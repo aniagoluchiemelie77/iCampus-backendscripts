@@ -31,10 +31,6 @@ mongoose
     const User = mongoose.model("User", userSchema); // ✅ Register model after connection
     const userRoutes = (await import("./routes/user.js")).default(User);
     app.use("/users", userRoutes);
-    app.get("/test", (req, res) => {
-      res.send("✅ Backend is reachable");
-    });
-
     app.listen(5000, "0.0.0.0", () => {
       console.log("Backend running on port 5000");
     });
