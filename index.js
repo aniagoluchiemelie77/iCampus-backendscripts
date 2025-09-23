@@ -31,6 +31,14 @@ const userSchema = new mongoose.Schema({
   phone_number: String,
   matriculation_number: String,
   staff_id: String,
+  isVerified: {
+    type: Boolean,
+    default: false,
+  },
+  verificationToken: {
+    type: String,
+    default: null,
+  },
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },
@@ -86,3 +94,5 @@ mongoose
 mongoose.connection.on("connected", () => {
   console.log("🧠 Mongoose connection is fully established");
 });
+
+//MongoDB connection: mongod --dbpath "D:\MongoDB\data"
