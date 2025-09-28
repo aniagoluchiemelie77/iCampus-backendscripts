@@ -12,6 +12,7 @@ app.use((req, res, next) => {
 const MONGO_URI = "mongodb://127.0.0.1:27017/iCampus";
 const userSchema = new mongoose.Schema({
   uid: String,
+  profilePic: String,
   usertype: String,
   isFirstLogin: Boolean,
   firstname: String,
@@ -58,6 +59,10 @@ const verifyStudentSchema = new mongoose.Schema({
   matriculation_number: String,
   school_name: String,
 });
+const storeCategoriesSchema = new mongoose.Schema({
+  id: Number,
+  categoryName: String,
+});
 const verifyLecturerSchema = new mongoose.Schema({
   firstname: String,
   lastname: String,
@@ -68,12 +73,20 @@ const verifyLecturerSchema = new mongoose.Schema({
 });
 const Student = mongoose.model("Student", verifyStudentSchema, "students");
 const Lecturer = mongoose.model("Lecturer", verifyLecturerSchema, "lecturers");
+const ProductCategory = mongoose.model(
+  "Category",
+  storeCategoriesSchema,
+  "store-categories"
+);
 mongoose
   .connect(MONGO_URI)
   .then(async () => {
     console.log("✅ MongoDB connected");
     const User = mongoose.model("User", userSchema); // ✅ Register model after connection
     const userRoutes = (await import("./routes/user.js")).default(User);
+    const productRoutes = (await import("./routes/store/products.js")).default(
+      ProductCategory
+    );
     const studentVerifyRoutes = (
       await import("./routes/verify/students.js")
     ).default(Student);
@@ -81,6 +94,7 @@ mongoose
       await import("./routes/verify/lecturers.js")
     ).default(Lecturer);
     app.use("/users", userRoutes);
+    app.use("/store", productRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);
     app.use("/verifyLecturer", lecturerVerifyRoutes);
     app.listen(5000, "0.0.0.0", () => {
