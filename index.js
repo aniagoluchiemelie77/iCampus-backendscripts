@@ -26,6 +26,7 @@ const userSchema = new mongoose.Schema({
   department: String,
   pointsBalance: Number,
   hasSubscribed: Boolean,
+  isCourseRep: Boolean,
   createdAt: Date,
   country: String,
   current_level: String,
