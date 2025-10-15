@@ -2,6 +2,7 @@ import express from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
+import jwt from "jsonwebtoken";
 
 // Temporary in-memory store
 const verificationCodes = {};
@@ -16,22 +17,27 @@ const transporter = nodemailer.createTransport({
 const now = new Date();
 
 const getOrdinalSuffix = (day) => {
-  if (day > 3 && day < 21) return 'th';
+  if (day > 3 && day < 21) return "th";
   switch (day % 10) {
-    case 1: return 'st';
-    case 2: return 'nd';
-    case 3: return 'rd';
-    default: return 'th';
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
   }
 };
 const day = now.getDate();
-const month = now.toLocaleString('default', { month: 'short' }); // e.g., "Jan"
+const month = now.toLocaleString("default", { month: "short" }); // e.g., "Jan"
 const year = now.getFullYear();
 
 const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
 
 // Utility to generate 6-digit code
-const generateCode = () => Math.floor(100000 + Math.random() * 900000).toString();
+const generateCode = () =>
+  Math.floor(100000 + Math.random() * 900000).toString();
 
 export default function (User) {
   const router = express.Router();
@@ -109,10 +115,22 @@ export default function (User) {
         return res.status(401).json({ error: "Invalid password" });
       }
       const { password: _, ...safeUser } = user.toObject();
+      const token = jwt.sign(
+        {
+          id: user._id,
+          email: user.email,
+        }, // payload
+        process.env.JWT_SECRET, // secret key
+        {
+          expiresIn: "8h",
+        } // optional: token expiry
+      );
       console.log("✅ Login succeeded:", user._id);
+      console.log("Token:", token);
       res.status(200).json({
         message: "Login successful",
-        user: safeUser, // return full profile minus password
+        user: safeUser,
+        token, // return full profile minus password
       });
     } catch (error) {
       console.error("❌ Login failed:", error);
@@ -169,56 +187,58 @@ export default function (User) {
     if (!user) return res.status(404).send("User not found");
     res.status(200).json({ isVerified: user.isVerified });
   });
-  router.post('/forgotPassword', async (req, res) => {
-    console.log('step 1');
+  router.post("/forgotPassword", async (req, res) => {
+    console.log("step 1");
     const { email } = req.body;
-    const user = await User.findOne({email});
+    const user = await User.findOne({ email });
     if (!user) {
-      res.status(404).json({ message: 'User not found' });
-      console.log('Substep2');
+      res.status(404).json({ message: "User not found" });
+      console.log("Substep2");
       return;
     }
     const code = generateCode();
     verificationCodes[email] = {
       code,
-       expiresAt: Date.now() + 12 * 60 * 60 * 1000, // expires in 12 hours
+      expiresAt: Date.now() + 12 * 60 * 60 * 1000, // expires in 12 hours
     };
     console.log(`Verification code for ${email}: ${code}`);
     await transporter.sendMail({
       from: '"iCampus" <admin@uniquetechcontentwriter.com>',
       to: email,
-      subject: 'Password Reset Verification Code',
+      subject: "Password Reset Verification Code",
       html: `<h1>Your 6-digit verification code is: ${code}</h1>
              <p>You are required to use the above code within 12 hours of password reset request</p>`,
     });
     res.status(201).json({
-      message: 'Verification code sent, check your email',
+      message: "Verification code sent, check your email",
     });
   });
-  router.post('/verifyCode', (req, res) => {
+  router.post("/verifyCode", (req, res) => {
     const { email, code } = req.body;
     const record = verificationCodes[email];
-    if (
-      !record || record.code !== code || Date.now() > record.expiresAt
-    ) {
-      return res.status(400).json({ message: 'Invalid or expired code' });
+    if (!record || record.code !== code || Date.now() > record.expiresAt) {
+      return res.status(400).json({ message: "Invalid or expired code" });
     }
     // Mark as verified, don't delete yet
     verificationCodes[email].verified = true;
-    res.status(200).json({ message: 'Code verified', email: email});
+    res.status(200).json({ message: "Code verified", email: email });
   });
-  router.post('/changePassword', async (req, res) => {
+  router.post("/changePassword", async (req, res) => {
     const { email, password, confirmPassword } = req.body;
     const record = verificationCodes[email];
     if (!record || !record.verified) {
-      return res.status(403).json({ message: 'Email not verified for password reset' });
+      return res
+        .status(403)
+        .json({ message: "Email not verified for password reset" });
     }
     if (!password || !confirmPassword || password !== confirmPassword) {
-      return res.status(400).json({ message: 'Passwords do not match or are missing' });
+      return res
+        .status(400)
+        .json({ message: "Passwords do not match or are missing" });
     }
     try {
       const user = await User.findOne({ email });
-      if (!user) return res.status(404).json({ message: 'User not found' });
+      if (!user) return res.status(404).json({ message: "User not found" });
       const hashedPassword = await bcrypt.hash(password, 10);
       user.password = hashedPassword;
       await user.save();
@@ -226,17 +246,16 @@ export default function (User) {
       await transporter.sendMail({
         from: '"iCampus" <admin@uniquetechcontentwriter.com>',
         to: email,
-        subject: 'Successful Password Reset Attempt',
+        subject: "Successful Password Reset Attempt",
         html: `<h1>Successful Password Reset Attempt</h1>
                <p>Dear User, a successful password reset was carried out by your account on ${formattedDate}, if this is not you, reach out to our email: admin@uniquetechcontentwriter.com immediately.</p>`,
-      });// Clean up after success
-      res.status(200).json({ message: 'Password changed successfully' });
+      }); // Clean up after success
+      res.status(200).json({ message: "Password changed successfully" });
     } catch (error) {
-      console.error('Password change error:', error);
-      res.status(500).json({ message: 'Internal server error' });
+      console.error("Password change error:", error);
+      res.status(500).json({ message: "Internal server error" });
     }
   });
-
 
   return router;
 }
