@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import mongoose from "mongoose";
+import jwt from "jsonwebtoken";
+import { Request, Response, NextFunction } from "express";
 
 const app = express();
 app.use(cors());
@@ -111,5 +113,23 @@ mongoose
 mongoose.connection.on("connected", () => {
   console.log("🧠 Mongoose connection is fully established");
 });
+
+export const authenticate = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return res.status(401).json({ message: "Authorization token missing" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded; // attach user info to request
+    next();
+  } catch (err) {
+    return res.status(403).json({ message: "Invalid or expired token" });
+  }
+};
 
 //MongoDB connection: mongod --dbpath "D:\MongoDB\data"

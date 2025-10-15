@@ -1,5 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
+import authenticate from "../index.js";
 
 const router = express.Router();
 
@@ -83,7 +84,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-router.post("/", async (req, res) => {
+app.post("/", authenticate, async (req, res) => {
   try {
     const newEvent = new Event(req.body);
     await newEvent.save();
