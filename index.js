@@ -66,7 +66,33 @@ const verifyStudentSchema = new mongoose.Schema({
 const storeCategoriesSchema = new mongoose.Schema({
   id: Number,
   categoryName: String,
+  schoolName: String,
 });
+const productSchema = new mongoose.Schema({
+  id: Number,
+  productId: { type: String, required: true },
+  category: { type: String, required: true },
+  schoolName: { type: String, required: true },
+  sellerId: { type: String, required: true },
+  title: { type: String, required: true },
+  mediaUrls: [{ type: String }], // ✅ array of strings
+  colors: [{ type: String }], // ✅ array of product colors
+  sizes: [{ type: String }], // ✅ array of product sizes
+  type: { type: String, enum: ["product", "File"], required: true },
+  priceInPoints: { type: Number, required: true },
+  createdAt: { type: Date, default: Date.now },
+  isAvailable: { type: Boolean, default: true },
+  viewsCount: { type: Number, default: 0 },
+  ratings: [{ type: Number }], // ✅ array of numbers
+  description: { type: String },
+  lockedWithPassword: { type: Boolean, default: false },
+  password: { type: String }, // optional, only if locked
+  isFile: { type: Boolean, default: false },
+  fileUrl: { type: String },
+  fileSizeInMB: { type: Number },
+  downloadCount: { type: Number, default: 0 },
+});
+
 const verifyLecturerSchema = new mongoose.Schema({
   firstname: String,
   lastname: String,
@@ -82,6 +108,9 @@ const ProductCategory = mongoose.model(
   storeCategoriesSchema,
   "store-categories"
 );
+
+const Product = mongoose.model("Product", productSchema, "store-products");
+
 mongoose
   .connect(MONGO_URI)
   .then(async () => {
@@ -89,7 +118,8 @@ mongoose
     const User = mongoose.model("User", userSchema); // ✅ Register model after connection
     const userRoutes = (await import("./routes/user.js")).default(User);
     const productRoutes = (await import("./routes/store/products.js")).default(
-      ProductCategory
+      ProductCategory,
+      Product
     );
     const eventsRoute = (await import("./routes/userEvents.js")).default;
     const studentVerifyRoutes = (
