@@ -13,7 +13,7 @@ app.use((req, res, next) => {
   next();
 });
 const MONGO_URI = "mongodb://127.0.0.1:27017/iCampus";
-const userSchema = new mongoose.Schema({
+export const userSchema = new mongoose.Schema({
   uid: String,
   profilePic: String,
   usertype: String,
@@ -54,6 +54,7 @@ userSchema.index(
   { staff_id: 1, department: 1 },
   { unique: true, partialFilterExpression: { usertype: "lecturer" } }
 );
+
 const verifyStudentSchema = new mongoose.Schema({
   firstname: String,
   lastname: String,
@@ -68,7 +69,7 @@ const storeCategoriesSchema = new mongoose.Schema({
   categoryName: String,
   schoolName: String,
 });
-const productSchema = new mongoose.Schema({
+export const productSchema = new mongoose.Schema({
   id: Number,
   productId: { type: String, required: true },
   category: { type: String, required: true },
@@ -82,7 +83,7 @@ const productSchema = new mongoose.Schema({
   priceInPoints: { type: Number, required: true },
   createdAt: { type: Date, default: Date.now },
   isAvailable: { type: Boolean, default: true },
-  viewsCount: { type: Number, default: 0 },
+  favCount: { type: Number, default: 0 },
   ratings: [{ type: Number }], // ✅ array of numbers
   description: { type: String },
   lockedWithPassword: { type: Boolean, default: false },
