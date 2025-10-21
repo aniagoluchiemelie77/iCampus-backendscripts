@@ -150,6 +150,7 @@ export default function (Category) {
 
       const favoriteIds = user.favorites || [];
       const products = await Product.find({ _id: { $in: favoriteIds } });
+      console.log(products);
 
       res.status(200).json(products);
     } catch (error) {
@@ -164,17 +165,92 @@ export default function (Category) {
 
     try {
       const user = await User.findById(userId);
-      if (!user) return res.status(404).json({ error: "User not found" });
-
       const cartIds = user.cart || [];
-      const products = await Product.find({ _id: { $in: cartIds } });
-
+      const products = await Product.find({ productId: { $in: cartIds } }); // or _id
       res.status(200).json(products);
     } catch (error) {
       console.error("Error fetching user's cart:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
+  router.post("/cart", authenticate, async (req, res) => {
+    const userId = req.user.id;
+    const { productId } = req.body;
+
+    try {
+      await User.findByIdAndUpdate(userId, {
+        $addToSet: { cart: productId }, // avoids duplicates
+      });
+      res.status(200).json({ message: "Product added to cart" });
+    } catch (error) {
+      console.error("Error adding to cart:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+  // Increment quantity or add item to cart
+  router.post("/cart/increment", authenticate, async (req, res) => {
+    const { productId } = req.body;
+    const userId = req.user.id;
+
+    try {
+      const user = await User.findById(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      user.cart.push(productId); // ✅ Add another instance of the product
+      await user.save();
+
+      res.status(200).json({ message: "Product added to cart" });
+    } catch (error) {
+      console.error("Increment error:", error);
+      res.status(500).json({ error: "Failed to add product to cart" });
+    }
+  });
+
+  // Decrement quantity or remove if zero
+  router.post("/cart/decrement", authenticate, async (req, res) => {
+    const { productId } = req.body;
+    const userId = req.user.id;
+
+    try {
+      const user = await User.findById(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      const index = user.cart.indexOf(productId);
+      if (index !== -1) {
+        user.cart.splice(index, 1); // ✅ Remove one instance
+        await user.save();
+        return res.status(200).json({ message: "Product removed from cart" });
+      }
+
+      res.status(404).json({ error: "Product not in cart" });
+    } catch (error) {
+      console.error("Decrement error:", error);
+      res.status(500).json({ error: "Failed to remove product from cart" });
+    }
+  });
+
+  // Remove item from cart
+  router.post("/cart/remove", authenticate, async (req, res) => {
+    const { productId } = req.body;
+    const userId = req.user.id;
+
+    try {
+      const user = await User.findById(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      user.cart = user.cart.filter((id) => id !== productId); // ✅ Remove all instances
+      await user.save();
+
+      res.status(200).json({ message: "Product completely removed from cart" });
+    } catch (error) {
+      console.error("Remove error:", error);
+      res.status(500).json({ error: "Failed to remove product from cart" });
+    }
+  });
+
+
+
+
 
   return router;
 }
