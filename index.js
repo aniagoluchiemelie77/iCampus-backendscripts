@@ -36,7 +36,8 @@ export const userSchema = new mongoose.Schema({
   phone_number: String,
   matriculation_number: String,
   staff_id: String,
-  cart: [{ type: String }], // or ObjectId if you're using MongoDB _id
+  cart: [{ type: String }],
+  favorites: [{ type: String }],
   isVerified: {
     type: Boolean,
     default: false,

@@ -176,10 +176,10 @@ export default function (Category) {
   router.post("/cart", authenticate, async (req, res) => {
     const userId = req.user.id;
     const { productId } = req.body;
-
+    console.log(productId);
     try {
       await User.findByIdAndUpdate(userId, {
-        $addToSet: { cart: productId }, // avoids duplicates
+        $addToSet: { cart: productId },
       });
       res.status(200).json({ message: "Product added to cart" });
     } catch (error) {
@@ -208,6 +208,7 @@ export default function (Category) {
 
   // Decrement quantity or remove if zero
   router.post("/cart/decrement", authenticate, async (req, res) => {
+    console.log("BODY:", req.body);
     const { productId } = req.body;
     const userId = req.user.id;
 
@@ -233,6 +234,7 @@ export default function (Category) {
   router.post("/cart/remove", authenticate, async (req, res) => {
     const { productId } = req.body;
     const userId = req.user.id;
+    console.log("Received productId:", productId);
 
     try {
       const user = await User.findById(userId);
