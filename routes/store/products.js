@@ -73,36 +73,38 @@ export default function (Category) {
   });
 
   // POST /store/:productId/favorite {Toggle favorite}
-  router.post("/:productId/favorite", authenticate, async (req, res) => {
-    const { productId } = req.params;
-    const { increment } = req.body;
+  router.post("/toggleFavorite", authenticate, async (req, res) => {
+    const { productId } = req.body; // Use req.body instead of req.params
     const userId = req.user.id;
+    console.log(productId);
+
     try {
       const user = await User.findById(userId);
-      const product = await Product.findById(productId);
-      if (!user || !product)
-        return res.status(404).json({ error: "User or product not found" });
+      if (!user) return res.status(404).json({ error: "User not found" });
 
-      const alreadyFavorited = user.favorites.includes(productId);
+      const product = await Product.findOne({ productId });
+      if (!product) return res.status(404).json({ error: "Product not found" });
 
-      if (increment && !alreadyFavorited) {
-        user.favorites.push(productId);
-        product.favCount += 1;
-      } else if (!increment && alreadyFavorited) {
+      const isFavorited = user.favorites.includes(productId);
+
+      if (isFavorited) {
+        // Unfavorite: remove productId from favorites
         user.favorites = user.favorites.filter(
           (id) => id.toString() !== productId
         );
-        product.favCount = Math.max(0, product.favCount - 1);
+        console.log("Unfavorite action complete");
       } else {
-        return res.status(200).json({ message: "No update needed" });
+        // Favorite: add productId to favorites
+        user.favorites.push(productId);
+        console.log("Favorite action complete");
       }
-
       await user.save();
-      await product.save();
-
+      console.log(user.favorites);
       res.status(200).json({
-        message: "Favorite status updated",
-        favCount: product.favCount,
+        message: isFavorited
+          ? "Product removed from favorites"
+          : "Product added to favorites",
+        favorites: user.favorites,
       });
     } catch (error) {
       console.error("Error updating favorite status:", error);
@@ -110,51 +112,17 @@ export default function (Category) {
     }
   });
 
-  // POST /store/:productId/cart {Add Product to Cart}
-  router.post("/:productId/cart", authenticate, async (req, res) => {
-    const { productId } = req.params;
-    const userId = req.user.id;
-    console.log(`Id: ${productId}, UserId: ${userId}`);
-    try {
-      const user = await User.findById(userId);
-      const product = await Product.findById(productId);
-      if (!user || !product)
-        return res.status(404).json({ message: "User or product not found" });
-      const cart = Array.isArray(user.cart) ? user.cart : [];
-      const alreadyInCart = cart.includes(productId);
-
-      if (!alreadyInCart) {
-        console.log(`PreSave`);
-        user.cart = [...cart, productId];
-        console.log(`Saving...`); // safely update cart
-        await user.save();
-        console.log(`Saved`);
-        return res.status(200).json({ message: "Product added to cart" });
-      } else {
-        console.log(`Unsuccessful`);
-        return res.status(200).json({ message: "Product already in cart" });
-      }
-    } catch (error) {
-      console.error("Cart add error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
-
   // GET /store/favorites (Favorite Products Fetch)
   router.get("/favorites", authenticate, async (req, res) => {
     const userId = req.user.id;
-
     try {
       const user = await User.findById(userId);
       if (!user) return res.status(404).json({ error: "User not found" });
-
       const favoriteIds = user.favorites || [];
-      const products = await Product.find({ _id: { $in: favoriteIds } });
-      console.log(products);
-
-      res.status(200).json(products);
+      const products = await Product.find({ productId: { $in: favoriteIds } });
+      res.status(200).json({ products });
     } catch (error) {
-      console.error("Error fetching user's favorite products:", error);
+      console.error("Error fetching user's cart:", error);
       res.status(500).json({ error: "Internal server error" });
     }
   });
@@ -173,6 +141,8 @@ export default function (Category) {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  // POST /store {Add Product to Cart}
   router.post("/cart", authenticate, async (req, res) => {
     const userId = req.user.id;
     const { productId } = req.body;
@@ -187,6 +157,7 @@ export default function (Category) {
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
   // Increment quantity or add item to cart
   router.post("/cart/increment", authenticate, async (req, res) => {
     const { productId } = req.body;
@@ -230,11 +201,10 @@ export default function (Category) {
     }
   });
 
-  // Remove item from cart
+  //POST store/cart/remove (Remove item from cart)
   router.post("/cart/remove", authenticate, async (req, res) => {
     const { productId } = req.body;
     const userId = req.user.id;
-    console.log("Received productId:", productId);
 
     try {
       const user = await User.findById(userId);
@@ -250,8 +220,39 @@ export default function (Category) {
     }
   });
 
+  //POST store/favorites/remove (Remove product from favorites)
+  router.post("/favorites/remove", authenticate, async (req, res) => {
+    const { productId } = req.body;
+    const userId = req.user.id;
 
+    try {
+      const user = await User.findById(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
 
+      user.favorites = user.favorites.filter((id) => id !== productId); // ✅ Remove all instances
+      await user.save();
+
+      res.status(200).json({ message: "Product removed from favorites" });
+    } catch (error) {
+      console.error("Remove error:", error);
+      res
+        .status(500)
+        .json({ error: "Failed to remove product from favorites" });
+    }
+  });
+
+  //POST store/productsByIds (Populating fetch favorites with favorite products)
+  router.post("/productsByIds", authenticate, async (req, res) => {
+    const { productIds } = req.body;
+
+    try {
+      const products = await Product.find({ productId: { $in: productIds } });
+      res.status(200).json({ products });
+    } catch (error) {
+      console.error("Error fetching products:", error);
+      res.status(500).json({ error: "Failed to fetch products" });
+    }
+  });
 
 
   return router;
