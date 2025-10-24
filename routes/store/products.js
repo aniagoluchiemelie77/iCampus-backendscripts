@@ -64,6 +64,13 @@ export default function (Category) {
           { $sample: { size: parsedLimit } },
         ]);
         total = await Product.countDocuments({ schoolName, isAvailable: true });
+      } else if (category === "popular") {
+        products = await Product.find({ schoolName, isAvailable: true })
+          .sort({ favCount: -1 }) // highest favorites first
+          .skip(parsedOffset)
+          .limit(parsedLimit);
+
+        total = await Product.countDocuments({ schoolName, isAvailable: true });
       } else {
         total = await Product.countDocuments(filter);
         products = await Product.find(filter)
