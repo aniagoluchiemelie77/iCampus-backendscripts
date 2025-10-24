@@ -36,6 +36,7 @@ export default function (Category) {
   router.get("/products", async (req, res) => {
     try {
       const { schoolName, category, limit = "10", offset = "0" } = req.query;
+
       if (!schoolName || typeof schoolName !== "string") {
         return res
           .status(400)
@@ -44,7 +45,12 @@ export default function (Category) {
 
       const parsedLimit = Math.max(parseInt(limit), 1);
       const parsedOffset = Math.max(parseInt(offset), 0);
-      const filter = { schoolName };
+
+      // Base filter includes schoolName and isAvailable
+      const filter = {
+        schoolName,
+        isAvailable: true,
+      };
 
       if (category && category !== "all") {
         filter.category = new RegExp(`^${category}$`, "i");
@@ -54,10 +60,10 @@ export default function (Category) {
 
       if (category === "all") {
         products = await Product.aggregate([
-          { $match: { schoolName } },
+          { $match: { schoolName, isAvailable: true } },
           { $sample: { size: parsedLimit } },
         ]);
-        total = await Product.countDocuments({ schoolName });
+        total = await Product.countDocuments({ schoolName, isAvailable: true });
       } else {
         total = await Product.countDocuments(filter);
         products = await Product.find(filter)
@@ -74,9 +80,8 @@ export default function (Category) {
 
   // POST /store/:productId/favorite {Toggle favorite}
   router.post("/toggleFavorite", authenticate, async (req, res) => {
-    const { productId } = req.body; // Use req.body instead of req.params
+    const { productId } = req.body;
     const userId = req.user.id;
-    console.log(productId);
 
     try {
       const user = await User.findById(userId);
@@ -92,19 +97,24 @@ export default function (Category) {
         user.favorites = user.favorites.filter(
           (id) => id.toString() !== productId
         );
+        product.favCount = Math.max((product.favCount || 1) - 1, 0); // prevent negative count
         console.log("Unfavorite action complete");
       } else {
         // Favorite: add productId to favorites
         user.favorites.push(productId);
+        product.favCount = (product.favCount || 0) + 1;
         console.log("Favorite action complete");
       }
-      await user.save();
+
+      await Promise.all([user.save(), product.save()]);
       console.log(user.favorites);
+
       res.status(200).json({
         message: isFavorited
           ? "Product removed from favorites"
           : "Product added to favorites",
         favorites: user.favorites,
+        favCount: product.favCount,
       });
     } catch (error) {
       console.error("Error updating favorite status:", error);
@@ -253,6 +263,65 @@ export default function (Category) {
       res.status(500).json({ error: "Failed to fetch products" });
     }
   });
+
+  //GET store/products/:sellerId (fetch product sellers info)
+  router.get("/products/:sellerId", async (req, res) => {
+    try {
+      const { sellerId } = req.params;
+      const seller = await User.findOne({ uid: sellerId }); // or _id if you're using MongoDB ObjectId
+
+      if (!seller) {
+        return res.status(404).json({ message: "Seller not found" });
+      }
+      const {
+        firstname,
+        lastname,
+        email,
+        profilePic,
+        department,
+        phone_number,
+      } = seller;
+      res.status(200).json({
+        firstname,
+        lastname,
+        email,
+        profilePic,
+        department,
+        phone_number,
+      });
+    } catch (error) {
+      console.error("Error fetching seller:", error);
+      res.status(500).json({ message: "Server error fetching seller" });
+    }
+  });
+
+  //GET store/products/otherProductsBySeller
+  router.post("/products/otherProductsBySeller", async (req, res) => {
+    const { sellerId, excludeProductId } = req.body;
+    try {
+      if (!sellerId || typeof sellerId !== "string") {
+        return res.status(400).json({ message: "Missing or invalid sellerId" });
+      }
+
+      const filter = {
+        sellerId,
+        isAvailable: true,
+      };
+
+      if (excludeProductId) {
+        filter.productId = { $ne: excludeProductId };
+      }
+      const products = await Product.find(filter).limit(10); // limit to 10 results or paginate
+      res.status(200).json({ products });
+    } catch (error) {
+      console.error("Error fetching seller products:", error);
+      res
+        .status(500)
+        .json({ message: "Server error fetching seller products" });
+    }
+  });
+
+
 
 
   return router;
