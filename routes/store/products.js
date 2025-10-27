@@ -328,8 +328,39 @@ export default function (Category) {
     }
   });
 
+  //GET store/search {Fetch Search Query Products}
+  router.get("/search", async (req, res) => {
+    try {
+      const { schoolName, limit = "10", offset = "0", search = "" } = req.query;
 
+      if (!schoolName || typeof schoolName !== "string") {
+        return res
+          .status(400)
+          .json({ message: "Missing or invalid schoolName in query" });
+      }
 
+      const parsedLimit = Math.max(parseInt(limit), 1);
+      const parsedOffset = Math.max(parseInt(offset), 0);
+
+      const filter = {
+        schoolName,
+        isAvailable: true,
+      };
+
+      if (search.trim()) {
+        const regex = new RegExp(search.trim(), "i");
+        filter.$or = [{ title: regex }, { description: regex }];
+      }
+
+      const total = await Product.countDocuments(filter);
+      const products = await Product.find(filter)
+        .skip(parsedOffset)
+        .limit(parsedLimit);
+      res.status(200).json({ products, total });
+    } catch (error) {
+      res.status(500).json({ message: "Server error fetching products" });
+    }
+  });
 
   return router;
 }
