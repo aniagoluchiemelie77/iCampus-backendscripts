@@ -7,7 +7,13 @@ dotenv.config();
 console.log("✅ storeRoutes loaded");
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use((req, res, next) => {
+  if (req.method === "POST" || req.method === "PUT") {
+    express.json()(req, res, next);
+  } else {
+    next();
+  }
+});
 app.use((req, res, next) => {
   console.log(`🔗 ${req.method} ${req.url}`);
   next();
@@ -95,6 +101,23 @@ export const productSchema = new mongoose.Schema({
   fileSizeInMB: { type: Number },
   downloadCount: { type: Number, default: 0 },
 });
+export const notificationSchema = new mongoose.Schema({
+  id: Number,
+  notificationId: { type: String },
+  userId: { type: String },
+  title: { type: String },
+  message: { type: String, required: true },
+  isRead: { type: Boolean, default: false },
+  isPublic: { type: Boolean, default: false },
+  relatedSchoolName: { type: String },
+  department: { type: String },
+  level: { type: String },
+  relatedCommunityId: { type: String },
+  createdAt: { type: Date, default: Date.now },
+  relatedEventId: { type: String },
+  relatedPollId: { type: String },
+  relatedClassSessionId: { type: String },
+});
 
 const verifyLecturerSchema = new mongoose.Schema({
   firstname: String,
@@ -158,7 +181,7 @@ export const authenticate = (req, res, next) => {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // attach user info to request
+    req.user = decoded;
     next();
   } catch (err) {
     return res.status(403).json({ message: "Invalid or expired token" });

@@ -1,8 +1,10 @@
 import express from "express";
+import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
+import { notificationSchema } from "../index.js";
 
 // Temporary in-memory store
 const verificationCodes = {};
@@ -15,6 +17,12 @@ const transporter = nodemailer.createTransport({
   },
 });
 const now = new Date();
+
+const formattedTime = new Intl.DateTimeFormat("en-US", {
+  hour: "numeric",
+  minute: "numeric",
+  hour12: true,
+}).format(now);
 
 const getOrdinalSuffix = (day) => {
   if (day > 3 && day < 21) return "th";
@@ -39,8 +47,20 @@ const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
 const generateCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
+function generateNotificationId(length = 7) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
 export default function (User) {
   const router = express.Router();
+  const Notification =
+    mongoose.models.Notification ||
+    mongoose.model("Notification", notificationSchema, "notifications");
   router.post("/register", async (req, res) => {
     console.log("Incoming payload:", req.body);
     const { usertype, matriculation_number, staff_id, department, password } =
@@ -102,35 +122,53 @@ export default function (User) {
     }
   });
   router.post("/login", async (req, res) => {
-    const { identifier, password } = req.body;
+    console.log("Recieved...");
+    const { identifier, password, ipAddress, location } = req.body;
+
     try {
       const user = await User.findOne({
         $or: [{ email: identifier }],
       });
+
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
+
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
         return res.status(401).json({ error: "Invalid password" });
       }
+
       const { password: _, ...safeUser } = user.toObject();
       const token = jwt.sign(
         {
           id: user._id,
           email: user.email,
-        }, // payload
-        process.env.JWT_SECRET, // secret key
-        {
-          expiresIn: "8h",
-        } // optional: token expiry
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: "8h" }
       );
+
+      // Create login notification
+      const loginMessage = `A login attempt from ${ipAddress} at ${location} on ${formattedTime}, ${formattedDate} was detected. Contact admin@uniquetechcontentwriter if this wasn't you.`;
+      const notificationId = generateNotificationId();
+      await Notification.create({
+        userId: user.uid || user._id.toString(),
+        notificationId: notificationId,
+        title: "Successful Login",
+        message: loginMessage,
+        isPublic: false,
+        isRead: false,
+        createdAt: new Date(),
+      });
+
       console.log("✅ Login succeeded:", user._id);
       console.log("Token:", token);
+
       res.status(200).json({
         message: "Login successful",
         user: safeUser,
-        token, // return full profile minus password
+        token,
       });
     } catch (error) {
       console.error("❌ Login failed:", error);
@@ -254,6 +292,35 @@ export default function (User) {
     } catch (error) {
       console.error("Password change error:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+  router.get("/notifications", async (req, res) => {
+    try {
+      const { userId, limit = "30", offset = "0" } = req.query;
+      console.log("Api recieved...");
+
+      if (!userId || typeof userId !== "string") {
+        return res.status(400).json({ message: "Missing or invalid userId" });
+      }
+
+      const parsedLimit = Math.max(parseInt(limit), 1);
+      const parsedOffset = Math.max(parseInt(offset), 0);
+
+      // Match notifications that are either public or specific to the user
+      const filter = {
+        $or: [{ userId }, { isPublic: true }],
+      };
+
+      const total = await Notification.countDocuments(filter);
+      const notifications = await Notification.find(filter)
+        .sort({ createdAt: -1 })
+        .skip(parsedOffset)
+        .limit(parsedLimit);
+
+      res.status(200).json({ notifications, total });
+    } catch (error) {
+      console.error("Error fetching notifications:", error);
+      res.status(500).json({ message: "Server error fetching notifications" });
     }
   });
 

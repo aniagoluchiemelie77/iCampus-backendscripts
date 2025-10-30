@@ -318,7 +318,7 @@ export default function (Category) {
       if (excludeProductId) {
         filter.productId = { $ne: excludeProductId };
       }
-      const products = await Product.find(filter).limit(10); // limit to 10 results or paginate
+      const products = await Product.find(filter).limit(30); 
       res.status(200).json({ products });
     } catch (error) {
       console.error("Error fetching seller products:", error);
