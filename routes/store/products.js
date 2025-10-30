@@ -151,7 +151,7 @@ export default function (Category) {
     try {
       const user = await User.findById(userId);
       const cartIds = user.cart || [];
-      const products = await Product.find({ productId: { $in: cartIds } }); // or _id
+      const products = await Product.find({ productId: { $in: cartIds } });
       res.status(200).json(products);
     } catch (error) {
       console.error("Error fetching user's cart:", error);
