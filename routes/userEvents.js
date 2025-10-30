@@ -39,7 +39,6 @@ const eventSchema = new mongoose.Schema({
 const Event = mongoose.model("Event", eventSchema, "events");
 
 router.get("/", async (req, res) => {
-  console.log(req.query);
   const { userId, department, level } = req.query;
 
   if (!userId || !department) {
@@ -76,7 +75,6 @@ router.get("/", async (req, res) => {
         { visibility: "private", userId: userId },
       ],
     });
-
     res.json(events);
   } catch (error) {
     console.error("Error fetching events:", error);

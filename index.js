@@ -4,11 +4,11 @@ import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 dotenv.config();
-console.log("✅ storeRoutes loaded");
+
 const app = express();
 app.use(cors());
 app.use((req, res, next) => {
-  if (req.method === "POST" || req.method === "PUT") {
+  if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
     express.json()(req, res, next);
   } else {
     next();
@@ -167,9 +167,7 @@ mongoose
     console.error("❌ MongoDB connection error:", err);
   });
 
-mongoose.connection.on("connected", () => {
-  console.log("🧠 Mongoose connection is fully established");
-});
+
 
 export const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;

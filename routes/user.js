@@ -122,23 +122,18 @@ export default function (User) {
     }
   });
   router.post("/login", async (req, res) => {
-    console.log("Recieved...");
     const { identifier, password, ipAddress, location } = req.body;
-
     try {
       const user = await User.findOne({
         $or: [{ email: identifier }],
       });
-
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-
       const isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
         return res.status(401).json({ error: "Invalid password" });
       }
-
       const { password: _, ...safeUser } = user.toObject();
       const token = jwt.sign(
         {
@@ -146,25 +141,24 @@ export default function (User) {
           email: user.email,
         },
         process.env.JWT_SECRET,
-        { expiresIn: "8h" }
+        { expiresIn: "10h" }
       );
-
-      // Create login notification
-      const loginMessage = `A login attempt from ${ipAddress} at ${location} on ${formattedTime}, ${formattedDate} was detected. Contact admin@uniquetechcontentwriter if this wasn't you.`;
-      const notificationId = generateNotificationId();
-      await Notification.create({
-        userId: user.uid || user._id.toString(),
-        notificationId: notificationId,
-        title: "Successful Login",
-        message: loginMessage,
-        isPublic: false,
-        isRead: false,
-        createdAt: new Date(),
-      });
+      // Compare IP address
+      if (!user.ipAddress.includes(ipAddress)) {
+        const loginMessage = `A login attempt from ${ipAddress} at ${location} on ${formattedTime}, ${formattedDate} was detected. Click here if this wasn't you.`;
+        const notificationId = generateNotificationId();
+        await Notification.create({
+          userId: user.uid || user._id.toString(),
+          notificationId: notificationId,
+          title: "Successful Login",
+          message: loginMessage,
+          isPublic: false,
+          isRead: false,
+          createdAt: new Date(),
+        });
+      }
 
       console.log("✅ Login succeeded:", user._id);
-      console.log("Token:", token);
-
       res.status(200).json({
         message: "Login successful",
         user: safeUser,
@@ -296,33 +290,79 @@ export default function (User) {
   });
   router.get("/notifications", async (req, res) => {
     try {
-      const { userId, limit = "30", offset = "0" } = req.query;
-      console.log("Api recieved...");
-
+      const { userId, limit = "50", offset = "0", unread } = req.query;
       if (!userId || typeof userId !== "string") {
         return res.status(400).json({ message: "Missing or invalid userId" });
       }
-
       const parsedLimit = Math.max(parseInt(limit), 1);
       const parsedOffset = Math.max(parseInt(offset), 0);
-
       // Match notifications that are either public or specific to the user
       const filter = {
         $or: [{ userId }, { isPublic: true }],
       };
-
+      if (unread === "true") {
+        filter.isRead = false;
+      }
       const total = await Notification.countDocuments(filter);
       const notifications = await Notification.find(filter)
         .sort({ createdAt: -1 })
         .skip(parsedOffset)
         .limit(parsedLimit);
-
       res.status(200).json({ notifications, total });
     } catch (error) {
       console.error("Error fetching notifications:", error);
       res.status(500).json({ message: "Server error fetching notifications" });
     }
   });
+  router.patch("/notifications/:id/read", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const notification = await Notification.findOne({ notificationId: id });
+      if (!notification) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+      notification.isRead = true;
+      await notification.save();
+
+      res.status(200).json({ message: "Notification marked as read" });
+    } catch (error) {
+      console.error("Error marking notification as read:", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+  router.patch("/notifications/mark-all-read", async (req, res) => {
+    try {
+      const { userId, limit = "50", offset = "0" } = req.body;
+      if (!userId || typeof userId !== "string") {
+        return res.status(400).json({ message: "Missing or invalid userId" });
+      }
+      const parsedLimit = Math.max(parseInt(limit), 1);
+      const parsedOffset = Math.max(parseInt(offset), 0);
+      // Mark unread notifications as read
+      const filter = {
+        $or: [{ userId }, { isPublic: true }],
+        isRead: false,
+      };
+      await Notification.updateMany(filter, { isRead: true });
+      // Fetch updated notifications
+      const filter2 = {
+        $or: [{ userId }, { isPublic: true }],
+      };
+      const total = await Notification.countDocuments(filter2);
+      const notifications = await Notification.find(filter2)
+        .sort({ createdAt: -1 })
+        .skip(parsedOffset)
+        .limit(parsedLimit);
+      res.status(200).json({ notifications, total });
+    } catch (error) {
+      console.error("Error marking all as read:", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
+
+
+
 
   return router;
 }
