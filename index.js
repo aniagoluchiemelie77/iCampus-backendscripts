@@ -19,6 +19,37 @@ app.use((req, res, next) => {
   next();
 });
 const MONGO_URI = "mongodb://127.0.0.1:27017/iCampus";
+const purchaseItemSchema = new mongoose.Schema(
+  {
+    productId: String,
+    title: String,
+    quantity: Number,
+    priceInPoints: Number,
+    selectedSize: String,
+    selectedColor: String,
+  },
+  { _id: false }
+);
+
+const purchaseHistorySchema = new mongoose.Schema(
+  {
+    id: String,
+    date: {
+      type: Date,
+      default: Date.now,
+    },
+    totalProductsPurchased: Number,
+    totalPointsSpent: Number,
+    items: [purchaseItemSchema],
+    status: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: "pending",
+    },
+  },
+  { _id: false }
+);
+
 export const userSchema = new mongoose.Schema({
   uid: String,
   profilePic: String,
@@ -52,6 +83,7 @@ export const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  purchaseHistory: [purchaseHistorySchema],
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },

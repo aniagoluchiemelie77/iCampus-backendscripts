@@ -47,14 +47,14 @@ const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
 const generateCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
-function generateNotificationId(length = 7) {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
+ function generateNotificationId(length = 7) {
+   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+   let result = "";
+   for (let i = 0; i < length; i++) {
+     result += chars.charAt(Math.floor(Math.random() * chars.length));
+   }
+   return result;
+ }
 
 export default function (User) {
   const router = express.Router();

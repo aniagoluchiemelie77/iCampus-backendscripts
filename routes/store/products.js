@@ -3,6 +3,42 @@ import mongoose from "mongoose";
 import { authenticate } from "../../index.js";
 import { userSchema } from "../../index.js";
 import { productSchema } from "../../index.js";
+import { notificationSchema } from "../../index.js";
+
+const now = new Date();
+
+const formattedTime = new Intl.DateTimeFormat("en-US", {
+  hour: "numeric",
+  minute: "numeric",
+  hour12: true,
+}).format(now);
+
+const getOrdinalSuffix = (day) => {
+  if (day > 3 && day < 21) return "th";
+  switch (day % 10) {
+    case 1:
+      return "st";
+    case 2:
+      return "nd";
+    case 3:
+      return "rd";
+    default:
+      return "th";
+  }
+};
+const day = now.getDate();
+const month = now.toLocaleString("default", { month: "short" }); // e.g., "Jan"
+const year = now.getFullYear();
+const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
+
+function generateNotificationId(length = 7) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
 
 export default function (Category) {
   const router = express.Router();
@@ -13,6 +49,9 @@ export default function (Category) {
     mongoose.model("Product", productSchema, "store-products");
   const User =
     mongoose.models.User || mongoose.model("User", userSchema, "users");
+  const Notification =
+    mongoose.models.Notification ||
+    mongoose.model("Notification", notificationSchema, "notifications");
 
   // GET /store/categories
   router.get("/categories", async (req, res) => {
@@ -318,7 +357,7 @@ export default function (Category) {
       if (excludeProductId) {
         filter.productId = { $ne: excludeProductId };
       }
-      const products = await Product.find(filter).limit(30); 
+      const products = await Product.find(filter).limit(30);
       res.status(200).json({ products });
     } catch (error) {
       console.error("Error fetching seller products:", error);
@@ -359,6 +398,91 @@ export default function (Category) {
       res.status(200).json({ products, total });
     } catch (error) {
       res.status(500).json({ message: "Server error fetching products" });
+    }
+  });
+
+  // DELETE /store/cart (Clear All Cart Items)
+  router.delete("/cart", authenticate, async (req, res) => {
+    const userId = req.user.id;
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      user.cart = [];
+      await user.save();
+      res.status(200).json({ message: "Cart cleared successfully" });
+    } catch (error) {
+      console.error("Error clearing user's cart:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // DELETE /store/favorites (Clear all favorites)
+  router.delete("/favorites", authenticate, async (req, res) => {
+    const userId = req.user.id;
+    try {
+      const user = await User.findById(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      user.favorites = [];
+      await user.save();
+      res.status(200).json({ message: "Cart cleared successfully" });
+    } catch (error) {
+      console.error("Error clearing user's cart:", error);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // POST /store/checkout (Purchase products and deduct points)
+  router.post("/checkout", authenticate, async (req, res) => {
+    const {
+      userId,
+      totalProductsPurchased,
+      totalPointsSpent,
+      items: purchasedItems,
+    } = req.body;
+
+    try {
+      const user = await User.findById(userId);
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      if (user.pointsBalance < totalPointsSpent) {
+        return res.status(400).json({ error: "Insufficient points balance" });
+      }
+
+      user.pointsBalance -= totalPointsSpent;
+
+      // Add purchase history with status 'pending'
+      user.purchaseHistory.push({
+        id: new mongoose.Types.ObjectId().toString(), // optional unique ID
+        date: new Date(),
+        totalProductsPurchased,
+        totalPointsSpent,
+        items: purchasedItems,
+        status: "pending",
+      });
+
+      await user.save();
+      const purchaseMessage = `Purchase of ${totalProductsPurchased} items at ${totalPointsSpent}pts on ${formattedTime}, ${formattedDate} is successful. Please head to the nearest pickup point to collect your items.`;
+      const notificationId = generateNotificationId();
+      await Notification.create({
+        userId: userId,
+        notificationId: notificationId,
+        title: "Successful Purchase",
+        message: purchaseMessage,
+        isPublic: false,
+        isRead: false,
+        createdAt: new Date(),
+      });
+
+      res
+        .status(200)
+        .json({ message: "Checkout recorded and points deducted" });
+    } catch (error) {
+      console.error("Checkout error:", error);
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 
