@@ -190,8 +190,22 @@ export default function (Category) {
     try {
       const user = await User.findById(userId);
       const cartIds = user.cart || [];
+
+      // Count quantities
+      const quantityMap = cartIds.reduce((acc, id) => {
+        acc[id] = (acc[id] || 0) + 1;
+        return acc;
+      }, {});
+
+      // Fetch product details
       const products = await Product.find({ productId: { $in: cartIds } });
-      res.status(200).json(products);
+
+      // Attach cartQuantity to each product
+      const enrichedProducts = products.map((product) => ({
+        ...product.toObject(),
+        cartQuantity: quantityMap[product.productId] || 1,
+      }));
+      res.status(200).json(enrichedProducts);
     } catch (error) {
       console.error("Error fetching user's cart:", error);
       res.status(500).json({ error: "Internal server error" });
@@ -406,10 +420,12 @@ export default function (Category) {
     const userId = req.user.id;
     try {
       const user = await User.findById(userId);
+
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
       user.cart = [];
+
       await user.save();
       res.status(200).json({ message: "Cart cleared successfully" });
     } catch (error) {
@@ -445,7 +461,7 @@ export default function (Category) {
     } = req.body;
 
     try {
-      const user = await User.findById(userId);
+      const user = await User.findOne({ uid: req.body.userId });
       if (!user) return res.status(404).json({ error: "User not found" });
 
       if (user.pointsBalance < totalPointsSpent) {
@@ -465,6 +481,7 @@ export default function (Category) {
       });
 
       await user.save();
+
       const purchaseMessage = `Purchase of ${totalProductsPurchased} items at ${totalPointsSpent}pts on ${formattedTime}, ${formattedDate} is successful. Please head to the nearest pickup point to collect your items.`;
       const notificationId = generateNotificationId();
       await Notification.create({

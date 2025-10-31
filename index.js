@@ -111,6 +111,7 @@ const storeCategoriesSchema = new mongoose.Schema({
 });
 export const productSchema = new mongoose.Schema({
   id: Number,
+  quantity: { type: String },
   productId: { type: String, required: true },
   category: { type: String, required: true },
   schoolName: { type: String, required: true },
