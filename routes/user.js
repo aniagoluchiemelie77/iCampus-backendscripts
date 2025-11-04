@@ -140,6 +140,7 @@ export default function (User) {
         {
           id: user._id,
           email: user.email,
+          uid: user.uid,
         },
         process.env.JWT_SECRET,
         { expiresIn: "10h" }
@@ -392,6 +393,17 @@ export default function (User) {
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
+      const ping = `Your profile image was successfully updated on ${formattedDate} at ${formattedTime}.`;
+      const notificationId = generateNotificationId();
+      await Notification.create({
+        userId: user.uid || user._id.toString(),
+        notificationId: notificationId,
+        title: "Successful Profile Image Update",
+        message: ping,
+        isPublic: false,
+        isRead: false,
+        createdAt: new Date(),
+      });
 
       return res
         .status(200)
