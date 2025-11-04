@@ -4,6 +4,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
+import { authenticate } from "../index.js";
 import { notificationSchema } from "../index.js";
 
 // Temporary in-memory store
@@ -47,14 +48,14 @@ const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
 const generateCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
- function generateNotificationId(length = 7) {
-   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-   let result = "";
-   for (let i = 0; i < length; i++) {
-     result += chars.charAt(Math.floor(Math.random() * chars.length));
-   }
-   return result;
- }
+function generateNotificationId(length = 7) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
 
 export default function (User) {
   const router = express.Router();
@@ -290,30 +291,43 @@ export default function (User) {
   });
   router.get("/notifications", async (req, res) => {
     try {
-      const { userId, limit = "50", offset = "0", unread } = req.query;
+      const { userId, limit = "50", offset = "0", unread, type } = req.query;
+
       if (!userId || typeof userId !== "string") {
         return res.status(400).json({ message: "Missing or invalid userId" });
       }
+
       const parsedLimit = Math.max(parseInt(limit), 1);
       const parsedOffset = Math.max(parseInt(offset), 0);
-      // Match notifications that are either public or specific to the user
+
+      // Base filter: notifications for the user or public
       const filter = {
         $or: [{ userId }, { isPublic: true }],
       };
+
+      // Optional: filter unread notifications
       if (unread === "true") {
         filter.isRead = false;
       }
+
+      // Optional: filter by notification type
+      if (type && typeof type === "string") {
+        filter.type = type;
+      }
+
       const total = await Notification.countDocuments(filter);
       const notifications = await Notification.find(filter)
         .sort({ createdAt: -1 })
         .skip(parsedOffset)
         .limit(parsedLimit);
+
       res.status(200).json({ notifications, total });
     } catch (error) {
       console.error("Error fetching notifications:", error);
       res.status(500).json({ message: "Server error fetching notifications" });
     }
   });
+
   router.patch("/notifications/:id/read", async (req, res) => {
     try {
       const { id } = req.params;
@@ -359,10 +373,34 @@ export default function (User) {
       res.status(500).json({ message: "Server error" });
     }
   });
+  router.post("/upload-profile-image", authenticate, async (req, res) => {
+    try {
+      const userId = req.user.id;
+      const { imageUrl } = req.body;
 
+      if (!imageUrl) {
+        return res.status(400).json({ message: "Image URL is required" });
+      }
 
+      // Update user's profilePic in the database
+      const user = await User.findByIdAndUpdate(
+        userId,
+        { $push: { profilePic: imageUrl } }, // or overwrite if single image
+        { new: true }
+      );
 
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
 
+      return res
+        .status(200)
+        .json({ imageUrl, message: "Profile image updated successfully" });
+    } catch (error) {
+      console.error("Upload error:", error);
+      return res.status(500).json({ message: "Server error" });
+    }
+  });
 
   return router;
 }

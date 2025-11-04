@@ -492,6 +492,7 @@ export default function (Category) {
         isPublic: false,
         isRead: false,
         createdAt: new Date(),
+        type: "transactions",
       });
 
       res

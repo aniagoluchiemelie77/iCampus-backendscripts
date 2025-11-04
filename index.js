@@ -52,7 +52,7 @@ const purchaseHistorySchema = new mongoose.Schema(
 
 export const userSchema = new mongoose.Schema({
   uid: String,
-  profilePic: String,
+  profilePic: [String],
   usertype: String,
   isFirstLogin: Boolean,
   firstname: String,
@@ -150,6 +150,7 @@ export const notificationSchema = new mongoose.Schema({
   relatedEventId: { type: String },
   relatedPollId: { type: String },
   relatedClassSessionId: { type: String },
+  type: { type: String },
 });
 
 const verifyLecturerSchema = new mongoose.Schema({
