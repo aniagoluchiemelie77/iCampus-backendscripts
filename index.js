@@ -3,6 +3,8 @@ import cors from "cors";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
+import rateLimit from "express-rate-limit";
+
 dotenv.config();
 
 const app = express();
@@ -30,7 +32,6 @@ const purchaseItemSchema = new mongoose.Schema(
   },
   { _id: false }
 );
-
 const purchaseHistorySchema = new mongoose.Schema(
   {
     id: String,
@@ -49,7 +50,19 @@ const purchaseHistorySchema = new mongoose.Schema(
   },
   { _id: false }
 );
-
+export const courseSchema = new mongoose.Schema({
+  courseId: { type: String, required: true },
+  courseCode: { type: String },
+  courseTitle: { type: String },
+  department: { type: String, required: true },
+  level: { type: String, required: true },
+  schoolName: { type: String, required: true },
+  lecturerIds: [{ type: String }], // or ObjectId if referencing User
+  studentsEnrolled: [{ type: String }], // or ObjectId if referencing User
+  credits: { type: Number },
+  semester: { type: String },
+  createdAt: { type: Date, default: Date.now },
+});
 export const userSchema = new mongoose.Schema({
   uid: String,
   profilePic: [String],
@@ -61,6 +74,7 @@ export const userSchema = new mongoose.Schema({
   email: String,
   ipAddress: [String],
   deviceType: [String],
+  coursesEnrolled: [String],
   accessToken: String,
   password: String,
   department: String,
@@ -84,6 +98,8 @@ export const userSchema = new mongoose.Schema({
     default: null,
   },
   purchaseHistory: [purchaseHistorySchema],
+  coursesEnrolled: [{ type: String }],
+  coursesTeaching: [{ type: String }],
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },
@@ -201,8 +217,6 @@ mongoose
     console.error("❌ MongoDB connection error:", err);
   });
 
-
-
 export const authenticate = (req, res, next) => {
   const authHeader = req.headers.authorization;
 
@@ -219,5 +233,14 @@ export const authenticate = (req, res, next) => {
     return res.status(403).json({ message: "Invalid or expired token" });
   }
 };
+export const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // limits each IP to 5 login attempts per windowMs
+  message: {
+    error: "Too many login attempts. Please try again after 15 minutes.",
+  },
+  standardHeaders: true, // Return rate limit info in headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+});
 
 //MongoDB connection: mongod --dbpath "D:\MongoDB\data"

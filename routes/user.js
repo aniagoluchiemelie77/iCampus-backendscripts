@@ -4,8 +4,13 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
-import { authenticate } from "../index.js";
-import { notificationSchema } from "../index.js";
+import { authenticate, loginLimiter } from "../index.js";
+import { notificationSchema, courseSchema } from "../index.js";
+import multer from "multer";
+import Tesseract from "tesseract.js";
+import pdfParse from "pdf-parse";
+import mammoth from "mammoth";
+import fs from "fs";
 
 // Temporary in-memory store
 const verificationCodes = {};
@@ -56,12 +61,15 @@ function generateNotificationId(length = 7) {
   }
   return result;
 }
-
+const upload = multer({ dest: "uploads/" });
 export default function (User) {
   const router = express.Router();
   const Notification =
     mongoose.models.Notification ||
     mongoose.model("Notification", notificationSchema, "notifications");
+  const Course =
+    mongoose.models.Course ||
+    mongoose.model("Course", courseSchema, "all-courses");
   router.post("/register", async (req, res) => {
     console.log("Incoming payload:", req.body);
     const { usertype, matriculation_number, staff_id, department, password } =
@@ -122,7 +130,7 @@ export default function (User) {
       });
     }
   });
-  router.post("/login", async (req, res) => {
+  router.post("/login", loginLimiter, async (req, res) => {
     const { identifier, password, ipAddress, location } = req.body;
     try {
       const user = await User.findOne({
@@ -147,6 +155,8 @@ export default function (User) {
       );
       // Compare IP address
       if (!user.ipAddress.includes(ipAddress)) {
+        user.ipAddress.push(ipAddress);
+        await user.save();
         const loginMessage = `A login attempt from ${ipAddress} at ${location} on ${formattedTime}, ${formattedDate} was detected. Click here if this wasn't you.`;
         const notificationId = generateNotificationId();
         await Notification.create({
@@ -159,8 +169,12 @@ export default function (User) {
           createdAt: new Date(),
         });
       }
+      if (user.isFirstLogin) {
+        user.isFirstLogin = false;
+        await user.save();
+      }
 
-      console.log("✅ Login succeeded:", user._id);
+      console.log("✅ Login succeeded:", user.uid);
       res.status(200).json({
         message: "Login successful",
         user: safeUser,
@@ -171,7 +185,6 @@ export default function (User) {
       res.status(500).json({ error: error.message || "Login error" });
     }
   });
-
   router.patch("/:uid", async (req, res) => {
     try {
       const updatedUser = await User.findOneAndUpdate(
@@ -328,7 +341,39 @@ export default function (User) {
       res.status(500).json({ message: "Server error fetching notifications" });
     }
   });
+  router.get("/notifications/count", async (req, res) => {
+    try {
+      const { userId, unread, type } = req.query;
 
+      if (!userId || typeof userId !== "string") {
+        return res.status(400).json({ message: "Missing or invalid userId" });
+      }
+
+      // Base filter: notifications for the user or public
+      const filter = {
+        $or: [{ userId }, { isPublic: true }],
+      };
+
+      // Optional: filter unread notifications
+      if (unread === "true") {
+        filter.isRead = false;
+      }
+
+      // Optional: filter by notification type
+      if (type && typeof type === "string") {
+        filter.type = type;
+      }
+
+      const count = await Notification.countDocuments(filter);
+
+      res.status(200).json({ count });
+    } catch (error) {
+      console.error("Error fetching notification count:", error);
+      res
+        .status(500)
+        .json({ message: "Server error fetching notification count" });
+    }
+  });
   router.patch("/notifications/:id/read", async (req, res) => {
     try {
       const { id } = req.params;
@@ -342,35 +387,6 @@ export default function (User) {
       res.status(200).json({ message: "Notification marked as read" });
     } catch (error) {
       console.error("Error marking notification as read:", error);
-      res.status(500).json({ message: "Server error" });
-    }
-  });
-  router.patch("/notifications/mark-all-read", async (req, res) => {
-    try {
-      const { userId, limit = "50", offset = "0" } = req.body;
-      if (!userId || typeof userId !== "string") {
-        return res.status(400).json({ message: "Missing or invalid userId" });
-      }
-      const parsedLimit = Math.max(parseInt(limit), 1);
-      const parsedOffset = Math.max(parseInt(offset), 0);
-      // Mark unread notifications as read
-      const filter = {
-        $or: [{ userId }, { isPublic: true }],
-        isRead: false,
-      };
-      await Notification.updateMany(filter, { isRead: true });
-      // Fetch updated notifications
-      const filter2 = {
-        $or: [{ userId }, { isPublic: true }],
-      };
-      const total = await Notification.countDocuments(filter2);
-      const notifications = await Notification.find(filter2)
-        .sort({ createdAt: -1 })
-        .skip(parsedOffset)
-        .limit(parsedLimit);
-      res.status(200).json({ notifications, total });
-    } catch (error) {
-      console.error("Error marking all as read:", error);
       res.status(500).json({ message: "Server error" });
     }
   });
@@ -413,6 +429,133 @@ export default function (User) {
       return res.status(500).json({ message: "Server error" });
     }
   });
+
+  router.post(
+    "/upload-course-form",
+    upload.single("file"),
+    async (req, res) => {
+      try {
+        const { userId, staffId } = req.body;
+        const file = req.file;
+        if (!file) return res.status(400).json({ error: "No file uploaded" });
+
+        const user = await User.findOne({ uid: userId });
+        if (!user) return res.status(404).json({ error: "User not found" });
+
+        let extractedText = "";
+        if (file.mimetype.startsWith("image/")) {
+          const result = await Tesseract.recognize(file.path, "eng");
+          extractedText = result.data.text;
+        } else if (file.mimetype === "application/pdf") {
+          const dataBuffer = fs.readFileSync(file.path);
+          const result = await pdfParse(dataBuffer);
+          extractedText = result.text;
+        } else if (
+          file.mimetype ===
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ) {
+          const dataBuffer = fs.readFileSync(file.path);
+          const result = await mammoth.extractRawText({ buffer: dataBuffer });
+          extractedText = result.value;
+        } else {
+          return res.status(400).json({ error: "Unsupported file type" });
+        }
+
+        // Regex parsers
+        const courseRegex = /([A-Z]{3}\s?\d{3})\s+(.+?)\s+[C|E]\s+(\d)/g;
+        const nameRegex = /Student's Name:\s*([A-Za-z\s]+)/;
+        const matricRegex = /Matric No:\s*([A-Z]+\/\d+\/\d{4})/;
+        const deptRegex = /Department:\s*([A-Za-z\s]+)/;
+        const levelRegex = /Level:\s*(\d{3}L)/;
+        const firstSemTotalRegex =
+          /Total Course Unit Registered This Semester:\s*(\d+)/;
+        const sessionTotalRegex = /Total Course Unit For The Session:\s*(\d+)/;
+
+        // Extract student details
+        const name = extractedText.match(nameRegex)?.[1]?.trim() || null;
+        const matricNumber =
+          extractedText.match(matricRegex)?.[1]?.trim() || null;
+        const department = extractedText.match(deptRegex)?.[1]?.trim() || null;
+        const level = extractedText.match(levelRegex)?.[1]?.trim() || null;
+        const firstSemesterUnits = parseInt(
+          extractedText.match(firstSemTotalRegex)?.[1] || "0"
+        );
+        const sessionUnits = parseInt(
+          extractedText.match(sessionTotalRegex)?.[1] || "0"
+        );
+
+        // Extract courses
+        const courses = [];
+        let match;
+        while ((match = courseRegex.exec(extractedText)) !== null) {
+          courses.push({
+            code: match[1],
+            title: match[2].trim(),
+            unit: parseInt(match[3]),
+            semester: extractedText.includes("SECOND SEMESTER")
+              ? "Second"
+              : "First",
+          });
+        }
+
+        // Create or update course records
+        const createdCourses = [];
+        for (const course of courses) {
+          const courseId = generateNotificationId();
+          const existing = await Course.findOne({
+            courseCode: course.code,
+            level,
+            department,
+          });
+
+          if (!existing) {
+            const newCourse = new Course({
+              courseId,
+              courseCode: course.code,
+              courseTitle: course.title,
+              department,
+              level,
+              schoolName: "Federal University of Petroleum Resources",
+              credits: course.unit,
+              semester: course.semester,
+              lecturerIds: staffId ? [userId] : [],
+              studentsEnrolled: staffId ? [] : [userId],
+            });
+
+            await newCourse.save();
+            createdCourses.push(newCourse);
+          } else {
+            if (staffId && !existing.lecturerIds.includes(userId)) {
+              existing.lecturerIds.push(userId);
+            } else if (
+              !staffId &&
+              !existing.studentsEnrolled.includes(userId)
+            ) {
+              existing.studentsEnrolled.push(userId);
+            }
+            await existing.save();
+            createdCourses.push(existing);
+          }
+        }
+
+        fs.unlinkSync(file.path); // cleanup
+        res.json({
+          student: {
+            name,
+            matricNumber,
+            department,
+            level,
+            firstSemesterUnits,
+            sessionUnits,
+          },
+          courses: createdCourses,
+        });
+      } catch (err) {
+        console.error("Error extracting course data:", err);
+        res.status(500).json({ error: "Failed to process file" });
+      }
+    }
+  );
 
   return router;
 }
