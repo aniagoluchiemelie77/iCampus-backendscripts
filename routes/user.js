@@ -8,7 +8,7 @@ import { authenticate, loginLimiter } from "../index.js";
 import { notificationSchema, courseSchema } from "../index.js";
 import multer from "multer";
 import Tesseract from "tesseract.js";
-import pdfParse from "pdf-parse";
+import * as pdfParse from "pdf-parse";
 import mammoth from "mammoth";
 import fs from "fs";
 
@@ -438,18 +438,23 @@ export default function (User) {
         const { userId, staffId } = req.body;
         const file = req.file;
         if (!file) return res.status(400).json({ error: "No file uploaded" });
+        console.log("Recieved Api...");
 
         const user = await User.findOne({ uid: userId });
+        const schoolName = user?.schoolName;
+        const userMatricNumber = user?.matricNumber;
         if (!user) return res.status(404).json({ error: "User not found" });
 
         let extractedText = "";
         if (file.mimetype.startsWith("image/")) {
           const result = await Tesseract.recognize(file.path, "eng");
           extractedText = result.data.text;
+          console.log("File is image...");
         } else if (file.mimetype === "application/pdf") {
           const dataBuffer = fs.readFileSync(file.path);
           const result = await pdfParse(dataBuffer);
           extractedText = result.text;
+          console.log("PDF File confirmed...");
         } else if (
           file.mimetype ===
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -457,11 +462,13 @@ export default function (User) {
           const dataBuffer = fs.readFileSync(file.path);
           const result = await mammoth.extractRawText({ buffer: dataBuffer });
           extractedText = result.value;
+          console.log("DOCX file confirmed...");
         } else {
           return res.status(400).json({ error: "Unsupported file type" });
         }
 
         // Regex parsers
+        console.log("Pre file details extraction...");
         const courseRegex = /([A-Z]{3}\s?\d{3})\s+(.+?)\s+[C|E]\s+(\d)/g;
         const nameRegex = /Student's Name:\s*([A-Za-z\s]+)/;
         const matricRegex = /Matric No:\s*([A-Z]+\/\d+\/\d{4})/;
@@ -483,9 +490,16 @@ export default function (User) {
         const sessionUnits = parseInt(
           extractedText.match(sessionTotalRegex)?.[1] || "0"
         );
-
+        console.log("File details extraction complete");
+        if (userMatricNumber !== matricNumber) {
+          return res.status(404).json({
+            error:
+              "Matriculation number mismatch, please make sure the matric number on the submitted document matches the existing matric number",
+          });
+        }
         // Extract courses
         const courses = [];
+        console.log(name);
         let match;
         while ((match = courseRegex.exec(extractedText)) !== null) {
           courses.push({
@@ -497,6 +511,7 @@ export default function (User) {
               : "First",
           });
         }
+        console.log("Course extraction complete...");
 
         // Create or update course records
         const createdCourses = [];
@@ -508,6 +523,8 @@ export default function (User) {
             department,
           });
 
+          console.log("Saved course ids: ", courseId);
+
           if (!existing) {
             const newCourse = new Course({
               courseId,
@@ -515,7 +532,7 @@ export default function (User) {
               courseTitle: course.title,
               department,
               level,
-              schoolName: "Federal University of Petroleum Resources",
+              schoolName: user.schoolName,
               credits: course.unit,
               semester: course.semester,
               lecturerIds: staffId ? [userId] : [],
@@ -535,16 +552,15 @@ export default function (User) {
             }
             await existing.save();
             createdCourses.push(existing);
+            user.coursesEnrolled.push(courseId);
+            await user.save();
           }
         }
-
+        console.log("Completed...");
         fs.unlinkSync(file.path); // cleanup
+        console.log(createdCourses);
         res.json({
           student: {
-            name,
-            matricNumber,
-            department,
-            level,
             firstSemesterUnits,
             sessionUnits,
           },
