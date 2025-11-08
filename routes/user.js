@@ -465,8 +465,7 @@ export default function (User) {
           if (pdfResult.text.trim() === "") {
             console.log("PDF has no extractable text — falling back to OCR...");
 
-            // @ts-ignore
-            const { convert } = require("pdf-poppler");
+            const gm = require("gm").subClass({ imageMagick: true });
             const path = require("path");
 
             try {
@@ -476,27 +475,37 @@ export default function (User) {
                 fs.mkdirSync(outputDir);
               }
 
-              // Ensure file has .pdf extension
-              const originalPath = file.path;
-              const renamedPath = originalPath.endsWith(".pdf")
-                ? originalPath
-                : `${originalPath}.pdf`;
-
-              if (originalPath !== renamedPath) {
-                fs.renameSync(originalPath, renamedPath);
-              }
-
-              const filePath = path.resolve(renamedPath);
+              const filePath = path.resolve(file.path);
               const outputFile = path.join(outputDir, "ocr_page.png");
 
-              const options = {
-                format: "png",
-                out_dir: outputDir,
-                out_prefix: "ocr_page",
-                page: 1,
-              };
+              // Convert first page of PDF to PNG using ImageMagick
+              await new Promise((resolve, reject) => {
+                console.log(
+                  "Converting PDF with ImageMagick:",
+                  `${filePath}[0] → ${outputFile}`
+                );
+                gm(`${filePath}[0]`)
+                  .in("-density", "300")
+                  .resize(2000, 2000)
+                  .write(outputFile, (err) => {
+                    if (err) {
+                      console.error(
+                        "ImageMagick conversion failed:",
+                        err.message
+                      );
+                      return reject(
+                        new Error("PDF conversion failed — PNG not created")
+                      );
+                    }
+                    resolve();
+                  });
+              });
 
-              await convert(filePath, options);
+              if (!fs.existsSync(outputFile)) {
+                throw new Error("PDF conversion failed — PNG not created");
+              }
+
+              console.log("Temp folder contents:", fs.readdirSync(outputDir));
 
               const ocrResult = await Tesseract.recognize(outputFile, "eng", {
                 logger: (m) => console.log(m.status, m.progress),
