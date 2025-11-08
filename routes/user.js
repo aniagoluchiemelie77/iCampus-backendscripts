@@ -8,9 +8,14 @@ import { authenticate, loginLimiter } from "../index.js";
 import { notificationSchema, courseSchema } from "../index.js";
 import multer from "multer";
 import Tesseract from "tesseract.js";
-import * as pdfParse from "pdf-parse";
+import { createRequire } from "module";
+const require = createRequire(import.meta.url);
+const pdfParse = require("pdf-parse");
+import { fromPath } from "pdf2pic";
 import mammoth from "mammoth";
 import fs from "fs";
+import { PDFDocument } from "pdf-lib";
+import sharp from "sharp";
 
 // Temporary in-memory store
 const verificationCodes = {};
@@ -438,23 +443,80 @@ export default function (User) {
         const { userId, staffId } = req.body;
         const file = req.file;
         if (!file) return res.status(400).json({ error: "No file uploaded" });
-        console.log("Recieved Api...");
+        console.log("Received API...");
 
         const user = await User.findOne({ uid: userId });
-        const schoolName = user?.schoolName;
-        const userMatricNumber = user?.matricNumber;
         if (!user) return res.status(404).json({ error: "User not found" });
 
+        const schoolName = user.schoolName;
+        const userMatricNumber = user.matricNumber;
+        const fullName = user.fullName || "";
+
         let extractedText = "";
+
         if (file.mimetype.startsWith("image/")) {
           const result = await Tesseract.recognize(file.path, "eng");
           extractedText = result.data.text;
           console.log("File is image...");
         } else if (file.mimetype === "application/pdf") {
           const dataBuffer = fs.readFileSync(file.path);
-          const result = await pdfParse(dataBuffer);
-          extractedText = result.text;
-          console.log("PDF File confirmed...");
+          const pdfResult = await pdfParse(dataBuffer);
+
+          if (pdfResult.text.trim() === "") {
+            console.log("PDF has no extractable text — falling back to OCR...");
+
+            // @ts-ignore
+            const { convert } = require("pdf-poppler");
+            const path = require("path");
+
+            try {
+              // Ensure temp folder exists
+              const outputDir = path.resolve("./temp");
+              if (!fs.existsSync(outputDir)) {
+                fs.mkdirSync(outputDir);
+              }
+
+              // Ensure file has .pdf extension
+              const originalPath = file.path;
+              const renamedPath = originalPath.endsWith(".pdf")
+                ? originalPath
+                : `${originalPath}.pdf`;
+
+              if (originalPath !== renamedPath) {
+                fs.renameSync(originalPath, renamedPath);
+              }
+
+              const filePath = path.resolve(renamedPath);
+              const outputFile = path.join(outputDir, "ocr_page.png");
+
+              const options = {
+                format: "png",
+                out_dir: outputDir,
+                out_prefix: "ocr_page",
+                page: 1,
+              };
+
+              await convert(filePath, options);
+
+              const ocrResult = await Tesseract.recognize(outputFile, "eng", {
+                logger: (m) => console.log(m.status, m.progress),
+              });
+
+              extractedText = ocrResult.data.text;
+              console.log("OCR extraction complete.");
+
+              fs.unlinkSync(outputFile);
+            } catch (err) {
+              console.error("OCR fallback failed:", err.message);
+              return res.status(400).json({
+                error:
+                  "Please ensure your course registration form is submitted.",
+              });
+            }
+          } else {
+            extractedText = pdfResult.text;
+            console.log("PDF File confirmed...");
+          }
         } else if (
           file.mimetype ===
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -469,17 +531,18 @@ export default function (User) {
 
         // Regex parsers
         console.log("Pre file details extraction...");
-        const courseRegex = /([A-Z]{3}\s?\d{3})\s+(.+?)\s+[C|E]\s+(\d)/g;
-        const nameRegex = /Student's Name:\s*([A-Za-z\s]+)/;
-        const matricRegex = /Matric No:\s*([A-Z]+\/\d+\/\d{4})/;
-        const deptRegex = /Department:\s*([A-Za-z\s]+)/;
-        const levelRegex = /Level:\s*(\d{3}L)/;
+        console.log("RAW extractedText:\n", extractedText);
+
+        const courseRegex = /([A-Z]{3}\s?\d{3})\s+(.+?)\s+(?:C|E)\s+(\d)/gs;
+        const nameRegex = new RegExp(fullName.replace(/\s+/g, "\\s+"), "i");
+        const matricRegex = /(COET\/\d{4,5}\/\d{4})/;
+        const deptRegex = /(Petroleum Engineering)/i;
+        const levelRegex = /(\d{3}L)/;
         const firstSemTotalRegex =
           /Total Course Unit Registered This Semester:\s*(\d+)/;
         const sessionTotalRegex = /Total Course Unit For The Session:\s*(\d+)/;
 
-        // Extract student details
-        const name = extractedText.match(nameRegex)?.[1]?.trim() || null;
+        const name = extractedText.match(nameRegex)?.[0] || null;
         const matricNumber =
           extractedText.match(matricRegex)?.[1]?.trim() || null;
         const department = extractedText.match(deptRegex)?.[1]?.trim() || null;
@@ -490,16 +553,42 @@ export default function (User) {
         const sessionUnits = parseInt(
           extractedText.match(sessionTotalRegex)?.[1] || "0"
         );
+
         console.log("File details extraction complete");
+        console.log("Extracted matricNumber:", matricNumber);
+        console.log("User matricNumber:", userMatricNumber);
+        console.log(
+          name,
+          department,
+          level,
+          matricNumber,
+          firstSemesterUnits,
+          sessionUnits
+        );
+
+        if (
+          !name &&
+          !matricNumber &&
+          !department &&
+          !level &&
+          firstSemesterUnits === 0 &&
+          sessionUnits === 0
+        ) {
+          console.log("No recognizable course registration data found.");
+          return res.status(400).json({
+            error: "Please ensure your course registration form is submitted.",
+          });
+        }
         if (userMatricNumber !== matricNumber) {
+          console.log("Does not match...");
           return res.status(404).json({
             error:
               "Matriculation number mismatch, please make sure the matric number on the submitted document matches the existing matric number",
           });
         }
+
         // Extract courses
         const courses = [];
-        console.log(name);
         let match;
         while ((match = courseRegex.exec(extractedText)) !== null) {
           courses.push({
@@ -515,6 +604,8 @@ export default function (User) {
 
         // Create or update course records
         const createdCourses = [];
+        if (!user.coursesEnrolled) user.coursesEnrolled = [];
+
         for (const course of courses) {
           const courseId = generateNotificationId();
           const existing = await Course.findOne({
@@ -532,7 +623,7 @@ export default function (User) {
               courseTitle: course.title,
               department,
               level,
-              schoolName: user.schoolName,
+              schoolName,
               credits: course.unit,
               semester: course.semester,
               lecturerIds: staffId ? [userId] : [],
@@ -541,6 +632,7 @@ export default function (User) {
 
             await newCourse.save();
             createdCourses.push(newCourse);
+            user.coursesEnrolled.push(courseId);
           } else {
             if (staffId && !existing.lecturerIds.includes(userId)) {
               existing.lecturerIds.push(userId);
@@ -551,14 +643,20 @@ export default function (User) {
               existing.studentsEnrolled.push(userId);
             }
             await existing.save();
+
+            if (!user.coursesEnrolled.includes(existing.courseId)) {
+              user.coursesEnrolled.push(existing.courseId);
+            }
+
             createdCourses.push(existing);
-            user.coursesEnrolled.push(courseId);
-            await user.save();
           }
         }
+
+        await user.save();
+        fs.unlinkSync(file.path);
         console.log("Completed...");
-        fs.unlinkSync(file.path); // cleanup
         console.log(createdCourses);
+
         res.json({
           student: {
             firstSemesterUnits,
