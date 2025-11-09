@@ -434,7 +434,6 @@ export default function (User) {
       return res.status(500).json({ message: "Server error" });
     }
   });
-
   router.post(
     "/upload-course-form",
     upload.single("file"),

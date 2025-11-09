@@ -74,7 +74,13 @@ export default function (Category) {
   // GET /store/products
   router.get("/products", async (req, res) => {
     try {
-      const { schoolName, category, limit = "10", offset = "0" } = req.query;
+      const {
+        schoolName,
+        category,
+        limit = "10",
+        offset = "0",
+        userId,
+      } = req.query;
 
       if (!schoolName || typeof schoolName !== "string") {
         return res
@@ -82,13 +88,20 @@ export default function (Category) {
           .json({ message: "Missing or invalid schoolName in query" });
       }
 
+      if (!userId || typeof userId !== "string") {
+        return res
+          .status(400)
+          .json({ message: "Missing or invalid userId in query" });
+      }
+
       const parsedLimit = Math.max(parseInt(limit), 1);
       const parsedOffset = Math.max(parseInt(offset), 0);
 
-      // Base filter includes schoolName and isAvailable
+      // Base filter includes schoolName, isAvailable, and excludes user's own products
       const filter = {
         schoolName,
         isAvailable: true,
+        sellerId: { $ne: userId },
       };
 
       if (category && category !== "all") {
@@ -99,24 +112,41 @@ export default function (Category) {
 
       if (category === "all") {
         products = await Product.aggregate([
-          { $match: { schoolName, isAvailable: true } },
+          {
+            $match: {
+              schoolName,
+              isAvailable: true,
+              sellerId: { $ne: userId },
+            },
+          },
           { $sample: { size: parsedLimit } },
         ]);
-        total = await Product.countDocuments({ schoolName, isAvailable: true });
+        total = await Product.countDocuments({
+          schoolName,
+          isAvailable: true,
+          sellerId: { $ne: userId },
+        });
       } else if (category === "popular") {
-        products = await Product.find({ schoolName, isAvailable: true })
-          .sort({ favCount: -1 }) // highest favorites first
+        products = await Product.find({
+          schoolName,
+          isAvailable: true,
+          sellerId: { $ne: userId },
+        })
+          .sort({ favCount: -1 })
           .skip(parsedOffset)
           .limit(parsedLimit);
 
-        total = await Product.countDocuments({ schoolName, isAvailable: true });
+        total = await Product.countDocuments({
+          schoolName,
+          isAvailable: true,
+          sellerId: { $ne: userId },
+        });
       } else {
         total = await Product.countDocuments(filter);
         products = await Product.find(filter)
           .skip(parsedOffset)
           .limit(parsedLimit);
       }
-
       res.status(200).json({ products, total });
     } catch (error) {
       console.error("Error fetching products:", error);
@@ -225,49 +255,6 @@ export default function (Category) {
     } catch (error) {
       console.error("Error adding to cart:", error);
       res.status(500).json({ error: "Internal server error" });
-    }
-  });
-
-  // Increment quantity or add item to cart
-  router.post("/cart/increment", authenticate, async (req, res) => {
-    const { productId } = req.body;
-    const userId = req.user.id;
-
-    try {
-      const user = await User.findById(userId);
-      if (!user) return res.status(404).json({ error: "User not found" });
-
-      user.cart.push(productId); // ✅ Add another instance of the product
-      await user.save();
-
-      res.status(200).json({ message: "Product added to cart" });
-    } catch (error) {
-      console.error("Increment error:", error);
-      res.status(500).json({ error: "Failed to add product to cart" });
-    }
-  });
-
-  // Decrement quantity or remove if zero
-  router.post("/cart/decrement", authenticate, async (req, res) => {
-    console.log("BODY:", req.body);
-    const { productId } = req.body;
-    const userId = req.user.id;
-
-    try {
-      const user = await User.findById(userId);
-      if (!user) return res.status(404).json({ error: "User not found" });
-
-      const index = user.cart.indexOf(productId);
-      if (index !== -1) {
-        user.cart.splice(index, 1); // ✅ Remove one instance
-        await user.save();
-        return res.status(200).json({ message: "Product removed from cart" });
-      }
-
-      res.status(404).json({ error: "Product not in cart" });
-    } catch (error) {
-      console.error("Decrement error:", error);
-      res.status(500).json({ error: "Failed to remove product from cart" });
     }
   });
 
@@ -459,9 +446,10 @@ export default function (Category) {
       totalPointsSpent,
       items: purchasedItems,
     } = req.body;
+    const purchaseId = new mongoose.Types.ObjectId().toString();
 
     try {
-      const user = await User.findOne({ uid: req.body.userId });
+      const user = await User.findOne({ uid: userId });
       if (!user) return res.status(404).json({ error: "User not found" });
 
       if (user.pointsBalance < totalPointsSpent) {
@@ -470,9 +458,8 @@ export default function (Category) {
 
       user.pointsBalance -= totalPointsSpent;
 
-      // Add purchase history with status 'pending'
       user.purchaseHistory.push({
-        id: new mongoose.Types.ObjectId().toString(), // optional unique ID
+        id: purchaseId,
         date: new Date(),
         totalProductsPurchased,
         totalPointsSpent,
@@ -482,17 +469,61 @@ export default function (Category) {
 
       await user.save();
 
-      const purchaseMessage = `Purchase of ${totalProductsPurchased} items at ${totalPointsSpent}pts on ${formattedTime}, ${formattedDate} is successful. Please head to the nearest pickup point to collect your items.`;
-      const notificationId = generateNotificationId();
+      for (const item of purchasedItems) {
+        const quantity = Number(item.selectedQuantity) || 1;
+
+        const product = await Product.findOne({ productId: item.productId });
+        if (product) {
+          product.inStock = Math.max(0, product.inStock - quantity);
+          product.downloadCount = (product.downloadCount || 0) + 1;
+          await product.save();
+
+          // Notify buyer if it's a file
+          if (item.isFile) {
+            await Notification.create({
+              userId: userId,
+              notificationId: generateNotificationId(),
+              title: `Download Ready: ${item.title}`,
+              message: `Your file is ready.\nURL: ${item.fileUrl}\nPassword: ${item.password}`,
+              isPublic: false,
+              isRead: false,
+              createdAt: new Date(),
+              type: "downloads",
+            });
+          }
+
+          // Notify seller
+          const seller = await User.findOne({ uid: product.sellerId });
+          if (seller) {
+            console.log("Found Seller");
+            await Notification.create({
+              userId: product.sellerId,
+              notificationId: generateNotificationId(),
+              title: "Product Purchased",
+              message: `Your product "${item.title}" was purchased (${quantity} units).`,
+              isPublic: false,
+              isRead: false,
+              createdAt: new Date(),
+              type: "sales",
+            });
+            console.log("Notified Seller: ", product.sellerId);
+          }
+        }
+      }
+
+      const formattedDate = new Date().toLocaleDateString();
+      const formattedTime = new Date().toLocaleTimeString();
+
       await Notification.create({
         userId: userId,
-        notificationId: notificationId,
+        notificationId: generateNotificationId(),
         title: "Successful Purchase",
-        message: purchaseMessage,
+        message: `Purchase ID: ${purchaseId}\n Purchase of ${totalProductsPurchased} items at ${totalPointsSpent}pts is successful.`,
         isPublic: false,
         isRead: false,
         createdAt: new Date(),
         type: "transactions",
+        purchaseId: purchaseId,
       });
 
       res

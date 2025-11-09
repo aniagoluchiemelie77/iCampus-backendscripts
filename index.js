@@ -124,10 +124,12 @@ const storeCategoriesSchema = new mongoose.Schema({
   id: Number,
   categoryName: String,
   schoolName: String,
+  icon: String,
 });
 export const productSchema = new mongoose.Schema({
   id: Number,
   quantity: { type: String },
+  inStock: { type: String },
   productId: { type: String, required: true },
   category: { type: String, required: true },
   schoolName: { type: String, required: true },
@@ -167,6 +169,7 @@ export const notificationSchema = new mongoose.Schema({
   relatedPollId: { type: String },
   relatedClassSessionId: { type: String },
   type: { type: String },
+  purchaseId: { type: String },
 });
 
 const verifyLecturerSchema = new mongoose.Schema({
