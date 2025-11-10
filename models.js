@@ -50,7 +50,7 @@ export const userBankOrCardDetails = new mongoose.Schema({
   cardOrBankDetailsId: String, // Unique reference from payment gateway
   userId: {
     type: String,
-    ref: "User", // assuming your model is named 'User'
+    ref: "User",
     required: true,
   },
   paymentToken: String, // Tokenized reference (encrypted at rest)
@@ -114,7 +114,7 @@ export const userSchema = new mongoose.Schema({
   userBankOrCardDetails: [
     {
       type: String, // or mongoose.Schema.Types.String
-      ref: "UserBankOrCardDetails", // optional: if you want to populate
+      ref: "UserBankOrCardDetails",
     },
   ],
 });

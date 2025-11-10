@@ -1,42 +1,8 @@
 import express from "express";
-import mongoose from "mongoose";
 import { authenticate } from "../index.js";
+import { Event } from "../../tableDeclarations.js";
 
 const router = express.Router();
-
-const eventSchema = new mongoose.Schema({
-  createdBy: { type: String, required: true }, // ID of the creator
-  creatorType: {
-    type: String,
-    enum: ["student", "lecturer"],
-    required: true,
-  },
-  title: { type: String, required: true },
-  description: { type: String },
-  courseTitle: { type: String }, //For lectures
-  startDate: { type: String },
-  endDate: { type: String },
-  eventStartTime: { type: String },
-  eventEndTime: { type: String },
-  eventType: { type: String }, // e.g., "lecture", "Webinar", or 'other'
-  lectureType: { type: String }, // e.g., "online", "physical"
-  visibility: {
-    type: String,
-    enum: ["public", "department", "private"],
-    required: true,
-  },
-  restriction: { type: String, default: "none" }, // For public events: "none" or level (e.g., "300")
-  department: { type: String },
-  isRecurring: { type: Boolean }, //For repeative private events
-  recurrenceRule: { type: String }, // Recurrence rule in iCal format
-  level: { type: String }, // For departmental or restricted public events
-  userId: { type: String }, // For private events
-  location: { type: String },
-  tags: { type: [String] }, // Array of tags
-  createdAt: { type: String, default: () => new Date().toISOString() },
-});
-
-const Event = mongoose.model("Event", eventSchema, "events");
 
 router.get("/", async (req, res) => {
   const { userId, department, level } = req.query;

@@ -1,5 +1,7 @@
 import express from 'express';
-export default function studentVerifyRoutes(UserModel) {
+import { Student } from "../../tableDeclarations.js";
+
+export default function studentVerifyRoutes() {
   const router = express.Router();
 
   router.post("/", async (req, res) => {
@@ -21,7 +23,7 @@ export default function studentVerifyRoutes(UserModel) {
 
     try {
       // Find student by matric number only
-      const student = await UserModel.findOne({
+      const student = await Student.findOne({
         matriculation_number: matriculation_number,
       });
 
@@ -45,7 +47,6 @@ export default function studentVerifyRoutes(UserModel) {
       return res.status(500).json({ message: "Server error" });
     }
   });
-
 
   return router;
 }

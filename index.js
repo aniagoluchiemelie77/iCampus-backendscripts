@@ -4,6 +4,14 @@ import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
+import {
+  User,
+  ProductCategory,
+  Product,
+  Student,
+  Lecturer,
+  Event,
+} from "./tableDeclarations.js";
 
 dotenv.config();
 
@@ -21,244 +29,16 @@ app.use((req, res, next) => {
   next();
 });
 const MONGO_URI = "mongodb://127.0.0.1:27017/iCampus";
-const purchaseItemSchema = new mongoose.Schema(
-  {
-    productId: String,
-    title: String,
-    quantity: Number,
-    priceInPoints: Number,
-    selectedSize: String,
-    selectedColor: String,
-    selectedQuantity: String,
-    fileUrl: String,
-  },
-  { _id: false }
-);
-const purchaseHistorySchema = new mongoose.Schema(
-  {
-    id: String,
-    date: {
-      type: Date,
-      default: Date.now,
-    },
-    totalProductsPurchased: Number,
-    totalPointsSpent: Number,
-    items: [purchaseItemSchema],
-    status: {
-      type: String,
-      enum: ["pending", "approved", "rejected"],
-      default: "pending",
-    },
-  },
-  { _id: false }
-);
-export const courseSchema = new mongoose.Schema({
-  courseId: { type: String, required: true },
-  courseCode: { type: String },
-  courseTitle: { type: String },
-  department: { type: String, required: true },
-  level: { type: String, required: true },
-  schoolName: { type: String, required: true },
-  lecturerIds: [{ type: String }], // or ObjectId if referencing User
-  studentsEnrolled: [{ type: String }], // or ObjectId if referencing User
-  credits: { type: Number },
-  semester: { type: String },
-  createdAt: { type: Date, default: Date.now },
-});
-export const userBankOrCardDetails = new mongoose.Schema({
-  _id: ObjectId, // MongoDB default
-  cardOrBankDetailsId: String, // Unique reference from payment gateway
-  userId: {
-    type: String,
-    ref: "User", // assuming your model is named 'User'
-    required: true,
-  },
-  paymentToken: String, // Tokenized reference (encrypted at rest)
-  method: String, // 'card' or 'bank'
-  provider: String, // e.g., 'Paystack', 'Flutterwave'
-  lastFourDigits: String, // Safe for display
-  cardBrand: String, // Optional: 'Visa', 'MasterCard'
-  expiryMonth: String, // Optional
-  expiryYear: String, // Optional
-  bankName: String, // Optional
-  country: String,
-  isDefault: Boolean,
-  createdAt: Date,
-  updatedAt: Date,
-  billingAddressDetails: {
-    id: String,
-    country: String,
-    state: String,
-    city: String,
-    street: String,
-    zip: String,
-  },
-});
-export const userSchema = new mongoose.Schema({
-  uid: String,
-  profilePic: [String],
-  usertype: String,
-  isFirstLogin: Boolean,
-  firstname: String,
-  lastname: String,
-  schoolName: String,
-  email: String,
-  ipAddress: [String],
-  deviceType: [String],
-  coursesEnrolled: [String],
-  accessToken: String,
-  password: String,
-  department: String,
-  pointsBalance: { type: Number, default: 0 },
-  hasSubscribed: { type: Boolean, default: false },
-  isCourseRep: { type: Boolean, default: false },
-  createdAt: Date,
-  country: String,
-  current_level: String,
-  phone_number: String,
-  matricNumber: String,
-  staff_id: String,
-  cart: [{ type: String }],
-  favorites: [{ type: String }],
-  isVerified: {
-    type: Boolean,
-    default: false,
-  },
-  verificationToken: {
-    type: String,
-    default: null,
-  },
-  purchaseHistory: [purchaseHistorySchema],
-  coursesEnrolled: [{ type: String }],
-  coursesTeaching: [{ type: String }],
-  userBankOrCardDetails: [
-    {
-      type: String, // or mongoose.Schema.Types.String
-      ref: "UserBankOrCardDetails", // optional: if you want to populate
-    },
-  ],
-});
-userSchema.index(
-  { matriculation_number: 1, department: 1 },
-  { unique: true, partialFilterExpression: { usertype: "student" } }
-);
-
-userSchema.index(
-  { staff_id: 1, department: 1 },
-  { unique: true, partialFilterExpression: { usertype: "lecturer" } }
-);
-
-export const verifyStudentSchema = new mongoose.Schema({
-  firstname: String,
-  lastname: String,
-  department: String,
-  current_level: String,
-  phone_number: String,
-  matriculation_number: String,
-  school_name: String,
-});
-export const storeCategoriesSchema = new mongoose.Schema({
-  id: Number,
-  categoryName: String,
-  schoolName: String,
-  icon: String,
-});
-export const productSchema = new mongoose.Schema({
-  id: Number,
-  quantity: { type: String },
-  inStock: { type: String },
-  productId: { type: String, required: true },
-  category: { type: String, required: true },
-  schoolName: { type: String, required: true },
-  sellerId: { type: String, required: true },
-  title: { type: String, required: true },
-  mediaUrls: [{ type: String }], // ✅ array of strings
-  colors: [{ type: String }], // ✅ array of product colors
-  sizes: [{ type: String }], // ✅ array of product sizes
-  type: { type: String, enum: ["product", "File"], required: true },
-  priceInPoints: { type: Number, required: true },
-  createdAt: { type: Date, default: Date.now },
-  isAvailable: { type: Boolean, default: true },
-  favCount: { type: Number, default: 0 },
-  ratings: [{ type: Number }], // ✅ array of numbers
-  description: { type: String },
-  lockedWithPassword: { type: Boolean, default: false },
-  password: { type: String }, // optional, only if locked
-  isFile: { type: Boolean, default: false },
-  fileUrl: { type: String },
-  fileSizeInMB: { type: Number },
-  downloadCount: { type: Number, default: 0 },
-});
-
-export const notificationSchema = new mongoose.Schema(
-  {
-    id: Number,
-    notificationId: { type: String },
-    userId: { type: String },
-    title: { type: String },
-    message: { type: String, required: true },
-    isRead: { type: Boolean, default: false },
-    isPublic: { type: Boolean, default: false },
-    relatedSchoolName: { type: String },
-    department: { type: String },
-    level: { type: String },
-    relatedCommunityId: { type: String },
-    createdAt: { type: Date, default: Date.now },
-    relatedEventId: { type: String },
-    relatedPollId: { type: String },
-    relatedClassSessionId: { type: String },
-    type: { type: String },
-    purchaseId: { type: String },
-    status: { type: String },
-    transactionIdMid: { type: String },
-    fileUrls: [{ type: String }],
-  },
-  { timestamps: true }
-);
-export const transactionMiddleState = new mongoose.Schema(
-  {
-    transactionId: { type: String, required: true, unique: true },
-    sellerId: { type: String, required: true },
-    priceInPoints: { type: Number, required: true },
-    status: {
-      type: String,
-      enum: ["pending", "completed"],
-      default: "pending",
-    },
-    productIdArrays: [{ type: String }],
-  },
-  { timestamps: true }
-);
-
-export const verifyLecturerSchema = new mongoose.Schema({
-  firstname: String,
-  lastname: String,
-  department: String,
-  phone_number: String,
-  school_name: String,
-  staff_id: String,
-});
-const Student = mongoose.model("Student", verifyStudentSchema, "students");
-const Lecturer = mongoose.model("Lecturer", verifyLecturerSchema, "lecturers");
-const ProductCategory = mongoose.model(
-  "Category",
-  storeCategoriesSchema,
-  "store-categories"
-);
-
-const Product = mongoose.model("Product", productSchema, "store-products");
-
 mongoose
   .connect(MONGO_URI)
   .then(async () => {
     console.log("✅ MongoDB connected");
-    const User = mongoose.model("User", userSchema); // ✅ Register model after connection
     const userRoutes = (await import("./routes/user.js")).default(User);
     const productRoutes = (await import("./routes/store/products.js")).default(
       ProductCategory,
       Product
     );
-    const eventsRoute = (await import("./routes/userEvents.js")).default;
+    const eventsRoute = (await import("./routes/userEvents.js")).default(Event);
     const studentVerifyRoutes = (
       await import("./routes/verify/students.js")
     ).default(Student);

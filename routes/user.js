@@ -6,10 +6,10 @@ import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
 import { authenticate, loginLimiter } from "../index.js";
 import {
-  notificationSchema,
-  courseSchema,
-  transactionMiddleState,
-} from "../index.js";
+  Notification,
+  Course,
+  TransactionMiddleState,
+} from "../tableDeclarations.js";
 import multer from "multer";
 import Tesseract from "tesseract.js";
 import { createRequire } from "module";
@@ -73,19 +73,6 @@ function generateNotificationId(length = 7) {
 const upload = multer({ dest: "uploads/" });
 export default function (User) {
   const router = express.Router();
-  const Notification =
-    mongoose.models.Notification ||
-    mongoose.model("Notification", notificationSchema, "notifications");
-  const Course =
-    mongoose.models.Course ||
-    mongoose.model("Course", courseSchema, "all-courses");
-  const TransactionMiddleState =
-    mongoose.models.TransactionMiddleState ||
-    mongoose.model(
-      "TransactionMiddleState",
-      transactionMiddleState,
-      "trans-mid-state"
-    );
 
   router.post("/register", async (req, res) => {
     console.log("Incoming payload:", req.body);

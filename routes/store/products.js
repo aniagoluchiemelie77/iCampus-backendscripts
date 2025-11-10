@@ -1,13 +1,12 @@
 import express from "express";
 import mongoose from "mongoose";
+import { authenticate, removeOutOfStockProducts } from "../../index.js";
 import {
-  authenticate,
-  transactionMiddleState,
-  userSchema,
-  productSchema,
-  notificationSchema,
-  removeOutOfStockProducts,
-} from "../../index.js";
+  Notification,
+  TransactionMiddleState,
+  Product,
+  User,
+} from "../../tableDeclarations.js";
 
 function generateNotificationId(length = 7) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -20,23 +19,6 @@ function generateNotificationId(length = 7) {
 
 export default function (Category) {
   const router = express.Router();
-
-  // Safe model declarations
-  const Product =
-    mongoose.models.Product ||
-    mongoose.model("Product", productSchema, "store-products");
-  const User =
-    mongoose.models.User || mongoose.model("User", userSchema, "users");
-  const Notification =
-    mongoose.models.Notification ||
-    mongoose.model("Notification", notificationSchema, "notifications");
-  const TransactionMiddleState =
-    mongoose.models.TransactionMiddleState ||
-    mongoose.model(
-      "TransactionMiddleState",
-      transactionMiddleState,
-      "trans-mid-state"
-    );
 
   // GET /store/categories
   router.get("/categories", async (req, res) => {
