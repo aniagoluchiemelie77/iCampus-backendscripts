@@ -5,7 +5,11 @@ import crypto from "crypto";
 import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
 import { authenticate, loginLimiter } from "../index.js";
-import { notificationSchema, courseSchema } from "../index.js";
+import {
+  notificationSchema,
+  courseSchema,
+  transactionMiddleState,
+} from "../index.js";
 import multer from "multer";
 import Tesseract from "tesseract.js";
 import { createRequire } from "module";
@@ -75,6 +79,14 @@ export default function (User) {
   const Course =
     mongoose.models.Course ||
     mongoose.model("Course", courseSchema, "all-courses");
+  const TransactionMiddleState =
+    mongoose.models.TransactionMiddleState ||
+    mongoose.model(
+      "TransactionMiddleState",
+      transactionMiddleState,
+      "trans-mid-state"
+    );
+
   router.post("/register", async (req, res) => {
     console.log("Incoming payload:", req.body);
     const { usertype, matriculation_number, staff_id, department, password } =
@@ -346,6 +358,38 @@ export default function (User) {
       res.status(500).json({ message: "Server error fetching notifications" });
     }
   });
+  router.get("/notifications/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const notification = await Notification.findOne({ notificationId: id });
+
+      if (!notification) {
+        return res.status(404).json({ message: "Notification not found" });
+      }
+
+      let purchaseDetails = null;
+
+      if (notification.type === "transactions") {
+        const user = await User.findOne({ uid: notification.userId });
+
+        if (user && Array.isArray(user.purchaseHistory)) {
+          purchaseDetails = user.purchaseHistory.find(
+            (entry) => entry.id === notification.purchaseId
+          );
+        }
+      }
+
+      res.status(200).json({
+        notification,
+        ...(purchaseDetails && { purchaseDetails }),
+      });
+    } catch (error) {
+      console.error("Error fetching notification:", error);
+      res.status(500).json({ message: "Server error fetching notification" });
+    }
+  });
+
   router.get("/notifications/count", async (req, res) => {
     try {
       const { userId, unread, type } = req.query;
@@ -679,6 +723,35 @@ export default function (User) {
     }
   );
 
+  router.post("/transactions/complete/:transactionId", async (req, res) => {
+    try {
+      const { transactionId } = req.params;
+      const transaction = await TransactionMiddleState.findOne({
+        transactionId,
+      });
+
+      if (!transaction || transaction.status !== "pending") {
+        return res
+          .status(404)
+          .json({ message: "Invalid or already completed transaction" });
+      }
+      const seller = await User.findOne({ uid: transaction.sellerId });
+      if (!seller) {
+        return res.status(404).json({ message: "Seller not found" });
+      }
+      // Update seller's points
+      seller.pointsBalance += transaction.priceInPoints;
+      await seller.save();
+      // Delete transaction record
+      await TransactionMiddleState.deleteOne({ transactionId });
+      res
+        .status(200)
+        .json({ message: "Transaction completed and points transferred" });
+    } catch (error) {
+      console.error("Error completing transaction:", error);
+      res.status(500).json({ message: "Server error" });
+    }
+  });
   return router;
 }
 //Mongod summon: mongod --dbpath D:\MongoDB\data

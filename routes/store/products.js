@@ -1,35 +1,12 @@
 import express from "express";
 import mongoose from "mongoose";
-import { authenticate } from "../../index.js";
-import { userSchema } from "../../index.js";
-import { productSchema } from "../../index.js";
-import { notificationSchema } from "../../index.js";
-
-const now = new Date();
-
-const formattedTime = new Intl.DateTimeFormat("en-US", {
-  hour: "numeric",
-  minute: "numeric",
-  hour12: true,
-}).format(now);
-
-const getOrdinalSuffix = (day) => {
-  if (day > 3 && day < 21) return "th";
-  switch (day % 10) {
-    case 1:
-      return "st";
-    case 2:
-      return "nd";
-    case 3:
-      return "rd";
-    default:
-      return "th";
-  }
-};
-const day = now.getDate();
-const month = now.toLocaleString("default", { month: "short" }); // e.g., "Jan"
-const year = now.getFullYear();
-const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
+import {
+  authenticate,
+  transactionMiddleState,
+  userSchema,
+  productSchema,
+  notificationSchema,
+} from "../../index.js";
 
 function generateNotificationId(length = 7) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -52,6 +29,13 @@ export default function (Category) {
   const Notification =
     mongoose.models.Notification ||
     mongoose.model("Notification", notificationSchema, "notifications");
+  const TransactionMiddleState =
+    mongoose.models.TransactionMiddleState ||
+    mongoose.model(
+      "TransactionMiddleState",
+      transactionMiddleState,
+      "trans-mid-state"
+    );
 
   // GET /store/categories
   router.get("/categories", async (req, res) => {
@@ -440,6 +424,7 @@ export default function (Category) {
 
   // POST /store/checkout (Purchase products and deduct points)
   router.post("/checkout", authenticate, async (req, res) => {
+    console.log("Checking out...");
     const {
       userId,
       totalProductsPurchased,
@@ -447,7 +432,6 @@ export default function (Category) {
       items: purchasedItems,
     } = req.body;
     const purchaseId = new mongoose.Types.ObjectId().toString();
-
     try {
       const user = await User.findOne({ uid: userId });
       if (!user) return res.status(404).json({ error: "User not found" });
@@ -463,39 +447,48 @@ export default function (Category) {
         date: new Date(),
         totalProductsPurchased,
         totalPointsSpent,
-        items: purchasedItems,
+        items: purchasedItems.map((item) => ({
+          ...item,
+          fileUrl: item.fileUrl ?? null,
+          selectedQuantity: item.selectedQuantity || "1",
+        })),
         status: "pending",
       });
 
       await user.save();
 
+      let fileUrls = [];
+      let transId;
+
       for (const item of purchasedItems) {
         const quantity = Number(item.selectedQuantity) || 1;
-
+        const totalItemPoints = item.priceInPoints * quantity;
         const product = await Product.findOne({ productId: item.productId });
         if (product) {
+          const productIdArray = [item.productId];
           product.inStock = Math.max(0, product.inStock - quantity);
           product.downloadCount = (product.downloadCount || 0) + 1;
           await product.save();
-
-          // Notify buyer if it's a file
-          if (item.isFile) {
-            await Notification.create({
-              userId: userId,
-              notificationId: generateNotificationId(),
-              title: `Download Ready: ${item.title}`,
-              message: `Your file is ready.\nURL: ${item.fileUrl}\nPassword: ${item.password}`,
-              isPublic: false,
-              isRead: false,
-              createdAt: new Date(),
-              type: "downloads",
-            });
-          }
-
-          // Notify seller
           const seller = await User.findOne({ uid: product.sellerId });
           if (seller) {
-            console.log("Found Seller");
+            const transactionIdMid = new mongoose.Types.ObjectId().toString();
+            transId = transactionIdMid;
+            if (item.fileUrl) {
+              fileUrls.push(item.fileUrl);
+              // Directly credit seller
+              seller.pointsBalance += totalItemPoints;
+              await seller.save();
+            } else {
+              await TransactionMiddleState.create({
+                transactionId: transactionIdMid,
+                sellerId: product.sellerId,
+                priceInPoints: totalItemPoints,
+                status: "pending",
+                productIdArrays: productIdArray,
+              });
+            }
+
+            // Notify seller
             await Notification.create({
               userId: product.sellerId,
               notificationId: generateNotificationId(),
@@ -505,25 +498,24 @@ export default function (Category) {
               isRead: false,
               createdAt: new Date(),
               type: "sales",
+              transactionIdMid: transactionIdMid,
             });
-            console.log("Notified Seller: ", product.sellerId);
           }
         }
       }
-
-      const formattedDate = new Date().toLocaleDateString();
-      const formattedTime = new Date().toLocaleTimeString();
-
       await Notification.create({
         userId: userId,
         notificationId: generateNotificationId(),
         title: "Successful Purchase",
-        message: `Purchase ID: ${purchaseId}\n Purchase of ${totalProductsPurchased} items at ${totalPointsSpent}pts is successful.`,
+        message: `Purchase ID: ${purchaseId}\nPurchase of ${totalProductsPurchased} items at ${totalPointsSpent}pts is successful.`,
         isPublic: false,
         isRead: false,
         createdAt: new Date(),
         type: "transactions",
         purchaseId: purchaseId,
+        status: "success",
+        transactionIdMid: transId,
+        fileUrls: fileUrls,
       });
 
       res

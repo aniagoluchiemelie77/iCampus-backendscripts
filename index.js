@@ -29,6 +29,8 @@ const purchaseItemSchema = new mongoose.Schema(
     priceInPoints: Number,
     selectedSize: String,
     selectedColor: String,
+    selectedQuantity: String,
+    fileUrl: String,
   },
   { _id: false }
 );
@@ -152,25 +154,47 @@ export const productSchema = new mongoose.Schema({
   fileSizeInMB: { type: Number },
   downloadCount: { type: Number, default: 0 },
 });
-export const notificationSchema = new mongoose.Schema({
-  id: Number,
-  notificationId: { type: String },
-  userId: { type: String },
-  title: { type: String },
-  message: { type: String, required: true },
-  isRead: { type: Boolean, default: false },
-  isPublic: { type: Boolean, default: false },
-  relatedSchoolName: { type: String },
-  department: { type: String },
-  level: { type: String },
-  relatedCommunityId: { type: String },
-  createdAt: { type: Date, default: Date.now },
-  relatedEventId: { type: String },
-  relatedPollId: { type: String },
-  relatedClassSessionId: { type: String },
-  type: { type: String },
-  purchaseId: { type: String },
-});
+
+export const notificationSchema = new mongoose.Schema(
+  {
+    id: Number,
+    notificationId: { type: String },
+    userId: { type: String },
+    title: { type: String },
+    message: { type: String, required: true },
+    isRead: { type: Boolean, default: false },
+    isPublic: { type: Boolean, default: false },
+    relatedSchoolName: { type: String },
+    department: { type: String },
+    level: { type: String },
+    relatedCommunityId: { type: String },
+    createdAt: { type: Date, default: Date.now },
+    relatedEventId: { type: String },
+    relatedPollId: { type: String },
+    relatedClassSessionId: { type: String },
+    type: { type: String },
+    purchaseId: { type: String },
+    status: { type: String },
+    transactionIdMid: { type: String },
+    fileUrls: [{ type: String }],
+  },
+  { timestamps: true }
+);
+export const transactionMiddleState = new mongoose.Schema(
+  {
+    transactionId: { type: String, required: true, unique: true },
+    sellerId: { type: String, required: true },
+    priceInPoints: { type: Number, required: true },
+    status: {
+      type: String,
+      enum: ["pending", "completed"],
+      default: "pending",
+    },
+    productIdArrays: [{ type: String }],
+  },
+  { timestamps: true }
+);
+
 
 const verifyLecturerSchema = new mongoose.Schema({
   firstname: String,
