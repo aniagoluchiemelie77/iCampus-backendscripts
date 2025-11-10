@@ -6,6 +6,7 @@ import {
   userSchema,
   productSchema,
   notificationSchema,
+  removeOutOfStockProducts,
 } from "../../index.js";
 
 function generateNotificationId(length = 7) {
@@ -517,7 +518,7 @@ export default function (Category) {
         transactionIdMid: transId,
         fileUrls: fileUrls,
       });
-
+      await removeOutOfStockProducts();
       res
         .status(200)
         .json({ message: "Checkout recorded and points deducted" });

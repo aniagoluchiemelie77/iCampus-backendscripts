@@ -269,5 +269,13 @@ export const loginLimiter = rateLimit({
   standardHeaders: true, // Return rate limit info in headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
+export const removeOutOfStockProducts = async () => {
+  try {
+    const result = await Product.deleteMany({ inStock: { $eq: 0 } });
+    console.log(`Deleted ${result.deletedCount} out-of-stock products.`);
+  } catch (error) {
+    console.error("Error deleting out-of-stock products:", error);
+  }
+};
 
 //MongoDB connection: mongod --dbpath "D:\MongoDB\data"
