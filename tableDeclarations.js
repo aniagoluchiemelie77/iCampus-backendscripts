@@ -1,8 +1,28 @@
 import mongoose from 'mongoose';
-import {notificationSchema, userBankOrCardDetails, courseSchema, transactionMiddleState, verifyStudentSchema, verifyLecturerSchema, storeCategoriesSchema, eventSchema, productSchema, userSchema} from './models';
+import {
+  notificationSchema,
+  dealSchema,
+  userBankOrCardDetails,
+  courseSchema,
+  transactionMiddleState,
+  verifyStudentSchema,
+  verifyLecturerSchema,
+  storeCategoriesSchema,
+  eventSchema,
+  productSchema,
+  userSchema,
+} from "./models";
 
-export const Student = mongoose.model("Student", verifyStudentSchema, "students");
-export const Lecturer = mongoose.model("Lecturer", verifyLecturerSchema, "lecturers");
+export const Student = mongoose.model(
+  "Student",
+  verifyStudentSchema,
+  "students"
+);
+export const Lecturer = mongoose.model(
+  "Lecturer",
+  verifyLecturerSchema,
+  "lecturers"
+);
 export const ProductCategory = mongoose.model(
   "Category",
   storeCategoriesSchema,
@@ -10,10 +30,10 @@ export const ProductCategory = mongoose.model(
 );
 export const Event = mongoose.model("Event", eventSchema, "events");
 export const Product =
-    mongoose.models.Product ||
-    mongoose.model("Product", productSchema, "store-products");
+  mongoose.models.Product ||
+  mongoose.model("Product", productSchema, "store-products");
 export const User =
-    mongoose.models.User || mongoose.model("User", userSchema, "users");
+  mongoose.models.User || mongoose.model("User", userSchema, "users");
 export const Notification =
   mongoose.models.Notification ||
   mongoose.model("Notification", notificationSchema, "notifications");
@@ -34,3 +54,5 @@ export const UserBankOrCardDetails =
     userBankOrCardDetails,
     "userBankDetails"
   );
+export const Deals =
+  mongoose.models.Deals || mongoose.model("Deals", dealSchema, "userDealings");

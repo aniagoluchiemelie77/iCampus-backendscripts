@@ -1,5 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
+import nodemailer from "nodemailer";
 import { authenticate, removeOutOfStockProducts } from "../../index.js";
 import {
   Notification,
@@ -7,6 +8,7 @@ import {
   Product,
   User,
 } from "../../tableDeclarations.js";
+import { transporter } from "../user.js";
 
 function generateNotificationId(length = 7) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -465,23 +467,32 @@ export default function (Category) {
               await TransactionMiddleState.create({
                 transactionId: transactionIdMid,
                 sellerId: product.sellerId,
+                buyerId: userId,
                 priceInPoints: totalItemPoints,
                 status: "pending",
                 productIdArrays: productIdArray,
               });
             }
 
-            // Notify seller
+            // Notify seller on app
             await Notification.create({
               userId: product.sellerId,
               notificationId: generateNotificationId(),
-              title: "Product Purchased",
-              message: `Your product "${item.title}" was purchased (${quantity} units).`,
+              title: "Product Successfully Purchased",
+              message: `${quantity} units of your product "${item.title}" has been purchased. Please head over to the drop off station to complete purchase and get paid.`,
               isPublic: false,
               isRead: false,
               createdAt: new Date(),
               type: "sales",
               transactionIdMid: transactionIdMid,
+            });
+
+            //Push Notification
+            await transporter.sendMail({
+              from: '"iCampus" <admin@uniquetechcontentwriter.com>',
+              to: seller.email,
+              subject: "Product Successfully Purchased",
+              html: `${quantity} units of your product "${item.title}" has been purchased. Please head over to the drop off station to complete purchase and get paid.`,
             });
           }
         }

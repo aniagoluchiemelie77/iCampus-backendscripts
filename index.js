@@ -34,6 +34,9 @@ mongoose
   .then(async () => {
     console.log("✅ MongoDB connected");
     const userRoutes = (await import("./routes/user.js")).default(User);
+    const userAccountDetailsRoute = (await import("./routes/userAccountDetails.js")).default(
+      User
+    );
     const productRoutes = (await import("./routes/store/products.js")).default(
       ProductCategory,
       Product
@@ -46,6 +49,7 @@ mongoose
       await import("./routes/verify/lecturers.js")
     ).default(Lecturer);
     app.use("/users", userRoutes);
+    app.use("/user", userAccountDetailsRoute);
     app.use("/user/events", eventsRoute);
     app.use("/store", productRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);

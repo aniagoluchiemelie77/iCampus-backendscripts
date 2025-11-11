@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import {User, UserBankOrCardDetails} from './tableDeclarations';
+import { User, UserBankOrCardDetails, Deal } from "./tableDeclarations";
 
 const purchaseItemSchema = new mongoose.Schema(
   {
@@ -61,6 +61,7 @@ export const userBankOrCardDetails = new mongoose.Schema({
   expiryMonth: String, // Optional
   expiryYear: String, // Optional
   bankName: String, // Optional
+  bankAccNumber: String,
   country: String,
   isDefault: Boolean,
   createdAt: Date,
@@ -108,10 +109,11 @@ export const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  deals: [{ type: String, ref: "Deal" }],
   purchaseHistory: [purchaseHistorySchema],
   coursesEnrolled: [{ type: String }],
   coursesTeaching: [{ type: String }],
-  userBankOrCardDetails: [
+  userAccountDetails: [
     {
       type: String, // or mongoose.Schema.Types.String
       ref: "UserBankOrCardDetails",
@@ -199,10 +201,11 @@ export const transactionMiddleState = new mongoose.Schema(
   {
     transactionId: { type: String, required: true, unique: true },
     sellerId: { type: String, required: true },
+    buyerId: { type: String, required: true },
     priceInPoints: { type: Number, required: true },
     status: {
       type: String,
-      enum: ["pending", "completed"],
+      enum: ["pending", "completed", "rejected"],
       default: "pending",
     },
     productIdArrays: [{ type: String }],
@@ -249,3 +252,25 @@ export const eventSchema = new mongoose.Schema({
   tags: { type: [String] }, // Array of tags
   createdAt: { type: String, default: () => new Date().toISOString() },
 });
+export const dealSchema = new mongoose.Schema(
+  {
+    dealId: { type: String, required: true, unique: true },
+    sellerId: { type: String, required: true }, // user.uid of seller
+    buyerId: { type: String, required: true }, // user.uid of buyer
+    totalPriceInPoints: { type: Number, required: true },
+    dealStatus: {
+      type: String,
+      enum: ["pending", "completed", "cancelled"],
+      default: "pending",
+    },
+    items: [
+      {
+        productId: { type: String, required: true },
+        productTitle: { type: String, required: true },
+        priceInPoints: { type: Number, required: true },
+      },
+    ],
+    dealDate: { type: Date, default: Date.now },
+  },
+  { timestamps: true }
+);

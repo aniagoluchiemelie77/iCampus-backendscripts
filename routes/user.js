@@ -1,5 +1,4 @@
 import express from "express";
-import mongoose from "mongoose";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
@@ -7,8 +6,10 @@ import jwt from "jsonwebtoken";
 import { authenticate, loginLimiter } from "../index.js";
 import {
   Notification,
+  Product,
   Course,
   TransactionMiddleState,
+  Deals,
 } from "../tableDeclarations.js";
 import multer from "multer";
 import Tesseract from "tesseract.js";
@@ -23,12 +24,12 @@ import sharp from "sharp";
 
 // Temporary in-memory store
 const verificationCodes = {};
-const transporter = nodemailer.createTransport({
+export const transporter = nodemailer.createTransport({
   host: "sandbox.smtp.mailtrap.io",
   port: 2525,
   auth: {
-    user: "ef11ae5dba1a82",
-    pass: "e37a56bc265a6b",
+    user: process.env.TRANSPORTER_AUTH_USER,
+    pass: process.env.TRANSPORTER_AUTH_PASS,
   },
 });
 const now = new Date();
@@ -70,6 +71,15 @@ function generateNotificationId(length = 7) {
   }
   return result;
 }
+function generateUniqueDealId(length = 10) {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
+
 const upload = multer({ dest: "uploads/" });
 export default function (User) {
   const router = express.Router();
@@ -710,35 +720,124 @@ export default function (User) {
     }
   );
 
-  router.post("/transactions/complete/:transactionId", async (req, res) => {
-    try {
-      const { transactionId } = req.params;
-      const transaction = await TransactionMiddleState.findOne({
-        transactionId,
-      });
+  router.post(
+    "/transactions/complete/:transactionId",
+    authenticate,
+    async (req, res) => {
+      try {
+        const { transactionId } = req.params;
+        const { uid } = req.body;
 
-      if (!transaction || transaction.status !== "pending") {
-        return res
-          .status(404)
-          .json({ message: "Invalid or already completed transaction" });
+        const transaction = await TransactionMiddleState.findOne({
+          transactionId,
+          sellerId: uid,
+        });
+
+        if (!transaction) {
+          return res
+            .status(404)
+            .json({ message: "Transaction not found for this seller" });
+        }
+
+        const now = new Date();
+        const createdAt = new Date(transaction.createdAt);
+        const hoursDiff = (now - createdAt) / (1000 * 60 * 60);
+
+        if (hoursDiff > 96) {
+          transaction.status = "rejected";
+          await transaction.save();
+          return res
+            .status(400)
+            .json({ message: "Transaction expired after 96 hours" });
+        }
+
+        const seller = await User.findOne({ uid });
+        const buyer = await User.findOne({ uid: transaction.buyerId });
+        if (!seller)
+          return res.status(404).json({ message: "Seller not found" });
+        if (!buyer) return res.status(404).json({ message: "Buyer not found" });
+
+        const transactionsTotalPriceInPoints = transaction.priceInPoints;
+        seller.pointsBalance += transactionsTotalPriceInPoints;
+        await seller.save();
+
+        transaction.status = "completed";
+        await transaction.save();
+
+        const productIds = transaction.productIdArrays;
+        const products = await Product.find({ productId: { $in: productIds } });
+
+        const productTitles = products.map((p) => p.title).join(", ");
+        const dealItems = products.map((p) => ({
+          productId: p.productId,
+          productTitle: p.title,
+          priceInPoints: p.priceInPoints,
+        }));
+
+        // Create Deal
+        const dealId = generateUniqueDealId();
+        await Deals.create({
+          dealId,
+          sellerId: transaction.sellerId,
+          buyerId: transaction.buyerId,
+          totalPriceInPoints: transactionsTotalPriceInPoints,
+          dealStatus: "completed",
+          items: dealItems,
+          dealDate: new Date(),
+        });
+
+        // Push dealId to both users
+        await User.updateOne(
+          { uid: transaction.sellerId },
+          { $push: { deals: dealId } }
+        );
+        await User.updateOne(
+          { uid: transaction.buyerId },
+          { $push: { deals: dealId } }
+        );
+
+        // Notify Seller
+        const sellerMessage = `Purchase of your products: ${productTitles} has been successfully completed. A total of ${transactionsTotalPriceInPoints} points has been added to your balance.`;
+        await Notification.create({
+          userId: uid,
+          notificationId: generateNotificationId(),
+          title: "Successful Purchase Payment",
+          message: sellerMessage,
+          isPublic: false,
+          isRead: false,
+          createdAt: new Date(),
+          type: "transactions",
+          status: "success",
+        });
+
+        // Notify Buyer
+        const buyerMessage = `Thanks for your purchase! We'd love your feedback on these products: ${productTitles}. Tap below to rate your experience.`;
+        await Notification.create({
+          userId: buyer.uid,
+          notificationId: generateNotificationId(),
+          title: "Rate Your Purchase",
+          message: buyerMessage,
+          isPublic: false,
+          isRead: false,
+          createdAt: new Date(),
+          type: "rate",
+        });
+
+        //Delete the transaction mid state
+        await TransactionMiddleState.deleteOne({ transactionId });
+
+        res.status(200).json({
+          message: "Transaction completed and points transferred",
+          productIdArrays: productIds,
+          transactionsTotalPriceInPoints,
+        });
+      } catch (error) {
+        console.error("Error completing transaction:", error);
+        res.status(500).json({ message: "Server error" });
       }
-      const seller = await User.findOne({ uid: transaction.sellerId });
-      if (!seller) {
-        return res.status(404).json({ message: "Seller not found" });
-      }
-      // Update seller's points
-      seller.pointsBalance += transaction.priceInPoints;
-      await seller.save();
-      // Delete transaction record
-      await TransactionMiddleState.deleteOne({ transactionId });
-      res
-        .status(200)
-        .json({ message: "Transaction completed and points transferred" });
-    } catch (error) {
-      console.error("Error completing transaction:", error);
-      res.status(500).json({ message: "Server error" });
     }
-  });
+  );
+
   return router;
 }
 //Mongod summon: mongod --dbpath D:\MongoDB\data
