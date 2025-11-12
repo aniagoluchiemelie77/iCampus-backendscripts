@@ -10,6 +10,7 @@ import {
   storeCategoriesSchema,
   eventSchema,
   productSchema,
+  userRecordsSchema,
   userSchema,
 } from "./models";
 
@@ -56,3 +57,6 @@ export const UserBankOrCardDetails =
   );
 export const Deals =
   mongoose.models.Deals || mongoose.model("Deals", dealSchema, "userDealings");
+export const UserRecords =
+  mongoose.models.UserRecords ||
+  mongoose.model("UserRecords", userRecordsSchema, "records");

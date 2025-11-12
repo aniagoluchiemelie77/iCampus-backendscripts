@@ -66,9 +66,10 @@ export const userBankOrCardDetails = new mongoose.Schema({
   isDefault: Boolean,
   createdAt: Date,
   updatedAt: Date,
+  accountHolderName: String,
+  bankCode: String,
   billingAddressDetails: {
     id: String,
-    country: String,
     state: String,
     city: String,
     street: String,
@@ -274,3 +275,14 @@ export const dealSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+const userRecordEntrySchema = new mongoose.Schema({
+  type: String,
+  status: String,
+  message: String,
+  refDate: String,
+  refTime: String,
+});
+export const userRecordsSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  records: [userRecordEntrySchema],
+});
