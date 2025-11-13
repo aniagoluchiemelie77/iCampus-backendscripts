@@ -1,5 +1,4 @@
-import mongoose from 'mongoose';
-import { User, UserBankOrCardDetails, Deal } from "./tableDeclarations";
+import mongoose from "mongoose";
 
 const purchaseItemSchema = new mongoose.Schema(
   {
@@ -51,7 +50,7 @@ export const courseSchema = new mongoose.Schema(
   { timestamps: true }
 );
 export const userBankOrCardDetails = new mongoose.Schema({
-  _id: ObjectId, // MongoDB default
+  _id: String, // MongoDB default
   cardOrBankDetailsId: String, // Unique reference from payment gateway
   userId: {
     type: String,

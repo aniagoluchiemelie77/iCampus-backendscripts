@@ -12,7 +12,7 @@ import {
   productSchema,
   userRecordsSchema,
   userSchema,
-} from "./models";
+} from "./models.js";
 
 export const Student = mongoose.model(
   "Student",
