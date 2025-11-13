@@ -1,7 +1,11 @@
 import express from "express";
 import mongoose from "mongoose";
 import nodemailer from "nodemailer";
-import { authenticate, removeOutOfStockProducts } from "../../index.js";
+import {
+  authenticate,
+  removeOutOfStockProducts,
+  addUserRecord,
+} from "../../index.js";
 import {
   Notification,
   TransactionMiddleState,
@@ -473,6 +477,16 @@ export default function (Category) {
                 productIdArrays: productIdArray,
               });
             }
+            await addUserRecord(
+              seller.uid,
+              "transaction",
+              item.fileUrl ? "completed" : "pending",
+              `${quantity} units of "${item.title}" purchased. ${
+                item.fileUrl
+                  ? "Points credited."
+                  : "Awaiting products pickup and transaction completion."
+              }`
+            );
 
             // Notify seller on app
             await Notification.create({

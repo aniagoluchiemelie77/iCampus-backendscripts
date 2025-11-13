@@ -3,7 +3,7 @@ import bcrypt from "bcrypt";
 import crypto from "crypto";
 import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
-import { authenticate, loginLimiter } from "../index.js";
+import { authenticate, loginLimiter, addUserRecord } from "../index.js";
 import {
   Notification,
   Product,
@@ -825,7 +825,18 @@ export default function (User) {
 
         //Delete the transaction mid state
         await TransactionMiddleState.deleteOne({ transactionId });
-
+        await addUserRecord(
+          uid,
+          "transaction",
+          "completed",
+          `Transaction ${transactionId} completed. Products: ${productTitles}. Points received: ${transactionsTotalPriceInPoints}`
+        );
+        await addUserRecord(
+          buyer.uid,
+          "transaction",
+          "completed",
+          `Transaction ${transactionId} completed. Products: ${productTitles} worth ${transactionsTotalPriceInPoints} points.`
+        );
         res.status(200).json({
           message: "Transaction completed and points transferred",
           productIdArrays: productIds,

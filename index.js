@@ -11,6 +11,7 @@ import {
   Student,
   Lecturer,
   Event,
+  UserRecords,
 } from "./tableDeclarations.js";
 
 dotenv.config();
@@ -34,9 +35,15 @@ mongoose
   .then(async () => {
     console.log("✅ MongoDB connected");
     const userRoutes = (await import("./routes/user.js")).default(User);
-    const userAccountDetailsRoute = (await import("./routes/userAccountDetails.js")).default(
-      User
-    );
+    const userAccountDetailsRoute = (
+      await import("./routes/userAccountDetails.js")
+    ).default(User);
+    const studentClassDetails = (
+      await import("./routes/class/students.js")
+    ).default(User);
+    const lecturerClassDetails = (
+      await import("./routes/class/lecturers.js")
+    ).default(User);
     const productRoutes = (await import("./routes/store/products.js")).default(
       ProductCategory,
       Product
@@ -50,6 +57,8 @@ mongoose
     ).default(Lecturer);
     app.use("/users", userRoutes);
     app.use("/user", userAccountDetailsRoute);
+    app.use("/users/student/class", studentClassDetails);
+    app.use("/users/lecturers/class", lecturerClassDetails);
     app.use("/user/events", eventsRoute);
     app.use("/store", productRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);
@@ -94,6 +103,27 @@ export const removeOutOfStockProducts = async () => {
   } catch (error) {
     console.error("Error deleting out-of-stock products:", error);
   }
+};
+export const addUserRecord = async (userId, type, status, message) => {
+  const now = new Date();
+  const refDate = now.toISOString().split("T")[0]; // YYYY-MM-DD
+  const refTime = now.toTimeString().split(" ")[0]; // HH:MM:SS
+
+  await UserRecords.updateOne(
+    { userId },
+    {
+      $push: {
+        records: {
+          type,
+          status,
+          message,
+          refDate,
+          refTime,
+        },
+      },
+    },
+    { upsert: true }
+  );
 };
 
 //MongoDB connection: mongod --dbpath "D:\MongoDB\data"

@@ -32,19 +32,24 @@ const purchaseHistorySchema = new mongoose.Schema(
   },
   { _id: false }
 );
-export const courseSchema = new mongoose.Schema({
-  courseId: { type: String, required: true },
-  courseCode: { type: String },
-  courseTitle: { type: String },
-  department: { type: String, required: true },
-  level: { type: String, required: true },
-  schoolName: { type: String, required: true },
-  lecturerIds: [{ type: String }], // or ObjectId if referencing User
-  studentsEnrolled: [{ type: String }], // or ObjectId if referencing User
-  credits: { type: Number },
-  semester: { type: String },
-  createdAt: { type: Date, default: Date.now },
-});
+export const courseSchema = new mongoose.Schema(
+  {
+    courseId: { type: String, required: true },
+    department: { type: String, required: true },
+    level: { type: String, required: true },
+    schoolName: { type: String, required: true },
+    lecturerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    studentsEnrolled: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    createdAt: { type: Date, default: Date.now },
+    courseCode: { type: String, required: true },
+    courseTitle: { type: String, required: true },
+    credits: { type: Number, required: true },
+    semester: { type: String, required: true },
+    session: { type: String, required: true },
+    isActive: { type: Boolean, default: true },
+  },
+  { timestamps: true }
+);
 export const userBankOrCardDetails = new mongoose.Schema({
   _id: ObjectId, // MongoDB default
   cardOrBankDetailsId: String, // Unique reference from payment gateway
