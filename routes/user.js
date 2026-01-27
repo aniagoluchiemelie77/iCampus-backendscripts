@@ -10,6 +10,8 @@ import {
   Course,
   TransactionMiddleState,
   Deals,
+  EmailVerification,
+  OperationalInstitutions,
 } from "../tableDeclarations.js";
 import multer from "multer";
 import Tesseract from "tesseract.js";
@@ -86,9 +88,16 @@ export default function (User) {
 
   router.post("/register", async (req, res) => {
     console.log("Incoming payload:", req.body);
-    const { usertype, matriculation_number, staff_id, department, password } =
-      req.body;
+    const {
+      usertype,
+      matriculation_number,
+      staff_id,
+      department,
+      password,
+      email,
+    } = req.body;
     try {
+      // Check if user already exists
       const existingUser = await User.findOne({
         usertype,
         ...(usertype === "student" && {
@@ -106,31 +115,35 @@ export default function (User) {
         });
       }
       console.log("🧪 Attempting insert...");
-      const token = crypto.randomBytes(32).toString("hex");
-      console.log(token);
+      // Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
+      // Create user
       const newUser = new User({
         ...req.body,
         password: hashedPassword,
-        verificationToken: token,
-        isVerified: false,
+        isVerified: true,
+        // Email already verified before this step
       });
       await newUser.save();
-      const verificationLink = `http://localhost:5000/users/verify-email?token=${token}`;
-      await transporter.sendMail({
-        from: '"iCampus" <admin@uniquetechcontentwriter.com>',
-        to: req.body.email,
-        subject: "Verify Your Account",
-        html: `
-               <h2>Welcome to iCampus!</h2>
-              <p>Click the link below to verify your account:</p>
-              <a href="${verificationLink}">Verify Email</a>
-            `,
-      });
-      res.status(201).json({
-        message: "User created successfully, check your email",
-        email: req.body.email,
-        verified: false,
+      // Generate JWT token
+      const token = jwt.sign(
+        {
+          id: newUser._id,
+          email: newUser.email,
+          uid: newUser.uid,
+        },
+        process.env.JWT_SECRET,
+        {
+          expiresIn: "10h",
+        },
+      );
+      console.log("JWT token generated:", token);
+      // Response to frontend
+      return res.status(201).json({
+        message: "User created successfully",
+        email: newUser.email,
+        verified: true,
+        token,
       });
     } catch (error) {
       console.error("❌ Insert failed:", error);
@@ -139,8 +152,8 @@ export default function (User) {
           message: "Duplicate entry: User already exists.",
         });
       }
-      res.status(500).json({
-        error: error.message || "Failed to save user",
+      return res.status(500).json({
+        message: error.message || "Failed to save user",
       });
     }
   });
@@ -165,7 +178,7 @@ export default function (User) {
           uid: user.uid,
         },
         process.env.JWT_SECRET,
-        { expiresIn: "10h" }
+        { expiresIn: "10h" },
       );
       // Compare IP address
       if (!user.ipAddress.includes(ipAddress)) {
@@ -204,7 +217,7 @@ export default function (User) {
       const updatedUser = await User.findOneAndUpdate(
         { uid: req.params.uid },
         { $set: req.body },
-        { new: true }
+        { new: true },
       );
       if (!updatedUser) {
         return res.status(404).json({ error: "User not found" });
@@ -215,32 +228,127 @@ export default function (User) {
       res.status(500).json({ error: error.message });
     }
   });
-  router.get("/verify-email", async (req, res) => {
-    const { token } = req.query;
-    if (!token) {
-      return res.status(400).send("Missing verification token");
-    }
-    const user = await User.findOneAndUpdate(
-      { verificationToken: token },
-      { isVerified: true, verificationToken: null },
-      { new: true }
-    );
-    console.log("✅ User updated:", user);
-    if (!user) {
-      return res.status(404).send("Invalid or expired token");
-    }
-    const isMobile =
-      req.headers["user-agent"].includes("Android") ||
-      req.headers["user-agent"].includes("iPhone");
-    if (isMobile) {
-      res.redirect("icampus://verify-email?verified=true");
-    } else {
+  router.post("/institutions/validate", async (req, res) => {
+    try {
+      const { schoolName } = req.body;
+
+      if (!schoolName) {
+        return res.status(400).json({ message: "School name required" });
+      }
+
+      const institution = await OperationalInstitutions.findOne({
+        schoolName: { $regex: new RegExp(`^${schoolName}$`, "i") },
+      });
+
+      if (!institution) {
+        return res.status(404).json({
+          message: "iCampus not yet operational in specified institution",
+        });
+      }
+
       res.status(200).json({
-        message: "✅ Account verified",
+        message: "Institution verified",
+        schoolName: institution.schoolName,
+        schoolCode: institution.schoolCode,
         verified: true,
       });
+    } catch (error) {
+      console.error("Institution validation error:", error);
+      res.status(500).json({ message: "Server error" });
     }
   });
+
+  router.post("/verifyEmail", async (req, res) => {
+    try {
+      const { email } = req.body;
+      if (!email) {
+        return res.status(400).json({ message: "Email is required" });
+      }
+      // Generate a secure 6‑digit code
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      // Set expiry time (1 hour)
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+      // Save or update existing verification entry
+      await EmailVerification.findOneAndUpdate(
+        { email },
+        { code, expiresAt },
+        { upsert: true, new: true },
+      );
+      // Send email
+      await transporter.sendMail({
+        from: '"iCampus" <admin@uniquetechcontentwriter.com>',
+        to: email,
+        subject: "Verify Your Account",
+        html: ` 
+            <h1>Welcome to iCampus!</h1> 
+            <p>Enter the 6‑digit code below to verify your email account:</p> 
+            <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; margin: 20px 0; ">
+              ${code} 
+            </div> 
+            <p>This code will expire in 60 minutes.</p> 
+          `,
+      });
+      return res.status(200).json({
+        message: "Verification code sent",
+        email,
+        codeSent: true,
+      });
+    } catch (error) {
+      console.error("Email verification error:", error);
+      return res.status(500).json({ message: "Server error" });
+    }
+  });
+  router.get("/institutions", async (req, res) => {
+    try {
+      const { country } = req.query;
+
+      const query = country ? { country } : {};
+
+      const institutions = await Institution.find(query).sort({
+        schoolName: 1,
+      });
+
+      res.status(200).json({
+        count: institutions.length,
+        institutions,
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Server error" });
+    }
+  });
+
+  router.post("/verifyEmailCode", async (req, res) => {
+    try {
+      const { email, code } = req.body;
+      if (!email && !code) {
+        return res.status(400).json({ message: "Email and code are required" });
+      }
+      const record = await EmailVerification.findOne({ email });
+      if (!record) {
+        return res
+          .status(404)
+          .json({ message: "No verification request found" });
+      }
+      if (record.code !== code) {
+        return res.status(400).json({ message: "Invalid verification code" });
+      }
+      if (record.expiresAt < new Date()) {
+        return res
+          .status(400)
+          .json({ message: "Verification code has expired" });
+      }
+      // Optional: delete record after successful verification
+      await EmailVerification.deleteOne({ email });
+      return res.status(200).json({
+        message: "Email verified successfully",
+        verified: true,
+      });
+    } catch (error) {
+      console.error("verifyEmailCode error:", error);
+      return res.status(500).json({ message: "Server error" });
+    }
+  });
+
   router.get("/status", async (req, res) => {
     const { email } = req.query;
     if (!email) return res.status(400).send("Missing email");
@@ -372,7 +480,7 @@ export default function (User) {
 
         if (user && Array.isArray(user.purchaseHistory)) {
           purchaseDetails = user.purchaseHistory.find(
-            (entry) => entry.id === notification.purchaseId
+            (entry) => entry.id === notification.purchaseId,
           );
         }
       }
@@ -449,7 +557,7 @@ export default function (User) {
       const user = await User.findByIdAndUpdate(
         userId,
         { $push: { profilePic: imageUrl } }, // or overwrite if single image
-        { new: true }
+        { new: true },
       );
 
       if (!user) {
@@ -522,7 +630,7 @@ export default function (User) {
               await new Promise((resolve, reject) => {
                 console.log(
                   "Converting PDF with ImageMagick:",
-                  `${filePath}[0] → ${outputFile}`
+                  `${filePath}[0] → ${outputFile}`,
                 );
                 gm(`${filePath}[0]`)
                   .in("-density", "300")
@@ -531,10 +639,10 @@ export default function (User) {
                     if (err) {
                       console.error(
                         "ImageMagick conversion failed:",
-                        err.message
+                        err.message,
                       );
                       return reject(
-                        new Error("PDF conversion failed — PNG not created")
+                        new Error("PDF conversion failed — PNG not created"),
                       );
                     }
                     resolve();
@@ -597,10 +705,10 @@ export default function (User) {
         const department = extractedText.match(deptRegex)?.[1]?.trim() || null;
         const level = extractedText.match(levelRegex)?.[1]?.trim() || null;
         const firstSemesterUnits = parseInt(
-          extractedText.match(firstSemTotalRegex)?.[1] || "0"
+          extractedText.match(firstSemTotalRegex)?.[1] || "0",
         );
         const sessionUnits = parseInt(
-          extractedText.match(sessionTotalRegex)?.[1] || "0"
+          extractedText.match(sessionTotalRegex)?.[1] || "0",
         );
 
         console.log("File details extraction complete");
@@ -612,7 +720,7 @@ export default function (User) {
           level,
           matricNumber,
           firstSemesterUnits,
-          sessionUnits
+          sessionUnits,
         );
 
         if (
@@ -717,7 +825,7 @@ export default function (User) {
         console.error("Error extracting course data:", err);
         res.status(500).json({ error: "Failed to process file" });
       }
-    }
+    },
   );
 
   router.post(
@@ -789,11 +897,11 @@ export default function (User) {
         // Push dealId to both users
         await User.updateOne(
           { uid: transaction.sellerId },
-          { $push: { deals: dealId } }
+          { $push: { deals: dealId } },
         );
         await User.updateOne(
           { uid: transaction.buyerId },
-          { $push: { deals: dealId } }
+          { $push: { deals: dealId } },
         );
 
         // Notify Seller
@@ -829,13 +937,13 @@ export default function (User) {
           uid,
           "transaction",
           "completed",
-          `Transaction ${transactionId} completed. Products: ${productTitles}. Points received: ${transactionsTotalPriceInPoints}`
+          `Transaction ${transactionId} completed. Products: ${productTitles}. Points received: ${transactionsTotalPriceInPoints}`,
         );
         await addUserRecord(
           buyer.uid,
           "transaction",
           "completed",
-          `Transaction ${transactionId} completed. Products: ${productTitles} worth ${transactionsTotalPriceInPoints} points.`
+          `Transaction ${transactionId} completed. Products: ${productTitles} worth ${transactionsTotalPriceInPoints} points.`,
         );
         res.status(200).json({
           message: "Transaction completed and points transferred",
@@ -846,7 +954,7 @@ export default function (User) {
         console.error("Error completing transaction:", error);
         res.status(500).json({ message: "Server error" });
       }
-    }
+    },
   );
 
   return router;

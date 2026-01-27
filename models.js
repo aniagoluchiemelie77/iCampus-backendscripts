@@ -11,7 +11,7 @@ const purchaseItemSchema = new mongoose.Schema(
     selectedQuantity: String,
     fileUrl: String,
   },
-  { _id: false }
+  { _id: false },
 );
 const purchaseHistorySchema = new mongoose.Schema(
   {
@@ -29,7 +29,7 @@ const purchaseHistorySchema = new mongoose.Schema(
       default: "pending",
     },
   },
-  { _id: false }
+  { _id: false },
 );
 export const courseSchema = new mongoose.Schema(
   {
@@ -47,7 +47,7 @@ export const courseSchema = new mongoose.Schema(
     session: { type: String, required: true },
     isActive: { type: Boolean, default: true },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const userBankOrCardDetails = new mongoose.Schema({
   _id: String, // MongoDB default
@@ -83,6 +83,7 @@ export const userBankOrCardDetails = new mongoose.Schema({
 export const userSchema = new mongoose.Schema({
   uid: String,
   profilePic: [String],
+  schoolCode: String,
   usertype: String,
   isFirstLogin: Boolean,
   firstname: String,
@@ -127,12 +128,12 @@ export const userSchema = new mongoose.Schema({
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },
-  { unique: true, partialFilterExpression: { usertype: "student" } }
+  { unique: true, partialFilterExpression: { usertype: "student" } },
 );
 
 userSchema.index(
   { staff_id: 1, department: 1 },
-  { unique: true, partialFilterExpression: { usertype: "lecturer" } }
+  { unique: true, partialFilterExpression: { usertype: "lecturer" } },
 );
 
 export const verifyStudentSchema = new mongoose.Schema({
@@ -200,7 +201,7 @@ export const notificationSchema = new mongoose.Schema(
     transactionIdMid: { type: String },
     fileUrls: [{ type: String }],
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 export const transactionMiddleState = new mongoose.Schema(
   {
@@ -215,7 +216,7 @@ export const transactionMiddleState = new mongoose.Schema(
     },
     productIdArrays: [{ type: String }],
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 
 export const verifyLecturerSchema = new mongoose.Schema({
@@ -277,7 +278,7 @@ export const dealSchema = new mongoose.Schema(
     ],
     dealDate: { type: Date, default: Date.now },
   },
-  { timestamps: true }
+  { timestamps: true },
 );
 const userRecordEntrySchema = new mongoose.Schema({
   type: String,
@@ -290,3 +291,39 @@ export const userRecordsSchema = new mongoose.Schema({
   userId: { type: String, required: true },
   records: [userRecordEntrySchema],
 });
+export const EmailVerificationSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true },
+  code: {
+    type: String,
+    required: true,
+  },
+  expiresAt: {
+    type: Date,
+    required: true,
+  },
+});
+export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
+  schoolName: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  contactEmail: {
+    type: String,
+  },
+  schoolCode: {
+    type: String,
+    required: true,
+    unique: true,
+  },
+  dateJoined: {
+    type: String,
+    default: () => new Date().toISOString().split("T")[0],
+    // YYYY-MM-DD
+  },
+  timeJoined: {
+    type: String,
+    default: () => new Date().toLocaleTimeString("en-US", { hour12: false }),
+  },
+});
+EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from "mongoose";
 import {
   notificationSchema,
   dealSchema,
@@ -12,22 +12,24 @@ import {
   productSchema,
   userRecordsSchema,
   userSchema,
+  EmailVerificationSchema,
+  iCampusOperationalInstitutionSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
   "Student",
   verifyStudentSchema,
-  "students"
+  "students",
 );
 export const Lecturer = mongoose.model(
   "Lecturer",
   verifyLecturerSchema,
-  "lecturers"
+  "lecturers",
 );
 export const ProductCategory = mongoose.model(
   "Category",
   storeCategoriesSchema,
-  "store-categories"
+  "store-categories",
 );
 export const Event = mongoose.model("Event", eventSchema, "events");
 export const Product =
@@ -43,7 +45,7 @@ export const TransactionMiddleState =
   mongoose.model(
     "TransactionMiddleState",
     transactionMiddleState,
-    "trans-mid-state"
+    "trans-mid-state",
   );
 export const Course =
   mongoose.models.Course ||
@@ -53,10 +55,18 @@ export const UserBankOrCardDetails =
   mongoose.model(
     "UserBankOrCardDetails",
     userBankOrCardDetails,
-    "userBankDetails"
+    "userBankDetails",
   );
 export const Deals =
   mongoose.models.Deals || mongoose.model("Deals", dealSchema, "userDealings");
 export const UserRecords =
   mongoose.models.UserRecords ||
   mongoose.model("UserRecords", userRecordsSchema, "records");
+export const EmailVerification = mongoose.model(
+  "EmailVerification",
+  EmailVerificationSchema,
+);
+export const OperationalInstitutions = mongoose.model(
+  "OperationalInstitutions",
+  iCampusOperationalInstitutionSchema,
+);
