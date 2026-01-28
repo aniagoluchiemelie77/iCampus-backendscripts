@@ -1,6 +1,7 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
+import axios from "axios";
 import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
 import { authenticate, loginLimiter, addUserRecord } from "../index.js";
@@ -299,20 +300,29 @@ export default function (User) {
     }
   });
   router.get("/institutions", async (req, res) => {
+    console.log("Fetching institutions...");
     try {
       const { country } = req.query;
 
-      const query = country ? { country } : {};
+      if (!country) {
+        return res.status(400).json({ message: "Country is required" });
+      }
 
-      const institutions = await Institution.find(query).sort({
-        schoolName: 1,
-      });
+      console.log(`Fetching institutions for country: ${country}`);
+      const response = await axios.get(
+        `https://universities.hipolabs.com/search?country=${country}`,
+      );
 
+      const institutions = response.data.sort((a, b) =>
+        a.name.localeCompare(b.name),
+      );
+      console.log(institutions);
       res.status(200).json({
         count: institutions.length,
         institutions,
       });
     } catch (error) {
+      console.error("Error fetching institutions:", error.message);
       res.status(500).json({ message: "Server error" });
     }
   });

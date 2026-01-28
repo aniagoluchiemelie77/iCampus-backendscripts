@@ -82,6 +82,7 @@ export const userBankOrCardDetails = new mongoose.Schema({
 });
 export const userSchema = new mongoose.Schema({
   uid: String,
+  iScore: String,
   profilePic: [String],
   schoolCode: String,
   usertype: String,
