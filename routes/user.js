@@ -1,6 +1,7 @@
 import express from "express";
 import bcrypt from "bcrypt";
-import crypto from "crypto";
+import axiosRetry from "axios-retry";
+//import crypto from "crypto";
 import axios from "axios";
 import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
@@ -19,11 +20,12 @@ import Tesseract from "tesseract.js";
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
 const pdfParse = require("pdf-parse");
-import { fromPath } from "pdf2pic";
+axiosRetry(axios, { retries: 3 });
+//import { fromPath } from "pdf2pic";
 import mammoth from "mammoth";
 import fs from "fs";
-import { PDFDocument } from "pdf-lib";
-import sharp from "sharp";
+//import { PDFDocument } from "pdf-lib";
+//import sharp from "sharp";
 
 // Temporary in-memory store
 const verificationCodes = {};
@@ -300,29 +302,35 @@ export default function (User) {
     }
   });
   router.get("/institutions", async (req, res) => {
-    console.log("Fetching institutions...");
     try {
+      console.log("first step");
       const { country } = req.query;
-
       if (!country) {
-        return res.status(400).json({ message: "Country is required" });
+        return res.status(400).json({
+          message: "Country is required",
+        });
       }
-
-      console.log(`Fetching institutions for country: ${country}`);
-      const response = await axios.get(
-        `https://universities.hipolabs.com/search?country=${country}`,
-      );
-
-      const institutions = response.data.sort((a, b) =>
-        a.name.localeCompare(b.name),
-      );
+      console.log("second step");
+      const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+      console.log("Pre fetch");
+      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=universities+in+${encodeURIComponent(country)}&key=${apiKey}`;
+      const response = await axios.get(url);
+      console.log("Google raw response:", response.data);
+      console.log("Post fetch");
+      const institutions = response.data.results.map((item) => ({
+        name: item.name,
+        address: item.formatted_address,
+        place_id: item.place_id,
+        rating: item.rating,
+        types: item.types,
+      }));
       console.log(institutions);
-      res.status(200).json({
+      res.json({
         count: institutions.length,
         institutions,
       });
     } catch (error) {
-      console.error("Error fetching institutions:", error.message);
+      console.error("Google Places error:", error.message);
       res.status(500).json({ message: "Server error" });
     }
   });
