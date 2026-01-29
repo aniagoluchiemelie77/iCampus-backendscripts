@@ -7,6 +7,7 @@ import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
 import { authenticate, loginLimiter, addUserRecord } from "../index.js";
 import {
+  UniversitiesAndColleges,
   Notification,
   Product,
   Course,
@@ -114,7 +115,7 @@ export default function (User) {
       });
       if (existingUser) {
         return res.status(409).json({
-          message: "User already exists with this ID and department.",
+          message: "User already exists.",
         });
       }
       console.log("🧪 Attempting insert...");
@@ -234,21 +235,19 @@ export default function (User) {
   router.post("/institutions/validate", async (req, res) => {
     try {
       const { schoolName } = req.body;
-
       if (!schoolName) {
         return res.status(400).json({ message: "School name required" });
       }
-
       const institution = await OperationalInstitutions.findOne({
-        schoolName: { $regex: new RegExp(`^${schoolName}$`, "i") },
+        schoolName: { $regex: schoolName, $options: "i" },
       });
-
       if (!institution) {
+        console.log("Not found...");
         return res.status(404).json({
           message: "iCampus not yet operational in specified institution",
         });
       }
-
+      console.log("Completed...");
       res.status(200).json({
         message: "Institution verified",
         schoolName: institution.schoolName,
@@ -303,34 +302,48 @@ export default function (User) {
   });
   router.get("/institutions", async (req, res) => {
     try {
-      console.log("first step");
       const { country } = req.query;
+
       if (!country) {
         return res.status(400).json({
           message: "Country is required",
         });
       }
-      console.log("second step");
-      const apiKey = process.env.GOOGLE_PLACES_API_KEY;
-      console.log("Pre fetch");
-      const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=universities+in+${encodeURIComponent(country)}&key=${apiKey}`;
-      const response = await axios.get(url);
-      console.log("Google raw response:", response.data);
-      console.log("Post fetch");
-      const institutions = response.data.results.map((item) => ({
-        name: item.name,
-        address: item.formatted_address,
-        place_id: item.place_id,
-        rating: item.rating,
-        types: item.types,
-      }));
-      console.log(institutions);
+
+      // -------------------------------
+      // GOOGLE PLACES API (COMMENTED OUT)
+      // -------------------------------
+      /*
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    console.log("Pre fetch");
+    const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=universities+in+${encodeURIComponent(country)}&key=${apiKey}`;
+    const response = await axios.get(url);
+    console.log("Google raw response:", response.data);
+    console.log("Post fetch");
+
+    const institutions = response.data.results.map((item) => ({
+      name: item.name,
+      address: item.formatted_address,
+      place_id: item.place_id,
+      rating: item.rating,
+      types: item.types,
+    }));
+    */
+
+      // -------------------------------
+      // MONGODB SEARCH INSTEAD
+      // -------------------------------
+
+      const institutions = await UniversitiesAndColleges.find({
+        country: { $regex: country, $options: "i" },
+      }).sort({ name: 1 });
+
       res.json({
         count: institutions.length,
         institutions,
       });
     } catch (error) {
-      console.error("Google Places error:", error.message);
+      console.error("Institutions fetch error:", error.message);
       res.status(500).json({ message: "Server error" });
     }
   });
@@ -356,7 +369,7 @@ export default function (User) {
           .json({ message: "Verification code has expired" });
       }
       // Optional: delete record after successful verification
-      await EmailVerification.deleteOne({ email });
+      //await EmailVerification.deleteOne({ email });
       return res.status(200).json({
         message: "Email verified successfully",
         verified: true,

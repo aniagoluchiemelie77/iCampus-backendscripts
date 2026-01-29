@@ -327,4 +327,12 @@ export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
     default: () => new Date().toLocaleTimeString("en-US", { hour12: false }),
   },
 });
+export const universitiesAndCollegesSchema = new mongoose.Schema({
+  name: String,
+  domains: [String],
+  web_pages: [String],
+  country: String,
+  alpha_two_code: String,
+  state_province: String,
+});
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

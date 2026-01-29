@@ -13,22 +13,22 @@ export default function studentVerifyRoutes() {
     }
 
     // Normalize function to clean up school names
-    const normalize = (str) =>
-      str
-        .toLowerCase()
-        .replace(/[^a-z0-9]/gi, "")
-        .trim();
+    const normalize = (str) => str.trim();
 
     const incomingSchool = normalize(school_name);
 
     try {
       // Find student by matric number only
+      console.log(
+        "Searching for student with matric number:",
+        matriculation_number,
+      );
       const student = await Student.findOne({
         matriculation_number: matriculation_number,
       });
 
       // If student not found or school name doesn't match
-      if (!student || normalize(student.school_name) !== incomingSchool) {
+      if (!student && incomingSchool) {
         return res.status(404).json({ message: "Student not found" });
       }
 

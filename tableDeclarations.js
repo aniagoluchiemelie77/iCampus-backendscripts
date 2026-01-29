@@ -14,6 +14,7 @@ import {
   userSchema,
   EmailVerificationSchema,
   iCampusOperationalInstitutionSchema,
+  universitiesAndCollegesSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -69,4 +70,9 @@ export const EmailVerification = mongoose.model(
 export const OperationalInstitutions = mongoose.model(
   "OperationalInstitutions",
   iCampusOperationalInstitutionSchema,
+);
+export const UniversitiesAndColleges = mongoose.model(
+  "UniversitiesAndColleges",
+  universitiesAndCollegesSchema,
+  "UniversitiesAndColleges", // <-- exact collection name
 );
