@@ -2,9 +2,9 @@ import amqp from "amqplib";
 
 let channel;
 
-async function connectQueue() {
+export async function connectQueue() {
   try {
-    const connection = await amqp.connect("amqp://localhost"); 
+    const connection = await amqp.connect("amqp://localhost");
     channel = await connection.createChannel();
     console.log("🐇 Connected to RabbitMQ");
   } catch (error) {
@@ -12,8 +12,6 @@ async function connectQueue() {
   }
 }
 
-function getChannel() {
+export function getChannel() {
   return channel;
 }
-
-module.exports = { connectQueue, getChannel };

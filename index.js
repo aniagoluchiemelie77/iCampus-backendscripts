@@ -17,7 +17,7 @@ import {
 import { connectQueue } from "./rabbitmq.js";
 import redis from "redis";
 
-const client = redis.createClient();
+export const client = redis.createClient();
 dotenv.config();
 
 const app = express();
@@ -150,5 +150,4 @@ export const transporter = nodemailer.createTransport({
     pass: process.env.TRANSPORTER_AUTH_PASS,
   },
 });
-module.exports = client;
 //MongoDB connection: mongod --dbpath "D:\MongoDB\data"
