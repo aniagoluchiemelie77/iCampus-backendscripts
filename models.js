@@ -90,7 +90,7 @@ export const userSchema = new mongoose.Schema({
   firstname: String,
   lastname: String,
   schoolName: String,
-  email: String,
+  email: { type: String, unique: true },
   ipAddress: [String],
   deviceType: [String],
   coursesEnrolled: [String],

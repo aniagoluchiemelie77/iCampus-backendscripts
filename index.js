@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
 import rateLimit from "express-rate-limit";
+import nodemailer from "nodemailer";
 import {
   User,
   ProductCategory,
@@ -13,7 +14,10 @@ import {
   Event,
   UserRecords,
 } from "./tableDeclarations.js";
+import { connectQueue } from "./rabbitmq.js";
+import redis from "redis";
 
+const client = redis.createClient();
 dotenv.config();
 
 const app = express();
@@ -29,7 +33,13 @@ app.use((req, res, next) => {
   console.log(`🔗 ${req.method} ${req.url}`);
   next();
 });
+
 const MONGO_URI = "mongodb://127.0.0.1:27017/iCampus";
+client.on("error", (err) => {
+  console.error("Redis Client Error:", err);
+});
+client.connect();
+connectQueue();
 mongoose
   .connect(MONGO_URI)
   .then(async () => {
@@ -46,7 +56,7 @@ mongoose
     ).default(User);
     const productRoutes = (await import("./routes/store/products.js")).default(
       ProductCategory,
-      Product
+      Product,
     );
     const eventsRoute = (await import("./routes/userEvents.js")).default(Event);
     const studentVerifyRoutes = (
@@ -88,7 +98,7 @@ export const authenticate = (req, res, next) => {
   }
 };
 export const loginLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 10 * 60 * 1000, // 15 minutes
   max: 5, // limits each IP to 5 login attempts per windowMs
   message: {
     error: "Too many login attempts. Please try again after 15 minutes.",
@@ -122,8 +132,23 @@ export const addUserRecord = async (userId, type, status, message) => {
         },
       },
     },
-    { upsert: true }
+    { upsert: true },
   );
 };
-
+export const emailLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 5,
+  message: {
+    error: "Too many requests, try again later.",
+  },
+});
+export const transporter = nodemailer.createTransport({
+  host: "sandbox.smtp.mailtrap.io",
+  port: 2525,
+  auth: {
+    user: process.env.TRANSPORTER_AUTH_USER,
+    pass: process.env.TRANSPORTER_AUTH_PASS,
+  },
+});
+module.exports = client;
 //MongoDB connection: mongod --dbpath "D:\MongoDB\data"

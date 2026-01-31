@@ -1,11 +1,17 @@
 import express from "express";
 import bcrypt from "bcrypt";
 import axiosRetry from "axios-retry";
-//import crypto from "crypto";
+import crypto from "crypto";
+import { getChannel } from "../rabbitmq.js";
 import axios from "axios";
-import nodemailer from "nodemailer";
 import jwt from "jsonwebtoken";
-import { authenticate, loginLimiter, addUserRecord } from "../index.js";
+import { redisClient } from "../index.js";
+import {
+  authenticate,
+  loginLimiter,
+  addUserRecord,
+  emailLimiter,
+} from "../index.js";
 import {
   UniversitiesAndColleges,
   Notification,
@@ -30,14 +36,7 @@ import fs from "fs";
 
 // Temporary in-memory store
 const verificationCodes = {};
-export const transporter = nodemailer.createTransport({
-  host: "sandbox.smtp.mailtrap.io",
-  port: 2525,
-  auth: {
-    user: process.env.TRANSPORTER_AUTH_USER,
-    pass: process.env.TRANSPORTER_AUTH_PASS,
-  },
-});
+
 const now = new Date();
 
 const formattedTime = new Intl.DateTimeFormat("en-US", {
@@ -92,44 +91,34 @@ export default function (User) {
 
   router.post("/register", async (req, res) => {
     console.log("Incoming payload:", req.body);
-    const {
-      usertype,
-      matriculation_number,
-      staff_id,
-      department,
-      password,
-      email,
-    } = req.body;
+
+    const { usertype, matriculation_number, staff_id, department, password } =
+      req.body;
+
     try {
-      // Check if user already exists
       const existingUser = await User.findOne({
         usertype,
-        ...(usertype === "student" && {
-          matriculation_number,
-          department,
-        }),
-        ...(usertype === "lecturer" && {
-          staff_id,
-          department,
-        }),
-      });
+        ...(usertype === "student" && { matriculation_number, department }),
+        ...(usertype === "lecturer" && { staff_id, department }),
+      }).lean();
+
       if (existingUser) {
-        return res.status(409).json({
-          message: "User already exists.",
-        });
+        return res.status(409).json({ message: "User already exists." });
       }
-      console.log("🧪 Attempting insert...");
-      // Hash password
+
+      // 🔐 Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
-      // Create user
+
+      // ⚡ Create user
       const newUser = new User({
         ...req.body,
         password: hashedPassword,
-        isVerified: true,
-        // Email already verified before this step
+        isVerified: true, // email already verified
       });
+
       await newUser.save();
-      // Generate JWT token
+
+      // 🔐 Generate JWT
       const token = jwt.sign(
         {
           id: newUser._id,
@@ -137,12 +126,9 @@ export default function (User) {
           uid: newUser.uid,
         },
         process.env.JWT_SECRET,
-        {
-          expiresIn: "10h",
-        },
+        { expiresIn: "10h" },
       );
-      console.log("JWT token generated:", token);
-      // Response to frontend
+
       return res.status(201).json({
         message: "User created successfully",
         email: newUser.email,
@@ -151,16 +137,19 @@ export default function (User) {
       });
     } catch (error) {
       console.error("❌ Insert failed:", error);
+
       if (error.code === 11000) {
         return res.status(409).json({
           message: "Duplicate entry: User already exists.",
         });
       }
+
       return res.status(500).json({
         message: error.message || "Failed to save user",
       });
     }
   });
+
   router.post("/login", loginLimiter, async (req, res) => {
     const { identifier, password, ipAddress, location } = req.body;
     try {
@@ -235,20 +224,26 @@ export default function (User) {
   router.post("/institutions/validate", async (req, res) => {
     try {
       const { schoolName } = req.body;
+
       if (!schoolName) {
         return res.status(400).json({ message: "School name required" });
       }
+
+      // ✅ Normalize input to avoid regex (faster + index-friendly)
+      const normalized = schoolName.trim().toLowerCase();
+
+      // ⚠️ Ensure your DB stores normalizedSchoolName for fast lookup
       const institution = await OperationalInstitutions.findOne({
-        schoolName: { $regex: schoolName, $options: "i" },
-      });
+        schoolName: normalized,
+      }).lean(); // ✅ .lean() for faster read
+
       if (!institution) {
-        console.log("Not found...");
         return res.status(404).json({
           message: "iCampus not yet operational in specified institution",
         });
       }
-      console.log("Completed...");
-      res.status(200).json({
+
+      return res.status(200).json({
         message: "Institution verified",
         schoolName: institution.schoolName,
         schoolCode: institution.schoolCode,
@@ -263,33 +258,29 @@ export default function (User) {
   router.post("/verifyEmail", async (req, res) => {
     try {
       const { email } = req.body;
+
       if (!email) {
         return res.status(400).json({ message: "Email is required" });
       }
-      // Generate a secure 6‑digit code
+
       const code = Math.floor(100000 + Math.random() * 900000).toString();
-      // Set expiry time (1 hour)
-      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
-      // Save or update existing verification entry
+      const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+
       await EmailVerification.findOneAndUpdate(
         { email },
-        { code, expiresAt },
+        { code: hashedCode, expiresAt },
         { upsert: true, new: true },
       );
-      // Send email
-      await transporter.sendMail({
-        from: '"iCampus" <admin@uniquetechcontentwriter.com>',
-        to: email,
-        subject: "Verify Your Account",
-        html: ` 
-            <h1>Welcome to iCampus!</h1> 
-            <p>Enter the 6‑digit code below to verify your email account:</p> 
-            <div style="font-size: 32px; font-weight: bold; letter-spacing: 6px; margin: 20px 0; ">
-              ${code} 
-            </div> 
-            <p>This code will expire in 60 minutes.</p> 
-          `,
-      });
+
+      // 🐇 Send job to RabbitMQ
+      const channel = getChannel();
+      await channel.assertQueue("emailQueue");
+      channel.sendToQueue(
+        "emailQueue",
+        Buffer.from(JSON.stringify({ email, code })),
+      );
+
       return res.status(200).json({
         message: "Verification code sent",
         email,
@@ -300,6 +291,7 @@ export default function (User) {
       return res.status(500).json({ message: "Server error" });
     }
   });
+
   router.get("/institutions", async (req, res) => {
     try {
       const { country } = req.query;
@@ -308,6 +300,19 @@ export default function (User) {
         return res.status(400).json({
           message: "Country is required",
         });
+      }
+      const normalizedCountry = country.trim();
+      // ✅ Build a cache key based on the country
+      const cacheKey = `institutions:${normalizedCountry}`;
+      // 1️⃣ Try to read from Redis cache first 
+      const cached = await redisClient.get(cacheKey); 
+      if (cached) { 
+        // ✅ Return cached response if found 
+        const data = JSON.parse(cached); 
+        return res.json({ 
+          cached: true, // helpful for debugging 
+          ...data, 
+        }); 
       }
 
       // -------------------------------
@@ -331,45 +336,60 @@ export default function (User) {
     */
 
       // -------------------------------
-      // MONGODB SEARCH INSTEAD
+      // MONGODB SEARCH (OPTIMIZED)
       // -------------------------------
 
       const institutions = await UniversitiesAndColleges.find({
-        country: { $regex: country, $options: "i" },
-      }).sort({ name: 1 });
+        normalizedCountry: normalizedCountry, // ✅ exact match, no regex
+      })
+        .sort({ name: 1 })
+        .lean(); // ✅ faster read, no Mongoose hydration
 
-      res.json({
-        count: institutions.length,
-        institutions,
-      });
+      const responsePayload = { 
+        count: institutions.length, 
+        institutions, 
+      };
+      await redisClient.setEx( 
+        cacheKey, 
+        3600, // TTL in seconds 
+        JSON.stringify(responsePayload) 
+      );
+      return res.json(responsePayload);
     } catch (error) {
       console.error("Institutions fetch error:", error.message);
-      res.status(500).json({ message: "Server error" });
+      return res.status(500).json({ message: "Server error" });
     }
   });
 
-  router.post("/verifyEmailCode", async (req, res) => {
+  router.post("/verifyEmailCode", emailLimiter, async (req, res) => {
     try {
       const { email, code } = req.body;
-      if (!email && !code) {
+
+      if (!email || !code) {
         return res.status(400).json({ message: "Email and code are required" });
       }
-      const record = await EmailVerification.findOne({ email });
+
+      const record = await EmailVerification.findOne({ email }).lean();
+
       if (!record) {
         return res
           .status(404)
           .json({ message: "No verification request found" });
       }
-      if (record.code !== code) {
+
+      // 🔐 Hash incoming code to compare with stored hash
+      const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
+
+      if (record.code !== hashedCode) {
         return res.status(400).json({ message: "Invalid verification code" });
       }
+
       if (record.expiresAt < new Date()) {
         return res
           .status(400)
           .json({ message: "Verification code has expired" });
       }
-      // Optional: delete record after successful verification
-      //await EmailVerification.deleteOne({ email });
+
       return res.status(200).json({
         message: "Email verified successfully",
         verified: true,
