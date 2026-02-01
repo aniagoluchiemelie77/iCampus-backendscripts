@@ -15,9 +15,8 @@ import {
   UserRecords,
 } from "./tableDeclarations.js";
 import { connectQueue } from "./rabbitmq.js";
-import redis from "redis";
+import { client } from "./workers/reditFile.js";
 
-export const client = redis.createClient();
 dotenv.config();
 
 const app = express();
@@ -38,7 +37,6 @@ const MONGO_URI = "mongodb://127.0.0.1:27017/iCampus";
 client.on("error", (err) => {
   console.error("Redis Client Error:", err);
 });
-client.connect();
 connectQueue();
 mongoose
   .connect(MONGO_URI)

@@ -2,7 +2,7 @@ import amqp from "amqplib";
 import {transporter} from "../index.js"; // your nodemailer config
 
 async function startWorker() {
-  const connection = await amqp.connect("amqp://localhost");
+  const connection = amqp.connect("amqp://localhost:5672");
   const channel = await connection.createChannel();
 
   await channel.assertQueue("emailQueue");

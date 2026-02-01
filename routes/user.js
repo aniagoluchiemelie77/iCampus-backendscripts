@@ -5,7 +5,7 @@ import crypto from "crypto";
 import { getChannel } from "../rabbitmq.js";
 import axios from "axios";
 import jwt from "jsonwebtoken";
-import { redisClient } from "../index.js";
+import { client } from "../workers/reditFile.js";
 import {
   authenticate,
   loginLimiter,
@@ -1012,3 +1012,5 @@ export default function (User) {
 }
 //Mongod summon: mongod --dbpath D:\MongoDB\data
 //backend summon: npx nodemon index.js
+
+//On powershell as admin: Start-Service RabbitMQ

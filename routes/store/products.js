@@ -1,6 +1,5 @@
 import express from "express";
 import mongoose from "mongoose";
-import nodemailer from "nodemailer";
 import {
   authenticate,
   removeOutOfStockProducts,
@@ -12,7 +11,7 @@ import {
   Product,
   User,
 } from "../../tableDeclarations.js";
-import { transporter } from "../user.js";
+import { transporter } from "../../index.js";
 
 function generateNotificationId(length = 7) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
