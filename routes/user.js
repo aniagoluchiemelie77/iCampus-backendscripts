@@ -1,3 +1,4 @@
+import "../workers/reditFile.js";
 import express from "express";
 import bcrypt from "bcrypt";
 import axiosRetry from "axios-retry";
@@ -5,13 +6,14 @@ import crypto from "crypto";
 import { getChannel } from "../rabbitmq.js";
 import axios from "axios";
 import jwt from "jsonwebtoken";
-import { client } from "../workers/reditFile.js";
+
 import {
   authenticate,
   loginLimiter,
   addUserRecord,
   emailLimiter,
 } from "../index.js";
+import { client } from "../workers/reditFile.js";
 import {
   UniversitiesAndColleges,
   Notification,
@@ -262,11 +264,13 @@ export default function (User) {
       if (!email) {
         return res.status(400).json({ message: "Email is required" });
       }
+      console.log("Verifying email for:", email);
 
       const code = Math.floor(100000 + Math.random() * 900000).toString();
       const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
       const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
+      console.log("Generated code:", code, "Expires at:", expiresAt);
+      console.log("Creating or updating verification record for:", email);
       await EmailVerification.findOneAndUpdate(
         { email },
         { code: hashedCode, expiresAt },
@@ -274,13 +278,15 @@ export default function (User) {
       );
 
       // 🐇 Send job to RabbitMQ
+      console.log("Sending verification email to queue for:", email);
       const channel = getChannel();
       await channel.assertQueue("emailQueue");
+      console.log("Queue asserted, sending message...");
       channel.sendToQueue(
         "emailQueue",
         Buffer.from(JSON.stringify({ email, code })),
       );
-
+      console.log("Message sent to queue for:", email);
       return res.status(200).json({
         message: "Verification code sent",
         email,
@@ -303,16 +309,25 @@ export default function (User) {
       }
       const normalizedCountry = country.trim();
       // ✅ Build a cache key based on the country
-      const cacheKey = `institutions:${normalizedCountry}`;
-      // 1️⃣ Try to read from Redis cache first 
-      const cached = await redisClient.get(cacheKey); 
-      if (cached) { 
-        // ✅ Return cached response if found 
-        const data = JSON.parse(cached); 
-        return res.json({ 
-          cached: true, // helpful for debugging 
-          ...data, 
-        }); 
+      const cacheKey = `institutions: ${normalizedCountry}`;
+      // 1️⃣ Try to read from Redis cache first
+      console.log("PING before GET:", await client.ping());
+
+      try {
+        const start = Date.now();
+        const cached = await client.get(cacheKey);
+        const end = Date.now();
+
+        console.log("Redis GET completed in", end - start, "ms");
+        console.log("Redis GET result type:", typeof cached);
+        console.log("Redis GET raw value length:", cached?.length || 0);
+
+        if (cached) {
+          const data = JSON.parse(cached);
+          return res.json({ cached: true, ...data });
+        }
+      } catch (err) {
+        console.error("Redis GET error:", err);
       }
 
       // -------------------------------
@@ -338,21 +353,19 @@ export default function (User) {
       // -------------------------------
       // MONGODB SEARCH (OPTIMIZED)
       // -------------------------------
-
       const institutions = await UniversitiesAndColleges.find({
-        normalizedCountry: normalizedCountry, // ✅ exact match, no regex
+        country: normalizedCountry, // ✅ exact match, no regex
       })
         .sort({ name: 1 })
-        .lean(); // ✅ faster read, no Mongoose hydration
-
-      const responsePayload = { 
-        count: institutions.length, 
-        institutions, 
+        .lean();
+      const responsePayload = {
+        count: institutions.length,
+        institutions,
       };
-      await redisClient.setEx( 
-        cacheKey, 
-        3600, // TTL in seconds 
-        JSON.stringify(responsePayload) 
+      await client.setEx(
+        cacheKey,
+        3600, // TTL in seconds
+        JSON.stringify(responsePayload),
       );
       return res.json(responsePayload);
     } catch (error) {

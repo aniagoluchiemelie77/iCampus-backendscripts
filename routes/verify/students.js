@@ -25,7 +25,7 @@ export default function studentVerifyRoutes() {
       );
       const student = await Student.findOne({
         matriculation_number: matriculation_number,
-      });
+      }).lean();
 
       // If student not found or school name doesn't match
       if (!student && incomingSchool) {

@@ -335,4 +335,5 @@ export const universitiesAndCollegesSchema = new mongoose.Schema({
   alpha_two_code: String,
   state_province: String,
 });
+
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });

@@ -1,4 +1,5 @@
 import express from "express";
+import "./workers/reditFile.js";
 import cors from "cors";
 import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
@@ -16,6 +17,13 @@ import {
 } from "./tableDeclarations.js";
 import { connectQueue } from "./rabbitmq.js";
 import { client } from "./workers/reditFile.js";
+import { initEmailQueue } from "./controllers/emailProducers.js";
+import { startWorker } from "./workers/emailWorker.js";
+
+(async () => {
+  await initEmailQueue();
+  startWorker();
+})();
 
 dotenv.config();
 
