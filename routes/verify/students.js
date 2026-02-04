@@ -6,7 +6,6 @@ export default function studentVerifyRoutes() {
 
   router.post("/", async (req, res) => {
     const { school_name, matriculation_number } = req.body;
-    console.log("Incoming payload:", req.body);
 
     if (!school_name || !matriculation_number) {
       return res.status(400).json({ message: "Missing required fields" });

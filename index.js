@@ -78,7 +78,7 @@ mongoose
     app.use("/user/events", eventsRoute);
     app.use("/store", productRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);
-    app.use("/verifyLecturer", lecturerVerifyRoutes);
+    app.use("/verifyInstructor", lecturerVerifyRoutes);
     app.listen(5000, "0.0.0.0", () => {
       console.log("Backend running on port 5000");
     });

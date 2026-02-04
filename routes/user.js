@@ -86,6 +86,24 @@ function generateUniqueDealId(length = 10) {
   }
   return result;
 }
+const generateTokens = async (user) => {
+  const accessToken = jwt.sign(
+    { id: user._id, email: user.email, uid: user.uid },
+    process.env.JWT_SECRET,
+    { expiresIn: "15m" }, // Short-lived
+  );
+
+  const refreshToken = jwt.sign(
+    { id: user._id },
+    process.env.REFRESH_TOKEN_SECRET, // Separate secret!
+    { expiresIn: "30d" }, // Long-lived
+  );
+
+  // Save refresh token to DB
+  user.refreshTokens.push(refreshToken);
+  await user.save();
+  return { accessToken, refreshToken };
+};
 
 const upload = multer({ dest: "uploads/" });
 export default function (User) {
@@ -121,21 +139,14 @@ export default function (User) {
       await newUser.save();
 
       // 🔐 Generate JWT
-      const token = jwt.sign(
-        {
-          id: newUser._id,
-          email: newUser.email,
-          uid: newUser.uid,
-        },
-        process.env.JWT_SECRET,
-        { expiresIn: "10h" },
-      );
+      const { accessToken, refreshToken } = await generateTokens(newUser);
 
       return res.status(201).json({
         message: "User created successfully",
         email: newUser.email,
         verified: true,
-        token,
+        accessToken,
+        refreshToken,
       });
     } catch (error) {
       console.error("❌ Insert failed:", error);
@@ -166,15 +177,7 @@ export default function (User) {
         return res.status(401).json({ error: "Invalid password" });
       }
       const { password: _, ...safeUser } = user.toObject();
-      const token = jwt.sign(
-        {
-          id: user._id,
-          email: user.email,
-          uid: user.uid,
-        },
-        process.env.JWT_SECRET,
-        { expiresIn: "10h" },
-      );
+      const { accessToken, refreshToken } = await generateTokens(user);
       // Compare IP address
       if (!user.ipAddress.includes(ipAddress)) {
         user.ipAddress.push(ipAddress);
@@ -200,11 +203,41 @@ export default function (User) {
       res.status(200).json({
         message: "Login successful",
         user: safeUser,
-        token,
+        accessToken,
+        refreshToken,
       });
     } catch (error) {
       console.error("❌ Login failed:", error);
       res.status(500).json({ error: error.message || "Login error" });
+    }
+  });
+  router.post("/refresh-token", async (req, res) => {
+    const { refreshToken } = req.body;
+    if (!refreshToken)
+      return res.status(401).json({ message: "Refresh Token Required" });
+
+    try {
+      const user = await User.findOne({ refreshTokens: refreshToken });
+      if (!user)
+        return res.status(403).json({ message: "Invalid Refresh Token" });
+
+      jwt.verify(
+        refreshToken,
+        process.env.REFRESH_TOKEN_SECRET,
+        (err, decoded) => {
+          if (err) return res.status(403).json({ message: "Token Expired" });
+
+          const newAccessToken = jwt.sign(
+            { id: user._id, email: user.email, uid: user.uid },
+            process.env.JWT_SECRET,
+            { expiresIn: "15m" },
+          );
+
+          res.json({ accessToken: newAccessToken });
+        },
+      );
+    } catch (e) {
+      res.status(500).json({ message: "Server Error" });
     }
   });
   router.patch("/:uid", async (req, res) => {

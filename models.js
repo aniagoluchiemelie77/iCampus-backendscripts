@@ -81,6 +81,7 @@ export const userBankOrCardDetails = new mongoose.Schema({
   },
 });
 export const userSchema = new mongoose.Schema({
+  refreshTokens: [{ type: String }],
   uid: String,
   iScore: String,
   profilePic: [String],
@@ -105,7 +106,7 @@ export const userSchema = new mongoose.Schema({
   current_level: String,
   phone_number: String,
   matricNumber: String,
-  staff_id: String,
+  staffId: String,
   cart: [{ type: String }],
   favorites: [{ type: String }],
   isVerified: {
