@@ -110,6 +110,18 @@ export default function (Posts, User) {
 
       const io = req.app.get("socketio");
       if (io) io.emit("post_updated", updatedPost);
+      if (io) {
+        io.emit("post_stats_updated", {
+          postId: updatedPost.postId,
+          stats: {
+            likes: updatedPost.likes, // Array of UIDs
+            bookmarks: updatedPost.bookmarks, // Array of UIDs
+            impressions: updatedPost.impressions,
+            repostsCount: updatedPost.repostsCount,
+            commentsCount: updatedPost.commentsCount,
+          },
+        });
+      }
 
       res.json(updatedPost);
     } catch (err) {
@@ -123,24 +135,46 @@ export default function (Posts, User) {
     const { userId } = req.body;
 
     try {
+      // 1. First, check if the post exists
       const post = await Posts.findOne({ postId });
       if (!post) return res.status(404).send("Post not found");
 
       const isBookmarked = (post.bookmarks ?? []).includes(userId);
 
+      // 2. Define the update logic
       const postUpdate = isBookmarked
         ? { $pull: { bookmarks: userId } }
         : { $push: { bookmarks: userId } };
+
       const userUpdate = isBookmarked
         ? { $pull: { bookmarks: postId } }
         : { $push: { bookmarks: postId } };
 
-      await Promise.all([
-        Posts.updateOne({ postId }, postUpdate),
+      // 3. Execute updates. Use findOneAndUpdate for the Post to get the NEW data.
+      const [updatedPost] = await Promise.all([
+        Posts.findOneAndUpdate({ postId }, postUpdate, { new: true }),
         User.updateOne({ uid: userId }, userUpdate),
       ]);
 
-      res.sendStatus(200);
+      // 4. Socket Emission using the REAL updated data
+      const io = req.app.get("socketio");
+      if (io && updatedPost) {
+        io.emit("post_stats_updated", {
+          postId: updatedPost.postId,
+          stats: {
+            likes: updatedPost.likes,
+            bookmarks: updatedPost.bookmarks,
+            impressions: updatedPost.impressions,
+            repostsCount: updatedPost.repostsCount,
+            commentsCount: updatedPost.commentsCount,
+          },
+        });
+      }
+
+      res.status(200).json({
+        isBookmarked: !isBookmarked,
+        count: updatedPost.bookmarks.length,
+      });
     } catch (err) {
       res.status(500).json({ error: err.message });
     }
@@ -267,7 +301,7 @@ export default function (Posts, User) {
   router.post("/repost", async (req, res) => {
     const { userId, originalPostId, content } = req.body;
     try {
-      // Create new post record marked as repost
+      // 1. Create and Save the repost
       const repost = new Posts({
         postId: Math.random().toString(36).slice(2, 11),
         userId,
@@ -279,16 +313,39 @@ export default function (Posts, User) {
 
       await repost.save();
 
-      // Increment original post's repost count
-      await Posts.updateOne(
+      // 2. Increment original post's count AND get the updated data for the socket
+      const updatedOriginal = await Posts.findOneAndUpdate(
         { postId: originalPostId },
         { $inc: { repostsCount: 1 } },
+        { new: true },
       );
 
-      const populatedRepost = await repost.populate(
-        "userId",
-        "firstname lastname profilePic",
-      );
+      // 3. Populate the new repost for the feed
+      const populatedRepost = await Posts.findOne({
+        postId: repost.postId,
+      }).populate("userId", "firstname lastname profilePic username");
+
+      // 4. SOCKET EMISSIONS
+      const io = req.app.get("socketio");
+      if (io) {
+        // Broadcast the NEW post to the top of everyone's feed
+        io.emit("new_post", populatedRepost);
+
+        // Broadcast the updated count for the ORIGINAL post
+        if (updatedOriginal) {
+          io.emit("post_stats_updated", {
+            postId: originalPostId,
+            stats: {
+              repostsCount: updatedOriginal.repostsCount,
+              // Including other stats ensures UI consistency
+              likes: updatedOriginal.likes,
+              bookmarks: updatedOriginal.bookmarks,
+              impressions: updatedOriginal.impressions,
+            },
+          });
+        }
+      }
+
       res.status(201).json(populatedRepost);
     } catch (err) {
       res.status(500).json({ error: err.message });
