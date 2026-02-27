@@ -85,6 +85,8 @@ export const userSchema = new mongoose.Schema({
   uid: String,
   iScore: String,
   profilePic: [String],
+  likes: [{ type: String }],
+  bookmarks: [{ type: String }],
   organizationName: String,
   website: String,
   jobTitle: String,
@@ -347,6 +349,8 @@ export const PostSchema = new mongoose.Schema(
       lastname: { type: String, ref: "User" },
       profilePic: { type: [String], ref: "User" },
     },
+    priorityScore: { type: Number, default: 0 },
+    isSubscriptionContent: { type: Boolean, default: false },
     content: { type: String, required: true },
     media: {
       mediaType: {

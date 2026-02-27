@@ -16,6 +16,7 @@ import {
   Lecturer,
   Event,
   UserRecords,
+  Posts,
 } from "./tableDeclarations.js";
 import { connectQueue } from "./rabbitmq.js";
 import { client } from "./workers/reditFile.js";
@@ -93,6 +94,7 @@ mongoose
       ProductCategory,
       Product,
     );
+    const postRoutes = (await import("./routes/posts.js")).default(Posts, User);
     const eventsRoute = (await import("./routes/userEvents.js")).default(Event);
     const studentVerifyRoutes = (
       await import("./routes/verify/students.js")
@@ -106,6 +108,7 @@ mongoose
     app.use("/users/student/class", studentClassDetails);
     app.use("/users/lecturers/class", lecturerClassDetails);
     app.use("/user/events", eventsRoute);
+    app.use("/posts", postRoutes);
     app.use("/store", productRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);
     app.use("/verifyInstructor", lecturerVerifyRoutes);
