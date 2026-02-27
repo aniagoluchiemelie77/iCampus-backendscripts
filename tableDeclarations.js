@@ -15,6 +15,7 @@ import {
   EmailVerificationSchema,
   iCampusOperationalInstitutionSchema,
   universitiesAndCollegesSchema,
+  PostSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -22,6 +23,7 @@ export const Student = mongoose.model(
   verifyStudentSchema,
   "students",
 );
+export const Posts = mongoose.model("Posts", PostSchema, "posts");
 export const Lecturer = mongoose.model(
   "Lecturer",
   verifyLecturerSchema,

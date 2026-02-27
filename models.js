@@ -339,5 +339,49 @@ export const universitiesAndCollegesSchema = new mongoose.Schema({
   alpha_two_code: String,
   state_province: String,
 });
+export const PostSchema = new mongoose.Schema(
+  {
+    userId: {
+      uid: { type: String, ref: "User" },
+      firstname: { type: String, ref: "User" },
+      lastname: { type: String, ref: "User" },
+      profilePic: { type: [String], ref: "User" },
+    },
+    content: { type: String, required: true },
+    media: {
+      mediaType: {
+        type: String,
+        enum: ["image", "video", null],
+        default: null,
+      },
+      url: String,
+    },
+
+    // Matching the String type for consistency
+    likes: [{ type: String, ref: "User" }],
+    bookmarks: [{ type: String, ref: "User" }],
+    comments: [
+      {
+        commentId: { type: String, required: true },
+        userId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: "User",
+          required: true,
+        },
+        comment: { type: String, required: true },
+        parentId: { type: String, default: null },
+        likes: [{ type: String, ref: "User" }],
+        createdAt: { type: Date, default: Date.now },
+      },
+    ],
+    impressions: { type: Number, default: 0 },
+    shares: [{ type: String, ref: "User" }],
+    isRepost: { type: Boolean, default: false },
+    originalPostId: { type: String },
+    repostsCount: { type: Number, default: 0 },
+    sharesCount: { type: Number, default: 0 },
+  },
+  { timestamps: true },
+);
 
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
