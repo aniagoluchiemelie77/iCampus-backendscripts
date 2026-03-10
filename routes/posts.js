@@ -352,26 +352,83 @@ export default function (Posts, User) {
     }
   });
 
-  //8. Add post creation with media validation
+  // --- CREATE POST ---
   router.post("/create", async (req, res) => {
-    const { media } = req.body;
+    try {
+      const { userId, content, media, poll, isSubscriptionContent } = req.body;
 
-    // 1. Check if it's a video
-    if (media.mediaType === "video") {
-      // If user sent multiple URLs for a video, only keep the first one
-      if (Array.isArray(media.url) && media.url.length > 1) {
-        media.url = [media.url[0]];
+      // media validation logic (as you wrote before)
+      let processedMedia = media;
+      if (media?.mediaType === "video" && Array.isArray(media.url)) {
+        processedMedia.url = [media.url[0]];
       }
-    }
 
-    // 2. Limit images (e.g., max 4)
-    if (media.mediaType === "image" && Array.isArray(media.url)) {
-      if (media.url.length > 4) {
-        return res.status(400).json({ error: "Maximum 4 images allowed" });
+      const newPost = new Posts({
+        userId: {
+          uid: userId.uid,
+          firstname: userId.firstname,
+          lastname: userId.lastname,
+          profilePic: userId.profilePic || [],
+        },
+        content,
+        media: processedMedia,
+        isSubscriptionContent: isSubscriptionContent || false,
+        poll: poll
+          ? {
+              options: poll.options.map((opt, index) => ({
+                optionId: `opt_${Date.now()}_${index}`,
+                text: opt.text,
+                votes: [],
+              })),
+              totalVotes: 0,
+              expiresAt:
+                poll.expiresAt ||
+                new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Default 7 days
+            }
+          : null,
+      });
+
+      const savedPost = await newPost.save();
+      res.status(201).json(savedPost);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // --- VOTE IN POLL ---
+  router.patch("/vote", async (req, res) => {
+    const { postId, optionId, userId } = req.body; // Expecting userId string
+
+    try {
+      // 1. Find the post and check if user already voted
+      const post = await Post.findById(postId);
+      if (!post || !post.poll)
+        return res.status(404).json({ error: "Poll not found" });
+
+      // Check expiration
+      if (post.poll.expiresAt && new Date() > new Date(post.poll.expiresAt)) {
+        return res.status(400).json({ error: "Poll has expired" });
       }
-    }
 
-    // ... proceed to save
+      const hasVoted = post.poll.options.some((opt) =>
+        opt.votes.includes(userId),
+      );
+      if (hasVoted) return res.status(400).json({ error: "Already voted" });
+
+      // 2. Atomic Update: Find post, find the option with optionId, push user to votes, increment total
+      const updatedPost = await Posts.findOneAndUpdate(
+        { _id: postId, "poll.options.optionId": optionId },
+        {
+          $push: { "poll.options.$.votes": userId },
+          $inc: { "poll.totalVotes": 1 },
+        },
+        { new: true },
+      );
+
+      res.status(200).json(updatedPost);
+    } catch (error) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   return router;

@@ -353,14 +353,20 @@ export const PostSchema = new mongoose.Schema(
     isSubscriptionContent: { type: Boolean, default: false },
     content: { type: String, required: true },
     media: {
-      mediaType: {
-        type: String,
-        enum: ["image", "video", null],
-        default: null,
-      },
-      url: String,
+      url: [String],
+      mediaType: { type: String, enum: ["image", "video"] },
     },
-
+    poll: {
+      options: [
+        {
+          optionId: String,
+          text: String,
+          votes: [String], // Array of User IDs
+        },
+      ],
+      totalVotes: { type: Number, default: 0 },
+      expiresAt: Date,
+    },
     // Matching the String type for consistency
     likes: [{ type: String, ref: "User" }],
     bookmarks: [{ type: String, ref: "User" }],
@@ -387,5 +393,4 @@ export const PostSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
-
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
