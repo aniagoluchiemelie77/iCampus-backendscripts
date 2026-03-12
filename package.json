@@ -11,6 +11,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "amqplib": "^0.10.9",
     "axios": "^1.13.3",
     "axios-retry": "^4.5.0",
@@ -23,7 +24,7 @@
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.11.0",
     "mongoose": "^8.18.0",
-    "multer": "^2.0.2",
+    "multer": "^2.1.1",
     "nodemailer": "^7.0.6",
     "pdf-image": "^2.0.0",
     "pdf-lib": "^1.17.1",

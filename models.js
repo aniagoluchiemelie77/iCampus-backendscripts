@@ -31,20 +31,60 @@ const purchaseHistorySchema = new mongoose.Schema(
   },
   { _id: false },
 );
+const lectureSchema = new mongoose.Schema({
+  topicName: { type: String, required: true },
+  lectureType: {
+    type: String,
+    enum: ["Physical", "Online", "Recorded"],
+    default: "Physical",
+  },
+  location: String,
+  startTime: String,
+  endTime: String,
+  date: String,
+  status: {
+    type: String,
+    enum: ["scheduled", "ongoing", "completed", "cancelled", "postponed"],
+    default: "scheduled",
+  },
+  isTaught: { type: Boolean, default: false },
+  videoUrl: String,
+  resources: [String],
+  attendance: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+  getAttendanceMode: { type: String, enum: ["Uploaded", "Online"] },
+});
+
 export const courseSchema = new mongoose.Schema(
   {
-    courseId: { type: String, required: true },
+    courseId: { type: String, required: true, unique: true }, // Custom ID (e.g. "CSC201-2026")
+    courseCode: { type: String, required: true },
+    courseTitle: { type: String, required: true },
     department: { type: String, required: true },
     level: { type: String, required: true },
     schoolName: { type: String, required: true },
-    lecturerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-    studentsEnrolled: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-    createdAt: { type: Date, default: Date.now },
-    courseCode: { type: String, required: true },
-    courseTitle: { type: String, required: true },
-    credits: { type: Number, required: true },
     semester: { type: String, required: true },
     session: { type: String, required: true },
+    credits: { type: Number, required: true },
+
+    // Arrays
+    lecturerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    studentsEnrolled: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    courseContents: [String],
+    resources: [String],
+    assignments: [String],
+
+    // Nested Sub-documents
+    Lectures: [lectureSchema],
+
+    // Marketplace / UI Fields
+    price: { type: Number, default: 0 },
+    thumbnailUrl: String,
+    rating: { type: Number, default: 0 },
+    totalReviews: { type: Number, default: 0 },
+    isPublished: { type: Boolean, default: false },
+    instructorName: String,
+    courseDuration: String,
+
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true },

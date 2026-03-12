@@ -51,8 +51,7 @@ export const TransactionMiddleState =
     "trans-mid-state",
   );
 export const Course =
-  mongoose.models.Course ||
-  mongoose.model("Course", courseSchema, "all-courses");
+  mongoose.models.Course || mongoose.model("Course", courseSchema, "courses");
 export const UserBankOrCardDetails =
   mongoose.models.UserBankOrCardDetails ||
   mongoose.model(
