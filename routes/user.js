@@ -1066,6 +1066,57 @@ export default function (User) {
       res.status(500).json({ message: "Failed to fetch course exceptions" });
     }
   });
+  router.get("/categories", async (req, res) => {
+    try {
+      const uniqueCategories = await Course.distinct("niche", {
+        isPublished: true,
+      });
+
+      // 2. Filter out any null or empty strings and sort alphabetically
+      const filteredCategories = uniqueCategories
+        .filter((cat) => !!cat)
+        .sort((a, b) => a.localeCompare(b));
+
+      res.status(200).json(filteredCategories);
+    } catch (error) {
+      console.error("Error fetching categories:", error);
+      res.status(500).json({ message: "Server error fetching niches" });
+    }
+  });
+  router.post("/verify-payment", async (req, res) => {
+    const { transaction_id, courseId, userId } = req.body;
+
+    try {
+      // 1. Call Flutterwave to verify the transaction
+      const response = await axios.get(
+        `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.FLUTTERWAVE_CLIENT_SECRET}`,
+          },
+        },
+      );
+
+      const { status, amount, currency, customer } = response.data.data;
+
+      // 2. Check if payment is successful and matches your expected amount
+      if (status === "successful") {
+        // 3. Update the User's enrolledCourses in MongoDB
+        await User.findOneAndUpdate(
+          { uid: userId },
+          { $addToSet: { coursesEnrolled: courseId } },
+        );
+
+        res.status(200).json({ message: "Course unlocked successfully!" });
+      } else {
+        res.status(400).json({ message: "Payment verification failed" });
+      }
+    } catch (error) {
+      res
+        .status(500)
+        .json({ message: "Internal server error during verification" });
+    }
+  });
 
   return router;
 }

@@ -38,6 +38,7 @@ const lectureSchema = new mongoose.Schema({
     enum: ["Physical", "Online", "Recorded"],
     default: "Physical",
   },
+  courseId: String;
   location: String,
   startTime: String,
   endTime: String,
