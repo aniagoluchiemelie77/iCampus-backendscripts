@@ -23,6 +23,7 @@ import {
   Deals,
   EmailVerification,
   OperationalInstitutions,
+  Exceptions,
 } from "../tableDeclarations.js";
 import multer from "multer";
 import Tesseract from "tesseract.js";
@@ -1053,6 +1054,18 @@ export default function (User) {
       }
     },
   );
+  router.get("/exceptions/course/:courseId", authenticate, async (req, res) => {
+    try {
+      const { courseId } = req.params;
+
+      // Fetch all exceptions linked to this courseId
+      const exceptions = await Exceptions.find({ courseId }).sort({ date: -1 });
+
+      res.status(200).json(exceptions);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch course exceptions" });
+    }
+  });
 
   return router;
 }

@@ -16,6 +16,7 @@ import {
   iCampusOperationalInstitutionSchema,
   universitiesAndCollegesSchema,
   PostSchema,
+  exceptionSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -76,4 +77,9 @@ export const UniversitiesAndColleges = mongoose.model(
   "UniversitiesAndColleges",
   universitiesAndCollegesSchema,
   "UniversitiesAndColleges", // <-- exact collection name
+);
+export const Exceptions = mongoose.model(
+  "Exceptions",
+  exceptionSchema,
+  "Exceptions", // <-- exact collection name
 );

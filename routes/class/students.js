@@ -5,6 +5,14 @@ import { upload } from "../../workers/multerWorker.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const generateCourseId = (length = 10) => {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
 
 export default function (User) {
   const router = express.Router();
@@ -18,7 +26,7 @@ export default function (User) {
       // Fetch courses by courseId and optionally filter by userId
       const courses = await Course.find({
         courseId: { $in: payload.ids },
-        studentsEnrolled: user, // optional: if you store enrolled students in each course
+        studentsEnrolled: user.uid, // optional: if you store enrolled students in each course
       });
 
       if (!courses || courses.length === 0) {
@@ -92,15 +100,32 @@ export default function (User) {
   //Discover
   router.get("/courses/discover", async (req, res) => {
     try {
-      // Show only published, active courses for the marketplace
-      const courses = await Course.find({ isPublished: true, isActive: true })
-        .select(
-          "courseTitle courseCode instructorName price rating thumbnailUrl courseDuration",
-        )
-        .limit(20);
+      // 1. Use aggregate to get random courses
+      const courses = await Course.aggregate([
+        // Filter for active, published courses
+        { $match: { isPublished: true, isActive: true } },
+
+        // Randomly pick 10 courses for variety
+        { $sample: { size: 10 } },
+
+        // Project (Select) only the fields the mobile app needs
+        {
+          $project: {
+            courseTitle: 1,
+            courseCode: 1,
+            instructorName: 1,
+            price: 1,
+            rating: 1,
+            thumbnailUrl: 1,
+            courseDuration: 1,
+            department: 1, // Add this so your ForYouCard shows the category
+          },
+        },
+      ]);
 
       res.status(200).json(courses);
     } catch (error) {
+      console.error("Marketplace Fetch Error:", error);
       res.status(500).json({ message: "Error fetching marketplace" });
     }
   });
@@ -120,13 +145,56 @@ export default function (User) {
           generationConfig: { responseMimeType: "application/json" },
         });
 
+        // 1. Gemini Extraction (Using the nested structure we discussed)
         const prompt = `
-      Extract course details from this document. 
-      Return a JSON object with: courseCode, courseTitle, department, level, semester, session, credits.
-      Context: Today's date is March 12, 2026.
-    `;
 
-        // Convert the buffer from Multer into the format Gemini expects
+          Extract all details from this course registration document.  
+
+          Return ONLY a valid JSON object with the following structure:
+
+            {
+
+              "studentInfo": {
+
+                "schoolName": "The name of the University/Institution found at the very top logo or header",
+
+                "studentName": "Full name of the student",
+
+                "college": "The college or faculty name",
+
+                "department": "The department name",
+
+                "level": "The level digits only, e.g., 300",
+
+                "matricNo": "The registration/matric number",
+
+                "date": "The date on the document"
+
+            },
+
+            "courses": [
+
+              {
+
+                "courseCode": "e.g., GET 311",
+
+                "courseTitle": "Full title",
+
+                "semester": 1 or 2,
+
+                "session": "e.g., 2024/2025",
+
+                "credits": Integer
+
+              }
+
+            ]
+
+          }
+
+          Context: For the school name, look at the circular logo at the top (e.g., "University of Port Harcourt" or similar).
+
+        `;
         const filePart = {
           inlineData: {
             data: req.file.buffer.toString("base64"),
@@ -135,25 +203,70 @@ export default function (User) {
         };
 
         const result = await model.generateContent([prompt, filePart]);
-        const response = result.response;
-        const extractedData = JSON.parse(response.text());
+        const { studentInfo, courses } = JSON.parse(result.response.text());
 
-        // Save to MongoDB and link to the user
-        const newCourse = new Course({
-          ...extractedData,
-          studentsEnrolled: [req.user.uid], // From your auth middleware
-          schoolName: req.user.schoolName,
-          isActive: true,
-        });
+        // 2. SECURITY CHECK: Verify document matches the current User
+        // We check matricNumber, schoolName, and level against the authenticated user (req.user)
+        const isOwner =
+          studentInfo.matricNo === req.user.matricNumber &&
+          studentInfo.schoolName
+            .toLowerCase()
+            .includes(req.user.schoolName.toLowerCase());
 
-        await newCourse.save();
+        if (!isOwner) {
+          return res.status(403).json({
+            message:
+              "Document verification failed. The Matric Number or School on this file does not match your profile.",
+          });
+        }
 
-        // Also update the User model's coursesEnrolled array
+        // 3. PROCESS EACH COURSE
+        const processedCourseIds = [];
+
+        for (const courseData of courses) {
+          // Search if the course already exists in the DB for this school
+          let course = await Course.findOne({
+            courseCode: courseData.courseCode,
+            schoolName: studentInfo.schoolName,
+          });
+
+          if (course) {
+            // If it exists, add user to studentsEnrolled (using $addToSet to avoid duplicates)
+            course.studentsEnrolled.addToSet(req.user.uid);
+            await course.save();
+          } else {
+            let newId;
+            let isUnique = false;
+            // If it doesn't exist, create it
+            while (!isUnique) {
+              newId = generateCourseId();
+              const existing = await Course.findOne({ courseId: newId });
+              if (!existing) isUnique = true;
+            }
+            course = new Course({
+              ...courseData,
+              courseId: newId,
+              schoolName: studentInfo.schoolName,
+              department: studentInfo.department,
+              level: studentInfo.level,
+              studentsEnrolled: [req.user.uid],
+              isActive: true,
+            });
+            await course.save();
+          }
+          processedCourseIds.push(course.courseId);
+        }
+
+        // 4. Update the User's enrolled courses list
         await User.findByIdAndUpdate(req.user.uid, {
-          $addToSet: { coursesEnrolled: newCourse._id },
+          $addToSet: { coursesEnrolled: { $each: processedCourseIds } },
         });
 
-        res.status(200).json(newCourse);
+        res.status(200).json({
+          message: `Courses processed and saved successfully`,
+          studentName: studentInfo.studentName,
+          courses: courses,
+        });
       } catch (error) {
         console.error("Extraction Error:", error);
         res.status(500).json({ message: "AI failed to process the document" });

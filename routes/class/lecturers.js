@@ -42,6 +42,41 @@ export default function (User) {
       return res.status(500).json({ message: "Server error" });
     }
   });
+  router.get("/courses/lecturer-view", authenticate, async (req, res) => {
+    try {
+      const { lecturerId, semester, session } = req.query;
+
+      const query = { lecturerIds: lecturerId };
+      if (semester && semester !== "All") query.semester = semester;
+      if (session && session !== "All") query.session = session;
+
+      const courses = await Course.find(query).lean();
+
+      // 1. Get all unique student UIDs across all courses
+      const allStudentUids = [
+        ...new Set(courses.flatMap((c) => c.studentsEnrolled)),
+      ];
+
+      // 2. Fetch those users from the User collection
+      const students = await User.find(
+        { uid: { $in: allStudentUids } },
+        "firstname lastname email matricNumber uid current_level",
+      ).lean();
+
+      // 3. Map students back into their respective courses
+      const results = courses.map((course) => ({
+        ...course,
+        studentsEnrolled: students.filter((s) =>
+          course.studentsEnrolled.includes(s.uid),
+        ),
+        studentCount: course.studentsEnrolled.length,
+      }));
+
+      res.status(200).json(results);
+    } catch (error) {
+      res.status(500).json({ message: "Error fetching lecturer courses" });
+    }
+  });
 
   return router;
 }

@@ -433,4 +433,71 @@ export const PostSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+export const exceptionSchema = new mongoose.Schema(
+  {
+    studentId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    courseId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    // Link to the specific lecture (Using the Lecture _id)
+    lectureId: {
+      type: String,
+      required: true,
+    },
+
+    // Metadata for the request
+    reasonCategory: {
+      type: String,
+      enum: [
+        "Medical",
+        "Family Emergency",
+        "Technical Issue",
+        "Personal",
+        "Other",
+      ],
+      default: "Personal",
+    },
+    reason: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+
+    // Status tracking
+    status: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: "pending",
+    },
+
+    // Feedback from the lecturer
+    lecturerComment: {
+      type: String,
+      default: "",
+    },
+
+    // The date the exception is for (to handle the "3 per month" logic)
+    date: {
+      type: Date,
+      required: true,
+      default: Date.now,
+    },
+
+    // Proof of claim (optional URL to an image/PDF)
+    attachmentUrl: {
+      type: String,
+      default: null,
+    },
+  },
+  { timestamps: true }, // Automatically creates createdAt and updatedAt
+);
+
+// Indexing for faster lookups when checking monthly limits
+exceptionSchema.index({ studentId: 1, date: -1 });
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
