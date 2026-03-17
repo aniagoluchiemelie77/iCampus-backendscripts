@@ -1117,6 +1117,23 @@ export default function (User) {
         .json({ message: "Internal server error during verification" });
     }
   });
+  router.get("/courses/:courseId", authenticate, async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      const course = await Course.findOne({ courseId: courseId })
+        .populate("lecturerIds", "firstname lastname profilePic")
+        .exec();
+
+      if (!course) {
+        return res.status(404).json({ message: "Course not found" });
+      }
+
+      res.status(200).json(course);
+    } catch (error) {
+      console.error("Fetch Course Error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
 
   return router;
 }

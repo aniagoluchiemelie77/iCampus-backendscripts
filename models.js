@@ -38,7 +38,7 @@ const lectureSchema = new mongoose.Schema({
     enum: ["Physical", "Online", "Recorded"],
     default: "Physical",
   },
-  courseId: String;
+  courseId: String,
   location: String,
   startTime: String,
   endTime: String,
@@ -54,7 +54,22 @@ const lectureSchema = new mongoose.Schema({
   attendance: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
   getAttendanceMode: { type: String, enum: ["Uploaded", "Online"] },
 });
-
+const assignmentSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  description: { type: String },
+  fileUrl: { type: String },
+  dueDate: { type: Date, required: true },
+  courseId: { type: String, ref: "Course" },
+  lectureId: { type: String },
+  createdAt: { type: Date, default: Date.now },
+  submissions: [
+    {
+      studentId: { type: String, ref: "User" },
+      fileUrl: String,
+      submittedAt: { type: Date, default: Date.now },
+    },
+  ],
+});
 export const courseSchema = new mongoose.Schema(
   {
     courseId: { type: String, required: true, unique: true }, // Custom ID (e.g. "CSC201-2026")
@@ -72,11 +87,10 @@ export const courseSchema = new mongoose.Schema(
     studentsEnrolled: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
     courseContents: [String],
     resources: [String],
-    assignments: [String],
+    assignments: [assignmentSchema],
 
     // Nested Sub-documents
     Lectures: [lectureSchema],
-
     // Marketplace / UI Fields
     price: { type: Number, default: 0 },
     thumbnailUrl: String,
