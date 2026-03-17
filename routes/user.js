@@ -1134,6 +1134,46 @@ export default function (User) {
       res.status(500).json({ message: "Internal server error" });
     }
   });
+  router.get(
+    "/courses/:courseId/assignments",
+    authenticate,
+    async (req, res) => {
+      try {
+        const course = await Course.findOne(
+          { courseId: req.params.courseId },
+          "assignments",
+        );
+        if (!course)
+          return res.status(404).json({ message: "Course not found" });
+
+        res.status(200).json(course.assignments);
+      } catch (error) {
+        res.status(500).json({ message: error.message });
+      }
+    },
+  );
+  router.get("/exceptions", authenticate, async (req, res) => {
+    try {
+      const { courseId } = req.query;
+      const userId = req.user.uid;
+      const userRole = req.user.usertype;
+      let query = { courseId };
+      if (userRole === "student") {
+        query.studentId = userId;
+      }
+
+      const exceptions = await CourseException.find(query)
+        .sort({ createdAt: -1 })
+        .lean();
+      res.status(200).json({
+        success: true,
+        count: exceptions.length,
+        exceptions,
+      });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  });
 
   return router;
 }

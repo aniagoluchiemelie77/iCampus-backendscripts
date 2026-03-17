@@ -138,44 +138,103 @@ export default function (User) {
  router.post(
    "/courses/:courseId/assignments",
    authenticate,
+   upload.single("file"),
    async (req, res) => {
      try {
        const { courseId } = req.params;
-       const { title, description, dueDate } = req.body;
-       if (!dueDate || isNaN(Date.parse(dueDate))) {
-         return res
-           .status(400)
-           .json({ message: "A valid due date is required" });
-       }
+       const { title, description, dueDate, submissionMethod, lectureId } =
+         req.body;
 
        const newAssignment = {
          title,
          description,
          dueDate: new Date(dueDate),
-         fileUrl: req.file ? req.file.path : null, // Store path if a file was uploaded
+         submissionMethod,
+         lectureId,
+         courseId,
+         fileUrl: req.file ? req.file.path : null, // If lecturer uploaded a brief
          submissions: [],
        };
 
-       const updatedCourse = await Course.findOneAndUpdate(
+       const course = await Course.findOneAndUpdate(
          { courseId: courseId },
          { $push: { assignments: newAssignment } },
          { new: true },
        );
 
-       if (!updatedCourse)
+       if (!course)
          return res.status(404).json({ message: "Course not found" });
 
-       res.status(201).json({
-         message: "Assignment created successfully",
-         assignments: updatedCourse.assignments,
-       });
+       res.status(201).json(course.assignments);
      } catch (error) {
-       res
-         .status(500)
-         .json({ message: "Error creating assignment", error: error.message });
+       res.status(500).json({ message: error.message });
      }
    },
  );
+ router.patch("/exceptions/:id/status", authenticate, async (req, res) => {
+   try {
+     const { id } = req.params;
+     const { status, lecturerComment } = req.body;
+     // 1. Find the exception record
+     const exception = await CourseException.findById(id);
+     if (!exception)
+       return res.status(404).json({ message: "Exception not found" });
+     if (exception.status !== "pending") {
+       return res
+         .status(400)
+         .json({ message: "This exception has already been processed" });
+     }
+     if (status === "approved") {
+       const lecturer = await User.findOne({ uid: req.user.uid });
+       if (lecturer) {
+         lecturer.pointsBalance = (lecturer.pointsBalance || 0) + 0.8;
+         await lecturer.save();
+       }
+     }
+     exception.status = status;
+     exception.lecturerComment = lecturerComment || "";
+     await exception.save();
+     res.status(200).json({
+       message: `Exception ${status} successfully.`,
+       exception,
+     });
+   } catch (error) {
+     res.status(500).json({ message: error.message });
+   }
+ });
+ router.get("/exceptions", authenticate, async (req, res) => {
+   try {
+     const { courseId } = req.query;
+     const userId = req.user.uid;
+     const userRole = req.user.usertype;
+     let query = { courseId };
 
+     if (userRole === "student") {
+       query.studentId = userId;
+     } else if (userRole === "lecturer") {
+       const course = await Course.findOne({
+         courseId: courseId,
+         lecturers: userId,
+       });
+       if (!course) {
+         return res.status(403).json({
+           message:
+             "Access Denied: You are not a registered lecturer for this course.",
+         });
+       }
+     } else {
+       return res.status(403).json({ message: "Unauthorized role" });
+     }
+     const exceptions = await CourseException.find(query)
+       .sort({ createdAt: -1 }) // Newest first
+       .lean();
+     res.json({
+       success: true,
+       exceptions: exceptions,
+     });
+   } catch (error) {
+     res.status(500).json({ message: "Server error", error: error.message });
+   }
+ });
   return router;
 }

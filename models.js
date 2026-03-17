@@ -57,16 +57,22 @@ const lectureSchema = new mongoose.Schema({
 const assignmentSchema = new mongoose.Schema({
   title: { type: String, required: true },
   description: { type: String },
-  fileUrl: { type: String },
+  fileUrl: { type: String }, // URL to the assignment brief
   dueDate: { type: Date, required: true },
-  courseId: { type: String, ref: "Course" },
+  courseId: { type: String, ref: "Course", required: true },
   lectureId: { type: String },
+  submissionMethod: {
+    type: String,
+    enum: ["Online", "Physical", "Both"],
+    default: "Online",
+  },
   createdAt: { type: Date, default: Date.now },
   submissions: [
     {
       studentId: { type: String, ref: "User" },
       fileUrl: String,
       submittedAt: { type: Date, default: Date.now },
+      isReceived: { type: Boolean, default: false },
     },
   ],
 });
@@ -450,6 +456,7 @@ export const PostSchema = new mongoose.Schema(
 );
 export const exceptionSchema = new mongoose.Schema(
   {
+    id: { type: String, required: true },
     studentId: {
       type: String,
       required: true,
@@ -459,6 +466,14 @@ export const exceptionSchema = new mongoose.Schema(
       type: String,
       required: true,
       index: true,
+    },
+    studentInfo: {
+      fullname: { type: String },
+      matricNumber: { type: String },
+    },
+    courseInfo: {
+      courseTitle: { type: String },
+      courseCode: { type: String },
     },
     // Link to the specific lecture (Using the Lecture _id)
     lectureId: {
