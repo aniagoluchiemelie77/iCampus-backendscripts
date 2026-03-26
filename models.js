@@ -31,7 +31,7 @@ const purchaseHistorySchema = new mongoose.Schema(
   },
   { _id: false },
 );
-const lectureSchema = new mongoose.Schema({
+export const lectureSchema = new mongoose.Schema({
   topicName: { type: String, required: true },
   lectureType: {
     type: String,
@@ -475,7 +475,6 @@ export const exceptionSchema = new mongoose.Schema(
       courseTitle: { type: String },
       courseCode: { type: String },
     },
-    // Link to the specific lecture (Using the Lecture _id)
     lectureId: {
       type: String,
       required: true,

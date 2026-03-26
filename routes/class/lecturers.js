@@ -1,6 +1,6 @@
 import express from "express";
 import { authenticate } from "../../index.js";
-import { Course } from "../../tableDeclarations.js";
+import { Course, Lectures } from "../../tableDeclarations.js";
 
 export default function (User) {
   const router = express.Router();
@@ -77,164 +77,213 @@ export default function (User) {
       res.status(500).json({ message: "Error fetching lecturer courses" });
     }
   });
- router.post(
-   "/courses/updateContent/:courseId",
-   authenticate,
-   async (req, res) => {
-     try {
-       const { courseId } = req.params;
-       const { updatedContents } = req.body;
+  router.post(
+    "/courses/updateContent/:courseId",
+    authenticate,
+    async (req, res) => {
+      try {
+        const { courseId } = req.params;
+        const { updatedContents } = req.body;
 
-       if (!Array.isArray(updatedContents)) {
-         return res.status(400).json({ message: "Invalid content format" });
-       }
+        if (!Array.isArray(updatedContents)) {
+          return res.status(400).json({ message: "Invalid content format" });
+        }
 
-       const updatedCourse = await Course.findByIdAndUpdate(
-         courseId,
-         { $set: { courseContents: updatedContents } },
-         { new: true },
-       );
+        const updatedCourse = await Course.findByIdAndUpdate(
+          courseId,
+          { $set: { courseContents: updatedContents } },
+          { new: true },
+        );
 
-       if (!updatedCourse) {
-         return res.status(404).json({ message: "Course not found" });
-       }
+        if (!updatedCourse) {
+          return res.status(404).json({ message: "Course not found" });
+        }
 
-       res.status(200).json({
-         message: "Course content updated successfully",
-         courseContents: updatedCourse.courseContents,
-       });
-     } catch (error) {
-       console.error("Update Course Error:", error);
-       res
-         .status(500)
-         .json({ message: "Server error updating course contents" });
-     }
-   },
- );
- router.post(
-   "/courses/uploadMaterial/:courseId",
-   authenticate,
-   async (req, res) => {
-     try {
-       const { courseId } = req.params;
-       // Assuming 'req.file.path' or 'req.file.location' (for S3) is provided by your upload middleware
-       const fileUrl = req.file.path;
+        res.status(200).json({
+          message: "Course content updated successfully",
+          courseContents: updatedCourse.courseContents,
+        });
+      } catch (error) {
+        console.error("Update Course Error:", error);
+        res
+          .status(500)
+          .json({ message: "Server error updating course contents" });
+      }
+    },
+  );
+  router.post(
+    "/courses/uploadMaterial/:courseId",
+    authenticate,
+    async (req, res) => {
+      try {
+        const { courseId } = req.params;
+        // Assuming 'req.file.path' or 'req.file.location' (for S3) is provided by your upload middleware
+        const fileUrl = req.file.path;
 
-       const updatedCourse = await Course.findByIdAndUpdate(
-         courseId,
-         { $push: { resources: fileUrl } }, // Add new file to general resources
-         { new: true },
-       );
+        const updatedCourse = await Course.findByIdAndUpdate(
+          courseId,
+          { $push: { resources: fileUrl } }, // Add new file to general resources
+          { new: true },
+        );
 
-       res.status(200).json({
-         message: "File uploaded",
-         resources: updatedCourse.resources,
-       });
-     } catch (error) {
-       res.status(500).json({ message: "Upload failed" });
-     }
-   },
- );
- router.post(
-   "/courses/:courseId/assignments",
-   authenticate,
-   upload.single("file"),
-   async (req, res) => {
-     try {
-       const { courseId } = req.params;
-       const { title, description, dueDate, submissionMethod, lectureId } =
-         req.body;
+        res.status(200).json({
+          message: "File uploaded",
+          resources: updatedCourse.resources,
+        });
+      } catch (error) {
+        res.status(500).json({ message: "Upload failed" });
+      }
+    },
+  );
+  router.post(
+    "/courses/:courseId/assignments",
+    authenticate,
+    upload.single("file"),
+    async (req, res) => {
+      try {
+        const { courseId } = req.params;
+        const { title, description, dueDate, submissionMethod, lectureId } =
+          req.body;
 
-       const newAssignment = {
-         title,
-         description,
-         dueDate: new Date(dueDate),
-         submissionMethod,
-         lectureId,
-         courseId,
-         fileUrl: req.file ? req.file.path : null, // If lecturer uploaded a brief
-         submissions: [],
-       };
+        const newAssignment = {
+          title,
+          description,
+          dueDate: new Date(dueDate),
+          submissionMethod,
+          lectureId,
+          courseId,
+          fileUrl: req.file ? req.file.path : null, // If lecturer uploaded a brief
+          submissions: [],
+        };
 
-       const course = await Course.findOneAndUpdate(
-         { courseId: courseId },
-         { $push: { assignments: newAssignment } },
-         { new: true },
-       );
+        const course = await Course.findOneAndUpdate(
+          { courseId: courseId },
+          { $push: { assignments: newAssignment } },
+          { new: true },
+        );
 
-       if (!course)
-         return res.status(404).json({ message: "Course not found" });
+        if (!course)
+          return res.status(404).json({ message: "Course not found" });
 
-       res.status(201).json(course.assignments);
-     } catch (error) {
-       res.status(500).json({ message: error.message });
-     }
-   },
- );
- router.patch("/exceptions/:id/status", authenticate, async (req, res) => {
-   try {
-     const { id } = req.params;
-     const { status, lecturerComment } = req.body;
-     // 1. Find the exception record
-     const exception = await CourseException.findById(id);
-     if (!exception)
-       return res.status(404).json({ message: "Exception not found" });
-     if (exception.status !== "pending") {
-       return res
-         .status(400)
-         .json({ message: "This exception has already been processed" });
-     }
-     if (status === "approved") {
-       const lecturer = await User.findOne({ uid: req.user.uid });
-       if (lecturer) {
-         lecturer.pointsBalance = (lecturer.pointsBalance || 0) + 0.8;
-         await lecturer.save();
-       }
-     }
-     exception.status = status;
-     exception.lecturerComment = lecturerComment || "";
-     await exception.save();
-     res.status(200).json({
-       message: `Exception ${status} successfully.`,
-       exception,
-     });
-   } catch (error) {
-     res.status(500).json({ message: error.message });
-   }
- });
- router.get("/exceptions", authenticate, async (req, res) => {
-   try {
-     const { courseId } = req.query;
-     const userId = req.user.uid;
-     const userRole = req.user.usertype;
-     let query = { courseId };
+        res.status(201).json(course.assignments);
+      } catch (error) {
+        res.status(500).json({ message: error.message });
+      }
+    },
+  );
+  router.patch("/exceptions/:id/status", authenticate, async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { status, lecturerComment } = req.body;
 
-     if (userRole === "student") {
-       query.studentId = userId;
-     } else if (userRole === "lecturer") {
-       const course = await Course.findOne({
-         courseId: courseId,
-         lecturers: userId,
-       });
-       if (!course) {
-         return res.status(403).json({
-           message:
-             "Access Denied: You are not a registered lecturer for this course.",
-         });
-       }
-     } else {
-       return res.status(403).json({ message: "Unauthorized role" });
-     }
-     const exceptions = await CourseException.find(query)
-       .sort({ createdAt: -1 }) // Newest first
-       .lean();
-     res.json({
-       success: true,
-       exceptions: exceptions,
-     });
-   } catch (error) {
-     res.status(500).json({ message: "Server error", error: error.message });
-   }
- });
+      // 1. Find the exception record
+      const exception = await CourseException.findById(id);
+      if (!exception) {
+        return res.status(404).json({ message: "Exception not found" });
+      }
+
+      // 2. Prevent double-processing
+      if (exception.status !== "pending") {
+        return res
+          .status(400)
+          .json({ message: "This exception has already been processed" });
+      }
+
+      // 3. Handle Lecturer Payout on Approval
+      if (status === "approved") {
+        const lecturer = await User.findOne({ uid: req.user.uid });
+        if (lecturer) {
+          lecturer.pointsBalance = (lecturer.pointsBalance || 0) + 0.4;
+          await lecturer.save();
+        }
+      }
+      // 4. Update Exception Record
+      exception.status = status;
+      exception.lecturerComment = lecturerComment || "";
+      await exception.save();
+
+      res.status(200).json({
+        success: true,
+        message: `Exception ${status} successfully.`,
+        exception,
+      });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // Example Express Route
+  router.post(
+    "/courses/:courseId/lectures/createSchedule",
+    async (req, res) => {
+      try {
+        const {
+          date,
+          repeatWeeks,
+          startTime,
+          endTime,
+          location,
+          lectureType,
+          courseId,
+        } = req.body;
+        const finalPayload = req.body;
+        const lecturesToCreate = [];
+        const datesToCheck = [];
+
+        // 1. Generate all dates first to check for conflicts in bulk
+        for (let i = 0; i < (repeatWeeks || 1); i++) {
+          const nextDate = new Date(date);
+          nextDate.setDate(nextDate.getDate() + i * 7);
+          datesToCheck.push(nextDate.toISOString().split("T")[0]);
+        }
+
+        // 2. Optimized Bulk Conflict Check
+        const conflict = await Lectures.findOne({
+          date: { $in: datesToCheck },
+          $or: [
+            {
+              lectureType: "Physical",
+              location: location,
+              startTime: { $lt: endTime },
+              endTime: { $gt: startTime },
+            },
+            {
+              courseId: courseId, // Or lecturerId if you have it in req.user
+              startTime: { $lt: endTime },
+              endTime: { $gt: startTime },
+            },
+          ],
+        });
+
+        if (conflict) {
+          return res.status(409).json({
+            message: `Conflict detected on ${conflict.date}! You have a class from ${conflict.startTime} to ${conflict.endTime}.`,
+          });
+        }
+
+        // 3. Build the array
+        datesToCheck.forEach((d) => {
+          lecturesToCreate.push({
+            ...finalPayload,
+            date: d,
+            status: "scheduled",
+            isTaught: false,
+            attendance: [],
+          });
+        });
+
+        // 4. Save all and send ONE response
+        const result = await Lectures.insertMany(lecturesToCreate);
+
+        res.status(201).json({
+          message: "Lectures scheduled successfully",
+          count: result.length,
+          lecture: result[0], // Return the first one for the success modal preview
+        });
+      } catch (error) {
+        console.error(error);
+        res.status(500).json({ message: "Internal Server Error" });
+      }
+    },
+  );
   return router;
 }

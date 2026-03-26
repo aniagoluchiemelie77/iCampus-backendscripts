@@ -273,63 +273,78 @@ export default function (User) {
       }
     },
   );
-  router.post("/exceptions/submit", authenticate, async (req, res) => {
-    try {
-      const {
-        studentId,
-        courseId,
-        lectureId,
-        reason,
-        reasonCategory,
-        studentInfo,
-        courseInfo,
-      } = req.body;
-      const user = await User.findOne({ uid: studentId });
-      if (!user) return res.status(404).json({ message: "User not found" });
-      if ((user.pointsBalance || 0) < 1.0) {
-        return res
-          .status(402)
-          .json({ message: "Insufficient iCash balance (1.0 required)" });
-      }
-      const startOfMonth = new Date();
-      startOfMonth.setDate(1);
-      startOfMonth.setHours(0, 0, 0, 0);
-      const monthlyCount = await CourseException.countDocuments({
-        studentId,
-        createdAt: { $gte: startOfMonth },
-      });
-      const limits = { free: 3, pro: 5, premium: 7 };
-      if (monthlyCount >= (limits[user.plan] || 3)) {
-        return res
-          .status(403)
-          .json({ message: `Monthly limit reached for ${user.plan} plan.` });
-      }
-      user.pointsBalance -= 1.0;
+ router.post("/exceptions/submit", authenticate, async (req, res) => {
+   try {
+     const {
+       studentId,
+       courseId,
+       lectureId,
+       reason,
+       reasonCategory,
+       studentInfo,
+       courseInfo,
+     } = req.body;
 
-      const exception = new CourseException({
-        id: new mongoose.Types.ObjectId().toString(),
-        studentId,
-        studentInfo,
-        courseInfo,
-        courseId,
-        lectureId,
-        reason,
-        reasonCategory,
-        status: "pending",
-        date: new Date().toISOString(),
-      });
+     const user = await User.findOne({ uid: studentId });
+     if (!user) return res.status(404).json({ message: "User not found" });
 
-      await user.save();
-      await exception.save();
+     // PRICING: 1 exception = 0.5 iCash (500 NGN)
+     const EXCEPTION_COST = 0.5;
 
-      res.status(201).json({
-        message: "Success",
-        exception,
-        newBalance: user.pointsBalance,
-      });
-    } catch (error) {
-      res.status(500).json({ message: error.message });
-    }
-  });
+     if ((user.pointsBalance || 0) < EXCEPTION_COST) {
+       return res.status(402).json({
+         message: `Insufficient iCash balance. Required: ${EXCEPTION_COST} iCash (500 NGN / ~$0.36 USD)`,
+       });
+     }
+
+     // Monthly limit logic
+     const startOfMonth = new Date();
+     startOfMonth.setDate(1);
+     startOfMonth.setHours(0, 0, 0, 0);
+
+     const monthlyCount = await CourseException.countDocuments({
+       studentId,
+       createdAt: { $gte: startOfMonth },
+     });
+
+     const limits = { free: 3, pro: 5, premium: 7 };
+     const userLimit = limits[user.plan] || 3;
+
+     if (monthlyCount >= userLimit) {
+       return res.status(403).json({
+         message: `Monthly limit reached (${userLimit}) for your ${user.plan || "free"} plan.`,
+       });
+     }
+
+     // Deducting 0.5 iCash
+     // Using simple subtraction since 0.5 is clean in binary/floating point
+     user.pointsBalance -= EXCEPTION_COST;
+
+     const exception = new CourseException({
+       id: new mongoose.Types.ObjectId().toString(),
+       studentId,
+       studentInfo,
+       courseInfo,
+       courseId,
+       lectureId,
+       reason,
+       reasonCategory,
+       status: "pending",
+       date: new Date().toISOString(),
+     });
+
+     await user.save();
+     await exception.save();
+
+     res.status(201).json({
+       success: true,
+       message: "Exception submitted successfully",
+       exception,
+       newBalance: user.pointsBalance,
+     });
+   } catch (error) {
+     res.status(500).json({ message: error.message });
+   }
+ });
   return router;
 }

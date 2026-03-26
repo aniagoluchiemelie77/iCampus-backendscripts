@@ -1157,14 +1157,32 @@ export default function (User) {
       const { courseId } = req.query;
       const userId = req.user.uid;
       const userRole = req.user.usertype;
+
+      if (!courseId) {
+        return res.status(400).json({ message: "courseId is required" });
+      }
       let query = { courseId };
       if (userRole === "student") {
         query.studentId = userId;
-      }
+      } else if (userRole === "lecturer") {
+        const course = await Course.findOne({
+          courseId: courseId,
+          lecturerIds: userId,
+        });
 
-      const exceptions = await CourseException.find(query)
+        if (!course) {
+          return res.status(403).json({
+            success: false,
+            message: "Access denied. You do not teach this course.",
+          });
+        }
+      } else {
+        return res.status(403).json({ message: "Unauthorized user type" });
+      }
+      const exceptions = await Exceptions.find(query)
         .sort({ createdAt: -1 })
         .lean();
+
       res.status(200).json({
         success: true,
         count: exceptions.length,
