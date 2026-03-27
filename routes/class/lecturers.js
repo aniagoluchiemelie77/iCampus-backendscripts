@@ -1,7 +1,13 @@
 import express from "express";
 import { authenticate } from "../../index.js";
-import { Course, Lectures, Assessment } from "../../tableDeclarations.js";
+import {
+  Course,
+  Lectures,
+  Assessment,
+  TestSubmission,
+} from "../../tableDeclarations.js";
 import { customAlphabet } from "nanoid";
+import PDFDocument from "pdfkit-table";
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const nano = customAlphabet(alphabet, 6);
 
@@ -368,6 +374,85 @@ export default function (User) {
       });
     } catch (error) {
       res.status(500).json({ message: error.message });
+    }
+  });
+  router.get("/courses/:courseId/assessmentAnalysis", async (req, res) => {
+    try {
+      const { testId } = req.params;
+
+      // 1. Fetch Data
+      const test = await Assessment.findById(testId);
+      const course = await Course.findOne({ courseId: test.courseId });
+      const submissions = await TestSubmission.find({ testId });
+
+      const doc = new PDFDocument({ margin: 30, size: "A4" });
+      let filename = `Report_${course.courseCode}_${test.title}.pdf`;
+
+      res.setHeader(
+        "Content-disposition",
+        `attachment; filename="${filename}"`,
+      );
+      res.setHeader("Content-type", "application/pdf");
+      doc.pipe(res);
+
+      // --- HEADER SECTION ---
+      // doc.image('logo.png', 50, 45, { width: 50 }); // Add your iCampus logo
+      doc.fontSize(18).text("iCampus Academic Report", { align: "center" });
+      doc.fontSize(10).text(courseData.schoolName, { align: "center" });
+      doc.moveDown(2);
+
+      // --- META DATA ---
+      doc
+        .fontSize(12)
+        .font("Helvetica-Bold")
+        .text(`Course: ${courseData.courseCode} - ${courseData.courseTitle}`);
+      doc.font("Helvetica").text(`Lecturer: ${courseData.instructorName}`);
+      doc.text(
+        `Assessment: ${testData.title} | Date: ${new Date().toLocaleDateString()}`,
+      );
+      doc.moveDown();
+
+      // --- TABLE LOGIC ---
+      const tableTop = 200;
+      const itemCodeX = 50;
+      const descriptionX = 150;
+      const scoreX = 400;
+      const statusX = 480;
+
+      // Table Header
+      doc.font("Helvetica-Bold").fontSize(10);
+      doc.text("Matric No", itemCodeX, tableTop);
+      doc.text("Student Name", descriptionX, tableTop);
+      doc.text("Score", scoreX, tableTop);
+      doc.text("Status", statusX, tableTop);
+
+      doc
+        .moveTo(50, tableTop + 15)
+        .lineTo(550, tableTop + 15)
+        .stroke();
+
+      // Table Rows
+      let currentY = tableTop + 30;
+      doc.font("Helvetica").fontSize(9);
+
+      submissions.forEach((sub) => {
+        doc.text(sub.matricNumber, itemCodeX, currentY);
+        doc.text(sub.studentName, descriptionX, currentY);
+        doc.text(`${sub.score}`, scoreX, currentY);
+        doc.text(sub.status, statusX, currentY);
+
+        currentY += 20; // Row spacing
+
+        // Add new page if table is too long
+        if (currentY > 700) {
+          doc.addPage();
+          currentY = 50;
+        }
+      });
+
+      doc.end();
+    } catch (error) {
+      res.status(500).send("Error generating PDF");
     }
   });
   return router;

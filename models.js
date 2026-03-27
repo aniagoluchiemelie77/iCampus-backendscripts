@@ -566,6 +566,34 @@ export const assessmentSchema = new mongoose.Schema(
     timestamps: true, // Automatically manages createdAt and updatedAt
   },
 );
+export const testSubmissionSchema = new mongoose.Schema({
+  testId: { type: String, required: true, index: true }, // From CreateTestPayload.id
+  studentId: { type: String, required: true, index: true }, // User.uid
+  studentName: { type: String, required: true },
+  matricNumber: { type: String, required: true },
+  answers: [
+    {
+      questionId: { type: String, required: true },
+      studentAnswer: { type: String },
+      isCorrect: { type: Boolean, default: false },
+      pointsEarned: { type: Number, default: 0 },
+    },
+  ],
+  score: { type: Number, default: 0 },
+  totalPossibleScore: { type: Number, required: true },
+  status: {
+    type: String,
+    enum: ["submitted", "graded"],
+    default: "submitted",
+  },
+  proctoringData: {
+    deviceId: { type: String },
+    entrySelfieUrl: { type: String },
+    tabSwitchCount: { type: Number, default: 0 },
+    ipAddress: { type: String },
+  },
+  submittedAt: { type: Date, default: Date.now },
+});
 
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
