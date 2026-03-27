@@ -194,6 +194,7 @@ export const userSchema = new mongoose.Schema({
       ref: "UserBankOrCardDetails",
     },
   ],
+  completedTests: [{ type: String }],
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },
@@ -269,6 +270,7 @@ export const notificationSchema = new mongoose.Schema(
     status: { type: String },
     transactionIdMid: { type: String },
     fileUrls: [{ type: String }],
+    metadata: [{ type: String }],
   },
   { timestamps: true },
 );
@@ -567,32 +569,30 @@ export const assessmentSchema = new mongoose.Schema(
   },
 );
 export const testSubmissionSchema = new mongoose.Schema({
-  testId: { type: String, required: true, index: true }, // From CreateTestPayload.id
-  studentId: { type: String, required: true, index: true }, // User.uid
-  studentName: { type: String, required: true },
-  matricNumber: { type: String, required: true },
+  testId: { type: mongoose.Schema.Types.ObjectId, ref: "Test", required: true },
+  studentId: { type: String, required: true },
+  studentName: String,
+  matricNumber: String,
   answers: [
     {
-      questionId: { type: String, required: true },
-      studentAnswer: { type: String },
-      isCorrect: { type: Boolean, default: false },
-      pointsEarned: { type: Number, default: 0 },
+      questionId: String,
+      studentAnswer: String,
+      isCorrect: Boolean,
+      pointsEarned: Number,
+      aiScore: Number, // For the semantic check we implemented
     },
   ],
-  score: { type: Number, default: 0 },
-  totalPossibleScore: { type: Number, required: true },
-  status: {
-    type: String,
-    enum: ["submitted", "graded"],
-    default: "submitted",
-  },
-  proctoringData: {
-    deviceId: { type: String },
-    entrySelfieUrl: { type: String },
-    tabSwitchCount: { type: Number, default: 0 },
-    ipAddress: { type: String },
-  },
+  score: Number,
+  totalPossibleScore: Number,
+  status: { type: String, default: "submitted" },
   submittedAt: { type: Date, default: Date.now },
+  proctoringData: {
+    deviceId: String,
+    entrySelfieUrl: String,
+    tabSwitchCount: Number,
+    ipAddress: String,
+  },
+  startTime: Date,
 });
 
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course

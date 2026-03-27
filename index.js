@@ -190,4 +190,34 @@ export const transporter = nodemailer.createTransport({
     pass: process.env.TRANSPORTER_AUTH_PASS,
   },
 });
+// Example of your Auth Middleware
+export const protect = async (req, res, next) => {
+  let token;
+
+  // 1. Check standard Header
+  if (req.headers.authorization?.startsWith("Bearer")) {
+    token = req.headers.authorization.split(" ")[1];
+  } 
+  // 2. Check Query String (Essential for PDF downloads via browser)
+  else if (req.query.token) {
+    token = req.query.token;
+  }
+
+  if (!token) {
+    return res.status(401).json({ message: "Not authorized, no token" });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findOne({ uid: decoded.id });
+    if (!user) {
+      return res.status(401).json({ message: "User no longer exists" });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    res.status(401).json({ message: "Token is not valid" });
+  }
+};
 //MongoDB connection: mongod --dbpath "D:\MongoDB\data"

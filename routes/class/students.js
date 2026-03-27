@@ -1,6 +1,7 @@
 import express from "express";
+import mongoose from "mongoose";
 import { authenticate } from "../../index.js";
-import { Course } from "../../tableDeclarations.js";
+import { Course, TestSubmission } from "../../tableDeclarations.js";
 import { upload } from "../../workers/multerWorker.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
@@ -13,6 +14,8 @@ const generateCourseId = (length = 10) => {
   }
   return result;
 };
+const session = await mongoose.startSession();
+session.startTransaction();
 
 export default function (User) {
   const router = express.Router();
@@ -258,78 +261,148 @@ export default function (User) {
       }
     },
   );
- router.post("/exceptions/submit", authenticate, async (req, res) => {
-   try {
-     const {
-       studentId,
-       courseId,
-       lectureId,
-       reason,
-       reasonCategory,
-       studentInfo,
-       courseInfo,
-     } = req.body;
+  router.post("/exceptions/submit", authenticate, async (req, res) => {
+    try {
+      const {
+        studentId,
+        courseId,
+        lectureId,
+        reason,
+        reasonCategory,
+        studentInfo,
+        courseInfo,
+      } = req.body;
 
-     const user = await User.findOne({ uid: studentId });
-     if (!user) return res.status(404).json({ message: "User not found" });
+      const user = await User.findOne({ uid: studentId });
+      if (!user) return res.status(404).json({ message: "User not found" });
 
-     // PRICING: 1 exception = 0.5 iCash (500 NGN)
-     const EXCEPTION_COST = 0.5;
+      // PRICING: 1 exception = 0.5 iCash (500 NGN)
+      const EXCEPTION_COST = 0.5;
 
-     if ((user.pointsBalance || 0) < EXCEPTION_COST) {
-       return res.status(402).json({
-         message: `Insufficient iCash balance. Required: ${EXCEPTION_COST} iCash (500 NGN / ~$0.36 USD)`,
-       });
-     }
+      if ((user.pointsBalance || 0) < EXCEPTION_COST) {
+        return res.status(402).json({
+          message: `Insufficient iCash balance. Required: ${EXCEPTION_COST} iCash (500 NGN / ~$0.36 USD)`,
+        });
+      }
 
-     // Monthly limit logic
-     const startOfMonth = new Date();
-     startOfMonth.setDate(1);
-     startOfMonth.setHours(0, 0, 0, 0);
+      // Monthly limit logic
+      const startOfMonth = new Date();
+      startOfMonth.setDate(1);
+      startOfMonth.setHours(0, 0, 0, 0);
 
-     const monthlyCount = await CourseException.countDocuments({
-       studentId,
-       createdAt: { $gte: startOfMonth },
-     });
+      const monthlyCount = await CourseException.countDocuments({
+        studentId,
+        createdAt: { $gte: startOfMonth },
+      });
 
-     const limits = { free: 3, pro: 5, premium: 7 };
-     const userLimit = limits[user.plan] || 3;
+      const limits = { free: 3, pro: 5, premium: 7 };
+      const userLimit = limits[user.plan] || 3;
 
-     if (monthlyCount >= userLimit) {
-       return res.status(403).json({
-         message: `Monthly limit reached (${userLimit}) for your ${user.plan || "free"} plan.`,
-       });
-     }
+      if (monthlyCount >= userLimit) {
+        return res.status(403).json({
+          message: `Monthly limit reached (${userLimit}) for your ${user.plan || "free"} plan.`,
+        });
+      }
 
-     // Deducting 0.5 iCash
-     // Using simple subtraction since 0.5 is clean in binary/floating point
-     user.pointsBalance -= EXCEPTION_COST;
+      // Deducting 0.5 iCash
+      // Using simple subtraction since 0.5 is clean in binary/floating point
+      user.pointsBalance -= EXCEPTION_COST;
 
-     const exception = new CourseException({
-       id: new mongoose.Types.ObjectId().toString(),
-       studentId,
-       studentInfo,
-       courseInfo,
-       courseId,
-       lectureId,
-       reason,
-       reasonCategory,
-       status: "pending",
-       date: new Date().toISOString(),
-     });
+      const exception = new CourseException({
+        id: new mongoose.Types.ObjectId().toString(),
+        studentId,
+        studentInfo,
+        courseInfo,
+        courseId,
+        lectureId,
+        reason,
+        reasonCategory,
+        status: "pending",
+        date: new Date().toISOString(),
+      });
 
-     await user.save();
-     await exception.save();
+      await user.save();
+      await exception.save();
 
-     res.status(201).json({
-       success: true,
-       message: "Exception submitted successfully",
-       exception,
-       newBalance: user.pointsBalance,
-     });
-   } catch (error) {
-     res.status(500).json({ message: error.message });
-   }
- });
+      res.status(201).json({
+        success: true,
+        message: "Exception submitted successfully",
+        exception,
+        newBalance: user.pointsBalance,
+      });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  router.post("/test/submit", authenticate, async (req, res) => {
+    try {
+      const { testId, answers, proctoringData } = req.body;
+
+      // 1. Basic Validation
+      if (!testId || !answers) {
+        return res
+          .status(400)
+          .json({ message: "Missing required submission data." });
+      }
+
+      // 2. Check for existing submission (Prevent double submission)
+      const existingSubmission = await TestSubmission.findOne({
+        testId,
+        studentId: req.user.uid, // req.user comes from your auth middleware
+      });
+
+      if (existingSubmission) {
+        return res
+          .status(403)
+          .json({ message: "You have already submitted this test." });
+      }
+      const isFlagged = proctoringData.tabSwitchCount >= 3;
+
+      const verificationStatus = proctoringData?.entrySelfieUrl
+        ? "Verified"
+        : "Unverified_Camera_Failure";
+
+      // 4. Create the record
+      const newSubmission = new TestSubmission({
+        verificationStatus,
+        ...req.body,
+        studentId: req.user.uid, // Always take ID from the verified token, not the body
+        isFlagged: isFlagged,
+        proctoringData: {
+          deviceId: proctoringData?.deviceId || "Unknown",
+          entrySelfieUrl: proctoringData?.entrySelfieUrl || "",
+          tabSwitchCount: proctoringData?.tabSwitchCount || 0,
+        },
+      });
+
+      await newSubmission.save({ session });
+      await User.findOneAndUpdate(
+        { uid: req.user.uid },
+        {
+          $addToSet: { completedTests: testId },
+          $inc: { overallProgress: 5 }, // Increment progress by a set percentage
+        },
+        { session },
+      );
+
+      await session.commitTransaction();
+
+      // 5. Update Student Progress (Optional)
+      // You could update the student's 'Completed' array in their User profile here
+
+      res.status(201).json({
+        success: true,
+        message: "Test submitted and graded successfully.",
+        submissionId: newSubmission._id,
+      });
+    } catch (error) {
+      await session.abortTransaction();
+      console.error("Submission Error:", error);
+      res
+        .status(500)
+        .json({ message: "Internal Server Error", error: error.message });
+    }
+    session.endSession();
+  });
   return router;
 }

@@ -1,20 +1,64 @@
 import express from "express";
-import { authenticate } from "../../index.js";
+import cron from "node-cron";
+import { authenticate, protect } from "../../index.js";
 import {
   Course,
   Lectures,
   Assessment,
   TestSubmission,
+  User,
+  Notification,
 } from "../../tableDeclarations.js";
 import { customAlphabet } from "nanoid";
 import PDFDocument from "pdfkit-table";
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const nano = customAlphabet(alphabet, 6);
+import { generateNotificationId } from "../user.js";
 
 export const generateAssessmentId = (courseCode = "GEN") => {
   const year = new Date().getFullYear();
   return `IC-${courseCode.toUpperCase()}-${year}-${nano()}`;
 };
+cron.schedule("0 * * * *", async () => {
+  const now = new Date();
+  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+
+  try {
+    // 1. Find tests that expired in the last hour
+    const expiredTests = await Assessment.find({
+      dueDate: { $lt: now, $gte: oneHourAgo },
+    });
+
+    for (const test of expiredTests) {
+      // 2. Identify students who MISSED the test
+      const submissions = await TestSubmission.find({
+        testId: test._id,
+      }).distinct("studentId");
+      const enrolledStudents = await User.find({
+        enrolledCourses: test.courseId,
+      });
+
+      const absentees = enrolledStudents.filter(
+        (s) => !submissions.includes(s.uid),
+      );
+      test.isAnalyzed = true;
+      await test.save();
+      await Notification.create({
+        notificationId: generateNotificationId(),
+        userId: test.lecturerId,
+        isRead: false,
+        isPublic: false,
+        title: "Test Deadline Reached",
+        message: `${test.title} is now closed. Submissions: ${submissions.length}. Absentees: ${absentees.length}.`,
+        type: "Test Deadline Alert",
+        metadata: { testId: test._id },
+      });
+      console.log(`Notification sent to lecturer for test: ${test.title}`);
+    }
+  } catch (error) {
+    console.error("Cron Job Error:", error);
+  }
+});
 
 export default function (User) {
   const router = express.Router();
@@ -376,17 +420,49 @@ export default function (User) {
       res.status(500).json({ message: error.message });
     }
   });
-  router.get("/courses/:courseId/assessmentAnalysis", async (req, res) => {
+  router.get("/tests/:testId/download-analysis", protect, async (req, res) => {
     try {
       const { testId } = req.params;
 
       // 1. Fetch Data
-      const test = await Assessment.findById(testId);
+      const test = await Assessment.findOne({ id: testId });
+      if (!test) return res.status(404).send("Assessment not found");
+
+      // 2. Security Check: Is it actually past due?
+      const isPastDue = new Date() > new Date(test.dueDate);
+      if (!isPastDue) {
+        return res
+          .status(403)
+          .send("Analysis is only available after the due date.");
+      }
+
       const course = await Course.findOne({ courseId: test.courseId });
       const submissions = await TestSubmission.find({ testId });
+      const submittedIds = submissions.map((s) => s.studentId);
+      const enrolledStudents = await User.find({
+        enrolledCourses: test.courseId,
+      });
+      const absentees = enrolledStudents.filter(
+        (s) => !submittedIds.includes(s.uid),
+      );
+      const passMark = test.totalMarks / 2;
+      const sortedSubmissions = [...submissions].sort(
+        (a, b) => b.score - a.score,
+      );
+      const topPerformers = sortedSubmissions.slice(0, 3);
+      const passedCount = submissions.filter((s) => s.score >= passMark).length;
+      const failedCount = submissions.length - passedCount;
+      const passRate =
+        submissions.length > 0
+          ? ((passedCount / submissions.length) * 100).toFixed(1)
+          : 0;
 
       const doc = new PDFDocument({ margin: 30, size: "A4" });
-      let filename = `Report_${course.courseCode}_${test.title}.pdf`;
+      let filename = `Report_${course?.courseCode || "TEST"}_${test.title.replace(/\s+/g, "_")}.pdf`;
+      const logoPath = "../../assets/logo.png";
+      const imageWidth = 60;
+      const pageWidth = doc.page.width;
+      const xPos = (pageWidth - imageWidth) / 2;
 
       res.setHeader(
         "Content-disposition",
@@ -395,63 +471,165 @@ export default function (User) {
       res.setHeader("Content-type", "application/pdf");
       doc.pipe(res);
 
-      // --- HEADER SECTION ---
-      // doc.image('logo.png', 50, 45, { width: 50 }); // Add your iCampus logo
-      doc.fontSize(18).text("iCampus Academic Report", { align: "center" });
-      doc.fontSize(10).text(courseData.schoolName, { align: "center" });
+      // --- HEADER ---
+      try {
+        doc.image(logoPath, xPos, 40, { width: imageWidth });
+        doc.moveDown(4); // Create space after the logo
+      } catch (err) {
+        doc.moveDown(2);
+      }
+      doc
+        .fontSize(20)
+        .fillColor("#2c3e50")
+        .text("iCampus Academic Analysis", { align: "center" });
+      doc
+        .fontSize(10)
+        .fillColor("#7f8c8d")
+        .text("Official Assessment Summary", { align: "center" });
       doc.moveDown(2);
 
-      // --- META DATA ---
+      // --- META DATA BOX ---
+      doc.rect(50, 100, 500, 70).fill("#f9f9f9").stroke("#ecf0f1");
+      doc
+        .fillColor("#222")
+        .fontSize(12)
+        .font("Helvetica-Bold")
+        .text(
+          `Course: ${course?.courseTitle} - ${course?.courseCode}`,
+          60,
+          110,
+        );
+      doc
+        .font("Helvetica")
+        .fontSize(10)
+        .text(`Lecturer: ${test.instructorName || "N/A"}`, 60, 130)
+        .text(
+          `Total Submissions: ${submissions.length} | Generated: ${new Date().toLocaleString()}`,
+          60,
+          145,
+        );
+
       doc
         .fontSize(12)
         .font("Helvetica-Bold")
-        .text(`Course: ${courseData.courseCode} - ${courseData.courseTitle}`);
-      doc.font("Helvetica").text(`Lecturer: ${courseData.instructorName}`);
-      doc.text(
-        `Assessment: ${testData.title} | Date: ${new Date().toLocaleDateString()}`,
-      );
-      doc.moveDown();
+        .fillColor("#2c3e50")
+        .text("Performance Analysis", 50, 190);
 
-      // --- TABLE LOGIC ---
-      const tableTop = 200;
-      const itemCodeX = 50;
-      const descriptionX = 150;
-      const scoreX = 400;
-      const statusX = 480;
+      const chartX = 70;
+      const chartY = 210;
+      const barMax = 150;
 
-      // Table Header
+      // Draw Green Bar (Pass)
+      const pWidth =
+        submissions.length > 0
+          ? (passedCount / submissions.length) * barMax
+          : 0;
+      doc.rect(chartX, chartY, pWidth, 12).fill("#27ae60");
+      doc
+        .fillColor("#222")
+        .fontSize(8)
+        .text(`Passed (${passedCount})`, chartX + pWidth + 5, chartY + 2);
+
+      // Draw Red Bar (Fail)
+      const fWidth =
+        submissions.length > 0
+          ? (failedCount / submissions.length) * barMax
+          : 0;
+      doc.rect(chartX, chartY + 20, fWidth, 12).fill("#e74c3c");
+      doc
+        .fillColor("#222")
+        .fontSize(8)
+        .text(`Failed (${failedCount})`, chartX + fWidth + 5, chartY + 22);
+
+      // --- TOP PERFORMERS (Right Side) ---
+      const topX = 350;
+      doc
+        .fontSize(12)
+        .font("Helvetica-Bold")
+        .fillColor("#2c3e50")
+        .text("Top Performers", topX, 190);
+
+      doc.fontSize(9).font("Helvetica").fillColor("#222");
+      topPerformers.forEach((student, index) => {
+        const medal = index === 0 ? "🥇 " : index === 1 ? "🥈 " : "🥉 ";
+        doc.text(
+          `${medal}${student.studentName} (${student.score}/${test.totalMarks})`,
+          topX,
+          210 + index * 15,
+        );
+      });
+
+      // --- TABLE HEADERS ---
+      const tableTop = 280;
+      const colX = { matric: 50, name: 150, score: 380, status: 470 };
+
       doc.font("Helvetica-Bold").fontSize(10);
-      doc.text("Matric No", itemCodeX, tableTop);
-      doc.text("Student Name", descriptionX, tableTop);
-      doc.text("Score", scoreX, tableTop);
-      doc.text("Status", statusX, tableTop);
+      doc.text("Matric Number", colX.matric, tableTop);
+      doc.text("Student Name", colX.name, tableTop);
+      doc.text("Score", colX.score, tableTop);
+      doc.text("Status", colX.status, tableTop);
 
       doc
         .moveTo(50, tableTop + 15)
         .lineTo(550, tableTop + 15)
         .stroke();
 
-      // Table Rows
+      // --- ROWS ---
       let currentY = tableTop + 30;
       doc.font("Helvetica").fontSize(9);
 
-      submissions.forEach((sub) => {
-        doc.text(sub.matricNumber, itemCodeX, currentY);
-        doc.text(sub.studentName, descriptionX, currentY);
-        doc.text(`${sub.score}`, scoreX, currentY);
-        doc.text(sub.status, statusX, currentY);
+      submissions.forEach((sub, i) => {
+        // Alternating row background for readability
+        if (i % 2 === 0) {
+          doc
+            .rect(50, currentY - 5, 500, 18)
+            .fill("#f2f2f2")
+            .fillColor("#222");
+        }
 
-        currentY += 20; // Row spacing
+        doc.text(sub.matricNumber || "N/A", colX.matric, currentY);
+        doc.text(sub.studentName, colX.name, currentY);
+        doc.text(`${sub.score} / ${test.totalMarks}`, colX.score, currentY);
+        doc.text(sub.status.toUpperCase(), colX.status, currentY);
 
-        // Add new page if table is too long
-        if (currentY > 700) {
+        currentY += 20;
+
+        if (currentY > 750) {
           doc.addPage();
           currentY = 50;
         }
       });
+      if (absentees.length > 0) {
+        doc.addPage();
+        doc
+          .fontSize(14)
+          .fillColor("#c0392b")
+          .text("Absentees (Did Not Submit)", { underline: true });
+        doc.moveDown();
+
+        doc.fontSize(10).fillColor("#000").font("Helvetica-Bold");
+        doc.text("Matric Number", 50);
+        doc.text("Student Name", 150);
+        doc
+          .moveTo(50, doc.y + 5)
+          .lineTo(550, doc.y + 5)
+          .stroke();
+        doc.moveDown();
+
+        doc.font("Helvetica");
+        absentees.forEach((student) => {
+          doc.text(student.matricNumber || "N/A", 50);
+          doc.text(`${student.firstname} ${student.lastname}`, 150);
+          doc.moveDown(0.5);
+        });
+      }
 
       doc.end();
+      doc.on("finish", () => {
+        console.log(`PDF Generated: ${filename}`);
+      });
     } catch (error) {
+      console.error(error);
       res.status(500).send("Error generating PDF");
     }
   });
