@@ -18,6 +18,7 @@ import {
   PostSchema,
   exceptionSchema,
   lectureSchema,
+  assessmentSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -85,3 +86,8 @@ export const Exceptions = mongoose.model(
   "Exceptions",
 );
 export const Lectures = mongoose.model("Lectures", lectureSchema, "Lectures");
+export const Assessment = mongoose.model(
+  "Assessment",
+  assessmentSchema,
+  "Assessment",
+);

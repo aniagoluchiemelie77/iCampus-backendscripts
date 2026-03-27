@@ -94,6 +94,7 @@ export const courseSchema = new mongoose.Schema(
     courseContents: [String],
     resources: [String],
     assignments: [assignmentSchema],
+    tests: [assessmentSchema],
 
     // Nested Sub-documents
     Lectures: [lectureSchema],
@@ -526,6 +527,48 @@ export const exceptionSchema = new mongoose.Schema(
   },
   { timestamps: true }, // Automatically creates createdAt and updatedAt
 );
+const questionSchema = new mongoose.Schema({
+  id: { type: String, required: true }, // Frontend-generated ID
+  type: {
+    type: String,
+    enum: ["MCQ", "ShortAnswer", "TrueFalse"],
+    required: true,
+  },
+  questionText: { type: String, required: true },
+  options: [{ type: String }], // Array of strings for MCQs
+  correctAnswer: { type: String, required: true },
+  points: { type: Number, default: 0 },
+});
+export const assessmentSchema = new mongoose.Schema(
+  {
+    id: { type: String, unique: true },
+    courseId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    title: { type: String, required: true, trim: true },
+    description: { type: String },
+    duration: { type: Number, required: true }, // Minutes
+    totalMarks: { type: Number, required: true },
+    questions: [questionSchema], // Array of sub-documents
+    isPublished: { type: Boolean, default: false },
+    status: {
+      type: String,
+      enum: ["published", "draft"],
+      default: "draft",
+    },
+    dueDate: { type: Date, required: true },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  {
+    timestamps: true, // Automatically manages createdAt and updatedAt
+  },
+);
+
+// Ensure a lecturer doesn't accidentally post the same test title twice in one course
+assessmentSchema.index({ courseId: 1, title: 1 });
 
 // Indexing for faster lookups when checking monthly limits
 exceptionSchema.index({ studentId: 1, date: -1 });

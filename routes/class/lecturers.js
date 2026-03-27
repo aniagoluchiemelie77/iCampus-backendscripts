@@ -1,6 +1,14 @@
 import express from "express";
 import { authenticate } from "../../index.js";
-import { Course, Lectures } from "../../tableDeclarations.js";
+import { Course, Lectures, Assessment } from "../../tableDeclarations.js";
+import { customAlphabet } from "nanoid";
+const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const nano = customAlphabet(alphabet, 6);
+
+export const generateAssessmentId = (courseCode = "GEN") => {
+  const year = new Date().getFullYear();
+  return `IC-${courseCode.toUpperCase()}-${year}-${nano()}`;
+};
 
 export default function (User) {
   const router = express.Router();
@@ -216,15 +224,8 @@ export default function (User) {
     "/courses/:courseId/lectures/createSchedule",
     async (req, res) => {
       try {
-        const {
-          date,
-          repeatWeeks,
-          startTime,
-          endTime,
-          location,
-          lectureType,
-          courseId,
-        } = req.body;
+        const { date, repeatWeeks, startTime, endTime, location, courseId } =
+          req.body;
         const finalPayload = req.body;
         const lecturesToCreate = [];
         const datesToCheck = [];
@@ -285,5 +286,89 @@ export default function (User) {
       }
     },
   );
+  // POST: Create or Update an Assessment (Test)
+  router.post("/courses/:courseId/assessments", async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      const {
+        id,
+        title,
+        questions,
+        duration,
+        isPublished,
+        totalMarks,
+        status,
+        dueDate,
+      } = req.body;
+
+      let assessment;
+
+      if (id) {
+        // SCENARIO A: UPDATE EXISTING
+        assessment = await Assessment.findByIdAndUpdate(
+          id,
+          {
+            title,
+            questions,
+            duration,
+            totalMarks,
+            isPublished,
+            status,
+            dueDate,
+            updatedAt: new Date(),
+          },
+          { new: true },
+        );
+      } else {
+        const course = await Course.findOne({ courseId });
+        const personalizedId = generateAssessmentId(
+          course?.courseCode || "TEMP",
+        );
+
+        assessment = new Assessment({
+          id: personalizedId,
+          courseId,
+          title,
+          questions,
+          duration,
+          totalMarks,
+          isPublished,
+          status,
+          dueDate,
+          createdAt: new Date(),
+        });
+
+        await assessment.save();
+        await Course.findOneAndUpdate(
+          { courseId },
+          { $addToSet: { tests: personalizedId } },
+        );
+      }
+
+      res.status(201).json({
+        message: isPublished ? "Assessment Published" : "Draft Synced",
+        data: assessment,
+      });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  // GET: Fetch all assessments for a course
+  router.get("/courses/:courseId/assessments", async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      const assessments = await Assessment.find({ courseId })
+        .sort({ updatedAt: -1 })
+        .select("-__v");
+
+      res.status(200).json({
+        success: true,
+        count: assessments.length,
+        data: assessments,
+      });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   return router;
 }
