@@ -133,11 +133,11 @@ export default function (User) {
   router.post(
     "/ai/extract-course",
     authenticate,
-    upload.single("file"),
+    upload.array("files"),
     async (req, res) => {
       try {
-        if (!req.file) {
-          return res.status(400).json({ message: "No file uploaded" });
+        if (!req.files || req.files.length === 0) {
+          return res.status(400).json({ message: "No files uploaded" });
         }
 
         const model = genAI.getGenerativeModel({
@@ -145,68 +145,57 @@ export default function (User) {
           generationConfig: { responseMimeType: "application/json" },
         });
 
-        // 1. Gemini Extraction (Using the nested structure we discussed)
         const prompt = `
-
-          Extract all details from this course registration document.  
-
-          Return ONLY a valid JSON object with the following structure:
-
-            {
-
-              "studentInfo": {
-
-                "schoolName": "The name of the University/Institution found at the very top logo or header",
-
-                "studentName": "Full name of the student",
-
-                "college": "The college or faculty name",
-
-                "department": "The department name",
-
-                "level": "The level digits only, e.g., 300",
-
-                "matricNo": "The registration/matric number",
-
-                "date": "The date on the document"
-
+          Extract all details from this course registration document. 
+          It may consist of multiple pages or images. Combine the data into one response.
+          
+          Return ONLY a valid JSON object:
+          {
+            "studentInfo": {
+                "schoolName": "University name from header/logo",
+                "studentName": "Full name",
+                "college": "Faculty name",
+                "department": "Department",
+                "level": "Level digits only",
+                "matricNo": "Registration number",
+                "date": "Document date"
             },
-
             "courses": [
-
               {
-
                 "courseCode": "e.g., GET 311",
-
                 "courseTitle": "Full title",
-
                 "semester": 1 or 2,
-
                 "session": "e.g., 2024/2025",
-
                 "credits": Integer
-
               }
-
             ]
-
           }
-
-          Context: For the school name, look at the circular logo at the top (e.g., "University of Port Harcourt" or similar).
-
+          Note: If a course appears across page breaks, do not duplicate it.
         `;
-        const filePart = {
+
+        // 2. Map all files into the filePart array
+        const fileParts = req.files.map((file) => ({
           inlineData: {
-            data: req.file.buffer.toString("base64"),
-            mimeType: req.file.mimetype,
+            data: file.buffer.toString("base64"),
+            mimeType: file.mimetype,
           },
-        };
+        }));
 
-        const result = await model.generateContent([prompt, filePart]);
-        const { studentInfo, courses } = JSON.parse(result.response.text());
+        // 3. Send the prompt + ALL file parts to Gemini
+        const result = await model.generateContent([prompt, ...fileParts]);
 
-        // 2. SECURITY CHECK: Verify document matches the current User
-        // We check matricNumber, schoolName, and level against the authenticated user (req.user)
+        let extraction;
+        try {
+          extraction = JSON.parse(result.response.text());
+        } catch (e) {
+          return res
+            .status(422)
+            .json({ message: "AI returned invalid JSON structure." });
+        }
+
+        const { studentInfo, courses } = extraction;
+
+        // 4. SECURITY CHECK: Verify document matches the current User
         const isOwner =
           studentInfo.matricNo === req.user.matricNumber &&
           studentInfo.schoolName
@@ -215,29 +204,25 @@ export default function (User) {
 
         if (!isOwner) {
           return res.status(403).json({
-            message:
-              "Document verification failed. The Matric Number or School on this file does not match your profile.",
+            message: "Document verification failed. Identity mismatch.",
           });
         }
 
-        // 3. PROCESS EACH COURSE
+        // 5. PROCESS EACH COURSE (Optimized with Promise.all for speed)
         const processedCourseIds = [];
 
         for (const courseData of courses) {
-          // Search if the course already exists in the DB for this school
           let course = await Course.findOne({
             courseCode: courseData.courseCode,
             schoolName: studentInfo.schoolName,
           });
 
           if (course) {
-            // If it exists, add user to studentsEnrolled (using $addToSet to avoid duplicates)
             course.studentsEnrolled.addToSet(req.user.uid);
             await course.save();
           } else {
             let newId;
             let isUnique = false;
-            // If it doesn't exist, create it
             while (!isUnique) {
               newId = generateCourseId();
               const existing = await Course.findOne({ courseId: newId });
@@ -257,19 +242,19 @@ export default function (User) {
           processedCourseIds.push(course.courseId);
         }
 
-        // 4. Update the User's enrolled courses list
+        // 6. Update User's enrolled courses
         await User.findByIdAndUpdate(req.user.uid, {
           $addToSet: { coursesEnrolled: { $each: processedCourseIds } },
         });
 
         res.status(200).json({
-          message: `Courses processed and saved successfully`,
+          message: `Courses processed successfully`,
           studentName: studentInfo.studentName,
-          courses: courses,
+          coursesCount: courses.length,
         });
       } catch (error) {
         console.error("Extraction Error:", error);
-        res.status(500).json({ message: "AI failed to process the document" });
+        res.status(500).json({ message: "Internal Server Error" });
       }
     },
   );
