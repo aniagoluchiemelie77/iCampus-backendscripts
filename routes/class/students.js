@@ -1,8 +1,9 @@
 import express from "express";
 import mongoose from "mongoose";
 import { authenticate } from "../../index.js";
-import { Course, TestSubmission } from "../../tableDeclarations.js";
+import { Course, TestSubmission, Assessment } from "../../tableDeclarations.js";
 import { upload } from "../../workers/multerWorker.js";
+import { createNotification } from "../../services/notificationService.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -19,42 +20,6 @@ session.startTransaction();
 
 export default function (User) {
   const router = express.Router();
-  router.post("/courses", authenticate, async (req, res) => {
-    try {
-      const { payload, user } = req.body;
-
-      if (!payload?.ids || !Array.isArray(payload.ids)) {
-        return res.status(400).json({ message: "Invalid payload format" });
-      }
-      // Fetch courses by courseId and optionally filter by userId
-      const courses = await Course.find({
-        courseId: { $in: payload.ids },
-        studentsEnrolled: user.uid, // optional: if you store enrolled students in each course
-      });
-
-      if (!courses || courses.length === 0) {
-        return res
-          .status(404)
-          .json({ message: "No courses found for this student" });
-      }
-
-      // Format course details
-      const filteredDetails = courses.map((course) => ({
-        courseId: course.courseId,
-        courseCode: course.courseCode,
-        title: course.title,
-        credits: course.credits,
-        semester: course.semester,
-        createdAt: course.createdAt,
-      }));
-
-      console.log("Filtered course details:", filteredDetails);
-      return res.status(200).json({ details: filteredDetails });
-    } catch (error) {
-      console.error("Error fetching course details:", error);
-      return res.status(500).json({ message: "Server error" });
-    }
-  });
   // GET /api/courses?studentId=...&semester=...&session=...
   router.get("/courses", authenticate, async (req, res) => {
     try {
@@ -92,7 +57,7 @@ export default function (User) {
 
       // Find all courses where _id is in the provided array
       const courses = await Course.find({
-        _id: { $in: ids },
+        courseId: { $in: ids },
       }).lean(); // lean() improves performance for read-only ops
 
       res.status(200).json(courses);
@@ -249,6 +214,24 @@ export default function (User) {
         await User.findByIdAndUpdate(req.user.uid, {
           $addToSet: { coursesEnrolled: { $each: processedCourseIds } },
         });
+        // --- NOTIFY STUDENT (Socket + Push + DB) ---
+        createNotification({
+          notificationId: generateNotificationId(),
+          recipientId: req.user.uid,
+          category: "academic",
+          actionType: "COURSES_EXTRACTED",
+          title: "Course Registration Synced",
+          message: `Successfully extracted ${courses.length} courses for the ${studentInfo.level}L ${courses[0]?.semester === 1 ? "1st" : "2nd"} Semester.`,
+          payload: {
+            courseCount: courses.length,
+            level: studentInfo.level,
+            matricNo: studentInfo.matricNo,
+          },
+          sendEmail: false,
+          sendPush: true, // Important confirmation of a manual upload
+          sendSocket: true, // Refresh the "My Courses" list in React Native
+          saveToDb: true,
+        });
 
         res.status(200).json({
           message: `Courses processed successfully`,
@@ -276,16 +259,14 @@ export default function (User) {
       const user = await User.findOne({ uid: studentId });
       if (!user) return res.status(404).json({ message: "User not found" });
 
-      // PRICING: 1 exception = 0.5 iCash (500 NGN)
+      // 1. Pricing & Limits Logic
       const EXCEPTION_COST = 0.5;
-
       if ((user.pointsBalance || 0) < EXCEPTION_COST) {
         return res.status(402).json({
-          message: `Insufficient iCash balance. Required: ${EXCEPTION_COST} iCash (500 NGN / ~$0.36 USD)`,
+          message: `Insufficient iCash balance. Required: ${EXCEPTION_COST} iCash`,
         });
       }
 
-      // Monthly limit logic
       const startOfMonth = new Date();
       startOfMonth.setDate(1);
       startOfMonth.setHours(0, 0, 0, 0);
@@ -295,7 +276,7 @@ export default function (User) {
         createdAt: { $gte: startOfMonth },
       });
 
-      const limits = { free: 3, pro: 5, premium: 7 };
+      const limits = { free: 2, pro: 4, premium: 6 };
       const userLimit = limits[user.plan] || 3;
 
       if (monthlyCount >= userLimit) {
@@ -304,8 +285,7 @@ export default function (User) {
         });
       }
 
-      // Deducting 0.5 iCash
-      // Using simple subtraction since 0.5 is clean in binary/floating point
+      // 2. Process Transaction & Create Record
       user.pointsBalance -= EXCEPTION_COST;
 
       const exception = new CourseException({
@@ -324,6 +304,25 @@ export default function (User) {
       await user.save();
       await exception.save();
 
+      // 3. NOTIFY STUDENT (Socket + Push + DB Only)
+      createNotification({
+        notificationId: generateNotificationId(),
+        recipientId: user.uid,
+        category: "finance", // Using finance because iCash was spent
+        actionType: "EXCEPTION_SUBMITTED",
+        title: "Exception Submitted",
+        message: `Your exception for ${courseInfo.courseCode} was received. 0.5 iCash has been deducted.`,
+        payload: {
+          exceptionId: exception.id,
+          newBalance: user.pointsBalance,
+          courseCode: courseInfo.courseCode,
+        },
+        sendEmail: false, // Per your requirement
+        sendPush: true, // Confirming the "payment" and submission
+        sendSocket: true, // Force UI balance update
+        saveToDb: true,
+      });
+
       res.status(201).json({
         success: true,
         message: "Exception submitted successfully",
@@ -335,20 +334,20 @@ export default function (User) {
     }
   });
   router.post("/test/submit", authenticate, async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
     try {
       const { testId, answers, proctoringData } = req.body;
-
-      // 1. Basic Validation
       if (!testId || !answers) {
         return res
           .status(400)
           .json({ message: "Missing required submission data." });
       }
 
-      // 2. Check for existing submission (Prevent double submission)
       const existingSubmission = await TestSubmission.findOne({
         testId,
-        studentId: req.user.uid, // req.user comes from your auth middleware
+        studentId: req.user.uid,
       });
 
       if (existingSubmission) {
@@ -356,17 +355,18 @@ export default function (User) {
           .status(403)
           .json({ message: "You have already submitted this test." });
       }
-      const isFlagged = proctoringData.tabSwitchCount >= 3;
 
+      // 2. Proctoring Logic
+      const isFlagged = (proctoringData?.tabSwitchCount || 0) >= 3;
       const verificationStatus = proctoringData?.entrySelfieUrl
         ? "Verified"
         : "Unverified_Camera_Failure";
 
-      // 4. Create the record
+      // 3. Create Record
       const newSubmission = new TestSubmission({
         verificationStatus,
         ...req.body,
-        studentId: req.user.uid, // Always take ID from the verified token, not the body
+        studentId: req.user.uid,
         isFlagged: isFlagged,
         proctoringData: {
           deviceId: proctoringData?.deviceId || "Unknown",
@@ -376,19 +376,39 @@ export default function (User) {
       });
 
       await newSubmission.save({ session });
-      await User.findOneAndUpdate(
+
+      // 4. Update User Profile
+      const updatedUser = await User.findOneAndUpdate(
         { uid: req.user.uid },
         {
           $addToSet: { completedTests: testId },
-          $inc: { overallProgress: 5 }, // Increment progress by a set percentage
+          $inc: { overallProgress: 5 },
         },
-        { session },
+        { session, new: true },
       );
 
       await session.commitTransaction();
 
-      // 5. Update Student Progress (Optional)
-      // You could update the student's 'Completed' array in their User profile here
+      // 5. NOTIFY STUDENT (Socket + Push + DB)
+      const test = await Assessment.findOne({ id: testId });
+
+      createNotification({
+        notificationId: generateNotificationId(),
+        recipientId: updatedUser.uid,
+        category: "academic",
+        actionType: "TEST_SUBMITTED",
+        title: "Assessment Submitted!",
+        message: `Your submission for "${test?.title || "the assessment"}" has been received successfully.`,
+        payload: {
+          testId,
+          submissionId: newSubmission._id,
+          isFlagged,
+        },
+        sendEmail: false, // Per requirement
+        sendPush: true, // Immediate confirmation on device
+        sendSocket: true, // Update UI state
+        saveToDb: true,
+      });
 
       res.status(201).json({
         success: true,
@@ -401,8 +421,9 @@ export default function (User) {
       res
         .status(500)
         .json({ message: "Internal Server Error", error: error.message });
+    } finally {
+      session.endSession();
     }
-    session.endSession();
   });
   return router;
 }

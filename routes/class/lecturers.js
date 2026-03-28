@@ -1,13 +1,10 @@
 import express from "express";
-import cron from "node-cron";
 import { authenticate, protect } from "../../index.js";
 import {
   Course,
   Lectures,
   Assessment,
   TestSubmission,
-  User,
-  Notification,
 } from "../../tableDeclarations.js";
 import { createNotification } from "../../services/notificationService.js";
 import { customAlphabet } from "nanoid";
@@ -20,46 +17,6 @@ export const generateAssessmentId = (courseCode = "GEN") => {
   const year = new Date().getFullYear();
   return `IC-${courseCode.toUpperCase()}-${year}-${nano()}`;
 };
-cron.schedule("0 * * * *", async () => {
-  const now = new Date();
-  const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-
-  try {
-    // 1. Find tests that expired in the last hour
-    const expiredTests = await Assessment.find({
-      dueDate: { $lt: now, $gte: oneHourAgo },
-    });
-
-    for (const test of expiredTests) {
-      // 2. Identify students who MISSED the test
-      const submissions = await TestSubmission.find({
-        testId: test._id,
-      }).distinct("studentId");
-      const enrolledStudents = await User.find({
-        enrolledCourses: test.courseId,
-      });
-
-      const absentees = enrolledStudents.filter(
-        (s) => !submissions.includes(s.uid),
-      );
-      test.isAnalyzed = true;
-      await test.save();
-      await Notification.create({
-        notificationId: generateNotificationId(),
-        userId: test.lecturerId,
-        isRead: false,
-        isPublic: false,
-        title: "Test Deadline Reached",
-        message: `${test.title} is now closed. Submissions: ${submissions.length}. Absentees: ${absentees.length}.`,
-        type: "Test Deadline Alert",
-        metadata: { testId: test._id },
-      });
-      console.log(`Notification sent to lecturer for test: ${test.title}`);
-    }
-  } catch (error) {
-    console.error("Cron Job Error:", error);
-  }
-});
 
 export default function (User) {
   const router = express.Router();
@@ -136,6 +93,7 @@ export default function (User) {
       res.status(500).json({ message: "Error fetching lecturer courses" });
     }
   });
+  //Update Course content
   router.post(
     "/courses/updateContent/:courseId",
     authenticate,
@@ -158,6 +116,30 @@ export default function (User) {
           return res.status(404).json({ message: "Course not found" });
         }
 
+        // --- NOTIFY STUDENTS (In-App Only) ---
+        const students = await User.find({
+          usertype: "student",
+          department: updatedCourse.department,
+          level: updatedCourse.level,
+        }).select("uid");
+
+        // Fire and forget: update the notification bell for all students
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "CONTENT_UPDATED",
+            title: "Course Syllabus Updated",
+            message: `the course contents for ${updatedCourse.courseCode} have been updated by the lecturer/instructor.`,
+            payload: { courseId: updatedCourse._id },
+            sendEmail: false,
+            sendPush: false,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+
         res.status(200).json({
           message: "Course content updated successfully",
           courseContents: updatedCourse.courseContents,
@@ -170,20 +152,44 @@ export default function (User) {
       }
     },
   );
+  // --- 1. UPLOAD MATERIAL ---
   router.post(
     "/courses/uploadMaterial/:courseId",
     authenticate,
     async (req, res) => {
       try {
         const { courseId } = req.params;
-        // Assuming 'req.file.path' or 'req.file.location' (for S3) is provided by your upload middleware
         const fileUrl = req.file.path;
+        const fileName = req.file.originalname || "New Resource";
 
         const updatedCourse = await Course.findByIdAndUpdate(
           courseId,
-          { $push: { resources: fileUrl } }, // Add new file to general resources
+          { $push: { resources: fileUrl } },
           { new: true },
         );
+
+        // NOTIFY STUDENTS
+        const students = await User.find({
+          usertype: "student",
+          department: updatedCourse.department,
+          level: updatedCourse.level,
+        }).select("uid");
+
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "MATERIAL_UPLOADED",
+            title: "New Study Material",
+            message: `A new resource file has been uploaded for ${updatedCourse.courseTitle}.`,
+            payload: { courseId, fileName },
+            sendEmail: false, // Per your requirement
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
 
         res.status(200).json({
           message: "File uploaded",
@@ -194,6 +200,7 @@ export default function (User) {
       }
     },
   );
+  // --- 2. CREATE ASSIGNMENT ---
   router.post(
     "/courses/:courseId/assignments",
     authenticate,
@@ -211,7 +218,7 @@ export default function (User) {
           submissionMethod,
           lectureId,
           courseId,
-          fileUrl: req.file ? req.file.path : null, // If lecturer uploaded a brief
+          fileUrl: req.file ? req.file.path : null,
           submissions: [],
         };
 
@@ -224,12 +231,42 @@ export default function (User) {
         if (!course)
           return res.status(404).json({ message: "Course not found" });
 
+        // NOTIFY STUDENTS
+        const students = await User.find({
+          usertype: "student",
+          department: course.department,
+          level: course.level,
+        }).select("uid");
+
+        const formattedDate = new Date(dueDate).toLocaleDateString();
+
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "ASSIGNMENT_CREATED",
+            title: "New Assignment",
+            message: `New assignment uploaded for ${course.courseTitle}: "${title}". Due: ${formattedDate}`,
+            payload: {
+              courseId,
+              assignmentTitle: title,
+              dueDate: formattedDate,
+            },
+            sendEmail: false, // Per your requirement
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+
         res.status(201).json(course.assignments);
       } catch (error) {
         res.status(500).json({ message: error.message });
       }
     },
   );
+  //Approve or disapprove exceptions
   router.patch("/exceptions/:id/status", authenticate, async (req, res) => {
     try {
       const { id } = req.params;
@@ -520,7 +557,6 @@ export default function (User) {
   router.get("/tests/:testId/download-analysis", protect, async (req, res) => {
     try {
       const { testId } = req.params;
-
       // 1. Fetch Data
       const test = await Assessment.findOne({ id: testId });
       if (!test) return res.status(404).send("Assessment not found");

@@ -6,8 +6,8 @@ create no-reply@icampus.com and support@icampus.com
 */
 const transporter = nodemailer.createTransport({
   host: process.env.TRANSPORTER_EMAIL_HOST,
-  port: 465, 
-  secure: true, 
+  port: 465,
+  secure: true,
   auth: {
     user: process.env.TRANSPORTER_AUTH_USER,
     pass: process.env.TRANSPORTER_AUTH_PASS,
@@ -18,7 +18,7 @@ const transporter = nodemailer.createTransport({
  * Sends an email
  * @param {Object} options - { to, subject, text, html }
  */
-const sendEmail = async ({ to, subject, text, html }) => {
+export const sendEmail = async ({ to, subject, text, html }) => {
   try {
     const info = await transporter.sendMail({
       from: `"iCampus Support" <${process.env.EMAIL_USER}>`,
@@ -34,5 +34,3 @@ const sendEmail = async ({ to, subject, text, html }) => {
     throw error;
   }
 };
-
-module.exports = { sendEmail };

@@ -68,8 +68,12 @@ export const passwordResetSuccessTemplate = (userName, time) => {
   `;
   return emailWrapper(body);
 };
-// services/emailTemplates.js
-export const testCreatedTemplate = (userName, courseCode, testTitle, dueDate) => {
+export const testCreatedTemplate = (
+  userName,
+  courseCode,
+  testTitle,
+  dueDate,
+) => {
   const body = `
     <h2 style="color: ${theme.colors.primary};">New Assessment Created</h2>
     <p>Hi ${userName},</p>
@@ -89,22 +93,110 @@ export const testCreatedTemplate = (userName, courseCode, testTitle, dueDate) =>
   `;
   return emailWrapper(body);
 };
-export const lectureScheduledTemplate = (userName, topic, type, location, time, date) => {
-  const isOnline = type === 'Online';
+export const emailVerificationTemplate = (code) => {
+  const body = `
+    <div style="text-align: center;">
+      <h2 style="color: ${theme.colors.primary};">Welcome to iCampus</h2>
+      <p>Please use the verification code below to complete your registration:</p>
+      
+      <div style="background: ${theme.colors.background}; padding: 25px; margin: 20px 0; border: 2px dashed ${theme.colors.primary}; border-radius: 8px;">
+        <span style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: ${theme.colors.primary};">
+          ${code}
+        </span>
+      </div>
+
+      <p style="font-size: 12px; color: #888;">
+        This code will expire in 15 minutes. If you didn't request this, you can safely ignore this email.
+      </p>
+    </div>
+  `;
+  return emailWrapper(body);
+};
+
+//Still check urls for these templates
+export const lectureScheduledTemplate = (
+  userName,
+  topic,
+  type,
+  location,
+  time,
+  date,
+) => {
+  const isOnline = type === "Online";
   const body = `
     <h2 style="color: ${theme.colors.primary};">Lecture Scheduled</h2>
     <p>Hi ${userName}, a new ${type} lecture has been set for <strong>${topic}</strong>.</p>
     <p><strong>Time:</strong> ${time}</p>
     <p><strong>Date:</strong> ${date}</p>
     
-    ${isOnline ? `
+    ${
+      isOnline
+        ? `
       <div style="margin: 20px 0; text-align: center;">
         <p>You can join the live lecture session using the link below:</p>
         <a href="${location}" style="color: ${theme.colors.primary}; font-weight: bold;">${location}</a>
       </div>
-    ` : `
+    `
+        : `
       <p><strong>Location:</strong> ${location}</p>
-    `}
+    `
+    }
+  `;
+  return emailWrapper(body);
+};
+export const testAnalysisTemplate = (
+  userName,
+  testTitle,
+  submissions,
+  absentees,
+  testId,
+) => {
+  const body = `
+    <h2 style="color: ${theme.colors.primary}; margin-top: 0;">Assessment Overview</h2>
+    <p>Hi ${userName},</p>
+    <p>The automated performance report for <strong>${testTitle}</strong> is now available.</p>
+    
+    <table style="width: 100%; margin: 20px 0; border-collapse: collapse; background: ${theme.colors.background}; border-radius: 8px; overflow: hidden;">
+      <tr>
+        <td style="padding: 15px; border-bottom: 1px solid #eee;"><strong>Total Submissions:</strong></td>
+        <td style="padding: 15px; border-bottom: 1px solid #eee;">${submissions}</td>
+      </tr>
+      <tr>
+        <td style="padding: 15px;"><strong>Total Absentees:</strong></td>
+        <td style="padding: 15px;">${absentees}</td>
+      </tr>
+    </table>
+
+    <p style="font-size: 14px; color: #666;">
+      You can download the full PDF report (including top performers and pass/fail rates) from your lecturer dashboard.
+    </p>
+
+    <div style="text-align: center; margin-top: 30px;">
+      <a href="${theme.branding.websiteUrl}/lecturer/reports/${testId}" 
+         style="background-color: ${theme.colors.primary}; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">
+        View Detailed Analysis
+      </a>
+    </div>
+  `;
+  return emailWrapper(body);
+};
+
+export const passwordResetTemplate = (userName, code) => {
+  const body = `
+    <div style="text-align: center;">
+      <h2 style="color: ${theme.colors.primary};">Password Reset Request</h2>
+      <p>Hi ${userName}, use the code below to reset your iCampus account password:</p>
+      
+      <div style="background: #f4f4f4; padding: 20px; margin: 20px 0; border-radius: 8px;">
+        <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: ${theme.colors.primary};">
+          ${code}
+        </span>
+      </div>
+
+      <p style="font-size: 13px; color: #666;">
+        This code is valid for <strong>12 hours</strong>. If you did not request this, please ignore.
+      </p>
+    </div>
   `;
   return emailWrapper(body);
 };

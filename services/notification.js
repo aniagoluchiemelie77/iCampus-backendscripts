@@ -1,9 +1,18 @@
 // services/notificationService.js
 import Notification from '../tableDeclarations'; 
 import { getIO } from '../controllers/socket.js'; 
-import { sendEmail } from './emailService.js'; 
-import { sendPushNotification } from './pushNotificationService';
-import { purchaseTemplate, loginAlertTemplate, passwordResetSuccessTemplate } from './emailTemplates.js';
+import sendEmail from "./emailService.js";
+import { sendPushNotification } from "./pushNotificationService";
+import {
+  purchaseTemplate,
+  passwordResetTemplate,
+  testAnalysisTemplate,
+  lectureScheduledTemplate,
+  loginAlertTemplate,
+  passwordResetSuccessTemplate,
+  testCreatedTemplate,
+  emailVerificationTemplate,
+} from "./emailTemplates.js";
 
 const createNotification = async ({
   notificationId,
@@ -20,7 +29,7 @@ const createNotification = async ({
   sendEmail = false,
   sendPush = true,
   sendSocket = true,
-  saveToDb = true
+  saveToDb = true,
 }) => {
   try {
     let notificationRecord = null;
@@ -33,69 +42,120 @@ const createNotification = async ({
         title,
         message,
         relatedEntity: { entityId, entityType },
-        payload
+        payload,
       });
       await notificationRecord.save();
     }
     if (sendSocket) {
-        const io = getIO();
-        io.to(recipientId).emit('new_notification', notificationRecord || { title, message, payload });
+      const io = getIO();
+      io.to(recipientId).emit(
+        "new_notification",
+        notificationRecord || { title, message, payload },
+      );
     }
     if (sendEmail && recipientEmail) {
-        let htmlContent = '';
-        let subject = 'iCampus Notification';
-        switch (actionType) {
-            case 'PURCHASE_DEBIT':
-                subject = 'Successful Purchase - iCampus';
-                htmlContent = purchaseTemplate(payload.userName, payload.productName, payload.amount, payload.downloadUrl);
-                break; 
-            case 'NEW_LOGIN':
-                subject = 'Security Alert: New Login Detected';
-                htmlContent = loginAlertTemplate(payload.userName, payload.ipAddress, new Date().toLocaleString());
-                break;
-            case 'PASSWORD_CHANGED':
-                subject = 'Security Alert: Password Updated';
-                htmlContent = passwordResetSuccessTemplate(
-                    payload.userName, 
-                    payload.time || new Date().toLocaleString()
-                );
-                break;
-            case 'TEST_CREATED':
-                subject = `New Assessment: ${payload.courseCode}`;
-                htmlContent = testCreatedTemplate(
-                    payload.userName, 
-                    payload.courseCode, 
-                    payload.testTitle, 
-                    payload.dueDate || 'Check app for details'
-                );
-                break;
-            case 'LECTURE_SCHEDULED':
-                subject = `New Lecture: ${payload.topicName}`;
-                htmlContent = lectureScheduledTemplate(
-                    payload.userName,
-                    payload.topicName,
-                    payload.lectureType,
-                    payload.location,
-                    payload.time,
-                    payload.date
-                );
-                break;
-               // Add more cases for 'TEST_CREATED', 'NEW_FOLLOWER', etc.
-        }
-        if (htmlContent) {
-            await sendEmail({
-                to: recipientEmail,
-                subject,
-                html: htmlContent
-            });
-        }
+      let htmlContent = "";
+      let subject = "iCampus Notification";
+      switch (actionType) {
+        case "PURCHASE_DEBIT":
+          subject = "Successful Purchase - iCampus";
+          htmlContent = purchaseTemplate(
+            payload.userName,
+            payload.productName,
+            payload.amount,
+            payload.downloadUrl,
+          );
+          break;
+        case "NEW_LOGIN":
+          subject = "Security Alert: New Login Detected";
+          htmlContent = loginAlertTemplate(
+            payload.userName,
+            payload.ipAddress,
+            new Date().toLocaleString(),
+          );
+          break;
+        case "PASSWORD_CHANGED":
+          subject = "Security Alert: Password Updated";
+          htmlContent = passwordResetSuccessTemplate(
+            payload.userName,
+            payload.time || new Date().toLocaleString(),
+          );
+          break;
+        case "TEST_CREATED":
+          subject = `New Assessment: ${payload.courseCode}`;
+          htmlContent = testCreatedTemplate(
+            payload.userName,
+            payload.courseCode,
+            payload.testTitle,
+            payload.dueDate || "Check app for details",
+          );
+          break;
+        case "LECTURE_SCHEDULED":
+          subject = `New Lecture: ${payload.topicName}`;
+          htmlContent = lectureScheduledTemplate(
+            payload.userName,
+            payload.topicName,
+            payload.lectureType,
+            payload.location,
+            payload.time,
+            payload.date,
+          );
+          break;
+        case "MATERIAL_UPLOADED":
+          subject = "New Course Material Available"; // Fallback if ever needed
+          break;
+        case "ASSIGNMENT_CREATED":
+          subject = "New Assignment Posted";
+          break;
+        case "EXCEPTION_UPDATED":
+          subject = `Update on your Exception: ${payload.courseCode}`;
+          break;
+        case "CONTENT_UPDATED":
+          subject = `Syllabus Update: ${payload.courseCode}`;
+          break;
+        case "TEST_ANALYSIS_READY":
+          subject = `Academic Report: ${payload.testTitle}`;
+          htmlContent = testAnalysisTemplate(
+            payload.userName,
+            payload.testTitle,
+            payload.submissionCount,
+            payload.absenteeCount,
+            payload.testId,
+          );
+          break;
+        case "TEST_SUBMITTED":
+          subject = "Submission Confirmed"; // Fallback label
+          break;
+        case "EXCEPTION_SUBMITTED":
+          subject = "Exception Payment Confirmed"; // Internal/DB label
+          break;
+        case "COURSES_EXTRACTED":
+          subject = "Registration Sync Complete";
+          break;
+        case "PASSWORD_RESET_CODE":
+          subject = "Your iCampus Verification Code";
+          htmlContent = passwordResetTemplate(payload.userName, payload.code);
+          break;
+        case "EMAIL_VERIFICATION":
+          subject = "Verify your iCampus Account";
+          htmlContent = emailVerificationTemplate(payload.code);
+          break;
+        // Add more cases for 'TEST_CREATED', 'NEW_FOLLOWER', etc.
+      }
+      if (htmlContent) {
+        await sendEmail({
+          to: recipientEmail,
+          subject,
+          html: htmlContent,
+        });
+      }
     }
     if (sendPush) {
-        await sendPushNotification(recipientId, title, message, {
-            category,
-            actionType,
-            ...payload 
-       });
+      await sendPushNotification(recipientId, title, message, {
+        category,
+        actionType,
+        ...payload,
+      });
     }
 
     return notificationRecord;

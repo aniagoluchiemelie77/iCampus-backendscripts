@@ -301,33 +301,40 @@ export default function (User) {
   router.post("/verifyEmail", async (req, res) => {
     try {
       const { email } = req.body;
-
-      if (!email) {
-        return res.status(400).json({ message: "Email is required" });
-      }
-      console.log("Verifying email for:", email);
+      if (!email) return res.status(400).json({ message: "Email is required" });
 
       const code = Math.floor(100000 + Math.random() * 900000).toString();
       const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-      console.log("Generated code:", code, "Expires at:", expiresAt);
-      console.log("Creating or updating verification record for:", email);
+      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+
       await EmailVerification.findOneAndUpdate(
         { email },
         { code: hashedCode, expiresAt },
         { upsert: true, new: true },
       );
 
-      // 🐇 Send job to RabbitMQ
-      console.log("Sending verification email to queue for:", email);
+      // 🐇 RabbitMQ: Send structured notification job
       const channel = getChannel();
       await channel.assertQueue("emailQueue");
-      console.log("Queue asserted, sending message...");
+
+      const notificationJob = {
+        notificationId: generateNotificationId(),
+        recipientEmail: email,
+        category: "security",
+        actionType: "EMAIL_VERIFICATION",
+        title: "Verify your Email",
+        message: `Your verification code is ${code}. It expires in 15 minutes.`,
+        payload: { code },
+        sendEmail: true,
+        sendPush: false, // User likely isn't logged in yet
+        saveToDb: false, // Don't save transient OTPs to permanent DB
+      };
+
       channel.sendToQueue(
         "emailQueue",
-        Buffer.from(JSON.stringify({ email, code })),
+        Buffer.from(JSON.stringify(notificationJob)),
       );
-      console.log("Message sent to queue for:", email);
+
       return res.status(200).json({
         message: "Verification code sent",
         email,
@@ -462,30 +469,48 @@ export default function (User) {
     res.status(200).json({ isVerified: user.isVerified });
   });
   router.post("/forgotPassword", async (req, res) => {
-    console.log("step 1");
-    const { email } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) {
-      res.status(404).json({ message: "User not found" });
-      console.log("Substep2");
-      return;
+    try {
+      const { email } = req.body;
+      const user = await User.findOne({ email });
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+
+      const code = generateCode();
+
+      // Store code in your temporary object/Redis
+      verificationCodes[email] = {
+        code,
+        expiresAt: Date.now() + 12 * 60 * 60 * 1000, // 12 hours
+      };
+
+      // --- UNIFIED NOTIFICATION ---
+      await createNotification({
+        notificationId: generateNotificationId(),
+        recipientId: user.uid,
+        recipientEmail: email,
+        category: "security",
+        actionType: "PASSWORD_RESET_CODE",
+        title: "Password Reset Code",
+        message: `Your 6-digit verification code is ${code}. It expires in 12 hours.`,
+        payload: {
+          code: code,
+          userName: user.firstName || "User",
+        },
+        sendEmail: true, // Critical for password reset
+        sendPush: true, // Helpful if they are on their phone
+        sendSocket: true,
+        saveToDb: false, // Usually, we don't save sensitive codes to the notification DB
+      });
+
+      res.status(201).json({
+        message: "Verification code sent, check your email",
+      });
+    } catch (error) {
+      console.error("Forgot Password Error:", error);
+      res.status(500).json({ message: "Internal Server Error" });
     }
-    const code = generateCode();
-    verificationCodes[email] = {
-      code,
-      expiresAt: Date.now() + 12 * 60 * 60 * 1000, // expires in 12 hours
-    };
-    console.log(`Verification code for ${email}: ${code}`);
-    await transporter.sendMail({
-      from: '"iCampus" <admin@uniquetechcontentwriter.com>',
-      to: email,
-      subject: "Password Reset Verification Code",
-      html: `<h1>Your 6-digit verification code is: ${code}</h1>
-             <p>You are required to use the above code within 12 hours of password reset request</p>`,
-    });
-    res.status(201).json({
-      message: "Verification code sent, check your email",
-    });
   });
   router.post("/verifyCode", (req, res) => {
     const { email, code } = req.body;
