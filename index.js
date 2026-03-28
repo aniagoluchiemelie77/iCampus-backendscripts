@@ -22,6 +22,7 @@ import { connectQueue } from "./rabbitmq.js";
 import { client } from "./workers/reditFile.js";
 import { initEmailQueue } from "./controllers/emailProducers.js";
 import { startWorker } from "./workers/emailWorker.js";
+import { init } from "./controllers/socket.js";
 
 dotenv.config();
 
@@ -31,18 +32,10 @@ dotenv.config();
 })();
 
 const app = express();
-const httpServer = createServer(app); // 3. Wrap Express app with HTTP server
-
-// 4. Initialize Socket.io
-const io = new Server(httpServer, {
-  cors: {
-    origin: "*", // Adjust this in production for better security
-    methods: ["GET", "POST", "PATCH"],
-  },
-});
+const httpServer = createServer(app);
 
 // 5. Make 'io' accessible to all routes via req.app.get("socketio")
-app.set("socketio", io);
+init(httpServer);
 
 app.use(cors());
 app.use((req, res, next) => {
@@ -58,14 +51,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Socket.io connection listener
-io.on("connection", (socket) => {
-  console.log(`📡 New client connected: ${socket.id}`);
-
-  socket.on("disconnect", () => {
-    console.log(`📡 Client disconnected: ${socket.id}`);
-  });
-});
 
 const MONGO_URI = "mongodb://127.0.0.1:27017/iCampus";
 client.on("error", (err) => {

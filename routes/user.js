@@ -6,7 +6,7 @@ import crypto from "crypto";
 import { getChannel } from "../rabbitmq.js";
 import axios from "axios";
 import jwt from "jsonwebtoken";
-
+import { createNotification } from "../services/notificationService.js";
 import {
   authenticate,
   loginLimiter,
@@ -102,6 +102,9 @@ const generateTokens = async (user) => {
 
   // Save refresh token to DB
   user.refreshTokens.push(refreshToken);
+  if (user.refreshTokens.length > 5) {
+    user.refreshTokens.shift();
+  }
   await user.save();
   return { accessToken, refreshToken };
 };
@@ -166,41 +169,46 @@ export default function (User) {
 
   router.post("/login", loginLimiter, async (req, res) => {
     const { identifier, password, ipAddress, location } = req.body;
+
     try {
-      const user = await User.findOne({
-        $or: [{ email: identifier }],
-      });
-      if (!user) {
-        return res.status(404).json({ error: "User not found" });
-      }
+      const user = await User.findOne({ $or: [{ email: identifier }] });
+      if (!user) return res.status(404).json({ error: "User not found" });
+
       const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res.status(401).json({ error: "Invalid password" });
-      }
-      const { password: _, ...safeUser } = user.toObject();
+      if (!isMatch) return res.status(401).json({ error: "Invalid password" });
+
       const { accessToken, refreshToken } = await generateTokens(user);
-      // Compare IP address
+
+      // --- SECURITY CHECK: NEW IP ---
       if (!user.ipAddress.includes(ipAddress)) {
         user.ipAddress.push(ipAddress);
+        if (user.isFirstLogin) user.isFirstLogin = false;
         await user.save();
-        const loginMessage = `A login attempt from ${ipAddress} at ${location} on ${formattedTime}, ${formattedDate} was detected. Click here if this wasn't you.`;
-        const notificationId = generateNotificationId();
-        await Notification.create({
-          userId: user.uid || user._id.toString(),
-          notificationId: notificationId,
-          title: "Successful Login",
-          message: loginMessage,
-          isPublic: false,
-          isRead: false,
-          createdAt: new Date(),
+        await createNotification({
+          notificationId: generateNotificationId(),
+          recipientId: user.uid,
+          recipientEmail: user.email,
+          category: "auth",
+          actionType: "NEW_LOGIN",
+          title: "Security Alert: New Login",
+          message: `A login was detected from ${ipAddress} in ${location || "an unknown location"}.`,
+          payload: {
+            userName: user.firstName || "User",
+            ipAddress: ipAddress,
+            location: location || "Unknown",
+          },
+          sendEmailFlag: true,
+          sendEmail: true,
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
         });
-      }
-      if (user.isFirstLogin) {
+      } else if (user.isFirstLogin) {
         user.isFirstLogin = false;
         await user.save();
       }
 
-      console.log("✅ Login succeeded:", user.uid);
+      const { password: _, ...safeUser } = user.toObject();
       res.status(200).json({
         message: "Login successful",
         user: safeUser,
@@ -208,7 +216,6 @@ export default function (User) {
         refreshToken,
       });
     } catch (error) {
-      console.error("❌ Login failed:", error);
       res.status(500).json({ error: error.message || "Login error" });
     }
   });
@@ -492,31 +499,58 @@ export default function (User) {
   });
   router.post("/changePassword", async (req, res) => {
     const { email, password, confirmPassword } = req.body;
+
+    // 1. Validation Logic
     const record = verificationCodes[email];
     if (!record || !record.verified) {
       return res
         .status(403)
         .json({ message: "Email not verified for password reset" });
     }
+
     if (!password || !confirmPassword || password !== confirmPassword) {
       return res
         .status(400)
         .json({ message: "Passwords do not match or are missing" });
     }
+
     try {
       const user = await User.findOne({ email });
       if (!user) return res.status(404).json({ message: "User not found" });
+
+      // 2. Update Password
       const hashedPassword = await bcrypt.hash(password, 10);
       user.password = hashedPassword;
+
+      // Optional security: Clear refresh tokens to force re-login on all devices
+      user.refreshTokens = [];
       await user.save();
+
+      // 3. Trigger Omnichannel Notification
+      const now = new Date();
+      const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
+
+      await createNotification({
+        notificationId: generateNotificationId(),
+        recipientId: user.uid,
+        recipientEmail: user.email,
+        category: "auth",
+        actionType: "PASSWORD_CHANGED",
+        title: "Password Changed",
+        message: `Your password was successfully updated on ${formattedTime}.`,
+        payload: {
+          userName: user.firstName || "User",
+          time: formattedTime,
+        },
+        sendEmailFlag: true,
+        sendEmail: true,
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      });
+      // 4. Cleanup
       delete verificationCodes[email];
-      await transporter.sendMail({
-        from: '"iCampus" <admin@uniquetechcontentwriter.com>',
-        to: email,
-        subject: "Successful Password Reset Attempt",
-        html: `<h1>Successful Password Reset Attempt</h1>
-               <p>Dear User, a successful password reset was carried out by your account on ${formattedDate}, if this is not you, reach out to our email: admin@uniquetechcontentwriter.com immediately.</p>`,
-      }); // Clean up after success
+
       res.status(200).json({ message: "Password changed successfully" });
     } catch (error) {
       console.error("Password change error:", error);

@@ -9,6 +9,7 @@ import {
   User,
   Notification,
 } from "../../tableDeclarations.js";
+import { createNotification } from "../../services/notificationService.js";
 import { customAlphabet } from "nanoid";
 import PDFDocument from "pdfkit-table";
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -255,10 +256,35 @@ export default function (User) {
           await lecturer.save();
         }
       }
+
       // 4. Update Exception Record
       exception.status = status;
       exception.lecturerComment = lecturerComment || "";
       await exception.save();
+
+      // 5. NOTIFY THE STUDENT (Socket + Push + DB only)
+      // Find the student who submitted the exception
+      const student = await User.findOne({ uid: exception.userId });
+
+      if (student) {
+        createNotification({
+          notificationId: generateNotificationId(),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "EXCEPTION_UPDATED",
+          title: `Exception ${status === "approved" ? "Approved " : "Rejected "}`,
+          message: `Your request for ${exception.courseCode} has been ${status}. ${lecturerComment ? "Comment: " + lecturerComment : ""}`,
+          payload: {
+            exceptionId: id,
+            status: status,
+            courseCode: exception.courseCode,
+          },
+          sendEmail: false, // Per your requirement
+          sendPush: true, // Important for students to see
+          sendSocket: true, // Real-time UI update
+          saveToDb: true,
+        });
+      }
 
       res.status(200).json({
         success: true,
@@ -269,36 +295,44 @@ export default function (User) {
       res.status(500).json({ message: error.message });
     }
   });
-  // Example Express Route
+  // Create Lectures
   router.post(
     "/courses/:courseId/lectures/createSchedule",
     async (req, res) => {
       try {
-        const { date, repeatWeeks, startTime, endTime, location, courseId } =
-          req.body;
+        const {
+          date,
+          repeatWeeks,
+          startTime,
+          endTime,
+          location,
+          courseId,
+          topicName,
+          lectureType,
+        } = req.body;
         const finalPayload = req.body;
         const lecturesToCreate = [];
         const datesToCheck = [];
 
-        // 1. Generate all dates first to check for conflicts in bulk
+        // 1. Generate dates
         for (let i = 0; i < (repeatWeeks || 1); i++) {
           const nextDate = new Date(date);
           nextDate.setDate(nextDate.getDate() + i * 7);
           datesToCheck.push(nextDate.toISOString().split("T")[0]);
         }
 
-        // 2. Optimized Bulk Conflict Check
+        // 2. Conflict Check
         const conflict = await Lectures.findOne({
           date: { $in: datesToCheck },
           $or: [
             {
               lectureType: "Physical",
-              location: location,
+              location,
               startTime: { $lt: endTime },
               endTime: { $gt: startTime },
             },
             {
-              courseId: courseId, // Or lecturerId if you have it in req.user
+              courseId,
               startTime: { $lt: endTime },
               endTime: { $gt: startTime },
             },
@@ -307,11 +341,11 @@ export default function (User) {
 
         if (conflict) {
           return res.status(409).json({
-            message: `Conflict detected on ${conflict.date}! You have a class from ${conflict.startTime} to ${conflict.endTime}.`,
+            message: `Conflict detected on ${conflict.date}! Class exists from ${conflict.startTime} to ${conflict.endTime}.`,
           });
         }
 
-        // 3. Build the array
+        // 3. Build array
         datesToCheck.forEach((d) => {
           lecturesToCreate.push({
             ...finalPayload,
@@ -322,13 +356,55 @@ export default function (User) {
           });
         });
 
-        // 4. Save all and send ONE response
+        // 4. Save to DB
         const result = await Lectures.insertMany(lecturesToCreate);
+
+        // 5. NOTIFICATION LOGIC (Asynchronous)
+        // Find students in this course's department/level
+        const course = await Course.findOne({ courseId });
+        const students = await User.find({
+          usertype: "student",
+          department: course.department,
+          level: course.level,
+        }).select("uid email firstName");
+
+        // We use Promise.all to handle notifications without blocking the response
+        const notificationPromises = students.map((student) =>
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: student.uid,
+            recipientEmail: student.email,
+            category: "classroom",
+            actionType: "LECTURE_SCHEDULED",
+            title: "New Lecture Scheduled",
+            message: `A new ${lectureType} session for ${topicName} has been set.`,
+            payload: {
+              userName: student.firstName,
+              topicName: topicName,
+              lectureType: lectureType,
+              location: location,
+              time: startTime,
+              date:
+                datesToCheck.length > 1
+                  ? `${datesToCheck[0]} (Repeats for ${repeatWeeks} weeks)`
+                  : datesToCheck[0],
+            },
+            sendEmail: true, // Crucial for scheduling
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          }),
+        );
+
+        // Trigger notifications in the background
+        Promise.all(notificationPromises).catch((err) =>
+          console.error("Notification Error:", err),
+        );
 
         res.status(201).json({
           message: "Lectures scheduled successfully",
           count: result.length,
-          lecture: result[0], // Return the first one for the success modal preview
+          lecture: result[0],
         });
       } catch (error) {
         console.error(error);
@@ -374,6 +450,28 @@ export default function (User) {
         const personalizedId = generateAssessmentId(
           course?.courseCode || "TEMP",
         );
+        if (isPublished) {
+          const students = await User.find({
+            usertype: "student",
+            department: course.department,
+            level: course.level,
+          }).select("uid email");
+          students.forEach((student) => {
+            createNotification({
+              notificationId: generateNotificationId(),
+              recipientId: student.uid,
+              category: "classroom",
+              actionType: "TEST_CREATED",
+              title: "New Assessment Posted",
+              message: `A new test "${title}" has been posted for ${course.courseCode}.`,
+              payload: { courseId, assessmentId: assessment.id },
+              sendEmail: false,
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            });
+          });
+        }
 
         assessment = new Assessment({
           id: personalizedId,
@@ -387,7 +485,6 @@ export default function (User) {
           dueDate,
           createdAt: new Date(),
         });
-
         await assessment.save();
         await Course.findOneAndUpdate(
           { courseId },

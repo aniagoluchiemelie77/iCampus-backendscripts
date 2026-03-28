@@ -250,27 +250,24 @@ export const productSchema = new mongoose.Schema({
 
 export const notificationSchema = new mongoose.Schema(
   {
-    id: Number,
-    notificationId: { type: String },
-    userId: { type: String },
-    title: { type: String },
+    notificationId: { type: String, required: true },
+    recipientId: { type: String, required: true, index: true }, // Who gets it
+    senderId: { type: String }, // Who triggered it (optional)
+    category: {
+      type: String,
+      enum: ["auth", "social", "classroom", "store", "finance", "profile"],
+      required: true,
+    },
+    actionType: { type: String, required: true }, // e.g., 'TEST_CREATED', 'NEW_FOLLOWER'
+    title: { type: String, required: true },
     message: { type: String, required: true },
     isRead: { type: Boolean, default: false },
-    isPublic: { type: Boolean, default: false },
-    relatedSchoolName: { type: String },
-    department: { type: String },
-    level: { type: String },
-    relatedCommunityId: { type: String },
-    createdAt: { type: Date, default: Date.now },
-    relatedEventId: { type: String },
-    relatedPollId: { type: String },
-    relatedClassSessionId: { type: String },
-    type: { type: String },
-    purchaseId: { type: String },
-    status: { type: String },
-    transactionIdMid: { type: String },
-    fileUrls: [{ type: String }],
-    metadata: [{ type: String }],
+    // Use a flexible object for different IDs based on the category
+    relatedEntity: {
+      entityId: String, // Could be postId, testId, purchaseId
+      entityType: String, // 'Post', 'Test', 'Transaction'
+    },
+    payload: { type: Object }, // Any extra data (IP address, old vs new time)
   },
   { timestamps: true },
 );
