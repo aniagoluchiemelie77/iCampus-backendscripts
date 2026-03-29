@@ -584,118 +584,120 @@ export default function (User) {
   });
   router.get("/notifications", async (req, res) => {
     try {
-      const { userId, limit = "50", offset = "0", unread, type } = req.query;
+      // 1. Destructure based on what the Frontend is actually sending
+      const {
+        userId,
+        limit = "50",
+        offset = "0",
+        unread,
+        category,
+      } = req.query;
 
-      if (!userId || typeof userId !== "string") {
-        return res.status(400).json({ message: "Missing or invalid userId" });
+      if (!userId) {
+        return res.status(400).json({ message: "Missing userId" });
       }
 
-      const parsedLimit = Math.max(parseInt(limit), 1);
-      const parsedOffset = Math.max(parseInt(offset), 0);
-
-      // Base filter: notifications for the user or public
       const filter = {
-        $or: [{ userId }, { isPublic: true }],
+        $or: [{ recipientId: userId }, { isPublic: true }],
       };
 
-      // Optional: filter unread notifications
+      // 3. Match Frontend: url += '&unread=true'
       if (unread === "true") {
         filter.isRead = false;
       }
 
-      // Optional: filter by notification type
-      if (type && typeof type === "string") {
-        filter.type = type;
+      // 4. Match Frontend: url += '&category=finance'
+      if (category) {
+        filter.category = category;
       }
 
-      const total = await Notification.countDocuments(filter);
       const notifications = await Notification.find(filter)
         .sort({ createdAt: -1 })
-        .skip(parsedOffset)
-        .limit(parsedLimit);
+        .skip(Math.max(parseInt(offset), 0))
+        .limit(Math.max(parseInt(limit), 1));
 
-      res.status(200).json({ notifications, total });
+      res.status(200).json({ notifications });
     } catch (error) {
       console.error("Error fetching notifications:", error);
-      res.status(500).json({ message: "Server error fetching notifications" });
+      res.status(500).json({ message: "Server error" });
     }
   });
+  // GET a single notification by ID
   router.get("/notifications/:id", async (req, res) => {
     try {
       const { id } = req.params;
 
-      const notification = await Notification.findOne({ notificationId: id });
+      // 1. Search using both ID types for maximum compatibility
+      const notification = await Notification.findOne({
+        $or: [{ notificationId: id }],
+      });
 
+      // 2. Error handling if not found
       if (!notification) {
-        return res.status(404).json({ message: "Notification not found" });
+        return res.status(404).json({
+          message: "Notification not found",
+          notification: null,
+        });
       }
 
-      let purchaseDetails = null;
-
-      if (notification.type === "transactions") {
-        const user = await User.findOne({ uid: notification.userId });
-
-        if (user && Array.isArray(user.purchaseHistory)) {
-          purchaseDetails = user.purchaseHistory.find(
-            (entry) => entry.id === notification.purchaseId,
-          );
-        }
+      // 3. Optional: Automatically mark as read when viewed in detail
+      if (!notification.isRead) {
+        notification.isRead = true;
+        await notification.save();
       }
 
+      // 4. Return the data in the structure your frontend expects (data.notification)
       res.status(200).json({
         notification,
-        ...(purchaseDetails && { purchaseDetails }),
       });
     } catch (error) {
-      console.error("Error fetching notification:", error);
-      res.status(500).json({ message: "Server error fetching notification" });
-    }
-  });
-
-  router.get("/notifications/count", async (req, res) => {
-    try {
-      const { userId, unread, type } = req.query;
-
-      if (!userId || typeof userId !== "string") {
-        return res.status(400).json({ message: "Missing or invalid userId" });
-      }
-
-      // Base filter: notifications for the user or public
-      const filter = {
-        $or: [{ userId }, { isPublic: true }],
-      };
-
-      // Optional: filter unread notifications
-      if (unread === "true") {
-        filter.isRead = false;
-      }
-
-      // Optional: filter by notification type
-      if (type && typeof type === "string") {
-        filter.type = type;
-      }
-
-      const count = await Notification.countDocuments(filter);
-
-      res.status(200).json({ count });
-    } catch (error) {
-      console.error("Error fetching notification count:", error);
+      console.error("Error fetching single notification:", error);
       res
         .status(500)
-        .json({ message: "Server error fetching notification count" });
+        .json({ message: "Server error fetching notification details" });
+    }
+  });
+  // router.js
+  router.patch("/notifications/mark-all-read/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+
+      // Update all notifications where recipientId matches and isRead is false
+      const result = await Notification.updateMany(
+        {
+          $or: [{ recipientId: userId }],
+          isRead: false,
+        },
+        { $set: { isRead: true } },
+      );
+
+      res.status(200).json({
+        message: "All notifications marked as read",
+        modifiedCount: result.modifiedCount,
+      });
+    } catch (error) {
+      console.error("Error marking all as read:", error);
+      res.status(500).json({ message: "Server error" });
     }
   });
   router.patch("/notifications/:id/read", async (req, res) => {
     try {
       const { id } = req.params;
-      const notification = await Notification.findOne({ notificationId: id });
+      const notification = await Notification.findOneAndUpdate(
+        {
+          $or: [{ notificationId: id }],
+        },
+        { isRead: true },
+        { new: true },
+      );
+
       if (!notification) {
         return res.status(404).json({ message: "Notification not found" });
       }
-      notification.isRead = true;
-      await notification.save();
 
-      res.status(200).json({ message: "Notification marked as read" });
+      res
+        .status(200)
+        .json({ message: "Notification marked as read", notification });
     } catch (error) {
       console.error("Error marking notification as read:", error);
       res.status(500).json({ message: "Server error" });

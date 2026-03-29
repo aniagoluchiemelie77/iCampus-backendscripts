@@ -140,7 +140,7 @@ const createNotification = async ({
           subject = "Verify your iCampus Account";
           htmlContent = emailVerificationTemplate(payload.code);
           break;
-        // Add more cases for 'TEST_CREATED', 'NEW_FOLLOWER', etc.
+        // There are more cases: 'NEW_FOLLOWER', 'POST_MENTIONS', 'TRANSACTIONS" etc.
       }
       if (htmlContent) {
         await sendEmail({
