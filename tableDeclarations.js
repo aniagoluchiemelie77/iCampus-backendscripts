@@ -84,16 +84,16 @@ export const UniversitiesAndColleges = mongoose.model(
 export const Exceptions = mongoose.model(
   "Exceptions",
   exceptionSchema,
-  "Exceptions",
+  "exceptions",
 );
 export const Lectures = mongoose.model("Lectures", lectureSchema, "Lectures");
 export const Assessment = mongoose.model(
   "Assessment",
   assessmentSchema,
-  "Assessment",
+  "assessment",
 );
 export const TestSubmission = mongoose.model(
   "TestSubmission",
   testSubmissionSchema,
-  "TestSubmission",
+  "testSubmission",
 );

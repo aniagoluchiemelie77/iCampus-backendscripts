@@ -449,7 +449,7 @@ export default function (User) {
       }
     },
   );
-  // POST: Create or Update an Assessment (Test)
+  // POST: Create or Update an Assessment
   router.post("/courses/:courseId/assessments", async (req, res) => {
     try {
       const { courseId } = req.params;
@@ -465,9 +465,10 @@ export default function (User) {
       } = req.body;
 
       let assessment;
+      let isNewPublish = false;
 
       if (id) {
-        // SCENARIO A: UPDATE EXISTING
+        // SCENARIO A: UPDATE
         assessment = await Assessment.findByIdAndUpdate(
           id,
           {
@@ -483,32 +484,11 @@ export default function (User) {
           { new: true },
         );
       } else {
+        // SCENARIO B: CREATE
         const course = await Course.findOne({ courseId });
         const personalizedId = generateAssessmentId(
           course?.courseCode || "TEMP",
         );
-        if (isPublished) {
-          const students = await User.find({
-            usertype: "student",
-            department: course.department,
-            level: course.level,
-          }).select("uid email");
-          students.forEach((student) => {
-            createNotification({
-              notificationId: generateNotificationId(),
-              recipientId: student.uid,
-              category: "classroom",
-              actionType: "TEST_CREATED",
-              title: "New Assessment Posted",
-              message: `A new test "${title}" has been posted for ${course.courseCode}.`,
-              payload: { courseId, assessmentId: assessment.id },
-              sendEmail: false,
-              sendPush: true,
-              sendSocket: true,
-              saveToDb: true,
-            });
-          });
-        }
 
         assessment = new Assessment({
           id: personalizedId,
@@ -523,10 +503,40 @@ export default function (User) {
           createdAt: new Date(),
         });
         await assessment.save();
+
         await Course.findOneAndUpdate(
           { courseId },
           { $addToSet: { tests: personalizedId } },
         );
+        isNewPublish = isPublished; // Only notify if it's a new published test
+      }
+
+      // TRIGGER NOTIFICATIONS
+      if (isNewPublish) {
+        const course = await Course.findOne({ courseId });
+        const students = await User.find({
+          usertype: "student",
+          department: course.department,
+          level: course.level,
+        }).select("uid");
+
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "TEST_CREATED",
+            title: "New Assessment Posted",
+            message: `A new test "${title}" has been posted for ${course.courseCode}.`,
+            payload: {
+              courseId: courseId,
+              assessmentId: assessment.id || assessment._id,
+            },
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
       }
 
       res.status(201).json({

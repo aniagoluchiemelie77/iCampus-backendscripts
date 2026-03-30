@@ -1,7 +1,12 @@
 import express from "express";
 import mongoose from "mongoose";
 import { authenticate } from "../../index.js";
-import { Course, TestSubmission, Assessment } from "../../tableDeclarations.js";
+import {
+  Course,
+  TestSubmission,
+  Assessment,
+  Lectures,
+} from "../../tableDeclarations.js";
 import { upload } from "../../workers/multerWorker.js";
 import { createNotification } from "../../services/notificationService.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -423,6 +428,71 @@ export default function (User) {
         .json({ message: "Internal Server Error", error: error.message });
     } finally {
       session.endSession();
+    }
+  });
+  // GET: Check test status and fetch details for a student
+  router.get(
+    "/courses/:courseId/assessments/:assessmentId/check-status",
+    async (req, res) => {
+      try {
+        const { assessmentId } = req.params;
+        const studentId = req.user.uid;
+
+        // 1. Fetch the test details
+        const test = await Assessment.findOne({
+          $or: [{ id: assessmentId }],
+        });
+
+        if (!test) {
+          return res.status(404).json({ message: "Assessment not found" });
+        }
+
+        // 2. Check if the student has already submitted this specific test
+        const submission = await TestSubmission.findOne({
+          testId: assessmentId,
+          studentId: studentId,
+        });
+
+        // 3. Return the merged state
+        res.status(200).json({
+          hasSubmitted: !!submission,
+          submissionDetails: submission || null,
+          test: test,
+        });
+      } catch (error) {
+        console.error("Error checking test status:", error);
+        res
+          .status(500)
+          .json({ message: "Server error checking assessment status" });
+      }
+    },
+  );
+  // GET: Fetch all lectures for a student's enrolled courses
+  router.get("/lectures/timeline", async (req, res) => {
+    try {
+      const studentId = req.user.uid;
+      const enrolledCourses = await Course.find({
+        studentsEnrolled: studentId,
+      }).select("courseId courseCode courseTitle");
+      const courseIds = enrolledCourses.map((c) => c.courseId);
+      const lectures = await Lectures.find({
+        courseId: { $in: courseIds },
+        status: { $ne: "cancelled" },
+      }).sort({ date: 1, startTime: 1 });
+      const decoratedLectures = lectures.map((lecture) => {
+        const courseInfo = enrolledCourses.find(
+          (c) => c.courseId === lecture.courseId,
+        );
+        return {
+          ...lecture._doc,
+          courseCode: courseInfo?.courseCode,
+          courseTitle: courseInfo?.courseTitle,
+        };
+      });
+
+      res.status(200).json({ success: true, data: decoratedLectures });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
     }
   });
   return router;
