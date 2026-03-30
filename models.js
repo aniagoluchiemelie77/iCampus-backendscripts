@@ -32,6 +32,7 @@ const purchaseHistorySchema = new mongoose.Schema(
   { _id: false },
 );
 export const lectureSchema = new mongoose.Schema({
+  id: { type: String, Unique: true },
   topicName: { type: String, required: true },
   lectureType: {
     type: String,

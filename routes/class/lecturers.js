@@ -566,6 +566,8 @@ export default function (User) {
   });
   router.get("/tests/:testId/download-analysis", protect, async (req, res) => {
     try {
+      const token = req.headers.authorization?.split(" ")[1] || req.query.token;
+      if (!token) return res.status(401).send("Unauthorized");
       const { testId } = req.params;
       // 1. Fetch Data
       const test = await Assessment.findOne({ id: testId });
@@ -774,6 +776,166 @@ export default function (User) {
     } catch (error) {
       console.error(error);
       res.status(500).send("Error generating PDF");
+    }
+  });
+  // GET: /tests/:testId/analysis-data
+  router.get("/tests/:testId/analysis-data", authenticate, async (req, res) => {
+    try {
+      const { testId } = req.params;
+      const test = await Assessment.findOne({ id: testId });
+      if (!test) return res.status(404).json({ message: "Not found" });
+
+      const submissions = await TestSubmission.find({ testId });
+      const passMark = test.totalMarks / 2;
+      const passedCount = submissions.filter((s) => s.score >= passMark).length;
+      const failedCount = submissions.length - passedCount;
+
+      const topPerformers = [...submissions]
+        .sort((a, b) => b.score - a.score)
+        .slice(0, 3);
+
+      res.json({
+        test,
+        submissions,
+        passedCount,
+        failedCount,
+        passRate: ((passedCount / (submissions.length || 1)) * 100).toFixed(1),
+        topPerformers,
+      });
+    } catch (error) {
+      res.status(500).send("Error");
+    }
+  });
+  // PUT route to postpone a specific lecture
+  router.put(
+    "/courses/:courseId/lectures/:lectureId/postpone",
+    authenticate,
+    async (req, res) => {
+      try {
+        const { lectureId, courseId } = req.params;
+        const { newDate, newStartTime, topicName } = req.body;
+
+        // 1. Update the specific lecture
+        const updatedLecture = await Lectures.findByIdAndUpdate(
+          lectureId,
+          {
+            date: newDate,
+            startTime: newStartTime,
+            status: "postponed",
+          },
+          { new: true },
+        );
+
+        if (!updatedLecture)
+          return res.status(404).json({ message: "Lecture not found" });
+
+        // 2. Fetch students to notify (similar to your create logic)
+        const course = await Course.findOne({ courseId });
+        const students = await User.find({
+          usertype: "student",
+          department: course.department,
+          level: course.level,
+        }).select("uid email firstName");
+
+        // 3. Send Notifications
+        const notificationPromises = students.map((student) =>
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: student.uid,
+            recipientEmail: student.email,
+            category: "classroom",
+            actionType: "LECTURE_POSTPONED",
+            title: "Lecture Rescheduled",
+            message: `The lecture "${topicName}" has been postponed to ${newDate} at ${newStartTime}.`,
+            payload: {
+              userName: student.firstName,
+              topicName: topicName,
+              newDate: newDate,
+              newTime: newStartTime,
+            },
+            sendEmail: false,
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          }),
+        );
+
+        Promise.all(notificationPromises).catch((err) =>
+          console.error("Notify Error:", err),
+        );
+
+        res.status(200).json({
+          message: "Lecture postponed and students notified",
+          updatedLecture,
+        });
+      } catch (error) {
+        res.status(500).json({ message: "Internal Server Error" });
+      }
+    },
+  );
+  // DELETE: /users/lecturers/class/lectures/:lectureId
+  router.delete("/lectures/:lectureId", authenticate, async (req, res) => {
+    try {
+      const { lectureId } = req.params;
+
+      // 1. Find the lecture using the custom 'id' field
+      const lecture = await Lectures.findOne({ id: lectureId });
+
+      if (!lecture) {
+        return res.status(404).json({ message: "Lecture not found" });
+      }
+
+      const { courseId, topicName, date } = lecture;
+
+      // 2. Delete the lecture using the same custom 'id' field
+      await Lectures.findOneAndDelete({ id: lectureId });
+
+      // 3. Fetch course details to identify target students
+      const course = await Course.findOne({ courseId });
+
+      if (course) {
+        // 4. Find all students in the same department and level
+        const students = await User.find({
+          usertype: "student",
+          department: course.department,
+          level: course.level,
+        }).select("uid email firstName");
+
+        // 5. Trigger notifications via your utility
+        const notificationPromises = students.map((student) =>
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: student.uid,
+            recipientEmail: student.email,
+            category: "classroom",
+            actionType: "LECTURE_CANCELLED",
+            title: "Lecture Cancelled",
+            message: `The lecture "${topicName}" scheduled for ${date} has been cancelled.`,
+            payload: {
+              userName: student.firstName,
+              topicName: topicName,
+              courseId: courseId,
+            },
+            sendEmail: false,
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          }),
+        );
+
+        // Run in background so the response isn't delayed
+        Promise.all(notificationPromises).catch((err) =>
+          console.error("Delete Notification Error:", err),
+        );
+      }
+
+      return res.status(200).json({
+        success: true,
+        message: "Lecture deleted and students notified locally.",
+      });
+    } catch (error) {
+      console.error("Delete Lecture Error:", error);
+      res.status(500).json({ message: "Internal server error" });
     }
   });
   return router;

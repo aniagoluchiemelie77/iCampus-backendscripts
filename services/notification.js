@@ -140,6 +140,26 @@ const createNotification = async ({
           subject = "Verify your iCampus Account";
           htmlContent = emailVerificationTemplate(payload.code);
           break;
+        case "LECTURE_CANCELLED":
+          title = "Lecture Cancelled";
+          priority = "high";
+          // We don't need to include a 'Join' link in the push payload for a cancelled class
+          dataPayload = {
+            click_action: "FLUTTER_NOTIFICATION_CLICK", // Or your RN equivalent
+            type: "LECTURE_CANCELLED",
+            courseId: payload.courseId,
+          };
+          break;
+
+        case "LECTURE_POSTPONED":
+          title = "Lecture Rescheduled";
+          priority = "normal";
+          dataPayload = {
+            type: "LECTURE_POSTPONED",
+            newDate: payload.newDate,
+            newTime: payload.newTime,
+          };
+          break;
         // There are more cases: 'NEW_FOLLOWER', 'POST_MENTIONS', 'TRANSACTIONS" etc.
       }
       if (htmlContent) {
