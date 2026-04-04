@@ -558,6 +558,7 @@ export const assessmentSchema = new mongoose.Schema(
       enum: ["published", "draft"],
       default: "draft",
     },
+    scheduledStart: { type: Date, default: Date.now },
     dueDate: { type: Date, required: true },
     createdAt: { type: Date, default: Date.now },
     updatedAt: { type: Date, default: Date.now },

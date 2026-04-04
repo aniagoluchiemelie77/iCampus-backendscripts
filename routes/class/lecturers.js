@@ -461,16 +461,25 @@ export default function (User) {
         isPublished,
         totalMarks,
         status,
+        scheduledStart,
         dueDate,
       } = req.body;
 
       let assessment;
-      let isNewPublish = false;
+      let shouldNotify = false;
 
-      if (id) {
+      // 1. FIND EXISTING OR PREPARE NEW
+      const existingAssessment = id ? await Assessment.findOne({ id }) : null;
+
+      if (existingAssessment) {
         // SCENARIO A: UPDATE
-        assessment = await Assessment.findByIdAndUpdate(
-          id,
+        // Logic: Notify if it wasn't published before, but is being published now
+        if (!existingAssessment.isPublished && isPublished) {
+          shouldNotify = true;
+        }
+
+        assessment = await Assessment.findOneAndUpdate(
+          { id }, // Use your custom id field
           {
             title,
             questions,
@@ -478,6 +487,9 @@ export default function (User) {
             totalMarks,
             isPublished,
             status,
+            scheduledStart: scheduledStart
+              ? new Date(scheduledStart)
+              : undefined,
             dueDate,
             updatedAt: new Date(),
           },
@@ -499,20 +511,25 @@ export default function (User) {
           totalMarks,
           isPublished,
           status,
+          scheduledStart: scheduledStart ? new Date(scheduledStart) : undefined,
           dueDate,
           createdAt: new Date(),
         });
+
         await assessment.save();
 
+        // Link to course
         await Course.findOneAndUpdate(
           { courseId },
           { $addToSet: { tests: personalizedId } },
         );
-        isNewPublish = isPublished; // Only notify if it's a new published test
+
+        // Notify immediately if created as "Published"
+        if (isPublished) shouldNotify = true;
       }
 
-      // TRIGGER NOTIFICATIONS
-      if (isNewPublish) {
+      // 2. TRIGGER NOTIFICATIONS (Handles both Create and Update-to-Publish)
+      if (shouldNotify) {
         const course = await Course.findOne({ courseId });
         const students = await User.find({
           usertype: "student",
@@ -530,7 +547,7 @@ export default function (User) {
             message: `A new test "${title}" has been posted for ${course.courseCode}.`,
             payload: {
               courseId: courseId,
-              assessmentId: assessment.id || assessment._id,
+              assessmentId: assessment.id,
             },
             sendPush: true,
             sendSocket: true,
@@ -539,11 +556,12 @@ export default function (User) {
         });
       }
 
-      res.status(201).json({
+      res.status(existingAssessment ? 200 : 201).json({
         message: isPublished ? "Assessment Published" : "Draft Synced",
         data: assessment,
       });
     } catch (error) {
+      console.error("Assessment Error:", error);
       res.status(500).json({ message: error.message });
     }
   });
