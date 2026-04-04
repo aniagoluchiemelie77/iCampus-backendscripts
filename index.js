@@ -106,31 +106,6 @@ mongoose
   .catch((err) => {
     console.error("❌ MongoDB connection error:", err);
   });
-export const authenticate = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    return res.status(401).json({ message: "Authorization token missing" });
-  }
-  const token = authHeader.split(" ")[1];
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded;
-    next();
-  } catch (err) {
-    return res.status(403).json({ message: "Invalid or expired token" });
-  }
-};
-export const loginLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000, // 15 minutes
-  max: 5, // limits each IP to 5 login attempts per windowMs
-  message: {
-    error: "Too many login attempts. Please try again after 15 minutes.",
-  },
-  standardHeaders: true, // Return rate limit info in headers
-  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-});
 export const removeOutOfStockProducts = async () => {
   try {
     const result = await Product.deleteMany({ inStock: { $eq: 0 } });
@@ -139,34 +114,7 @@ export const removeOutOfStockProducts = async () => {
     console.error("Error deleting out-of-stock products:", error);
   }
 };
-export const addUserRecord = async (userId, type, status, message) => {
-  const now = new Date();
-  const refDate = now.toISOString().split("T")[0]; // YYYY-MM-DD
-  const refTime = now.toTimeString().split(" ")[0]; // HH:MM:SS
 
-  await UserRecords.updateOne(
-    { userId },
-    {
-      $push: {
-        records: {
-          type,
-          status,
-          message,
-          refDate,
-          refTime,
-        },
-      },
-    },
-    { upsert: true },
-  );
-};
-export const emailLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,
-  max: 5,
-  message: {
-    error: "Too many requests, try again later.",
-  },
-});
 export const transporter = nodemailer.createTransport({
   host: "sandbox.smtp.mailtrap.io",
   port: 2525,
@@ -175,34 +123,4 @@ export const transporter = nodemailer.createTransport({
     pass: process.env.TRANSPORTER_AUTH_PASS,
   },
 });
-// Example of your Auth Middleware
-export const protect = async (req, res, next) => {
-  let token;
-
-  // 1. Check standard Header
-  if (req.headers.authorization?.startsWith("Bearer")) {
-    token = req.headers.authorization.split(" ")[1];
-  } 
-  // 2. Check Query String (Essential for PDF downloads via browser)
-  else if (req.query.token) {
-    token = req.query.token;
-  }
-
-  if (!token) {
-    return res.status(401).json({ message: "Not authorized, no token" });
-  }
-
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findOne({ uid: decoded.id });
-    if (!user) {
-      return res.status(401).json({ message: "User no longer exists" });
-    }
-
-    req.user = user;
-    next();
-  } catch (error) {
-    res.status(401).json({ message: "Token is not valid" });
-  }
-};
 //MongoDB connection: mongod --dbpath "D:\MongoDB\data"

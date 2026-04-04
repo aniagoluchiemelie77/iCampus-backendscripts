@@ -1,5 +1,5 @@
 import express from "express";
-import { authenticate, protect } from "../../index.js";
+import { authenticate, protect } from "../../middleware/auth.js";
 import {
   Course,
   Lectures,

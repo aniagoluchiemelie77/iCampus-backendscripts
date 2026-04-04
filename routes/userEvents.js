@@ -1,5 +1,5 @@
 import express from "express";
-import { authenticate } from "../index.js";
+import { authenticate } from "../middleware/auth.js";
 import { Event } from "../tableDeclarations.js";
 
 export default function (Event) {

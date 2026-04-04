@@ -12,7 +12,7 @@ import {
   loginLimiter,
   addUserRecord,
   emailLimiter,
-} from "../index.js";
+} from "../middleware/auth.js";
 import { client } from "../workers/reditFile.js";
 import {
   UniversitiesAndColleges,
@@ -24,6 +24,7 @@ import {
   EmailVerification,
   OperationalInstitutions,
   Exceptions,
+  Lectures,
 } from "../tableDeclarations.js";
 import multer from "multer";
 import Tesseract from "tesseract.js";
@@ -1111,8 +1112,6 @@ export default function (User) {
   router.get("/exceptions/course/:courseId", authenticate, async (req, res) => {
     try {
       const { courseId } = req.params;
-
-      // Fetch all exceptions linked to this courseId
       const exceptions = await Exceptions.find({ courseId }).sort({ date: -1 });
 
       res.status(200).json(exceptions);
@@ -1175,7 +1174,10 @@ export default function (User) {
     try {
       const { courseId } = req.params;
       const course = await Course.findOne({ courseId: courseId })
-        .populate("lecturerIds", "firstname lastname profilePic")
+        .populate(
+          "lecturerIds studentsEnrolled",
+          "firstname lastname profilePic",
+        )
         .exec();
 
       if (!course) {
@@ -1244,6 +1246,30 @@ export default function (User) {
       });
     } catch (error) {
       res.status(500).json({ message: error.message });
+    }
+  });
+  // GET /api/lectures/:lectureId
+  router.get("/courses/lectures/:lectureId", async (req, res) => {
+    try {
+      const { lectureId } = req.params;
+      const lecture = await Lectures.findOne({ id: lectureId });
+      if (!lecture) {
+        return res.status(404).json({ error: "Lectures session not found" });
+      }
+      const now = new Date();
+      const startTime = new Date(lecture.startTime);
+
+      if (lecture.status === "scheduled" && now >= startTime) {
+        lecture.status = "ongoing";
+        await lecture.save();
+      }
+
+      res.json(lecture);
+    } catch (err) {
+      console.error("Fetch lecture error:", err);
+      res
+        .status(500)
+        .json({ error: "Server error while fetching lecture details" });
     }
   });
 

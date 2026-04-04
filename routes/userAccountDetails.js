@@ -1,5 +1,5 @@
 import express from "express";
-import { authenticate, addUserRecord } from "../index.js";
+import { authenticate, addUserRecord } from "../middleware/auth.js";
 import { UserBankOrCardDetails } from "../tableDeclarations.js";
 
 const now = new Date();

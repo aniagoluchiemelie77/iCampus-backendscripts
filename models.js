@@ -31,6 +31,14 @@ const purchaseHistorySchema = new mongoose.Schema(
   },
   { _id: false },
 );
+export const attendanceSchema = new mongoose.Schema({
+  studentId: { type: String, required: true },
+  lectureId: { type: String, required: true },
+  courseId: { type: String, required: true },
+  status: { type: String, enum: ["Present", "Absent"], required: true },
+  checkData: [Boolean],
+  timestamp: { type: Date, default: Date.now },
+});
 export const lectureSchema = new mongoose.Schema({
   id: { type: String, Unique: true },
   topicName: { type: String, required: true },
@@ -52,7 +60,7 @@ export const lectureSchema = new mongoose.Schema({
   isTaught: { type: Boolean, default: false },
   videoUrl: String,
   resources: [String],
-  attendance: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+  attendance: [attendanceSchema],
   getAttendanceMode: { type: String, enum: ["Uploaded", "Online"] },
 });
 const assignmentSchema = new mongoose.Schema({
@@ -610,3 +618,4 @@ exceptionSchema.index({ studentId: 1, date: -1 });
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 // Add this to the end of your PostSchema file
 PostSchema.index({ userId: 1, createdAt: -1 });
+attendanceSchema.index({ studentId: 1, lectureId: 1 }, { unique: true });
