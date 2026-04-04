@@ -90,8 +90,8 @@ export const courseSchema = new mongoose.Schema(
     credits: { type: Number, required: true },
 
     // Arrays
-    lecturerIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
-    studentsEnrolled: [{ type: mongoose.Schema.Types.ObjectId, ref: "User" }],
+    lecturerIds: [{ type: String, ref: "User" }],
+    studentsEnrolled: [{ type: String, ref: "User" }],
     courseContents: [String],
     resources: [String],
     assignments: [assignmentSchema],
@@ -405,6 +405,7 @@ export const universitiesAndCollegesSchema = new mongoose.Schema({
 });
 export const PostSchema = new mongoose.Schema(
   {
+    postId: { type: String, required: true, unique: true },
     userId: {
       uid: { type: String, ref: "User" },
       firstname: { type: String, ref: "User" },
@@ -452,6 +453,13 @@ export const PostSchema = new mongoose.Schema(
     originalPostId: { type: String },
     repostsCount: { type: Number, default: 0 },
     sharesCount: { type: Number, default: 0 },
+  },
+  { timestamps: true },
+);
+export const followSchema = new mongoose.Schema(
+  {
+    followerId: { type: String, ref: "User", index: true }, // The person doing the following
+    followingId: { type: String, ref: "User", index: true }, // The person being followed
   },
   { timestamps: true },
 );
@@ -600,3 +608,5 @@ assessmentSchema.index({ courseId: 1, title: 1 });
 // Indexing for faster lookups when checking monthly limits
 exceptionSchema.index({ studentId: 1, date: -1 });
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// Add this to the end of your PostSchema file
+PostSchema.index({ userId: 1, createdAt: -1 });

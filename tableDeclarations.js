@@ -20,6 +20,7 @@ import {
   lectureSchema,
   assessmentSchema,
   testSubmissionSchema,
+  followSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -97,3 +98,4 @@ export const TestSubmission = mongoose.model(
   testSubmissionSchema,
   "testSubmission",
 );
+export const Follow = mongoose.model("Follow", followSchema, "follows");

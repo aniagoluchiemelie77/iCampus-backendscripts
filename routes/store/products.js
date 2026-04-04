@@ -12,15 +12,7 @@ import {
   User,
 } from "../../tableDeclarations.js";
 import { transporter } from "../../index.js";
-
-function generateNotificationId(length = 7) {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
+import { generateNotificationId } from "../../utils/idGenerator.js";
 
 export default function (Category) {
   const router = express.Router();

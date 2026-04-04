@@ -34,6 +34,7 @@ axiosRetry(axios, { retries: 3 });
 //import { fromPath } from "pdf2pic";
 import mammoth from "mammoth";
 import fs from "fs";
+import { generateNotificationId } from "../utils/idGenerator.js";
 //import { PDFDocument } from "pdf-lib";
 //import sharp from "sharp";
 
@@ -70,15 +71,6 @@ const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
 // Utility to generate 6-digit code
 const generateCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
-
-export function generateNotificationId(length = 7) {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
 function generateUniqueDealId(length = 10) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let result = "";
@@ -742,6 +734,7 @@ export default function (User) {
       return res.status(500).json({ message: "Server error" });
     }
   });
+  //
   router.post(
     "/upload-course-form",
     upload.single("file"),

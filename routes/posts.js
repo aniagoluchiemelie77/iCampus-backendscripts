@@ -1,5 +1,12 @@
 import express from "express";
 import { client } from "../workers/reditFile.js";
+import { createNotification } from "../services/notificationService.js";
+import { Follow } from "../tableDeclarations.js";
+import {
+  generateNotificationId,
+  generatePostId,
+} from "../utils/idGenerator.js";
+import { extractMentions } from "../utils/postMentionsRegex.js";
 
 export default function (Posts, User) {
   const router = express.Router();
@@ -107,6 +114,22 @@ export default function (Posts, User) {
         Posts.findOneAndUpdate({ postId }, postUpdate, { new: true }),
         User.updateOne({ uid: userId }, userUpdate), // Adjust 'uid' to your User ID field
       ]);
+      if (!isLiked && post.userId.uid !== userId) {
+        const liker = await User.findOne({ uid: userId }).select(
+          "firstname lastname",
+        );
+        createNotification({
+          notificationId: generateNotificationId(),
+          recipientId: post.userId.uid,
+          category: "social",
+          actionType: "POST_LIKED",
+          title: "New Like",
+          message: `${liker.firstname} liked your post.`,
+          payload: { postId: post._id, userId },
+          sendPush: true,
+          saveToDb: true,
+        });
+      }
 
       const io = req.app.get("socketio");
       if (io) io.emit("post_updated", updatedPost);
@@ -252,6 +275,10 @@ export default function (Posts, User) {
       const populatedComment = updatedPost.comments.find(
         (c) => c.commentId === tempCommentId,
       );
+      const commenter = await User.findOne({ uid: userId }).select(
+        "firstname lastname",
+      );
+      const postAuthorId = updatedPost.userId.uid;
 
       // 3. Emit the POPULATED comment via Socket
       const io = req.app.get("socketio");
@@ -267,7 +294,19 @@ export default function (Posts, User) {
           commentsCount: updatedPost.commentsCount,
         });
       }
-
+      if (postAuthorId !== userId) {
+        createNotification({
+          notificationId: generateNotificationId(),
+          recipientId: postAuthorId,
+          category: "social",
+          actionType: "POST_COMMENTED",
+          title: "New Comment",
+          message: `${commenter.firstname} commented on your post: "${comment.substring(0, 30)}..."`,
+          payload: { postId, commentId: tempCommentId },
+          sendPush: true,
+          saveToDb: true,
+        });
+      }
       res.status(201).json(populatedComment);
     } catch (err) {
       res.status(500).json({ error: err.message });
@@ -297,82 +336,134 @@ export default function (Posts, User) {
     }
   });
 
-  // 7. REPOST
+  // 7. REPOST with Notifications to Original Author and Followers (Handle Mentions in Repost Content)
   router.post("/repost", async (req, res) => {
     const { userId, originalPostId, content } = req.body;
+
     try {
-      // 1. Create and Save the repost
+      // 1. Fetch Author details to satisfy denormalized Schema
+      const author = await User.findOne({ uid: userId })
+        .select("firstname lastname username profilePic")
+        .lean();
+
+      if (!author) return res.status(404).json({ message: "User not found" });
+
+      const authorName = `${author.firstname} ${author.lastname}`;
+
+      // 2. Create and Save the repost matching PostSchema
       const repost = new Posts({
-        postId: Math.random().toString(36).slice(2, 11),
-        userId,
+        postId: generatePostId(),
+        userId: {
+          uid: userId,
+          firstname: author.firstname,
+          lastname: author.lastname,
+          profilePic: author.profilePic,
+        },
         content,
         originalPostId,
         isRepost: true,
-        createdAt: new Date().toISOString(),
+        createdAt: new Date(),
       });
-
       await repost.save();
 
-      // 2. Increment original post's count AND get the updated data for the socket
+      // 3. Increment original post's count AND get the original author's UID
       const updatedOriginal = await Posts.findOneAndUpdate(
         { postId: originalPostId },
         { $inc: { repostsCount: 1 } },
         { new: true },
       );
 
-      // 3. Populate the new repost for the feed
-      const populatedRepost = await Posts.findOne({
-        postId: repost.postId,
-      }).populate("userId", "firstname lastname profilePic username");
-
-      // 4. SOCKET EMISSIONS
+      // --- SOCKET EMISSIONS ---
       const io = req.app.get("socketio");
       if (io) {
-        // Broadcast the NEW post to the top of everyone's feed
-        io.emit("new_post", populatedRepost);
-
-        // Broadcast the updated count for the ORIGINAL post
+        io.emit("new_post", repost);
         if (updatedOriginal) {
           io.emit("post_stats_updated", {
             postId: originalPostId,
             stats: {
               repostsCount: updatedOriginal.repostsCount,
-              // Including other stats ensures UI consistency
               likes: updatedOriginal.likes,
               bookmarks: updatedOriginal.bookmarks,
-              impressions: updatedOriginal.impressions,
             },
           });
         }
       }
+      // --- NOTIFICATION LOGIC ---
+      let notifiedUids = new Set();
+      // 4. Notify the Original Post Author
+      if (updatedOriginal && updatedOriginal.userId.uid !== userId) {
+        notifiedUids.add(updatedOriginal.userId.uid);
+        createNotification({
+          notificationId: generateNotificationId(),
+          recipientId: updatedOriginal.userId.uid,
+          category: "social",
+          actionType: "POST_REPOSTED",
+          title: "Post Reposted",
+          message: `${authorName} shared your post.`,
+          payload: { postId: repost.postId, originalPostId },
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        });
+      }
 
-      res.status(201).json(populatedRepost);
+      // 5. Notify Followers
+      const followers = await Follow.find({ followingId: userId }).select(
+        "followerId",
+      );
+
+      followers.forEach((follow) => {
+        if (
+          !notifiedUids.has(follow.followerId) &&
+          follow.followerId !== userId
+        ) {
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: follow.followerId,
+            category: "social",
+            actionType: "NEW_POST",
+            title: `New Repost from ${authorName}`,
+            message: `${authorName} shared a post.`,
+            payload: { postId: repost.postId, authorId: userId },
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        }
+      });
+
+      res.status(201).json(repost);
     } catch (err) {
+      console.error("Repost Error:", err);
       res.status(500).json({ error: err.message });
     }
   });
-
-  // --- CREATE POST ---
+  // 8. CREATE POST (with Mention and Follower Notifications)
   router.post("/create", async (req, res) => {
     try {
       const { userId, content, media, poll, isSubscriptionContent } = req.body;
-
-      // media validation logic (as you wrote before)
       let processedMedia = media;
       if (media?.mediaType === "video" && Array.isArray(media.url)) {
         processedMedia.url = [media.url[0]];
       }
-
+      const author = await User.findOne({ uid: userId }).select(
+        "firstname lastname username profilePic",
+      );
+      if (!author) {
+        return res.status(404).json({ message: "Author not found" });
+      }
+      const authorName = `${author.firstname} ${author.lastname}`;
       const newPost = new Posts({
+        postId: generatePostId(),
         userId: {
-          uid: userId.uid,
-          firstname: userId.firstname,
-          lastname: userId.lastname,
-          profilePic: userId.profilePic || [],
+          uid: userId,
+          firstname: author.firstname,
+          lastname: author.lastname,
+          profilePic: author.profilePic,
         },
         content,
-        media: processedMedia,
         isSubscriptionContent: isSubscriptionContent || false,
+        media: processedMedia,
         poll: poll
           ? {
               options: poll.options.map((opt, index) => ({
@@ -387,11 +478,63 @@ export default function (Posts, User) {
             }
           : null,
       });
+      await newPost.save();
+      // 3. Handle Mentions (@username)
+      const mentionedUsernames = extractMentions(content);
+      let notifiedUids = new Set();
+      if (mentionedUsernames.length > 0) {
+        const mentionedUsers = await User.find({
+          username: { $in: mentionedUsernames },
+        }).select("uid");
 
-      const savedPost = await newPost.save();
-      res.status(201).json(savedPost);
+        mentionedUsers.forEach((user) => {
+          notifiedUids.add(user.uid);
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: user.uid,
+            category: "social",
+            actionType: "POST_MENTION",
+            title: "You were mentioned",
+            message: `${authorName} mentioned you in a post.`,
+            payload: { postId: newPost._id, authorId: userId },
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+      }
+      // 4. Notify Followers
+      const followers = await Follow.find({ followingId: userId }).select(
+        "followerId",
+      );
+
+      followers.forEach((follow) => {
+        if (
+          !notifiedUids.has(follow.followerId) &&
+          follow.followerId !== userId
+        ) {
+          createNotification({
+            notificationId: generateNotificationId(),
+            recipientId: follow.followerId,
+            category: "social",
+            actionType: "NEW_POST",
+            title: `New Post from ${authorName}`,
+            message: `${authorName} just shared a new update.`,
+            payload: { postId: newPost._id, authorId: userId },
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        }
+      });
+
+      res.status(201).json({
+        message: "Post created successfully",
+        data: newPost,
+      });
     } catch (error) {
-      res.status(500).json({ error: error.message });
+      console.error("Create Post Error:", error);
+      res.status(500).json({ message: error.message });
     }
   });
 
@@ -401,7 +544,7 @@ export default function (Posts, User) {
 
     try {
       // 1. Find the post and check if user already voted
-      const post = await Post.findById(postId);
+      const post = await Posts.findOne({ postId });
       if (!post || !post.poll)
         return res.status(404).json({ error: "Poll not found" });
 
@@ -417,14 +560,29 @@ export default function (Posts, User) {
 
       // 2. Atomic Update: Find post, find the option with optionId, push user to votes, increment total
       const updatedPost = await Posts.findOneAndUpdate(
-        { _id: postId, "poll.options.optionId": optionId },
+        { postId: postId, "poll.options.optionId": optionId },
         {
           $push: { "poll.options.$.votes": userId },
           $inc: { "poll.totalVotes": 1 },
         },
         { new: true },
       );
-
+      if (
+        updatedPost.poll.totalVotes % 10 === 0 &&
+        updatedPost.userId.uid !== userId
+      ) {
+        createNotification({
+          notificationId: generateNotificationId(),
+          recipientId: updatedPost.userId.uid,
+          category: "social",
+          actionType: "POLL_MILESTONE",
+          title: "Poll Update",
+          message: `${updatedPost.poll.totalVotes} people have now voted in your poll!`,
+          payload: { postId: updatedPost._id },
+          sendPush: true,
+          saveToDb: true,
+        });
+      }
       res.status(200).json(updatedPost);
     } catch (error) {
       res.status(500).json({ error: error.message });

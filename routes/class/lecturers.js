@@ -11,7 +11,7 @@ import { customAlphabet } from "nanoid";
 import PDFDocument from "pdfkit-table";
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const nano = customAlphabet(alphabet, 6);
-import { generateNotificationId } from "../user.js";
+import { generateNotificationId } from "../../utils/idGenerator.js";
 
 export const generateAssessmentId = (courseCode = "GEN") => {
   const year = new Date().getFullYear();

@@ -5,7 +5,7 @@ import {
   TestSubmission,
   User,
 } from "../tableDeclarations.js";
-
+import { generateNotificationId } from "../utils/idGenerator.js";
 export const processAssessmentAnalysis = async (testId) => {
   const test = await Assessment.findOne({ id: testId });
   if (!test || test.isAnalyzed) return;

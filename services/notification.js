@@ -160,7 +160,45 @@ const createNotification = async ({
             newTime: payload.newTime,
           };
           break;
-        // There are more cases: 'NEW_FOLLOWER', 'POST_MENTIONS', 'TRANSACTIONS" etc.
+        case "LECTURE_REMINDER":
+          subject = `Reminder: ${payload.topicName} starts in 45 mins`;
+          priority = "normal";
+          break;
+        case "POST_MENTION":
+          subject = "You were mentioned in a post";
+          break;
+        case "NEW_POST":
+          subject = `New post from ${title}`;
+          break;
+        case "POST_REPOSTED":
+          subject = "Your post was shared!";
+          title = "Post Reposted";
+          message = `${payload.userName || "Someone"} shared your post.`;
+          priority = "normal";
+          dataPayload = {
+            type: "POST_REPOSTED",
+            postId: payload.postId,
+            originalPostId: payload.originalPostId,
+            click_action: "FLUTTER_NOTIFICATION_CLICK",
+          };
+          break;
+        case "NEW_FOLLOWER":
+          subject = "You have a new follower!";
+          title = "New Follower";
+          message = `${payload.userName} started following you.`;
+          break;
+        case "POST_LIKED":
+          subject = "Someone liked your post!";
+          title = "New Like";
+          break;
+        case "POST_COMMENTED":
+          subject = "New comment on your post";
+          title = "New Comment";
+          break;
+        case "POLL_MILESTONE":
+          subject = "Your poll is trending!";
+          title = "Poll Milestone reached";
+          break;
       }
       if (htmlContent) {
         await sendEmail({

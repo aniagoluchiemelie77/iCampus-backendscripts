@@ -10,6 +10,7 @@ import {
 import { upload } from "../../workers/multerWorker.js";
 import { createNotification } from "../../services/notificationService.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
+import { generateNotificationId } from "../../utils/idGenerator.js";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const generateCourseId = (length = 10) => {
