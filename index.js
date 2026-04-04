@@ -1,12 +1,9 @@
 import express from "express";
 import { createServer } from "http";
-import { Server } from "socket.io";
 import "./workers/reditFile.js";
 import cors from "cors";
 import mongoose from "mongoose";
-import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
-import rateLimit from "express-rate-limit";
 import nodemailer from "nodemailer";
 import {
   User,
@@ -15,7 +12,6 @@ import {
   Student,
   Lecturer,
   Event,
-  UserRecords,
   Posts,
 } from "./tableDeclarations.js";
 import { connectQueue } from "./rabbitmq.js";
