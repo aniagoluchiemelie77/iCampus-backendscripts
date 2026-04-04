@@ -7,6 +7,7 @@ import {
   generatePostId,
 } from "../utils/idGenerator.js";
 import { extractMentions } from "../utils/postMentionsRegex.js";
+import { authenticate } from "../index.js";
 
 export default function (Posts, User) {
   const router = express.Router();
@@ -538,7 +539,7 @@ export default function (Posts, User) {
     }
   });
 
-  // --- VOTE IN POLL ---
+  //9. --- VOTE IN POLL ---
   router.patch("/vote", async (req, res) => {
     const { postId, optionId, userId } = req.body; // Expecting userId string
 
@@ -586,6 +587,40 @@ export default function (Posts, User) {
       res.status(200).json(updatedPost);
     } catch (error) {
       res.status(500).json({ error: error.message });
+    }
+  });
+
+  //10. fetch posts using postId
+  router.get("/:postId", authenticate, async (req, res) => {
+    try {
+      const { postId } = req.params;
+      const post = await Posts.aggregate([
+        { $match: { postId: postId } }, // Find the specific post
+        {
+          $lookup: {
+            from: "users",
+            localField: "userId.uid",
+            foreignField: "uid",
+            as: "authorDetails",
+          },
+        },
+        { $unwind: "$authorDetails" },
+        {
+          $project: {
+            "authorDetails.password": 0,
+            "authorDetails.email": 0, // Privacy
+          },
+        },
+      ]);
+
+      if (!post || post.length === 0) {
+        return res.status(404).json({ error: "Post not found" });
+      }
+
+      res.json(post[0]);
+    } catch (err) {
+      console.error("Fetch single post error:", err);
+      res.status(500).json({ error: err.message });
     }
   });
 

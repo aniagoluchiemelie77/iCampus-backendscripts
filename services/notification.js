@@ -90,17 +90,6 @@ const createNotification = async ({
             payload.dueDate || "Check app for details",
           );
           break;
-        case "LECTURE_SCHEDULED":
-          subject = `New Lecture: ${payload.topicName}`;
-          htmlContent = lectureScheduledTemplate(
-            payload.userName,
-            payload.topicName,
-            payload.lectureType,
-            payload.location,
-            payload.time,
-            payload.date,
-          );
-          break;
         case "MATERIAL_UPLOADED":
           subject = "New Course Material Available"; // Fallback if ever needed
           break;
@@ -140,64 +129,36 @@ const createNotification = async ({
           subject = "Verify your iCampus Account";
           htmlContent = emailVerificationTemplate(payload.code);
           break;
-        case "LECTURE_CANCELLED":
-          title = "Lecture Cancelled";
-          priority = "high";
-          // We don't need to include a 'Join' link in the push payload for a cancelled class
-          dataPayload = {
-            click_action: "FLUTTER_NOTIFICATION_CLICK", // Or your RN equivalent
-            type: "LECTURE_CANCELLED",
-            courseId: payload.courseId,
-          };
-          break;
-
-        case "LECTURE_POSTPONED":
-          title = "Lecture Rescheduled";
-          priority = "normal";
-          dataPayload = {
-            type: "LECTURE_POSTPONED",
-            newDate: payload.newDate,
-            newTime: payload.newTime,
-          };
-          break;
         case "LECTURE_REMINDER":
           subject = `Reminder: ${payload.topicName} starts in 45 mins`;
           priority = "normal";
           break;
-        case "POST_MENTION":
-          subject = "You were mentioned in a post";
-          break;
         case "NEW_POST":
           subject = `New post from ${title}`;
-          break;
-        case "POST_REPOSTED":
-          subject = "Your post was shared!";
-          title = "Post Reposted";
-          message = `${payload.userName || "Someone"} shared your post.`;
-          priority = "normal";
-          dataPayload = {
-            type: "POST_REPOSTED",
-            postId: payload.postId,
-            originalPostId: payload.originalPostId,
-            click_action: "FLUTTER_NOTIFICATION_CLICK",
-          };
           break;
         case "NEW_FOLLOWER":
           subject = "You have a new follower!";
           title = "New Follower";
           message = `${payload.userName} started following you.`;
           break;
+        case "POST_MENTION":
         case "POST_LIKED":
-          subject = "Someone liked your post!";
-          title = "New Like";
-          break;
         case "POST_COMMENTED":
-          subject = "New comment on your post";
-          title = "New Comment";
+        case "POST_REPOSTED":
+          category = "social";
+          entityId = payload.postId;
+          entityType = "post";
           break;
         case "POLL_MILESTONE":
           subject = "Your poll is trending!";
           title = "Poll Milestone reached";
+          break;
+        case "LECTURE_CANCELLED":
+        case "LECTURE_POSTPONED":
+        case "LECTURE_SCHEDULED":
+          category = "academic";
+          entityId = payload.lectureId;
+          entityType = "lecture";
           break;
       }
       if (htmlContent) {

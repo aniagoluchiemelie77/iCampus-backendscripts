@@ -397,27 +397,29 @@ export default function (User) {
         const result = await Lectures.insertMany(lecturesToCreate);
 
         // 5. NOTIFICATION LOGIC (Asynchronous)
-        // Find students in this course's department/level
-        const course = await Course.findOne({ courseId });
+        const courseDetails = await Course.findOne({ courseId });
+        if (!courseDetails) return; // Safety check
+
         const students = await User.find({
           usertype: "student",
-          department: course.department,
-          level: course.level,
-        }).select("uid email firstName");
+          department: courseDetails.department,
+          level: courseDetails.level,
+        }).select("uid email firstname"); // Ensure this matches your User Schema casing
 
-        // We use Promise.all to handle notifications without blocking the response
         const notificationPromises = students.map((student) =>
           createNotification({
             notificationId: generateNotificationId(),
             recipientId: student.uid,
             recipientEmail: student.email,
-            category: "classroom",
+            category: "academic", // Changed from 'classroom' to match your frontend icon logic
             actionType: "LECTURE_SCHEDULED",
             title: "New Lecture Scheduled",
             message: `A new ${lectureType} session for ${topicName} has been set.`,
             payload: {
-              userName: student.firstName,
+              userName: student.firstname,
               topicName: topicName,
+              courseId: courseId, // From req.body or courseDetails
+              lectureId: result[0].id, // Use the ID from the first created record
               lectureType: lectureType,
               location: location,
               time: startTime,
@@ -426,14 +428,16 @@ export default function (User) {
                   ? `${datesToCheck[0]} (Repeats for ${repeatWeeks} weeks)`
                   : datesToCheck[0],
             },
-            sendEmail: true, // Crucial for scheduling
+            entityId: result[0].id,
+            entityType: "lecture",
+            sendEmail: true,
             sendPush: true,
             sendSocket: true,
             saveToDb: true,
           }),
         );
 
-        // Trigger notifications in the background
+        // Fire and forget (don't await to keep API response fast)
         Promise.all(notificationPromises).catch((err) =>
           console.error("Notification Error:", err),
         );
@@ -870,7 +874,10 @@ export default function (User) {
               topicName: topicName,
               newDate: newDate,
               newTime: newStartTime,
+              courseId: updatedLecture.courseId,
+              lectureId: updatedLecture.lectureId,
             },
+            entityId: updatedLecture.lectureId,
             sendEmail: false,
             sendPush: true,
             sendSocket: true,
@@ -930,10 +937,10 @@ export default function (User) {
             title: "Lecture Cancelled",
             message: `The lecture "${topicName}" scheduled for ${date} has been cancelled.`,
             payload: {
-              userName: student.firstName,
-              topicName: topicName,
-              courseId: courseId,
+              courseId: lecture.courseId, // CRITICAL: Frontend needs this to load the page
+              lectureId: lecture.lectureId,
             },
+            entityId: lecture.lectureId,
             sendEmail: false,
             sendPush: true,
             sendSocket: true,
