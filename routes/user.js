@@ -1017,6 +1017,23 @@ export default function (User) {
         .json({ error: "Server error while fetching lecture details" });
     }
   });
+  // router.get('/users/:uid', ...)
+  router.get("/:uid", async (req, res) => {
+    try {
+      const { uid } = req.params;
+      const user = await User.findOne({ uid: uid })
+        .select("uid firstname lastname email profilePic")
+        .lean();
+
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.status(200).json(user);
+    } catch (error) {
+      console.error("iCampus DB Error:", error);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
+  });
 
   return router;
 }
