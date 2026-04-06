@@ -1,6 +1,11 @@
 // socket.js
 import { Server } from "socket.io";
 import { processLecturerAudio } from "./audio-service.js";
+import {
+  endLecture,
+  updateAttendeeList,
+  getAttendeesForRoom,
+} from "./lectures.js";
 import { Deepgram } from "@deepgram/sdk";
 let io;
 const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
@@ -94,6 +99,24 @@ module.exports = {
         // 3. Push the raw audio chunk (buffer) into the AI stream
         const audioBuffer = Buffer.from(audio, "base64");
         activeStreams.get(streamKey).send(audioBuffer);
+      });
+      socket.on("end_lecture", async ({ lectureId }) => {
+        await endLecture(lectureId);
+        io.to(`lecture_${lectureId}`).emit("lecture_ended", { lectureId });
+      });
+      socket.on("join_lecture", ({ lectureId, user }) => {
+        const roomName = `lecture_${lectureId}`;
+        socket.join(roomName);
+        updateAttendeeList(lectureId, user, "join");
+        const currentAttendees = getAttendeesForRoom(lectureId);
+        io.to(roomName).emit("update_attendee_list", currentAttendees);
+      });
+      socket.on("leave_lecture", ({ lectureId, uid }) => {
+        const roomName = `lecture_${lectureId}`;
+        socket.leave(roomName);
+        updateAttendeeList(lectureId, { uid }, "leave");
+        const currentAttendees = getAttendeesForRoom(lectureId);
+        io.to(roomName).emit("update_attendee_list", currentAttendees);
       });
 
       socket.on("disconnect", () => {
