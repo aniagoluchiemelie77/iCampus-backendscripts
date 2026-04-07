@@ -1034,6 +1034,31 @@ export default function (User) {
       res.status(500).json({ error: "Internal Server Error" });
     }
   });
+  // Check if user has an ongoing lecture
+  router.get("/lectures/ongoing/:userId", async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const ongoingLecture = await Lectures.findOne({
+        status: "ongoing",
+        courseId: {
+          $in: await Course.find({ studentsEnrolled: userId }).distinct(
+            "courseId",
+          ),
+        },
+      }).populate("courseId"); // Optional: get course details like title
+
+      if (ongoingLecture) {
+        return res.status(200).json({
+          ongoing: true,
+          lecture: ongoingLecture,
+        });
+      }
+
+      res.status(200).json({ ongoing: false });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   return router;
 }

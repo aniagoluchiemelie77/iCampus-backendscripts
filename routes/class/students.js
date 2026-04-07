@@ -7,6 +7,7 @@ import {
   Assessment,
   Lectures,
   Attendance,
+  Review,
 } from "../../tableDeclarations.js";
 import { upload } from "../../workers/multerWorker.js";
 import { createNotification } from "../../services/notificationService.js";
@@ -580,6 +581,22 @@ export default function (User) {
       res
         .status(500)
         .json({ error: "Internal server error during attendance sync." });
+    }
+  });
+  router.post("/submit-review", async (req, res) => {
+    try {
+      const { lectureId, studentId, lecturerId, rating, comment } = req.body;
+      const newReview = new Review({
+        lectureId,
+        studentId,
+        lecturerId,
+        rating,
+        comment,
+      });
+      await newReview.save();
+      res.status(201).json({ message: "Review submitted successfully" });
+    } catch (error) {
+      res.status(500).json({ error: error.message });
     }
   });
   return router;

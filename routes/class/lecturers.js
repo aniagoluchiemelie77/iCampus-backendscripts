@@ -963,5 +963,21 @@ export default function (User) {
       res.status(500).json({ message: "Internal server error" });
     }
   });
+  // routes/lecture.js (The Start Lecture Route)
+  router.post("/start", async (req, res) => {
+    const { lectureId, courseId } = req.body;
+    const lecture = await Lectures.findByIdAndUpdate(
+      lectureId,
+      { status: "ongoing" },
+      { new: true },
+    );
+    // 2. Get all enrolled students to notify them
+    const course = await Course.findById(courseId);
+
+    // 3. Emit via Socket
+    // Strategy A: Broadcast to a specific 'Course Room' (Recommended)
+    req.io.to(`course_${courseId}`).emit("lecture_started", lecture);
+    res.status(200).json(lecture);
+  });
   return router;
 }

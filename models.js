@@ -609,6 +609,19 @@ export const testSubmissionSchema = new mongoose.Schema({
   },
   startTime: Date,
 });
+export const reviewSchema = new mongoose.Schema({
+  reviewType: {
+    type: String,
+    enum: ["Lectures", "Transactions", "General"],
+    default: "General",
+  },
+  lectureId: { type: String, ref: "Lecture", required: true, unique: true },
+  studentId: { type: String },
+  lecturerId: { type: String },
+  rating: { type: Number, min: 1, max: 5, required: true },
+  comment: String,
+  createdAt: { type: Date, default: Date.now },
+});
 
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });

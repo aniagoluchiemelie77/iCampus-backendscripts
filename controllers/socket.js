@@ -10,6 +10,7 @@ import { Deepgram } from "@deepgram/sdk";
 let io;
 const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
 const activeStreams = new Map();
+const activeLectures = {};
 
 const closeStream = (streamKey) => {
   if (activeStreams.has(streamKey)) {
@@ -36,10 +37,6 @@ module.exports = {
         socket.join(userId);
         console.log(`User ${userId} joined their private room.`);
       });
-      socket.on("join_lecture", (data) => {
-        socket.join(data.lectureId);
-        console.log(`User joined lecture room: ${data.lectureId}`);
-      });
 
       socket.on("send_wave", (data) => {
         io.to(data.lectureId).emit("student_waved", {
@@ -61,13 +58,14 @@ module.exports = {
         processLecturerAudio(data.audioBuffer, data.lectureId, io);
       });
       socket.on("grant_mic_permission", (data) => {
-        // 1. First, tell the whole room to mute (safety first)
-        io.to(data.lectureId).emit("mic_permission_revoked");
-
-        // 2. Then, target the specific student to unmute
-        io.to(data.lectureId).emit("mic_permission_granted", {
-          targetUid: data.studentUid,
+        const room = `lecture_${data.lectureId}`;
+        io.to(room).emit("mic_permission_revoked");
+        io.to(room).emit("mic_permission_granted", {
+          targetUid: data.targetUid, // Changed from studentUid to match frontend
         });
+      });
+      socket.on("revoke_all_mics", ({ lectureId }) => {
+        io.to(`lecture_${lectureId}`).emit("mic_permission_revoked");
       });
       socket.on("student_audio_chunk", (data) => {
         const { lectureId, audio } = data;
@@ -107,9 +105,23 @@ module.exports = {
       socket.on("join_lecture", ({ lectureId, user }) => {
         const roomName = `lecture_${lectureId}`;
         socket.join(roomName);
+
+        // 1. Attendance Logic
         updateAttendeeList(lectureId, user, "join");
         const currentAttendees = getAttendeesForRoom(lectureId);
+
+        // Sync the attendee list for everyone in the room
         io.to(roomName).emit("update_attendee_list", currentAttendees);
+
+        // 2. Stream Persistence Logic (for Late Joiners)
+        // Check if the lecturer has already registered a stream URL
+        if (activeLectures[lectureId]?.streamUrl) {
+          socket.emit("stream_received", {
+            streamUrl: activeLectures[lectureId].streamUrl,
+          });
+        }
+
+        console.log(`User ${user.firstname} joined ${roomName}`);
       });
       socket.on("leave_lecture", ({ lectureId, uid }) => {
         const roomName = `lecture_${lectureId}`;
@@ -117,6 +129,50 @@ module.exports = {
         updateAttendeeList(lectureId, { uid }, "leave");
         const currentAttendees = getAttendeesForRoom(lectureId);
         io.to(roomName).emit("update_attendee_list", currentAttendees);
+      });
+      socket.on("toggle_lecturer_mic", ({ lectureId, isMuted }) => {
+        io.to(`lecture_${lectureId}`).emit("lecturer_mic_toggled", { isMuted });
+      });
+      socket.on("toggle_lecturer_camera", ({ lectureId, isCameraOn }) => {
+        io.to(`lecture_${lectureId}`).emit("lecturer_camera_toggled", {
+          isCameraOn,
+        });
+      });
+      socket.on("lecturer_started_sharing", ({ lectureId, streamId }) => {
+        io.to(`lecture_${lectureId}`).emit("lecturer_started_sharing", {
+          streamId,
+        });
+      });
+      socket.on("lecturer_stopped_sharing", ({ lectureId }) => {
+        io.to(`lecture_${lectureId}`).emit("lecturer_stopped_sharing");
+      });
+      socket.on("stream_ready", ({ lectureId, streamUrl }) => {
+        const roomName = `lecture_${lectureId}`;
+
+        // Save to memory so joiners can find it
+        activeLectures[lectureId] = { ...activeLectures[lectureId], streamUrl };
+
+        // Broadcast to existing users
+        io.to(roomName).emit("stream_received", { streamUrl });
+      });
+      socket.on("webrtc_signal", ({ lectureId, signal, targetUid }) => {
+        const roomName = `lecture_${lectureId}`;
+
+        if (targetUid) {
+          // 1. Student -> Lecturer (Targeted)
+          // We add 'from: socket.id' so the lecturer knows who is answering
+          io.to(targetUid).emit("webrtc_signal", {
+            signal,
+            from: socket.id,
+          });
+        } else {
+          // 2. Lecturer -> All Students (Broadcast)
+          // Use socket.to(room).emit to send to everyone EXCEPT the sender
+          socket.to(roomName).emit("webrtc_signal", {
+            signal,
+            from: socket.id,
+          });
+        }
       });
 
       socket.on("disconnect", () => {

@@ -16,6 +16,7 @@ import {
   iCampusOperationalInstitutionSchema,
   universitiesAndCollegesSchema,
   PostSchema,
+  reviewSchema,
   exceptionSchema,
   lectureSchema,
   assessmentSchema,
@@ -105,3 +106,4 @@ export const Attendance = mongoose.model(
   attendanceSchema,
   "lectureAttendance",
 );
+export const Reviews = mongoose.model("Reviews", reviewSchema, "reviews");
