@@ -5,6 +5,7 @@ import cors from "cors";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
+import { init } from "./controllers/socket.js";
 import {
   User,
   ProductCategory,
@@ -29,6 +30,7 @@ dotenv.config();
 
 const app = express();
 const httpServer = createServer(app);
+const io = init(httpServer);
 
 // 5. Make 'io' accessible to all routes via req.app.get("socketio")
 init(httpServer);
@@ -44,6 +46,7 @@ app.use((req, res, next) => {
 
 app.use((req, res, next) => {
   console.log(`🔗 ${req.method} ${req.url}`);
+  req.io = io;
   next();
 });
 

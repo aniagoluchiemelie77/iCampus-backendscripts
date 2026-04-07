@@ -964,20 +964,46 @@ export default function (User) {
     }
   });
   // routes/lecture.js (The Start Lecture Route)
-  router.post("/start", async (req, res) => {
+router.post("/lectures/start", async (req, res) => {
+  try {
     const { lectureId, courseId } = req.body;
+
+    // 1. Validation: Ensure IDs are present
+    if (!lectureId || !courseId) {
+      return res
+        .status(400)
+        .json({ message: "Lecture ID and Course ID are required" });
+    }
+    const existingLecture = await Lectures.findById(lectureId);
+    if (!existingLecture) {
+      return res.status(404).json({ message: "Lecture not found" });
+    }
+
+    if (existingLecture.status === "ongoing") {
+      return res.status(200).json(existingLecture); // Already live, just return it
+    }
+
+    // 3. Update status to 'ongoing'
     const lecture = await Lectures.findByIdAndUpdate(
       lectureId,
-      { status: "ongoing" },
+      { status: "ongoing", actualStartTime: new Date() }, // Track actual start time
       { new: true },
     );
-    // 2. Get all enrolled students to notify them
-    const course = await Course.findById(courseId);
 
-    // 3. Emit via Socket
-    // Strategy A: Broadcast to a specific 'Course Room' (Recommended)
-    req.io.to(`course_${courseId}`).emit("lecture_started", lecture);
+    // 4. Emit via Socket (with safety check)
+    if (req.io) {
+      // Use the course room so only enrolled students get the popup
+      req.io.to(`course_${courseId}`).emit("lecture_started", lecture);
+      console.log(`Live signal sent to course_${courseId}`);
+    } else {
+      console.error("Socket.io instance (req.io) not found on request object");
+    }
+
     res.status(200).json(lecture);
-  });
+  } catch (error) {
+    console.error("Error starting lecture:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+});
   return router;
 }

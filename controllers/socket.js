@@ -37,6 +37,15 @@ module.exports = {
         socket.join(userId);
         console.log(`User ${userId} joined their private room.`);
       });
+      socket.on("join_course_rooms", (courseIds) => {
+        if (Array.isArray(courseIds)) {
+          courseIds.forEach((id) => {
+            const roomName = `course_${id}`;
+            socket.join(roomName);
+            console.log(`Socket ${socket.id} joined course room: ${roomName}`);
+          });
+        }
+      });
 
       socket.on("send_wave", (data) => {
         io.to(data.lectureId).emit("student_waved", {
