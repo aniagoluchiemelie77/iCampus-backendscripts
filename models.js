@@ -34,19 +34,41 @@ const purchaseHistorySchema = new mongoose.Schema(
 export const attendanceSchema = new mongoose.Schema({
   studentId: { type: String, required: true },
   lectureId: { type: String, required: true },
-  courseId: { type: String, required: true },
+  courseId: { type: String },
   status: { type: String, enum: ["Present", "Absent"], required: true },
   checkData: [Boolean],
   timestamp: { type: Date, default: Date.now },
+  deviceId: { type: String },
+});
+export const commentSchema = new mongoose.Schema({
+  id: { type: String, required: true },
+  userId: { type: String, required: true },
+  firstName: { type: String, required: true },
+  userName: { type: String, required: true },
+  profilePic: { type: String },
+  text: { type: String, required: true },
+  timestamp: { type: Date, default: Date.now },
+  likes: { type: Number, default: 0 },
+  replies: [this],
 });
 export const lectureSchema = new mongoose.Schema({
-  id: { type: String, Unique: true },
+  id: { type: String, unique: true },
   topicName: { type: String, required: true },
   lectureType: {
     type: String,
     enum: ["Physical", "Online", "Recorded"],
     default: "Physical",
   },
+  views: {
+    type: Number,
+    default: 0,
+  },
+  viewedBy: [
+    {
+      userId: String,
+      lastViewed: { type: Date, default: Date.now },
+    },
+  ],
   courseId: String,
   location: String,
   startTime: String,
@@ -61,6 +83,7 @@ export const lectureSchema = new mongoose.Schema({
   videoUrl: String,
   resources: [String],
   attendance: [attendanceSchema],
+  comments: [commentSchema],
   getAttendanceMode: { type: String, enum: ["Uploaded", "Online"] },
 });
 const assignmentSchema = new mongoose.Schema({
@@ -169,6 +192,7 @@ export const userSchema = new mongoose.Schema({
   schoolName: String,
   email: { type: String, unique: true },
   ipAddress: [String],
+  currentDeviceId: string,
   deviceType: [String],
   coursesEnrolled: [String],
   accessToken: String,

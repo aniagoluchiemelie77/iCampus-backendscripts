@@ -1059,6 +1059,23 @@ export default function (User) {
       res.status(500).json({ error: err.message });
     }
   });
+  // GET /api/lectures/:lectureId (Fetch lectures using videoUrl)
+  router.get("/lectures/details", async (req, res) => {
+    try {
+      const { url } = req.query;
+      if (!url) {
+        return res.status(400).json({ message: "URL parameter is required" });
+      }
+      const lecture = await Lectures.findOne({ videoUrl: url });
+      if (!lecture) {
+        return res.status(404).json({ message: "Lecture not found" });
+      }
+      res.status(200).json(lecture);
+    } catch (error) {
+      console.error("Backend Error:", error);
+      res.status(500).json({ message: "Internal server error" });
+    }
+  });
 
   return router;
 }

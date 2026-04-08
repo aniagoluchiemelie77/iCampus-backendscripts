@@ -31,6 +31,8 @@
     "nodemailer": "^7.0.6",
     "pdf-image": "^2.0.0",
     "pdf-poppler": "^0.2.3",
+    "react-native-webview": "^13.16.1",
+    "react-native-youtube-iframe": "^2.4.1",
     "redis": "^5.10.0",
     "socket.io": "^4.8.3"
   },
