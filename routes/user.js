@@ -29,7 +29,8 @@ import {
 import multer from "multer";
 axiosRetry(axios, { retries: 3 });
 import { generateNotificationId } from "../utils/idGenerator.js";
-
+const { GoogleGenerativeAI } = require("@google/generative-ai");
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // Temporary in-memory store
 const verificationCodes = {};
 
@@ -1088,6 +1089,43 @@ export default function (User) {
     } catch (error) {
       console.error("Backend Error:", error);
       res.status(500).json({ message: "Internal server error" });
+    }
+  });
+  router.post("/ai/chat", async (req, res) => {
+    const { message, context, history } = req.body;
+    try {
+      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+      let contextString = `You are iAssistant, an academic AI for the iCampus app. 
+    Current Context: ${context.type}. \n`;
+
+      if (context.type === "course") {
+        contextString += `Course: ${context.data.courseTitle} (${context.data.courseCode}). 
+      Dept: ${context.data.department}.`;
+      } else if (context.type === "lecture") {
+        contextString += `Lecture: ${context.data.topicName}. Type: ${context.data.lectureType}. 
+      Location: ${context.data.location}.`;
+      }
+      const chat = model.startChat({
+        history: [
+          { role: "user", parts: [{ text: contextString + " Understood?" }] },
+          {
+            role: "model",
+            parts: [
+              {
+                text: "Understood. I am ready to assist with this specific context.",
+              },
+            ],
+          },
+          ...history,
+        ],
+      });
+      const result = await chat.sendMessage(message);
+      const response = result.response;
+
+      res.json({ reply: response.text() });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Failed to fetch AI response" });
     }
   });
 
