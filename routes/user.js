@@ -858,12 +858,26 @@ export default function (User) {
     try {
       const { courseId } = req.params;
       const exceptions = await Exceptions.find({ courseId }).sort({ date: -1 });
-
       res.status(200).json(exceptions);
     } catch (error) {
       res.status(500).json({ message: "Failed to fetch course exceptions" });
     }
   });
+  router.get(
+    "/exceptions/lectures/:lectureId",
+    authenticate,
+    async (req, res) => {
+      try {
+        const { lectureId } = req.params;
+        const exceptions = await Exceptions.find({ lectureId }).sort({
+          date: -1,
+        });
+        res.status(200).json(exceptions);
+      } catch (error) {
+        res.status(500).json({ message: "Failed to fetch course exceptions" });
+      }
+    },
+  );
   router.get("/categories", async (req, res) => {
     try {
       const uniqueCategories = await Course.distinct("niche", {

@@ -520,8 +520,6 @@ export const exceptionSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-
-    // Metadata for the request
     reasonCategory: {
       type: String,
       enum: [
