@@ -7,6 +7,7 @@ import { getChannel } from "../rabbitmq.js";
 import axios from "axios";
 import jwt from "jsonwebtoken";
 import { createNotification } from "../services/notificationService.js";
+import { getFallbackBooks } from "../utils/libraryHelpers.js";
 import {
   authenticate,
   loginLimiter,
@@ -29,6 +30,7 @@ import {
 import multer from "multer";
 axiosRetry(axios, { retries: 3 });
 import { generateNotificationId } from "../utils/idGenerator.js";
+import * as cheerio from "cheerio";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // Temporary in-memory store
@@ -950,6 +952,34 @@ export default function (User) {
       res.status(500).json({ message: "Internal server error" });
     }
   });
+  //Fetch course details only if user is enrolled
+  router.get("/courses/:courseId", authenticate, async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      const userId = req.user.uid;
+      const course = await Course.findOne({
+        courseId: courseId,
+        studentsEnrolled: userId,
+      });
+      if (!course) {
+        return res.status(404).json({
+          success: false,
+          message: "Course not found or you are not enrolled in this course.",
+        });
+      }
+      return res.status(200).json({
+        success: true,
+        data: course,
+      });
+    } catch (error) {
+      console.error(`Error fetching course ${req.params.courseId}:`, error);
+      return res.status(500).json({
+        success: false,
+        message: "Server error while fetching course details.",
+        error: error.message,
+      });
+    }
+  });
   router.get(
     "/courses/:courseId/assignments",
     authenticate,
@@ -1126,6 +1156,131 @@ export default function (User) {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Failed to fetch AI response" });
+    }
+  });
+  //Library routes
+  router.get("/library/search", async (req, res) => {
+    const { q } = req.query;
+    const searchUrl = `https://1lib.sk/s/${encodeURIComponent(q)}`;
+    try {
+      const { data } = await axios.get(searchUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+        },
+      });
+
+      const $ = cheerio.load(data);
+      const books = [];
+
+      // 1lib.sk specific selectors
+      $(".resItemBox").each((index, element) => {
+        const row = $(element);
+
+        // Extracting metadata
+        const title = row.find('h3[itemprop="name"] a').text().trim();
+        const author = row.find(".authors a").text().trim() || "Unknown Author";
+        const thumbnail =
+          row.find(".cover").attr("data-src") || row.find(".cover").attr("src");
+        const detailsUrl = row.find('h3[itemprop="name"] a').attr("href");
+
+        // Filesize and Extension are usually inside .property_value or property_size
+        const extension = row.find(".property_value").first().text().trim();
+        const size = row.find(".property_size").text().trim();
+        const year = row.find(".property_year").text().trim();
+
+        if (title) {
+          books.push({
+            id: detailsUrl?.split("/").pop() || Math.random().toString(),
+            title,
+            author,
+            thumbnail: thumbnail?.startsWith("http")
+              ? thumbnail
+              : `https://1lib.sk${thumbnail}`,
+            extension: extension || "PDF",
+            size: size || "N/A",
+            year: year || "N/A",
+            downloadUrl: `https://1lib.sk${detailsUrl}`,
+          });
+        }
+      });
+
+      res.json(books);
+    } catch (error) {
+      console.error("Scraping Error:", error.message);
+      res.status(500).json({ error: "Failed to connect to the library" });
+    }
+  });
+
+  // GET /library/featured
+  router.get("/library/featured", async (req, res) => {
+    try {
+      const rawDept = req.query.department;
+      const department =
+        rawDept && rawDept.trim().length > 0 ? rawDept.trim() : null;
+      const BASE_URL = "https://1lib.sk";
+      let targetUrl = department
+        ? `${BASE_URL}/s/${encodeURIComponent(department)}`
+        : `${BASE_URL}/popular.php`;
+
+      const { data } = await axios.get(targetUrl, {
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+        },
+        timeout: 5000,
+      });
+
+      const $ = cheerio.load(data);
+      const featuredBooks = [];
+
+      $(".bookDetailsBox, .resItemBox").each((index, element) => {
+        if (index >= 12) return;
+
+        const row = $(element);
+        const title = row.find('h3[itemprop="name"] a, .title a').text().trim();
+        const author =
+          row.find(".authors a, .author").first().text().trim() ||
+          "Various Authors";
+
+        // Selectors can vary; check both common locations for images
+        const thumbnail =
+          row.find("img.cover").attr("data-src") ||
+          row.find("img.cover").attr("src") ||
+          row.find(".bookCover img").attr("src");
+
+        const detailsUrl = row.find('a[href^="/book/"]').attr("href");
+
+        // Metadata extraction
+        const extension =
+          row.find(".property_value").first().text().trim() || "PDF";
+        const size = row.find(".property_size").text().trim() || "N/A";
+        const year = row.find(".property_year").text().trim() || "N/A";
+
+        if (title && detailsUrl) {
+          featuredBooks.push({
+            id: detailsUrl.split("/").pop(),
+            title,
+            author,
+            thumbnail: thumbnail?.startsWith("http")
+              ? thumbnail
+              : `${BASE_URL}${thumbnail}`,
+            extension: extension.toUpperCase(),
+            size,
+            year,
+            downloadUrl: `${BASE_URL}${detailsUrl}`,
+          });
+        }
+      });
+
+      if (featuredBooks.length === 0) {
+        return res.json(getFallbackBooks());
+      }
+
+      res.json(featuredBooks);
+    } catch (error) {
+      console.error("Featured Scrape Error:", error.message);
+      res.json(getFallbackBooks());
     }
   });
 
