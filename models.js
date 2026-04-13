@@ -644,6 +644,32 @@ export const reviewSchema = new mongoose.Schema({
   comment: String,
   createdAt: { type: Date, default: Date.now },
 });
+export const transactionSchema = new mongoose.Schema({
+  transactionId: { type: String, required: true, unique: true },
+  userId: { type: String, required: true },
+  type: {
+    type: String,
+    enum: [
+      "buy",
+      "withdraw",
+      "p2p_sent",
+      "p2p_received",
+      "payment",
+      "exceptionsDividend",
+    ],
+  },
+  amountICash: Number,
+  amountLocal: Number,
+  status: { type: String, enum: ["pending", "success", "failed"] },
+  payType: { type: String, enum: ["in", "out"] },
+  title: { type: String },
+  reference: String,
+  metadata: {
+    recipientId: { type: String },
+    bankName: String,
+  },
+  createdAt: { type: Date, default: Date.now },
+});
 
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });

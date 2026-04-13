@@ -272,25 +272,38 @@ export default function (User) {
       const { id } = req.params;
       const { status, lecturerComment } = req.body;
 
-      // 1. Find the exception record
       const exception = await CourseException.findById(id);
-      if (!exception) {
+      if (!exception)
         return res.status(404).json({ message: "Exception not found" });
-      }
 
-      // 2. Prevent double-processing
       if (exception.status !== "pending") {
         return res
           .status(400)
           .json({ message: "This exception has already been processed" });
       }
 
-      // 3. Handle Lecturer Payout on Approval
+      // 3. Handle Lecturer Payout on Approval + Log Transaction
       if (status === "approved") {
         const lecturer = await User.findOne({ uid: req.user.uid });
         if (lecturer) {
-          lecturer.pointsBalance = (lecturer.pointsBalance || 0) + 0.4;
+          const dividendAmount = 0.4;
+          lecturer.pointsBalance =
+            (lecturer.pointsBalance || 0) + dividendAmount;
           await lecturer.save();
+          await Transactions.create({
+            transactionId: `TX-${Date.now()}-${Math.random().toString(36).toUpperCase().substring(2, 7)}`,
+            userId: lecturer.uid,
+            type: "exceptionsDividend",
+            amountICash: dividendAmount,
+            amountLocal: dividendAmount * 1000, // NGN equivalent
+            status: "success",
+            payType: "in",
+            title: `Exception Dividend for ${exception.courseTitle}`,
+            reference: `EXC-REF-${id}`,
+            metadata: {
+              recipientId: lecturer.uid,
+            },
+          });
         }
       }
 
@@ -299,26 +312,23 @@ export default function (User) {
       exception.lecturerComment = lecturerComment || "";
       await exception.save();
 
-      // 5. NOTIFY THE STUDENT (Socket + Push + DB only)
-      // Find the student who submitted the exception
+      // 5. Notify Student (logic remains the same)
       const student = await User.findOne({ uid: exception.userId });
-
       if (student) {
         createNotification({
           notificationId: generateNotificationId(),
           recipientId: student.uid,
           category: "classroom",
           actionType: "EXCEPTION_UPDATED",
-          title: `Exception ${status === "approved" ? "Approved " : "Rejected "}`,
-          message: `Your request for ${exception.courseCode} has been ${status}. ${lecturerComment ? "Comment: " + lecturerComment : ""}`,
+          title: `Exception ${status === "approved" ? "Approved" : "Rejected"}`,
+          message: `Your request for ${exception.courseCode} has been ${status}.`,
           payload: {
             exceptionId: id,
-            status: status,
+            status,
             courseCode: exception.courseCode,
           },
-          sendEmail: false, // Per your requirement
-          sendPush: true, // Important for students to see
-          sendSocket: true, // Real-time UI update
+          sendPush: true,
+          sendSocket: true,
           saveToDb: true,
         });
       }

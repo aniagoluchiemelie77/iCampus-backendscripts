@@ -13,6 +13,7 @@ import {
   userRecordsSchema,
   userSchema,
   EmailVerificationSchema,
+  transactionSchema,
   iCampusOperationalInstitutionSchema,
   universitiesAndCollegesSchema,
   PostSchema,
@@ -107,3 +108,8 @@ export const Attendance = mongoose.model(
   "lectureAttendance",
 );
 export const Reviews = mongoose.model("Reviews", reviewSchema, "reviews");
+export const Transactions = mongoose.model(
+  "Transactions",
+  transactionSchema,
+  "transactions",
+);
