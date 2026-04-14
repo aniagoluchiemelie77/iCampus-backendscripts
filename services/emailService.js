@@ -24,8 +24,8 @@ export const sendEmail = async ({ to, subject, text, html }) => {
       from: `"iCampus Support" <${process.env.EMAIL_USER}>`,
       to,
       subject,
-      text, // Plain text version
-      html, // HTML version (better for receipts/links)
+      text,
+      html,
     });
     console.log("Email sent: %s", info.messageId);
     return info;

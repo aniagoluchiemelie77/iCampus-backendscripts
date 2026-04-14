@@ -1,5 +1,5 @@
 // services/emailTemplates.js
-import { theme } from './emailTheme.js';
+import { theme } from "./emailTheme.js";
 
 const { colors, branding, typography } = theme;
 
@@ -23,7 +23,12 @@ const emailWrapper = (content) => `
   </div>
 `;
 
-export const purchaseTemplate = (userName, productName, amount, downloadUrl) => {
+export const purchaseTemplate = (
+  userName,
+  productName,
+  amount,
+  downloadUrl,
+) => {
   const body = `
     <h2 style="color: ${colors.success}; margin-top: 0;">Purchase Successful!</h2>
     <p>Hi ${userName},</p>
@@ -31,13 +36,17 @@ export const purchaseTemplate = (userName, productName, amount, downloadUrl) => 
     <div style="border: 2px dashed ${colors.primary}; padding: 20px; text-align: center; margin: 20px 0;">
       <span style="font-size: 24px; font-weight: bold; color: ${colors.text};">₦${amount}</span>
     </div>
-    ${downloadUrl ? `
+    ${
+      downloadUrl
+        ? `
       <div style="text-align: center;">
         <a href="${downloadUrl}" style="background-color: ${colors.primary}; color: ${colors.white}; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">
           Access Your Digital Product
         </a>
       </div>
-    ` : ''}
+    `
+        : ""
+    }
   `;
   return emailWrapper(body);
 };
@@ -195,6 +204,43 @@ export const passwordResetTemplate = (userName, code) => {
 
       <p style="font-size: 13px; color: #666;">
         This code is valid for <strong>12 hours</strong>. If you did not request this, please ignore.
+      </p>
+    </div>
+  `;
+  return emailWrapper(body);
+};
+export const icashPinResetTemplate = (userName, code) => {
+  const body = `
+    <div style="text-align: center; font-family: sans-serif;">
+      <div style="margin-bottom: 20px;">
+        <span style="background: ${theme.colors.primary}; color: white; padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
+          Secure Transaction Service
+        </span>
+      </div>
+      
+      <h2 style="color: #1e293b; margin-top: 10px;">iCash PIN Reset</h2>
+      
+      <p style="color: #475569; font-size: 15px;">
+        Hello ${userName}, we received a request to reset your <strong>iCash Security PIN</strong>. 
+        Use the authorization code below to proceed:
+      </p>
+      
+      <div style="background: #fff5f0; border: 1px dashed ${theme.colors.primary}; padding: 25px; margin: 25px 0; border-radius: 12px;">
+        <span style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: ${theme.colors.primary}; font-family: monospace;">
+          ${code}
+        </span>
+      </div>
+
+      <div style="text-align: left; background: #f8fafc; padding: 15px; border-radius: 8px; border-left: 4px solid #ef4444;">
+        <p style="font-size: 13px; color: #1e293b; margin: 0;">
+          <strong>Security Alert:</strong> This code will expire in <strong>10 minutes</strong>. 
+          If you did not initiate this request, your iCash funds may be at risk. 
+          Please change your iCampus password immediately or contact support.
+        </p>
+      </div>
+
+      <p style="font-size: 12px; color: #94a3b8; margin-top: 30px;">
+        Sent securely by iCampus Fintech Division.
       </p>
     </div>
   `;

@@ -228,6 +228,12 @@ export const userSchema = new mongoose.Schema({
     },
   ],
   completedTests: [{ type: String }],
+  iCashPin: { type: String, select: false },
+  iCashLockoutUntil: { type: Date, default: null },
+  iCashAttempts: { type: Number, default: 0 },
+  twoFactorEnabled: { type: Boolean, default: false },
+  resetPinOTP: { type: String },
+  resetPinOTPExpires: { type: Date },
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },
