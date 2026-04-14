@@ -198,7 +198,12 @@ export const userSchema = new mongoose.Schema({
   accessToken: String,
   password: String,
   department: String,
-  pointsBalance: { type: Number, default: 0 },
+  pointsBalance: {
+    type: Number,
+    default: 0,
+    get: (v) => parseFloat(v.toFixed(2)), // Always return 2 dp
+    set: (v) => parseFloat(v.toFixed(2)),
+  },
   hasSubscribed: { type: Boolean, default: false },
   isCourseRep: { type: Boolean, default: false },
   createdAt: Date,
@@ -234,6 +239,7 @@ export const userSchema = new mongoose.Schema({
   twoFactorEnabled: { type: Boolean, default: false },
   resetPinOTP: { type: String },
   resetPinOTPExpires: { type: Date },
+  isSuspended: { type: Boolean, default: false },
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },

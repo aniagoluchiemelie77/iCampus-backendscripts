@@ -33,16 +33,23 @@ export default function (User) {
         message: `Locked. Try again after ${moment(user.iCashLockoutUntil).format("LT")}`,
       });
     }
+    if (user.isSuspended) {
+      return res.status(403).json({
+        isSuspended: true,
+        message: "This account is already suspended.",
+      });
+    }
     const isMatch = await bcrypt.compare(pin, user.iCashPin);
     if (!isMatch) {
       user.iCashAttempts += 1;
       if (user.iCashAttempts >= 5) {
-        user.iCashLockoutUntil = Date.now() + 15 * 60 * 1000;
+        user.isSuspended = true;
         user.iCashAttempts = 0;
         await user.save();
-        return res
-          .status(403)
-          .json({ message: "Too many attempts. Locked for 15 minutes." });
+        return res.status(403).json({
+          isSuspended: true,
+          message: "Maximum attempts reached. Account suspended for security.",
+        });
       }
 
       await user.save();
@@ -98,7 +105,7 @@ export default function (User) {
     const user = await User.findOne({
       uid: req.user.uid,
       resetPinOTP: otp,
-      resetPinOTPExpires: { $gt: Date.now() }, // Must not be expired
+      resetPinOTPExpires: { $gt: Date.now() },
     }).select("+iCashPin");
 
     if (!user) {

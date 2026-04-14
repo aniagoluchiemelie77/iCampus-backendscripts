@@ -13,6 +13,7 @@ import {
   loginLimiter,
   addUserRecord,
   emailLimiter,
+  protect,
 } from "../middleware/auth.js";
 import { client } from "../workers/reditFile.js";
 import {
@@ -1156,6 +1157,23 @@ export default function (User) {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Failed to fetch AI response" });
+    }
+  });
+  router.get("/me", protect, async (req, res) => {
+    try {
+      const user = await User.findOne({ uid: req.user.uid });
+      if (!user) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      res.status(200).json({
+        success: true,
+        user: {
+          uid: user.uid,
+          isSuspended: user.isSuspended,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Server error" });
     }
   });
   //Library routes
