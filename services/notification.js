@@ -1,8 +1,8 @@
 // services/notificationService.js
-import Notification from '../tableDeclarations'; 
-import { getIO } from '../controllers/socket.js'; 
-import sendEmail from "./emailService.js";
-import { sendPushNotification } from "./pushNotificationService";
+import { Notification } from "../tableDeclarations.js";
+import { getIO } from "../controllers/socket.js";
+import { sendEmail } from "./emailService.js";
+import { sendPushNotification } from "./pushNotification.js";
 import {
   purchaseTemplate,
   passwordResetTemplate,
@@ -14,7 +14,7 @@ import {
   emailVerificationTemplate,
 } from "./emailTemplates.js";
 
-const createNotification = async ({
+export const createNotification = async ({
   notificationId,
   recipientId,
   category,

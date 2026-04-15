@@ -19,7 +19,7 @@ import { connectQueue } from "./rabbitmq.js";
 import { client } from "./workers/reditFile.js";
 import { initEmailQueue } from "./controllers/emailProducers.js";
 import { startWorker } from "./workers/emailWorker.js";
-import { init } from "./controllers/socket.js";
+import { init as initSocket } from "./controllers/socket.js";
 
 dotenv.config();
 

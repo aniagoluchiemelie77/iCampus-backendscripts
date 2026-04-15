@@ -1,13 +1,18 @@
 // services/pushNotificationService.js
 import admin from 'firebase-admin';
 const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-import User from '../tableDeclarations.js'; // To fetch the token
+import { User } from "../tableDeclarations.js"; // To fetch the token
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccountPath),
 });
 
-const sendPushNotification = async (recipientId, title, body, data = {}) => {
+export const sendPushNotification = async (
+  recipientId,
+  title,
+  body,
+  data = {},
+) => {
   try {
     // 1. Find the user's device token from your DB
     const user = await User.findById(recipientId);
@@ -28,9 +33,9 @@ const sendPushNotification = async (recipientId, title, body, data = {}) => {
 
     // 3. Send via Firebase
     const response = await admin.messaging().send(message);
-    console.log('Push sent successfully:', response);
+    console.log("Push sent successfully:", response);
   } catch (error) {
-    console.error('Error sending push notification:', error);
+    console.error("Error sending push notification:", error);
   }
 };
 

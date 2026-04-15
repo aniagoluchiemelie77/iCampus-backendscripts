@@ -24,6 +24,7 @@ import {
   testSubmissionSchema,
   followSchema,
   attendanceSchema,
+  paymentMethodSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -112,4 +113,9 @@ export const Transactions = mongoose.model(
   "Transactions",
   transactionSchema,
   "transactions",
+);
+export const PaymentMethods = mongoose.model(
+  "PaymentMethods",
+  paymentMethodSchema,
+  "paymentMethods",
 );

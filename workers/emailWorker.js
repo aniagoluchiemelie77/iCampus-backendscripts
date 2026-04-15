@@ -1,5 +1,5 @@
 import amqp from "amqplib";
-import { createNotification } from "../services/notificationService.js";
+import { createNotification } from "../services/notification.js";
 
 export async function startWorker() {
   const connection = await amqp.connect("amqp://localhost:5672");

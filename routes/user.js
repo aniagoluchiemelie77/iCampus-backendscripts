@@ -1306,5 +1306,6 @@ export default function (User) {
 }
 //Mongod summon: mongod --dbpath D:\MongoDB\data
 //backend summon: npx nodemon index.js
+//ngrok http 5000
 
 //On powershell as admin: Start-Service RabbitMQ

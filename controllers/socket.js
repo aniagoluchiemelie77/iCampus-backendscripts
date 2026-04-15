@@ -1,6 +1,9 @@
 // socket.js
 import { Server } from "socket.io";
-import { processLecturerAudio } from "./audio-service.js";
+import {
+  processLecturerAudio,
+  startLiveTranscription,
+} from "./audio-service.js";
 import {
   endLecture,
   updateAttendeeList,
@@ -34,7 +37,7 @@ export const init = (httpServer) => {
 
   io.on("connection", (socket) => {
     console.log("A user connected:", socket.id);
-
+    let dgLive = null;
     socket.on("join_user_room", (userId) => {
       socket.join(userId);
       console.log(`User ${userId} joined their private room.`);
@@ -68,6 +71,17 @@ export const init = (httpServer) => {
 
     socket.on("lecturer_audio_chunk", (data) => {
       processLecturerAudio(data.audioBuffer, data.lectureId, io);
+    });
+    socket.on("start-lecture", () => {
+      // Initialize the transcription pipeline
+      dgLive = startLiveTranscription(socket, io);
+    });
+
+    socket.on("audio-data", (data) => {
+      // Send raw audio buffer from React Native to Deepgram
+      if (dgLive && dgLive.getReadyState() === 1) {
+        dgLive.send(data);
+      }
     });
 
     socket.on("grant_mic_permission", (data) => {
@@ -113,6 +127,7 @@ export const init = (httpServer) => {
     socket.on("end_lecture", async ({ lectureId }) => {
       await endLecture(lectureId);
       io.to(`lecture_${lectureId}`).emit("lecture_ended", { lectureId });
+      if (dgLive) dgLive.finish();
     });
 
     socket.on("join_lecture", ({ lectureId, user }) => {

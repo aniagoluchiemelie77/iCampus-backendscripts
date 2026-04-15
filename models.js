@@ -682,6 +682,19 @@ export const transactionSchema = new mongoose.Schema({
   },
   createdAt: { type: Date, default: Date.now },
 });
+export const paymentMethodSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  type: { type: String, enum: ["card", "bank"], required: true },
+  flw_token: { type: String, required: true },
+  // UI Display Data (Masked)
+  last4: { type: String }, // e.g., "4242"
+  card_type: { type: String }, // e.g., "Mastercard"
+  expiry: { type: String }, // e.g., "09/28"
+  bank_name: { type: String }, // e.g., "Zenith Bank"
+  account_number: { type: String }, // e.g., "****5678"
+  isDefault: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+});
 
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });

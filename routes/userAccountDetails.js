@@ -5,6 +5,10 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { icashPinResetTemplate } from "../services/emailTemplates.js";
 import { sendEmail } from "../services/emailService.js";
+import {
+  getSavedMethods,
+  handleFlutterwaveWebhook,
+} from "../controllers/paymentController.js";
 
 export default function (User) {
   const router = express.Router();
@@ -121,5 +125,7 @@ export default function (User) {
       .status(200)
       .json({ success: true, message: "PIN updated successfully." });
   });
+  router.get("/payment-methods", protect, getSavedMethods);
+  router.post("/flw-webhook", handleFlutterwaveWebhook);
   return router;
 }
