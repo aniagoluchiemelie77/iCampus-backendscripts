@@ -176,7 +176,7 @@ export const userBankOrCardDetails = new mongoose.Schema({
 });
 export const userSchema = new mongoose.Schema({
   refreshTokens: [{ type: String }],
-  uid: String,
+  uid: { type: String, index: true },
   iScore: String,
   profilePic: [String],
   likes: [{ type: String }],
@@ -187,6 +187,7 @@ export const userSchema = new mongoose.Schema({
   schoolCode: String,
   usertype: String,
   isFirstLogin: Boolean,
+  username: String,
   firstname: String,
   lastname: String,
   schoolName: String,
@@ -302,6 +303,9 @@ export const notificationSchema = new mongoose.Schema(
       type: String,
       enum: ["auth", "social", "classroom", "store", "finance", "profile"],
       required: true,
+    },
+    currency: {
+      type: String,
     },
     actionType: { type: String, required: true }, // e.g., 'TEST_CREATED', 'NEW_FOLLOWER'
     title: { type: String, required: true },

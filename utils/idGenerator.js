@@ -22,3 +22,10 @@ export function userAccountDetailsId(length = 10) {
   }
   return result;
 }
+export const generateTransactionId = () => {
+  const prefix = "trns";
+  const timestamp = Date.now(); // Current time in milliseconds
+  const randomStr = Math.random().toString(36).substring(2, 8); // 6 character random alphanumeric string
+
+  return `${prefix}_${timestamp}_${randomStr}`;
+};

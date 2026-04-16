@@ -213,34 +213,80 @@ export const icashPinResetTemplate = (userName, code) => {
   const body = `
     <div style="text-align: center; font-family: sans-serif;">
       <div style="margin-bottom: 20px;">
-        <span style="background: ${theme.colors.primary}; color: white; padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
+        <span style="background: ${colors.primary}; color: white; padding: 5px 15px; border-radius: 20px; font-size: 12px; font-weight: bold; text-transform: uppercase;">
           Secure Transaction Service
         </span>
       </div>
       
-      <h2 style="color: #1e293b; margin-top: 10px;">iCash PIN Reset</h2>
+      <h2 style="color: ${colors.primary}; margin-top: 10px;">iCash PIN Reset</h2>
       
-      <p style="color: #475569; font-size: 15px;">
+      <p style="color: ${colors.text}; font-size: 15px;">
         Hello ${userName}, we received a request to reset your <strong>iCash Security PIN</strong>. 
         Use the authorization code below to proceed:
       </p>
       
       <div style="background: #fff5f0; border: 1px dashed ${theme.colors.primary}; padding: 25px; margin: 25px 0; border-radius: 12px;">
-        <span style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: ${theme.colors.primary}; font-family: monospace;">
+        <span style="font-size: 36px; font-weight: 800; letter-spacing: 8px; color: ${colors.primary}; font-family: monospace;">
           ${code}
         </span>
       </div>
 
       <div style="text-align: left; background: #f8fafc; padding: 15px; border-radius: 8px; border-left: 4px solid #ef4444;">
-        <p style="font-size: 13px; color: #1e293b; margin: 0;">
+        <p style="font-size: 13px; color: ${colors.text}; margin: 0;">
           <strong>Security Alert:</strong> This code will expire in <strong>10 minutes</strong>. 
           If you did not initiate this request, your iCash funds may be at risk. 
           Please change your iCampus password immediately or contact support.
         </p>
       </div>
 
-      <p style="font-size: 12px; color: #94a3b8; margin-top: 30px;">
+      <p style="font-size: 12px; color: ${colors.secondary}; margin-top: 30px;">
         Sent securely by iCampus Fintech Division.
+      </p>
+    </div>
+  `;
+  return emailWrapper(body);
+};
+export const iCashPurchaseTemplate = (
+  userName,
+  amountICash,
+  amountLocal,
+  currency,
+  transactionId,
+) => {
+  const body = `
+    <div style="text-align: center; font-family: sans-serif; max-width: 500px; margin: auto;">
+      <div style="margin-bottom: 20px;">
+        <span style="background: ${colors.primary}; color: white; padding: 5px 15px; border-radius: 20px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+          Transaction Confirmed
+        </span>
+      </div>
+      
+      <h2 style="color: ${colors.primary}; margin-bottom: 5px;">iCash Credited</h2>
+      <p style="color: ${colors.text}; font-size: 15px;">Hello ${userName}, your wallet has been credited.</p>
+
+      <div style="background: #f0f9ff; border: 1px solid #bae6fd; padding: 30px; margin: 25px 0; border-radius: 16px;">
+        <div style="font-size: 14px; color: ${colors.text}; font-weight: 600; text-transform: uppercase; margin-bottom: 8px;">Total iCash Added</div>
+        <div style="font-size: 42px; font-weight: 800; color: ${colors.primary}">
+          ${amountICash.toLocaleString()} 
+        </div>
+      </div>
+
+      <div style="text-align: left; background: #fafafa; padding: 20px; border-radius: 12px; border: 1px solid #f1f5f9;">
+        <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 0; color: ${colors.text};">Amount Paid</td>
+            <td style="padding: 8px 0; text-align: right; color: ${colors.text}; font-weight: 600;">${currency} ${amountLocal.toLocaleString()}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #64748b;">Transaction ID</td>
+            <td style="padding: 8px 0; text-align: right; color: #64748b; font-family: monospace;">${transactionId}</td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="font-size: 13px; color: ${colors.secondary}; margin-top: 25px;">
+        Your new balance is now updated in your iCash Dashboard. <br/>
+        Thank you for choosing <strong>iCampus</strong>.
       </p>
     </div>
   `;

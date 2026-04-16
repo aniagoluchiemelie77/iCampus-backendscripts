@@ -133,6 +133,19 @@ export const createNotification = async ({
           subject = `Reminder: ${payload.topicName} starts in 45 mins`;
           priority = "normal";
           break;
+        case "ICASH_PURCHASE":
+          subject = `Credit Alert: ${payload.amountICash.toLocaleString()} iCash Added`;
+          if (sendEmail) {
+            // Ensure you pass these values in the payload during webhook/logic
+            htmlContent = iCashPurchaseTemplate(
+              payload.userName,
+              payload.amountICash,
+              payload.amountLocal,
+              payload.currency,
+              payload.transactionId || "N/A",
+            );
+          }
+          break;
         case "NEW_POST":
           subject = `New post from ${title}`;
           break;
