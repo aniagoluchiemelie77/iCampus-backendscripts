@@ -8,6 +8,7 @@ import { sendEmail } from "../services/emailService.js";
 import {
   getSavedMethods,
   handleFlutterwaveWebhook,
+  initializeBuy,
 } from "../controllers/paymentController.js";
 
 export default function (User) {
@@ -126,6 +127,7 @@ export default function (User) {
       .json({ success: true, message: "PIN updated successfully." });
   });
   router.get("/payment-methods", protect, getSavedMethods);
+  router.get("/transactions/initialize-buy", protect, initializeBuy);
   router.post("/flw-webhook", handleFlutterwaveWebhook);
   return router;
 }

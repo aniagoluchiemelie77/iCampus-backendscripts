@@ -684,16 +684,26 @@ export const transactionSchema = new mongoose.Schema({
 });
 export const paymentMethodSchema = new mongoose.Schema({
   userId: { type: String, required: true },
-  type: { type: String, enum: ["card", "bank"], required: true },
-  flw_token: { type: String, required: true },
-  // UI Display Data (Masked)
-  last4: { type: String }, // e.g., "4242"
-  card_type: { type: String }, // e.g., "Mastercard"
-  expiry: { type: String }, // e.g., "09/28"
-  bank_name: { type: String }, // e.g., "Zenith Bank"
-  account_number: { type: String }, // e.g., "****5678"
+  method: { type: String, enum: ["card", "bank"], required: true },
+  paymentToken: { type: String, required: true },
+  lastFourDigits: { type: String },
+  cardBrand: { type: String },
+  bankName: { type: String },
+  bankAccNumber: { type: String },
+  bankCode: { type: String },
+  accountHolderName: { type: String },
+  country: { type: String },
   isDefault: { type: Boolean, default: false },
+  expiryMonth: { type: String },
+  expiryYear: { type: String },
+  billingAddressDetails: {
+    state: String,
+    city: String,
+    street: String,
+    zip: String,
+  },
   createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now },
 });
 
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
