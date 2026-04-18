@@ -4,11 +4,14 @@ import { Transactions } from "../tableDeclarations.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { icashPinResetTemplate } from "../services/emailTemplates.js";
+import { createNotification } from "../services/notification.js";
 import { sendEmail } from "../services/emailService.js";
+import { generateNotificationId } from "../utils/idGenerator.js";
 import {
   getSavedMethods,
   handleFlutterwaveWebhook,
   initializeBuy,
+  initializeWithdraw,
 } from "../controllers/paymentController.js";
 
 export default function (User) {
@@ -122,12 +125,30 @@ export default function (User) {
     user.resetPinOTPExpires = undefined;
     user.iCashAttempts = 0;
     await user.save();
+    createNotification({
+      notificationId: generateNotificationId(),
+      recipientEmail: user.email,
+      recipientId: user.uid,
+      category: "security",
+      actionType: "ICASH_PIN_RESET",
+      title: "iCash PIN Reset",
+      message: `Your iCash PIN has been successfully reset.`,
+      payload: {
+        userName: user.username || user.firstname,
+        date: Date.now(),
+      },
+      sendEmail: true,
+      sendPush: true,
+      sendSocket: true,
+      saveToDb: true,
+    });
     res
       .status(200)
       .json({ success: true, message: "PIN updated successfully." });
   });
   router.get("/payment-methods", protect, getSavedMethods);
   router.get("/transactions/initialize-buy", protect, initializeBuy);
+  router.get("/transactions/initialize-withdraw", protect, initializeWithdraw);
   router.post("/flw-webhook", handleFlutterwaveWebhook);
   router.get("/my-profile", protect, async (req, res) => {
     try {

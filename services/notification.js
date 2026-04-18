@@ -12,6 +12,9 @@ import {
   passwordResetSuccessTemplate,
   testCreatedTemplate,
   emailVerificationTemplate,
+  iCashSuccessfulPinResetTemplate,
+  iCashPurchaseTemplate,
+  iCashWithdrawalTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -143,6 +146,31 @@ export const createNotification = async ({
               payload.amountLocal,
               payload.currency,
               payload.transactionId || "N/A",
+            );
+          }
+          break;
+        case "ICASH_WITHDRAWAL":
+          subject = `Debit Alert: ${payload.amountICash.toLocaleString()} iCash Withdrawn`;
+          if (sendEmail) {
+            htmlContent = iCashWithdrawalTemplate(
+              payload.userName,
+              payload.amountICash,
+              payload.amountLocal,
+              payload.currency,
+              payload.transactionId || "N/A",
+            );
+          }
+          title = title || "Withdrawal Successful";
+          message =
+            message ||
+            `You have successfully withdrawn ${payload.currency} ${payload.amountLocal.toLocaleString()}.`;
+          break;
+        case "ICASH_PIN_RESET":
+          subject = "Security Alert: iCash PIN Reset";
+          if (sendEmail) {
+            htmlContent = iCashSuccessfulPinResetTemplate(
+              payload.userName,
+              new Date().toLocaleString(),
             );
           }
           break;

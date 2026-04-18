@@ -292,3 +292,80 @@ export const iCashPurchaseTemplate = (
   `;
   return emailWrapper(body);
 };
+export const iCashWithdrawalTemplate = (
+  userName,
+  amountICash,
+  amountLocal,
+  currency,
+  transactionId,
+) => {
+  const body = `
+    <div style="text-align: center; font-family: sans-serif; max-width: 500px; margin: auto;">
+      <div style="margin-bottom: 20px;">
+        <span style="background: ${colors.primary}; color: white; padding: 5px 15px; border-radius: 20px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+          Payout Processed
+        </span>
+      </div>
+      
+      <h2 style="color: ${colors.primary}; margin-bottom: 5px;">Withdrawal Successful</h2>
+      <p style="color: ${colors.text}; font-size: 15px;">Hello ${userName}, your withdrawal request has been completed.</p>
+
+      <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 30px; margin: 25px 0; border-radius: 16px;">
+        <div style="font-size: 14px; color: ${colors.text}; font-weight: 600; text-transform: uppercase; margin-bottom: 8px;">iCash Debited</div>
+        <div style="font-size: 42px; font-weight: 800; color: ${colors.secondary}">
+          -${amountICash.toLocaleString()} 
+        </div>
+      </div>
+
+      <div style="text-align: left; background: #fafafa; padding: 20px; border-radius: 12px; border: 1px solid #f1f5f9;">
+        <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 0; color: ${colors.text};">Amount Sent</td>
+            <td style="padding: 8px 0; text-align: right; color: ${colors.secondary}; font-weight: 600;">${currency} ${amountLocal.toLocaleString()}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #64748b;">Transaction ID</td>
+            <td style="padding: 8px 0; text-align: right; color: #64748b; font-family: monospace;">${transactionId}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #64748b;">Status</td>
+            <td style="padding: 8px 0; text-align: right; color: ${colors.success}; font-weight: bold;">SUCCESS</td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="font-size: 13px; color: ${colors.secondary}; margin-top: 25px;">
+        The funds should reflect in your bank account shortly depending on your bank's processing time. <br/>
+        Keep building with <strong>iCampus</strong>.
+      </p>
+    </div>
+  `;
+  return emailWrapper(body);
+};
+export const iCashSuccessfulPinResetTemplate = (userName, time) => {
+  const body = `
+    <div style="text-align: center; font-family: sans-serif; max-width: 500px; margin: auto;">
+      <div style="margin-bottom: 20px;">
+        <span style="background: #fee2e2; color:${colors.secondary}; padding: 5px 15px; border-radius: 20px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+          Security Update
+        </span>
+      </div>
+      
+      <h2 style="color: ${colors.primary}; margin-bottom: 5px;">PIN Successfully Reset</h2>
+      <p style="color: ${colors.text}; font-size: 15px;">Hello ${userName}, your <strong>iCash PIN</strong> was changed on ${time}.</p>
+
+      <div style="background: #fff7ed; border: 1px solid #ffedd5; padding: 20px; margin: 25px 0; border-radius: 12px; text-align: left;">
+        <p style="margin: 0; font-size: 13px; color: ${colors.text};">
+          <strong>Didn't make this change?</strong><br/>
+          If you did not authorize this PIN reset, please contact iCampus support immediately or freeze your iCash account from the security settings.
+        </p>
+      </div>
+
+      <p style="font-size: 13px; color: ${colors.secondary}; margin-top: 25px;">
+        Secure transactions are our priority. <br/>
+        Thank you for keeping your account safe with <strong>iCampus</strong>.
+      </p>
+    </div>
+  `;
+  return emailWrapper(body);
+};

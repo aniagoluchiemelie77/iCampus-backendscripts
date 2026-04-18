@@ -45,6 +45,7 @@ export const handleFlutterwaveWebhook = async (req, res) => {
       createNotification({
         notificationId: generateNotificationId(),
         recipientId: userId,
+        recipientEmail: updatedUser.email,
         category: "finance",
         actionType: "ICASH_PURCHASE",
         title,
@@ -211,6 +212,108 @@ export const initializeBuy = async (req, res) => {
       "Tokenized Charge Error:",
       error.response?.data || error.message,
     );
+    res.status(500).json({
+      status: "error",
+      message: error.response?.data?.message || "Internal Server Error",
+    });
+  }
+};
+export const initializeWithdraw = async (req, res) => {
+  const { iCashAmount, amountToReceive, fee, currency, bankDetails } = req.body;
+  const userId = req.user.uid;
+  const idempotencyKey = `wd-${userId}-${Date.now().toString().substring(0, 10)}`;
+  const transactionId = generateTransactionId();
+  const title = "iCash Withdrawal",
+  const user = await User.findOne({ uid: userId });
+  if (user.iCashBalance < iCashAmount) {
+    return res.status(400).json({ message: "Insufficient iCash balance." });
+  }
+  user.iCashBalance -= iCashAmount;
+  try {
+    const userName =
+      user.username || user.firstname || "iCampus User";
+    const newWithdrawal = await Transactions.create({
+      transactionId,
+      userId,
+      type: "withdraw",
+      amountICash: iCashAmount,
+      amountLocal: amountToReceive,
+      fee,
+      payType: "out",
+      title,
+      currency,
+      status: "pending",
+      reference: idempotencyKey,
+      metadata: bankDetails,
+      createdAt: Date.now(),
+    });
+    await user.save();
+    const response = await axios.post(
+      "https://api.flutterwave.com/v3/transfers",
+      {
+        account_bank: bankDetails.bankCode,
+        account_number: bankDetails.accountNumber,
+        amount: amountToReceive,
+        currency: currency,
+        narration: "iCampus iCash Withdrawal",
+        reference: idempotencyKey, 
+        callback_url: `${process.env.BACKEND_URL}/hooks/flutterwave`,
+        debit_currency: "NGN",
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.FLUTTERWAVE_CLIENT_SECRET}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    if (response.data.status === "success") {
+      await Transactions.findOneAndUpdate({ transactionId }, { status: "success" });
+      createNotification({
+        notificationId: generateNotificationId(),
+        recipientId: userId,
+        recipientEmail: user.email,
+        category: "finance",
+        actionType: "ICASH_WITHDRAWAL",
+        title,
+        message: `Withdrawal of ${currency} ${amountToReceive} for ${iCashAmount} iCash is successful.`,
+        payload: {
+          userName,
+          amountLocal: amountToReceive,
+          amountICash: iCashAmount,
+          currency,
+          transactionId,
+        },
+        sendEmail: true,
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      });
+      return res.status(200).json({
+        status: "success",
+        message: "Transfer initiated successfully",
+        data: response.data.data,
+      });
+    } else {
+      user.iCashBalance += iCashAmount;
+      await user.save();
+      await Transactions.findOneAndUpdate({ transactionId }, { status: "failed" });
+      return res.status(400).json({ 
+        status: "error", 
+        message: response.data.message || "Flutterwave declined the transfer." 
+      });
+    }
+  } catch (error) {
+    console.error("Withdrawal Error:", error.response?.data || error.message);
+    if (error.response || error.request) {
+      const user = await User.findOne({ uid: userId });
+      user.iCashBalance += iCashAmount;
+      await user.save();
+      await Transactions.findOneAndUpdate({ transactionId }, { status: "failed" });
+    }
+    if (error.code === 11000) {
+      return res.status(409).json({ message: "Request already in progress." });
+    }
     res.status(500).json({
       status: "error",
       message: error.response?.data?.message || "Internal Server Error",

@@ -301,7 +301,15 @@ export const notificationSchema = new mongoose.Schema(
     senderId: { type: String }, // Who triggered it (optional)
     category: {
       type: String,
-      enum: ["auth", "social", "classroom", "store", "finance", "profile"],
+      enum: [
+        "auth",
+        "social",
+        "classroom",
+        "store",
+        "finance",
+        "profile",
+        "security",
+      ],
       required: true,
     },
     currency: {
@@ -672,6 +680,7 @@ export const transactionSchema = new mongoose.Schema({
       "p2p_received",
       "payment",
       "exceptionsDividend",
+      "icash_pin_reset",
     ],
   },
   amountICash: Number,
@@ -679,7 +688,7 @@ export const transactionSchema = new mongoose.Schema({
   status: { type: String, enum: ["pending", "success", "failed"] },
   payType: { type: String, enum: ["in", "out"] },
   title: { type: String },
-  reference: String,
+  reference: { type: String, unique: true },
   metadata: {
     recipientId: { type: String },
     bankName: String,
