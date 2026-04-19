@@ -1,6 +1,6 @@
 import express from "express";
 import { authenticate, protect } from "../middleware/auth.js";
-import { Transactions } from "../tableDeclarations.js";
+import { Transactions, ITag } from "../tableDeclarations.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { icashPinResetTemplate } from "../services/emailTemplates.js";
@@ -190,6 +190,35 @@ export default function (User) {
         success: false,
         message: "Internal server error",
       });
+    }
+  });
+  router.get("/iTag/search/:username", protect, async (req, res) => {
+    try {
+      const { username } = req.params;
+      let isPremium;
+      let isUser;
+      const iTagData = await ITag.findOne({
+        username: { $regex: new RegExp(`^${username}$`, "i") },
+      });
+
+      if (!iTagData) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      const maskedNumber = iTagData.cardNumber.replace(/\d(?=\d{4})/g, "*");
+      isPremium = iTagData.tier === "premium";
+      isUser = iTagData.userId === req.user.id;
+
+      res.status(200).json({
+        username: iTagData.username,
+        cardHolderName: iTagData.cardHolderName,
+        cardNumber: maskedNumber,
+        tier: iTagData.tier,
+        designOptions: iTagData.designOptions,
+        isPremium,
+        isUser,
+      });
+    } catch (error) {
+      res.status(500).json({ message: "Internal Server Error" });
     }
   });
   return router;

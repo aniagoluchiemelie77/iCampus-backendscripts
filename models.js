@@ -176,8 +176,9 @@ export const userBankOrCardDetails = new mongoose.Schema({
 });
 export const userSchema = new mongoose.Schema({
   refreshTokens: [{ type: String }],
-  uid: { type: String, index: true },
+  uid: { type: String, index: true, required: true },
   iScore: String,
+  itagusername: { type: String, unique: true },
   profilePic: [String],
   likes: [{ type: String }],
   bookmarks: [{ type: String }],
@@ -718,6 +719,59 @@ export const paymentMethodSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now },
 });
+export const iTagSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+    username: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    cardHolderName: {
+      type: String,
+      required: true,
+      uppercase: true,
+    },
+    cardNumber: {
+      type: String,
+      required: true,
+    },
+    expiryDate: {
+      type: String,
+    },
+    layoutType: {
+      type: Number,
+      enum: [1, 2, 3],
+      default: 1,
+    },
+    tier: {
+      type: String,
+      enum: ["pro", "premium", "free"],
+      default: "free",
+    },
+    designOptions: {
+      backgroundColor: {
+        type: String,
+        default: "#ffffff",
+      },
+      backgroundImage: {
+        type: String,
+        default: null,
+      },
+      glassmorphismOpacity: {
+        type: Number,
+        default: 0.2,
+        min: 0,
+        max: 1,
+      },
+    },
+  },
+  { timestamps: true },
+);
 
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });

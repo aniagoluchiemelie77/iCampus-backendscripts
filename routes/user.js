@@ -8,6 +8,7 @@ import axios from "axios";
 import jwt from "jsonwebtoken";
 import { createNotification } from "../services/notificationService.js";
 import { getFallbackBooks } from "../utils/libraryHelpers.js";
+import { generateExpiryDate } from "../utils/dateHelper.js";
 import {
   authenticate,
   loginLimiter,
@@ -26,11 +27,16 @@ import {
   EmailVerification,
   OperationalInstitutions,
   Exceptions,
+  iTag,
   Lectures,
 } from "../tableDeclarations.js";
 import multer from "multer";
 axiosRetry(axios, { retries: 3 });
-import { generateNotificationId } from "../utils/idGenerator.js";
+import {
+  generateNotificationId,
+  generateUniqueCardNumber,
+  generateUserUID,
+} from "../utils/idGenerator.js";
 import * as cheerio from "cheerio";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -104,8 +110,16 @@ export default function (User) {
   router.post("/register", async (req, res) => {
     console.log("Incoming payload:", req.body);
 
-    const { usertype, matriculation_number, staff_id, department, password } =
-      req.body;
+    const {
+      usertype,
+      matriculation_number,
+      staff_id,
+      department,
+      password,
+      itagusername,
+      firstname,
+      lastname,
+    } = req.body;
 
     try {
       const existingUser = await User.findOne({
@@ -117,18 +131,37 @@ export default function (User) {
       if (existingUser) {
         return res.status(409).json({ message: "User already exists." });
       }
+      const uid = generateUserUID();
 
       // 🔐 Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
 
       // ⚡ Create user
       const newUser = new User({
+        uid,
         ...req.body,
         password: hashedPassword,
-        isVerified: true, // email already verified
+        isVerified: true,
       });
 
       await newUser.save();
+      const iSCardEligible =
+        usertype === "student" ||
+        usertype === "lecturer" ||
+        usertype === "otherUser";
+      if (iSCardEligible) {
+        const newCardNumber = await generateUniqueCardNumber();
+        const expiryDate = await generateExpiryDate();
+        const newITag = new iTag({
+          userId: uid,
+          username: itagusername,
+          cardHolderName: `${firstname} ${lastname}`,
+          cardNumber: newCardNumber,
+          tier: "free",
+          expiryDate,
+        });
+        await newITag.save();
+      }
 
       // 🔐 Generate JWT
       const { accessToken, refreshToken } = await generateTokens(newUser);

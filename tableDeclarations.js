@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import {
+  iTagSchema,
   notificationSchema,
   dealSchema,
   userBankOrCardDetails,
@@ -119,3 +120,4 @@ export const PaymentMethods = mongoose.model(
   paymentMethodSchema,
   "paymentMethods",
 );
+export const ITag = mongoose.model("ITag", iTagSchema, "iTags");
