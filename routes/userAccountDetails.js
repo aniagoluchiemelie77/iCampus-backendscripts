@@ -6,13 +6,18 @@ import crypto from "crypto";
 import { icashPinResetTemplate } from "../services/emailTemplates.js";
 import { createNotification } from "../services/notification.js";
 import { sendEmail } from "../services/emailService.js";
-import { generateNotificationId } from "../utils/idGenerator.js";
+import {
+  generateNotificationId,
+  generateTransactionId,
+} from "../utils/idGenerator.js";
 import {
   getSavedMethods,
   handleFlutterwaveWebhook,
   initializeBuy,
   initializeWithdraw,
 } from "../controllers/paymentController.js";
+import { v4 as uuidv4 } from "uuid";
+import mongoose from "mongoose";
 
 export default function (User) {
   const router = express.Router();
@@ -209,6 +214,7 @@ export default function (User) {
       isUser = iTagData.userId === req.user.id;
 
       res.status(200).json({
+        userId: iTagData.userId,
         username: iTagData.username,
         cardHolderName: iTagData.cardHolderName,
         cardNumber: maskedNumber,
@@ -219,6 +225,112 @@ export default function (User) {
       });
     } catch (error) {
       res.status(500).json({ message: "Internal Server Error" });
+    }
+  });
+  router.post("/transactions/p2p-transfer", protect, async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const { recipientId, amount, description } = req.body;
+      const senderId = req.user.id;
+      if (amount <= 0)
+        return res.status(400).json({ message: "Invalid amount" });
+      if (senderId === recipientId)
+        return res.status(400).json({ message: "Cannot send to yourself" });
+
+      const sender = await User.findOne({ uid: senderUid }).session(session);
+      const recipient = await User.findOne({ uid: recipientId }).session(
+        session,
+      );
+
+      if (!recipient) throw new Error("Recipient not found");
+      if (sender.pointsBalance < amount)
+        return res.status(400).json({ message: "Insufficient iCash balance" });
+
+      const transactionRef = `P2P-${uuidv4().substring(0, 8).toUpperCase()}`;
+
+      sender.pointsBalance -= amount;
+      recipient.pointsBalance += amount;
+      await sender.save({ session });
+      await recipient.save({ session });
+
+      // 5. Create Transaction Records (Dual-entry)
+      const senderTransactionId = generateTransactionId();
+      const senderTx = new Transaction({
+        transactionId: senderTransactionId,
+        userId: senderId,
+        type: "p2p_sent",
+        amountICash: amount,
+        status: "success",
+        payType: "out",
+        title: "iCash Sent",
+        reference: transactionRef,
+        metadata: { recipientId, note: description },
+      });
+      const receipientTransactionId = generateTransactionId();
+      const recipientTx = new Transaction({
+        transactionId: receipientTransactionId,
+        userId: recipientId,
+        type: "p2p_received",
+        amountICash: amount,
+        status: "success",
+        payType: "in",
+        title: "iCash Received",
+        reference: `${transactionRef}-REC`, // Unique ref for recipient
+        metadata: { senderId: senderId, note: description },
+      });
+      await senderTx.save({ session });
+      await recipientTx.save({ session });
+      // 6. Commit everything
+      await session.commitTransaction();
+      session.endSession();
+
+      // --- 7. Notifications (Triggered after successful commit) ---
+      // A. Notification for the SENDER (Debit Alert)
+      const senderNotificationId = generateNotificationId();
+      const receipientNotificationId = generateNotificationId();
+      createNotification({
+        notificationId: senderNotificationId,
+        recipientId: senderUid,
+        category: "financial",
+        actionType: "ICASH_WITHDRAWAL",
+        title: "iCash Sent Successfully",
+        message: `You sent ${amount.toLocaleString()} iCash to ${recipient.username}.`,
+        payload: {
+          userName: sender.username,
+          amountICash: amount,
+          amountLocal: 0,
+          currency: "iCash",
+          transactionId: transactionRef,
+        },
+        sendSocket: true,
+        sendPush: true,
+      });
+      // B. Notification for the RECIPIENT (Credit Alert)
+      createNotification({
+        notificationId: receipientNotificationId,
+        recipientId: recipientId,
+        category: "financial",
+        actionType: "ICASH_PURCHASE",
+        title: "iCash Received!",
+        message: `You received ${amount.toLocaleString()} iCash from ${sender.username}.`,
+        payload: {
+          userName: recipient.username,
+          amountICash: amount,
+          transactionId: transactionRef,
+        },
+        sendSocket: true,
+        sendPush: true,
+      });
+
+      res.status(200).json({ message: "Transfer successful", transactionRef });
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      res
+        .status(500)
+        .json({ message: error.message || "Internal Server Error" });
     }
   });
   return router;

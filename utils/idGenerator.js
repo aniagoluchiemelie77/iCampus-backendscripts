@@ -7,7 +7,7 @@ export function generateNotificationId(length = 7) {
   for (let i = 0; i < length; i++) {
     result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return result;
+  return `iC-n-${result}`;
 }
 export function generatePostId(length = 8) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -26,7 +26,7 @@ export function userAccountDetailsId(length = 10) {
   return result;
 }
 export const generateTransactionId = () => {
-  const prefix = "trns";
+  const prefix = "iCn_trns";
   const timestamp = Date.now(); // Current time in milliseconds
   const randomStr = Math.random().toString(36).substring(2, 8); // 6 character random alphanumeric string
 
@@ -55,5 +55,5 @@ export const generateUniqueCardNumber = async () => {
 };
 export const generateUserUID = () => {
   const randomBytes = crypto.randomBytes(12).toString("hex");
-  return `iC_${randomBytes}`;
+  return `iC-u-${randomBytes}`;
 };
