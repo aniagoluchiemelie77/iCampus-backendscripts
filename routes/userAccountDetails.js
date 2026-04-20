@@ -24,12 +24,38 @@ export default function (User) {
   router.get("/my-transactions/:userId", authenticate, async (req, res) => {
     try {
       const { userId } = req.params;
-      const list = await Transactions.find({ userId })
-        .sort({ createdAt: -1 })
-        .limit(20);
+
+      // 1. Parse pagination parameters from query strings
+      // page: the current page number (default 1)
+      // limit: items per page (default 20)
+      const page = parseInt(req.query.page) || 1;
+      const limit = parseInt(req.query.limit) || 20;
+
+      // 2. Calculate the number of items to skip
+      // Example: If page 2 and limit 20, we skip the first 20 items.
+      const skip = (page - 1) * limit;
+
+      // 3. Fetch data and total count in parallel for better performance
+      const [transactions, total] = await Promise.all([
+        Transactions.find({ userId })
+          .sort({ createdAt: -1 })
+          .skip(skip)
+          .limit(limit),
+        Transactions.countDocuments({ userId }),
+      ]);
+
+      // 4. Calculate total pages
+      const totalPages = Math.ceil(total / limit);
+
       res.status(200).json({
         success: true,
-        data: list,
+        data: transactions,
+        pagination: {
+          totalItems: total,
+          totalPages: totalPages,
+          currentPage: page,
+          hasNextPage: page < totalPages,
+        },
       });
     } catch (error) {
       res.status(500).json({ message: error.message });
@@ -332,6 +358,45 @@ export default function (User) {
       res
         .status(500)
         .json({ message: error.message || "Internal Server Error" });
+    }
+  });
+  router.get("/transactions/stats/:userId", authenticate, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const stats = await Transactions.aggregate([
+        { $match: { userId } },
+        {
+          $facet: {
+            flow: [
+              { $group: { _id: "$payType", total: { $sum: "$amountICash" } } },
+            ],
+            // Common Recipients (Most common 'out' to)
+            topRecipients: [
+              { $match: { payType: "out", type: "p2p_sent" } },
+              {
+                $group: {
+                  _id: "$metadata.recipientId",
+                  count: { $sum: 1 },
+                  total: { $sum: "$amountICash" },
+                },
+              },
+              { $sort: { count: -1 } },
+              { $limit: 3 },
+            ],
+            monthly: [
+              {
+                $group: {
+                  _id: { $month: "$createdAt" },
+                  total: { $sum: "$amountICash" },
+                },
+              },
+            ],
+          },
+        },
+      ]);
+      res.json(stats[0]);
+    } catch (e) {
+      res.status(500).send(e.message);
     }
   });
   return router;
