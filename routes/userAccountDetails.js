@@ -232,7 +232,7 @@ export default function (User) {
     session.startTransaction();
 
     try {
-      const { recipientId, amount, description } = req.body;
+      const { recipientId, amount, description, recipientiTagName } = req.body;
       const senderId = req.user.id;
       if (amount <= 0)
         return res.status(400).json({ message: "Invalid amount" });
@@ -240,9 +240,10 @@ export default function (User) {
         return res.status(400).json({ message: "Cannot send to yourself" });
 
       const sender = await User.findOne({ uid: senderUid }).session(session);
-      const recipient = await User.findOne({ uid: recipientId }).session(
-        session,
-      );
+      const recipient = await User.findOne({
+        uid: recipientId,
+        itagusername: recipientiTagName,
+      }).session(session);
 
       if (!recipient) throw new Error("Recipient not found");
       if (sender.pointsBalance < amount)
