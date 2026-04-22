@@ -772,6 +772,12 @@ export const iTagSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+export const floatSchema = new mongoose.Schema({
+  totalCirculation: Number,
+  actualBankBalance: Number,
+  accruedInterest: Number,
+  lastUpdated: { type: Date, default: Date.now },
+});
 
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
