@@ -18,7 +18,7 @@ const transporter = nodemailer.createTransport({
  * Sends an email
  * @param {Object} options - { to, subject, text, html }
  */
-export const sendEmail = async ({ to, subject, text, html }) => {
+export const sendEmail = async ({ to, subject, text, html, attachments }) => {
   try {
     const info = await transporter.sendMail({
       from: `"iCampus Support" <${process.env.EMAIL_USER}>`,
@@ -26,6 +26,7 @@ export const sendEmail = async ({ to, subject, text, html }) => {
       subject,
       text,
       html,
+      attachments: attachments || [],
     });
     console.log("Email sent: %s", info.messageId);
     return info;

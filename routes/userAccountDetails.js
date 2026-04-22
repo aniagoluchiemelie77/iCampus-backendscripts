@@ -6,6 +6,7 @@ import crypto from "crypto";
 import { icashPinResetTemplate } from "../services/emailTemplates.js";
 import { createNotification } from "../services/notification.js";
 import { sendEmail } from "../services/emailService.js";
+import PDFDocument from "pdfkit";
 import {
   generateNotificationId,
   generateTransactionId,
@@ -24,18 +25,9 @@ export default function (User) {
   router.get("/my-transactions/:userId", authenticate, async (req, res) => {
     try {
       const { userId } = req.params;
-
-      // 1. Parse pagination parameters from query strings
-      // page: the current page number (default 1)
-      // limit: items per page (default 20)
       const page = parseInt(req.query.page) || 1;
       const limit = parseInt(req.query.limit) || 20;
-
-      // 2. Calculate the number of items to skip
-      // Example: If page 2 and limit 20, we skip the first 20 items.
       const skip = (page - 1) * limit;
-
-      // 3. Fetch data and total count in parallel for better performance
       const [transactions, total] = await Promise.all([
         Transactions.find({ userId })
           .sort({ createdAt: -1 })
@@ -363,14 +355,16 @@ export default function (User) {
   router.get("/transactions/stats/:userId", authenticate, async (req, res) => {
     try {
       const { userId } = req.params;
+      const { month, year } = req.query;
+      const start = new Date(year, month - 1, 1);
+      const end = new Date(year, month, 0);
       const stats = await Transactions.aggregate([
-        { $match: { userId } },
+        { $match: { userId, createdAt: { $gte: start, $lte: end } } },
         {
           $facet: {
             flow: [
               { $group: { _id: "$payType", total: { $sum: "$amountICash" } } },
             ],
-            // Common Recipients (Most common 'out' to)
             topRecipients: [
               { $match: { payType: "out", type: "p2p_sent" } },
               {
@@ -378,6 +372,29 @@ export default function (User) {
                   _id: "$metadata.recipientId",
                   count: { $sum: 1 },
                   total: { $sum: "$amountICash" },
+                },
+              },
+              {
+                $lookup: {
+                  from: "users",
+                  localField: "_id",
+                  foreignField: "uid", // or "uid" depending on your schema
+                  as: "userDetails",
+                },
+              },
+              { $unwind: "$userDetails" },
+              {
+                $project: {
+                  _id: 1,
+                  count: 1,
+                  total: 1,
+                  name: {
+                    $concat: [
+                      { $ifNull: ["$userDetails.firstname", "User"] },
+                      " ",
+                      { $ifNull: ["$userDetails.lastname", ""] },
+                    ],
+                  },
                 },
               },
               { $sort: { count: -1 } },
