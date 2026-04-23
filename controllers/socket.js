@@ -11,6 +11,7 @@ import {
 } from "./lectures.js";
 import { Deepgram } from "@deepgram/sdk";
 import { Lectures, User, Attendance } from "../tableDeclarations.js";
+import { calculateStudentIScore } from "../controllers/iScoreController.js";
 
 let io;
 const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
@@ -191,21 +192,34 @@ export const init = (httpServer) => {
     // Recorded Lectures Logic
     socket.on("mark_attendance", async ({ lectureId, userId }) => {
       try {
-        const lecture = await Lectures.findOne({ id: lectureId });
-        if (!lecture) return console.error("Lecture not found");
-        const alreadyPresent = lecture.attendance.some(
-          (a) => a.studentId === userId,
+        // 1. Update Lecture: Increment view count and add to viewedBy if not already there
+        const lecture = await Lectures.findOneAndUpdate(
+          { id: lectureId, "viewedBy.userId": { $ne: userId } },
+          {
+            $inc: { views: 1 },
+            $push: { viewedBy: { userId, lastViewed: new Date() } },
+          },
+          { new: true },
         );
 
-        if (!alreadyPresent) {
-          lecture.attendance.push({
-            lectureId,
-            studentId: userId,
+        if (!lecture) return;
+
+        // 2. Upsert Attendance to prevent duplicates
+        await Attendance.findOneAndUpdate(
+          { studentId: userId, lectureId: lectureId },
+          {
             status: "Present",
-            timestamp: new Date().toISOString(),
-          });
-          await lecture.save();
-        }
+            courseId: lecture.courseId,
+            timestamp: new Date(),
+          },
+          { upsert: true },
+        );
+
+        // 3. Update Library Usage Session (watching a lecture is a research session)
+        await User.updateOne(
+          { uid: userId },
+          { $inc: { "monthlyStats.libraryUsageSessions": 1 } },
+        );
       } catch (err) {
         console.error("Attendance Error:", err);
       }
@@ -295,15 +309,36 @@ export const init = (httpServer) => {
               "Attendance session is no longer active.",
             );
           }
+
+          const lecture = await Lectures.findOne({ id: lectureId });
+
+          // 1. Prevent multiple attendance entries for same lecture/student
+          const existing = await Attendance.findOne({ studentId, lectureId });
+          if (existing) {
+            return socket.emit("attendance_success", {
+              message: "Already marked present!",
+            });
+          }
+
+          // 2. Create Attendance Record
+          await Attendance.create({
+            studentId,
+            lectureId,
+            courseId: lecture?.courseId,
+            status: "Present",
+            timestamp: new Date(),
+          });
+
+          // 3. Optional: Trigger Lecturer UI Update
           const student = await User.findOne({ uid: studentId });
           io.to(`lecturer_${lectureId}`).emit("student_checked_in", {
             uid: student.uid,
             firstname: student.firstname,
             lastname: student.lastname,
             matricNumber: student.matricNumber,
-            department: student.department,
             timestamp: timestamp,
           });
+
           socket.emit("attendance_success", {
             message: "You have been marked present!",
           });

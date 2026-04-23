@@ -1,5 +1,5 @@
 import express from "express";
-import { authenticate, protect } from "../middleware/auth.js";
+import { protect } from "../middleware/auth.js";
 import { Transactions, ITag } from "../tableDeclarations.js";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
@@ -22,7 +22,7 @@ import mongoose from "mongoose";
 
 export default function (User) {
   const router = express.Router();
-  router.get("/my-transactions/:userId", authenticate, async (req, res) => {
+  router.get("/my-transactions/:userId", protect, async (req, res) => {
     try {
       const { userId } = req.params;
       const page = parseInt(req.query.page) || 1;
@@ -352,7 +352,7 @@ export default function (User) {
         .json({ message: error.message || "Internal Server Error" });
     }
   });
-  router.get("/transactions/stats/:userId", authenticate, async (req, res) => {
+  router.get("/transactions/stats/:userId", protect, async (req, res) => {
     try {
       const { userId } = req.params;
       const { month, year } = req.query;
@@ -417,7 +417,7 @@ export default function (User) {
     }
   });
 
-router.post("/transactions/export", authenticate, async (req, res) => {
+router.post("/transactions/export", protect, async (req, res) => {
   try {
     const { userId, startDate, endDate } = req.body;
     const user = await User.findOne({ uid: userId });

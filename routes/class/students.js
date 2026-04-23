@@ -1,6 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
-import { authenticate, verifyToken } from "../../middleware/auth.js";
+import { protect } from "../../middleware/auth.js";
 import {
   Course,
   TestSubmission,
@@ -29,7 +29,7 @@ session.startTransaction();
 export default function (User) {
   const router = express.Router();
   // GET /api/courses?studentId=...&semester=...&session=...
-  router.get("/courses", authenticate, async (req, res) => {
+  router.get("/courses", protect, async (req, res) => {
     try {
       const { semester, session } = req.query;
       const userId = req.user.uid;
@@ -53,7 +53,7 @@ export default function (User) {
     }
   });
   // POST /api/courses/batch
-  router.post("/courses/batch", authenticate, async (req, res) => {
+  router.post("/courses/batch", protect, async (req, res) => {
     try {
       const { ids } = req.body;
 
@@ -108,7 +108,7 @@ export default function (User) {
   //AI course detail extraction from coursee file upload
   router.post(
     "/ai/extract-course",
-    authenticate,
+    protect,
     upload.array("files"),
     async (req, res) => {
       try {
@@ -252,7 +252,7 @@ export default function (User) {
       }
     },
   );
-  router.post("/exceptions/submit", authenticate, async (req, res) => {
+  router.post("/exceptions/submit", protect, async (req, res) => {
     try {
       const {
         studentId,
@@ -341,7 +341,7 @@ export default function (User) {
       res.status(500).json({ message: error.message });
     }
   });
-  router.post("/test/submit", authenticate, async (req, res) => {
+  router.post("/test/submit", protect, async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
 
@@ -499,7 +499,7 @@ export default function (User) {
     }
   });
   //Attendance submission
-  router.post("/submit", verifyToken, async (req, res) => {
+  router.post("/submit", protect, async (req, res) => {
     try {
       const { studentId, lectureId, courseId, status, checkData } = req.body;
 
@@ -570,6 +570,10 @@ export default function (User) {
           { courseId, "students.id": studentId },
           { $inc: { "students.$.classesAttended": 1 } },
         );
+        await User.updateOne(
+          { uid: studentId },
+          { $inc: { "monthlyStats.libraryUsageSessions": 1 } },
+        );
       }
 
       res.status(200).json({
@@ -594,6 +598,23 @@ export default function (User) {
         comment,
       });
       await newReview.save();
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+      const reviews = await Review.find({
+        lecturerId,
+        createdAt: {
+          $gte: startOfMonth, // Greater than or equal to the 1st
+          $lt: endOfMonth, // Less than the 1st of next month
+        },
+      });
+      const totalRating = reviews.reduce((acc, curr) => acc + curr.rating, 0);
+      const newAvg = totalRating / reviews.length;
+      await User.updateOne(
+        { uid: lecturerId },
+        { $set: { "monthlyStats.avgReview": newAvg } },
+      );
+
       res.status(201).json({ message: "Review submitted successfully" });
     } catch (error) {
       res.status(500).json({ error: error.message });

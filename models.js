@@ -197,8 +197,8 @@ export const userSchema = new mongoose.Schema({
   },
   tier: {
     type: String,
-    enum: ["Free", "Pro", "Premium"],
-    default: "Free",
+    enum: ["free", "pro", "premium"],
+    default: "free",
   },
   itagusername: { type: String, unique: true },
   profilePic: [String],

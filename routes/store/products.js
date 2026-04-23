@@ -1,10 +1,7 @@
 import express from "express";
 import mongoose from "mongoose";
-import {
-  authenticate,
-  removeOutOfStockProducts,
-  addUserRecord,
-} from "../../index.js";
+import { removeOutOfStockProducts } from "../../index.js";
+import { protect, addUserRecord } from "../../middleware/auth.js";
 import {
   Notification,
   TransactionMiddleState,
@@ -119,7 +116,7 @@ export default function (Category) {
   });
 
   // POST /store/:productId/favorite {Toggle favorite}
-  router.post("/toggleFavorite", authenticate, async (req, res) => {
+  router.post("/toggleFavorite", protect, async (req, res) => {
     const { productId } = req.body;
     const userId = req.user.id;
 
@@ -135,7 +132,7 @@ export default function (Category) {
       if (isFavorited) {
         // Unfavorite: remove productId from favorites
         user.favorites = user.favorites.filter(
-          (id) => id.toString() !== productId
+          (id) => id.toString() !== productId,
         );
         product.favCount = Math.max((product.favCount || 1) - 1, 0); // prevent negative count
         console.log("Unfavorite action complete");
@@ -163,7 +160,7 @@ export default function (Category) {
   });
 
   // GET /store/favorites (Favorite Products Fetch)
-  router.get("/favorites", authenticate, async (req, res) => {
+  router.get("/favorites", protect, async (req, res) => {
     const userId = req.user.id;
     try {
       const user = await User.findById(userId);
@@ -178,7 +175,7 @@ export default function (Category) {
   });
 
   // GTT /store (Cart Items Fetch)
-  router.get("/cart", authenticate, async (req, res) => {
+  router.get("/cart", protect, async (req, res) => {
     const userId = req.user.id;
 
     try {
@@ -207,7 +204,7 @@ export default function (Category) {
   });
 
   // POST /store {Add Product to Cart}
-  router.post("/cart", authenticate, async (req, res) => {
+  router.post("/cart", protect, async (req, res) => {
     const userId = req.user.id;
     const { productId } = req.body;
     console.log(productId);
@@ -223,7 +220,7 @@ export default function (Category) {
   });
 
   //POST store/cart/remove (Remove item from cart)
-  router.post("/cart/remove", authenticate, async (req, res) => {
+  router.post("/cart/remove", protect, async (req, res) => {
     const { productId } = req.body;
     const userId = req.user.id;
 
@@ -242,7 +239,7 @@ export default function (Category) {
   });
 
   //POST store/favorites/remove (Remove product from favorites)
-  router.post("/favorites/remove", authenticate, async (req, res) => {
+  router.post("/favorites/remove", protect, async (req, res) => {
     const { productId } = req.body;
     const userId = req.user.id;
 
@@ -263,7 +260,7 @@ export default function (Category) {
   });
 
   //POST store/productsByIds (Populating fetch favorites with favorite products)
-  router.post("/productsByIds", authenticate, async (req, res) => {
+  router.post("/productsByIds", protect, async (req, res) => {
     const { productIds } = req.body;
 
     try {
@@ -367,7 +364,7 @@ export default function (Category) {
   });
 
   // DELETE /store/cart (Clear All Cart Items)
-  router.delete("/cart", authenticate, async (req, res) => {
+  router.delete("/cart", protect, async (req, res) => {
     const userId = req.user.id;
     try {
       const user = await User.findById(userId);
@@ -386,7 +383,7 @@ export default function (Category) {
   });
 
   // DELETE /store/favorites (Clear all favorites)
-  router.delete("/favorites", authenticate, async (req, res) => {
+  router.delete("/favorites", protect, async (req, res) => {
     const userId = req.user.id;
     try {
       const user = await User.findById(userId);
@@ -403,7 +400,7 @@ export default function (Category) {
   });
 
   // POST /store/checkout (Purchase products and deduct points)
-  router.post("/checkout", authenticate, async (req, res) => {
+  router.post("/checkout", protect, async (req, res) => {
     console.log("Checking out...");
     const {
       userId,
@@ -476,7 +473,7 @@ export default function (Category) {
                 item.fileUrl
                   ? "Points credited."
                   : "Awaiting products pickup and transaction completion."
-              }`
+              }`,
             );
 
             // Notify seller on app

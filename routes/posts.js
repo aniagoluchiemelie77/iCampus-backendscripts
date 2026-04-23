@@ -7,7 +7,7 @@ import {
   generatePostId,
 } from "../utils/idGenerator.js";
 import { extractMentions } from "../utils/postMentionsRegex.js";
-import { authenticate } from "../index.js";
+import { protect } from "../middleware/auth.js";
 
 export default function (Posts, User) {
   const router = express.Router();
@@ -591,7 +591,7 @@ export default function (Posts, User) {
   });
 
   //10. fetch posts using postId
-  router.get("/:postId", authenticate, async (req, res) => {
+  router.get("/:postId", protect, async (req, res) => {
     try {
       const { postId } = req.params;
       const post = await Posts.aggregate([

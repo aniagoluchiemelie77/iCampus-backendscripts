@@ -1,5 +1,5 @@
 import express from "express";
-import { authenticate } from "../middleware/auth.js";
+import { protect } from "../middleware/auth.js";
 import { Event } from "../tableDeclarations.js";
 
 export default function (Event) {
@@ -51,7 +51,7 @@ export default function (Event) {
     }
   });
 
-  router.post("/add/", authenticate, async (req, res) => {
+  router.post("/add/", protect, async (req, res) => {
     try {
       const newEvent = new Event(req.body);
       await newEvent.save();

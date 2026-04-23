@@ -1,5 +1,5 @@
 import express from "express";
-import { authenticate, protect } from "../../middleware/auth.js";
+import { protect } from "../../middleware/auth.js";
 import {
   Course,
   Lectures,
@@ -20,7 +20,7 @@ export const generateAssessmentId = (courseCode = "GEN") => {
 
 export default function (User) {
   const router = express.Router();
-  router.post("/courses", authenticate, async (req, res) => {
+  router.post("/courses", protect, async (req, res) => {
     try {
       const { payload, user } = req.body;
 
@@ -58,7 +58,7 @@ export default function (User) {
       return res.status(500).json({ message: "Server error" });
     }
   });
-  router.get("/courses/lecturer-view", authenticate, async (req, res) => {
+  router.get("/courses/lecturer-view", protect, async (req, res) => {
     try {
       const { lecturerId, semester, session } = req.query;
 
@@ -94,68 +94,64 @@ export default function (User) {
     }
   });
   //Update Course content
-  router.post(
-    "/courses/updateContent/:courseId",
-    authenticate,
-    async (req, res) => {
-      try {
-        const { courseId } = req.params;
-        const { updatedContents } = req.body;
+  router.post("/courses/updateContent/:courseId", protect, async (req, res) => {
+    try {
+      const { courseId } = req.params;
+      const { updatedContents } = req.body;
 
-        if (!Array.isArray(updatedContents)) {
-          return res.status(400).json({ message: "Invalid content format" });
-        }
-
-        const updatedCourse = await Course.findByIdAndUpdate(
-          courseId,
-          { $set: { courseContents: updatedContents } },
-          { new: true },
-        );
-
-        if (!updatedCourse) {
-          return res.status(404).json({ message: "Course not found" });
-        }
-
-        // --- NOTIFY STUDENTS (In-App Only) ---
-        const students = await User.find({
-          usertype: "student",
-          department: updatedCourse.department,
-          level: updatedCourse.level,
-        }).select("uid");
-
-        // Fire and forget: update the notification bell for all students
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId(),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "CONTENT_UPDATED",
-            title: "Course Syllabus Updated",
-            message: `the course contents for ${updatedCourse.courseCode} have been updated by the lecturer/instructor.`,
-            payload: { courseId: updatedCourse._id },
-            sendEmail: false,
-            sendPush: false,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-
-        res.status(200).json({
-          message: "Course content updated successfully",
-          courseContents: updatedCourse.courseContents,
-        });
-      } catch (error) {
-        console.error("Update Course Error:", error);
-        res
-          .status(500)
-          .json({ message: "Server error updating course contents" });
+      if (!Array.isArray(updatedContents)) {
+        return res.status(400).json({ message: "Invalid content format" });
       }
-    },
-  );
+
+      const updatedCourse = await Course.findByIdAndUpdate(
+        courseId,
+        { $set: { courseContents: updatedContents } },
+        { new: true },
+      );
+
+      if (!updatedCourse) {
+        return res.status(404).json({ message: "Course not found" });
+      }
+
+      // --- NOTIFY STUDENTS (In-App Only) ---
+      const students = await User.find({
+        usertype: "student",
+        department: updatedCourse.department,
+        level: updatedCourse.level,
+      }).select("uid");
+
+      // Fire and forget: update the notification bell for all students
+      students.forEach((student) => {
+        createNotification({
+          notificationId: generateNotificationId(),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "CONTENT_UPDATED",
+          title: "Course Syllabus Updated",
+          message: `the course contents for ${updatedCourse.courseCode} have been updated by the lecturer/instructor.`,
+          payload: { courseId: updatedCourse._id },
+          sendEmail: false,
+          sendPush: false,
+          sendSocket: true,
+          saveToDb: true,
+        });
+      });
+
+      res.status(200).json({
+        message: "Course content updated successfully",
+        courseContents: updatedCourse.courseContents,
+      });
+    } catch (error) {
+      console.error("Update Course Error:", error);
+      res
+        .status(500)
+        .json({ message: "Server error updating course contents" });
+    }
+  });
   // --- 1. UPLOAD MATERIAL ---
   router.post(
     "/courses/uploadMaterial/:courseId",
-    authenticate,
+    protect,
     async (req, res) => {
       try {
         const { courseId } = req.params;
@@ -190,6 +186,15 @@ export default function (User) {
             saveToDb: true,
           });
         });
+        await User.updateOne(
+          { uid: req.user.uid },
+          {
+            $inc: {
+              "monthlyStats.libraryUsageSessions": 1,
+              "monthlyStats.minutesActive": 10,
+            },
+          },
+        );
 
         res.status(200).json({
           message: "File uploaded",
@@ -203,7 +208,7 @@ export default function (User) {
   // --- 2. CREATE ASSIGNMENT ---
   router.post(
     "/courses/:courseId/assignments",
-    authenticate,
+    protect,
     upload.single("file"),
     async (req, res) => {
       try {
@@ -267,7 +272,7 @@ export default function (User) {
     },
   );
   //Approve or disapprove exceptions
-  router.patch("/exceptions/:id/status", authenticate, async (req, res) => {
+  router.patch("/exceptions/:id/status", protect, async (req, res) => {
     try {
       const { id } = req.params;
       const { status, lecturerComment } = req.body;
@@ -345,6 +350,7 @@ export default function (User) {
   // Create Lectures
   router.post(
     "/courses/:courseId/lectures/createSchedule",
+    protect,
     async (req, res) => {
       try {
         const {
@@ -450,6 +456,15 @@ export default function (User) {
         // Fire and forget (don't await to keep API response fast)
         Promise.all(notificationPromises).catch((err) =>
           console.error("Notification Error:", err),
+        );
+        await User.updateOne(
+          { uid: req.user.uid },
+          {
+            $inc: {
+              "monthlyStats.minutesActive": 15, // Reward for administrative setup
+              "monthlyStats.aiQueries": 2, // Assuming they used the AI to help draft questions
+            },
+          },
         );
 
         res.status(201).json({
@@ -811,7 +826,7 @@ export default function (User) {
     }
   });
   // GET: /tests/:testId/analysis-data
-  router.get("/tests/:testId/analysis-data", authenticate, async (req, res) => {
+  router.get("/tests/:testId/analysis-data", protect, async (req, res) => {
     try {
       const { testId } = req.params;
       const test = await Assessment.findOne({ id: testId });
@@ -841,7 +856,7 @@ export default function (User) {
   // PUT route to postpone a specific lecture
   router.put(
     "/courses/:courseId/lectures/:lectureId/postpone",
-    authenticate,
+    protect,
     async (req, res) => {
       try {
         const { lectureId, courseId } = req.params;
@@ -909,7 +924,7 @@ export default function (User) {
     },
   );
   // DELETE: /users/lecturers/class/lectures/:lectureId
-  router.delete("/lectures/:lectureId", authenticate, async (req, res) => {
+  router.delete("/lectures/:lectureId", protect, async (req, res) => {
     try {
       const { lectureId } = req.params;
 
@@ -974,46 +989,48 @@ export default function (User) {
     }
   });
   // routes/lecture.js (The Start Lecture Route)
-router.post("/lectures/start", async (req, res) => {
-  try {
-    const { lectureId, courseId } = req.body;
+  router.post("/lectures/start", async (req, res) => {
+    try {
+      const { lectureId, courseId } = req.body;
 
-    // 1. Validation: Ensure IDs are present
-    if (!lectureId || !courseId) {
-      return res
-        .status(400)
-        .json({ message: "Lecture ID and Course ID are required" });
+      // 1. Validation: Ensure IDs are present
+      if (!lectureId || !courseId) {
+        return res
+          .status(400)
+          .json({ message: "Lecture ID and Course ID are required" });
+      }
+      const existingLecture = await Lectures.findById(lectureId);
+      if (!existingLecture) {
+        return res.status(404).json({ message: "Lecture not found" });
+      }
+
+      if (existingLecture.status === "ongoing") {
+        return res.status(200).json(existingLecture); // Already live, just return it
+      }
+
+      // 3. Update status to 'ongoing'
+      const lecture = await Lectures.findByIdAndUpdate(
+        lectureId,
+        { status: "ongoing", actualStartTime: new Date() }, // Track actual start time
+        { new: true },
+      );
+
+      // 4. Emit via Socket (with safety check)
+      if (req.io) {
+        // Use the course room so only enrolled students get the popup
+        req.io.to(`course_${courseId}`).emit("lecture_started", lecture);
+        console.log(`Live signal sent to course_${courseId}`);
+      } else {
+        console.error(
+          "Socket.io instance (req.io) not found on request object",
+        );
+      }
+
+      res.status(200).json(lecture);
+    } catch (error) {
+      console.error("Error starting lecture:", error);
+      res.status(500).json({ message: "Internal Server Error" });
     }
-    const existingLecture = await Lectures.findById(lectureId);
-    if (!existingLecture) {
-      return res.status(404).json({ message: "Lecture not found" });
-    }
-
-    if (existingLecture.status === "ongoing") {
-      return res.status(200).json(existingLecture); // Already live, just return it
-    }
-
-    // 3. Update status to 'ongoing'
-    const lecture = await Lectures.findByIdAndUpdate(
-      lectureId,
-      { status: "ongoing", actualStartTime: new Date() }, // Track actual start time
-      { new: true },
-    );
-
-    // 4. Emit via Socket (with safety check)
-    if (req.io) {
-      // Use the course room so only enrolled students get the popup
-      req.io.to(`course_${courseId}`).emit("lecture_started", lecture);
-      console.log(`Live signal sent to course_${courseId}`);
-    } else {
-      console.error("Socket.io instance (req.io) not found on request object");
-    }
-
-    res.status(200).json(lecture);
-  } catch (error) {
-    console.error("Error starting lecture:", error);
-    res.status(500).json({ message: "Internal Server Error" });
-  }
-});
+  });
   return router;
 }

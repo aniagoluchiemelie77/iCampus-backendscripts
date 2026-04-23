@@ -9,13 +9,7 @@ import jwt from "jsonwebtoken";
 import { createNotification } from "../services/notificationService.js";
 import { getFallbackBooks } from "../utils/libraryHelpers.js";
 import { generateExpiryDate } from "../utils/dateHelper.js";
-import {
-  authenticate,
-  loginLimiter,
-  addUserRecord,
-  emailLimiter,
-  protect,
-} from "../middleware/auth.js";
+import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import { client } from "../workers/reditFile.js";
 import {
   UniversitiesAndColleges,
@@ -185,7 +179,7 @@ export default function (User) {
     }
   });
 
-  router.post("/login", loginLimiter, async (req, res) => {
+  router.post("/login", authLimiter, async (req, res) => {
     const { identifier, password, ipAddress, location } = req.body;
 
     try {
@@ -440,7 +434,7 @@ export default function (User) {
     }
   });
 
-  router.post("/verifyEmailCode", emailLimiter, async (req, res) => {
+  router.post("/verifyEmailCode", authLimiter, async (req, res) => {
     try {
       const { email, code } = req.body;
 
@@ -721,7 +715,7 @@ export default function (User) {
       res.status(500).json({ message: "Server error" });
     }
   });
-  router.post("/upload-profile-image", authenticate, async (req, res) => {
+  router.post("/upload-profile-image", protect, async (req, res) => {
     try {
       const userId = req.user.id;
       const { imageUrl } = req.body;
@@ -762,7 +756,7 @@ export default function (User) {
   });
   router.post(
     "/transactions/complete/:transactionId",
-    authenticate,
+    protect,
     async (req, res) => {
       try {
         const { transactionId } = req.params;
@@ -888,7 +882,7 @@ export default function (User) {
       }
     },
   );
-  router.get("/exceptions/course/:courseId", authenticate, async (req, res) => {
+  router.get("/exceptions/course/:courseId", protect, async (req, res) => {
     try {
       const { courseId } = req.params;
       const exceptions = await Exceptions.find({ courseId }).sort({ date: -1 });
@@ -897,21 +891,17 @@ export default function (User) {
       res.status(500).json({ message: "Failed to fetch course exceptions" });
     }
   });
-  router.get(
-    "/exceptions/lectures/:lectureId",
-    authenticate,
-    async (req, res) => {
-      try {
-        const { lectureId } = req.params;
-        const exceptions = await Exceptions.find({ lectureId }).sort({
-          date: -1,
-        });
-        res.status(200).json(exceptions);
-      } catch (error) {
-        res.status(500).json({ message: "Failed to fetch course exceptions" });
-      }
-    },
-  );
+  router.get("/exceptions/lectures/:lectureId", protect, async (req, res) => {
+    try {
+      const { lectureId } = req.params;
+      const exceptions = await Exceptions.find({ lectureId }).sort({
+        date: -1,
+      });
+      res.status(200).json(exceptions);
+    } catch (error) {
+      res.status(500).json({ message: "Failed to fetch course exceptions" });
+    }
+  });
   router.get("/categories", async (req, res) => {
     try {
       const uniqueCategories = await Course.distinct("niche", {
@@ -963,7 +953,7 @@ export default function (User) {
         .json({ message: "Internal server error during verification" });
     }
   });
-  router.get("/courses/:courseId", authenticate, async (req, res) => {
+  router.get("/courses/:courseId", protect, async (req, res) => {
     try {
       const { courseId } = req.params;
       const course = await Course.findOne({ courseId: courseId })
@@ -984,7 +974,7 @@ export default function (User) {
     }
   });
   //Fetch course details only if user is enrolled
-  router.get("/courses/:courseId", authenticate, async (req, res) => {
+  router.get("/courses/:courseId", protect, async (req, res) => {
     try {
       const { courseId } = req.params;
       const userId = req.user.uid;
@@ -1011,25 +1001,20 @@ export default function (User) {
       });
     }
   });
-  router.get(
-    "/courses/:courseId/assignments",
-    authenticate,
-    async (req, res) => {
-      try {
-        const course = await Course.findOne(
-          { courseId: req.params.courseId },
-          "assignments",
-        );
-        if (!course)
-          return res.status(404).json({ message: "Course not found" });
+  router.get("/courses/:courseId/assignments", protect, async (req, res) => {
+    try {
+      const course = await Course.findOne(
+        { courseId: req.params.courseId },
+        "assignments",
+      );
+      if (!course) return res.status(404).json({ message: "Course not found" });
 
-        res.status(200).json(course.assignments);
-      } catch (error) {
-        res.status(500).json({ message: error.message });
-      }
-    },
-  );
-  router.get("/exceptions", authenticate, async (req, res) => {
+      res.status(200).json(course.assignments);
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  });
+  router.get("/exceptions", protect, async (req, res) => {
     try {
       const { courseId } = req.query;
       const userId = req.user.uid;
@@ -1153,7 +1138,7 @@ export default function (User) {
     }
   });
   router.post("/ai/chat", async (req, res) => {
-    const { message, context, history } = req.body;
+    const { message, context, history, userId } = req.body;
     try {
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
       let contextString = `You are iAssistant, an academic AI for the iCampus app. 
@@ -1182,6 +1167,12 @@ export default function (User) {
       });
       const result = await chat.sendMessage(message);
       const response = result.response;
+      if (userId) {
+        await User.findOneAndUpdate(
+          { uid: userId, usertype: { $in: ["student", "lecturer"] } },
+          { $inc: { "monthlyStats.aiQueries": 1 } },
+        );
+      }
 
       res.json({ reply: response.text() });
     } catch (error) {
@@ -1208,9 +1199,26 @@ export default function (User) {
   });
   //Library routes
   router.get("/library/search", async (req, res) => {
-    const { q } = req.query;
+    const { q, userId } = req.query;
     const searchUrl = `https://1lib.sk/s/${encodeURIComponent(q)}`;
     try {
+      if (userId) {
+        const today = new Date();
+        const user = await User.findOne({ uid: userId });
+        const lastAccess = user.monthlyStats.lastLibraryAccess;
+        const isNewSession =
+          !lastAccess || today - new Date(lastAccess) > 1000 * 60 * 60;
+        await User.findOneAndUpdate(
+          { uid: userId },
+          {
+            $inc: {
+              "monthlyStats.libraryUsageSessions": isNewSession ? 1 : 0,
+              "monthlyStats.booksFound": 1,
+            },
+            $set: { "monthlyStats.lastLibraryAccess": today },
+          },
+        );
+      }
       const { data } = await axios.get(searchUrl, {
         headers: {
           "User-Agent":
@@ -1329,38 +1337,6 @@ export default function (User) {
     } catch (error) {
       console.error("Featured Scrape Error:", error.message);
       res.json(getFallbackBooks());
-    }
-  });
-  router.post("/library/track-usage", async (req, res) => {
-    const { userId } = req.body;
-    const now = new Date();
-
-    try {
-      const user = await User.findById(userId);
-
-      // Rate Limiting: Only count usage once every 6 hours
-      const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
-
-      if (
-        !user.monthlyStats.lastLibraryAccess ||
-        user.monthlyStats.lastLibraryAccess < sixHoursAgo
-      ) {
-        user.monthlyStats.libraryUsageSessions += 1;
-        user.monthlyStats.lastLibraryAccess = now;
-
-        // Recalculate the preview iScore
-        user.pendingIScore = calculateIScore(user.monthlyStats);
-        await user.save();
-
-        return res.json({
-          message: "iScore progress updated!",
-          pending: user.pendingIScore,
-        });
-      }
-
-      res.json({ message: "Usage already recorded for this session." });
-    } catch (error) {
-      res.status(500).send("Error tracking usage");
     }
   });
 
