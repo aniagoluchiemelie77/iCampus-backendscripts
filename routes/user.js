@@ -30,7 +30,6 @@ import {
   iTag,
   Lectures,
 } from "../tableDeclarations.js";
-import multer from "multer";
 axiosRetry(axios, { retries: 3 });
 import {
   generateNotificationId,
@@ -102,8 +101,6 @@ const generateTokens = async (user) => {
   await user.save();
   return { accessToken, refreshToken };
 };
-
-const upload = multer({ dest: "uploads/" });
 export default function (User) {
   const router = express.Router();
 
@@ -1332,6 +1329,38 @@ export default function (User) {
     } catch (error) {
       console.error("Featured Scrape Error:", error.message);
       res.json(getFallbackBooks());
+    }
+  });
+  router.post("/library/track-usage", async (req, res) => {
+    const { userId } = req.body;
+    const now = new Date();
+
+    try {
+      const user = await User.findById(userId);
+
+      // Rate Limiting: Only count usage once every 6 hours
+      const sixHoursAgo = new Date(now.getTime() - 6 * 60 * 60 * 1000);
+
+      if (
+        !user.monthlyStats.lastLibraryAccess ||
+        user.monthlyStats.lastLibraryAccess < sixHoursAgo
+      ) {
+        user.monthlyStats.libraryUsageSessions += 1;
+        user.monthlyStats.lastLibraryAccess = now;
+
+        // Recalculate the preview iScore
+        user.pendingIScore = calculateIScore(user.monthlyStats);
+        await user.save();
+
+        return res.json({
+          message: "iScore progress updated!",
+          pending: user.pendingIScore,
+        });
+      }
+
+      res.json({ message: "Usage already recorded for this session." });
+    } catch (error) {
+      res.status(500).send("Error tracking usage");
     }
   });
 

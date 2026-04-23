@@ -178,6 +178,28 @@ export const userSchema = new mongoose.Schema({
   refreshTokens: [{ type: String }],
   uid: { type: String, index: true, required: true },
   iScore: String,
+  currentIScore: {
+    type: Number,
+    default: 5,
+  },
+  pendingIScore: {
+    type: Number,
+    default: 0,
+  },
+  monthlyStats: {
+    minutesActive: { type: Number, default: 0 },
+    libraryUsageSessions: { type: Number, default: 0 },
+    booksFound: { type: Number, default: 0 },
+    aiQueries: { type: Number, default: 0 },
+    avgReview: { type: Number, default: 0 },
+    avgTestScore: { type: Number, default: 0 },
+    lastLibraryAccess: { type: Date },
+  },
+  tier: {
+    type: String,
+    enum: ["Free", "Pro", "Premium"],
+    default: "Free",
+  },
   itagusername: { type: String, unique: true },
   profilePic: [String],
   likes: [{ type: String }],
