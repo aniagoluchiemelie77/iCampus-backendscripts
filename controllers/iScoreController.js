@@ -1,5 +1,6 @@
 import { Lectures, TestSubmission, Attendance } from "../tableDeclarations.js";
 
+const CARRY_FORWARD_WEIGHT = 0.5;
 export const calculateUnifiedIScore = async (user) => {
   const stats = user.monthlyStats;
   const utype = user.usertype;
@@ -86,5 +87,10 @@ export const calculateUnifiedIScore = async (user) => {
   const tierMultipliers = { free: 1, pro: 1.05, premium: 1.1 };
   total *= tierMultipliers[user.tier] || 1;
 
-  return Math.min(Math.round(total), 100);
-};;
+  // Formula: (50% of Old Score) + (50% of New Month Performance)
+  // This prevents the score from dropping to zero while rewarding fresh work.
+  const previousScore = user.currentIScore || 0;
+  let finalScore =
+    previousScore * CARRY_FORWARD_WEIGHT + total * (1 - CARRY_FORWARD_WEIGHT);
+  return Math.min(Math.round(finalScore), 100);
+};

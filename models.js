@@ -177,14 +177,9 @@ export const userBankOrCardDetails = new mongoose.Schema({
 export const userSchema = new mongoose.Schema({
   refreshTokens: [{ type: String }],
   uid: { type: String, index: true, required: true },
-  iScore: String,
   currentIScore: {
     type: Number,
     default: 5,
-  },
-  pendingIScore: {
-    type: Number,
-    default: 0,
   },
   monthlyStats: {
     minutesActive: { type: Number, default: 0 },
