@@ -9,7 +9,7 @@ cron.schedule("0 0 1 * *", async () => {
   try {
     // 1. Only fetch users who actually use the iScore system
     const users = await User.find({
-      usertype: { $in: ["student", "lecturer"] },
+      usertype: { $in: ["student", "lecturer", "otherUser"] },
     });
 
     for (let user of users) {

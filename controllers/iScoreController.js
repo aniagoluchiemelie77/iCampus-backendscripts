@@ -4,24 +4,25 @@ export const calculateUnifiedIScore = async (user) => {
   const stats = user.monthlyStats;
   const utype = user.usertype;
 
-  if (utype !== "student" && utype !== "lecturer") {
+  // Enterprise users or undefined types still get the floor
+  if (utype === "enterprise" || !utype) {
     return user.currentIScore || 5;
   }
 
   const isLecturer = utype === "lecturer";
+  const isStudent = utype === "student";
+  const isOther = !isLecturer && !isStudent; // Staff, Alumni, etc.
+
   let academicBase = 0;
   let attendanceScore = 0;
+  let communityScore = 0;
 
-  // --- 1. Role-Specific Academic & Attendance Logic ---
+  // --- 1. Role-Specific Logic ---
   if (isLecturer) {
-    // 1. Reputation (35 pts): Based on student feedback (rating 1-5)
-    // Higher average reviews = higher academicBase.
     academicBase = (stats.avgReview / 5) * 35;
-    // 2. Resource Impact (Bonus pts): Rewarding syllabus & material management
-    // We can track this via minutesActive or a new 'impactScore'
     attendanceScore = Math.min((stats.minutesActive / 200) * 15, 15);
-  } else {
-    // Students: Dynamic Test Performance Ratio
+  } else if (isStudent) {
+    // Student Academic Logic
     const submissions = await TestSubmission.find({ studentId: user.uid });
     if (submissions.length > 0) {
       const totalPercentage = submissions.reduce(
@@ -30,11 +31,10 @@ export const calculateUnifiedIScore = async (user) => {
       );
       academicBase = (totalPercentage / submissions.length) * 30;
     }
-
-    // Students: Attendance Ratio
+    // Student Attendance Logic
     const totalLectures = await Lectures.countDocuments({
       courseId: { $in: user.coursesEnrolled },
-      status: { $in: ["completed", "ongoing"] }, // include ongoing for real-time feel
+      status: { $in: ["completed", "ongoing"] },
     });
     const attendedCount = await Attendance.countDocuments({
       studentId: user.uid,
@@ -44,35 +44,47 @@ export const calculateUnifiedIScore = async (user) => {
       totalLectures > 0
         ? Math.min((attendedCount / totalLectures) * 20, 20)
         : 0;
+  } else if (isOther) {
+    // --- NEW: otherUser Logic (Target: 50 pts for this section) ---
+    // They are graded on "Community Contribution" (Posts created) and "Social Reach"
+    const postCreationScore = Math.min(stats.libraryUsageSessions * 5, 25); // 5 posts = 25 pts
+    const reachScore = Math.min((stats.minutesActive / 200) * 25, 25); // Engagement via impressions/activity
+    communityScore = postCreationScore + reachScore;
   }
 
   // --- 2. Shared Library & AI Logic (Target: 30) ---
   const sessionWeight = isLecturer ? 3.0 : 2.0;
-  const librarySessions = Math.min(
-    stats.libraryUsageSessions * sessionWeight,
-    12,
-  );
+  const librarySessions = isOther
+    ? 0
+    : Math.min(stats.libraryUsageSessions * sessionWeight, 12);
   const libraryDownloads = Math.min(stats.booksFound * 1.5, 8);
   const aiAssistantUse = Math.min((stats.aiQueries / 40) * 10, 10);
-  const techTotal = librarySessions + libraryDownloads + aiAssistantUse;
+
+  // For 'other', we don't count librarySessions here because it's in 'communityScore'
+  const techTotal =
+    (isOther ? 0 : librarySessions) + libraryDownloads + aiAssistantUse;
 
   // --- 3. Engagement & Reputation ---
-  const engagement = isLecturer
-    ? 0
-    : Math.min((stats.minutesActive / 200) * 20, 20);
+  // Students/Lecturers use the standard engagement
+  const engagement =
+    isLecturer || isOther ? 0 : Math.min((stats.minutesActive / 200) * 20, 20);
   const reputation = (stats.avgReview / 5) * 20;
 
   // --- 4. Final Calculation ---
   let total =
-    academicBase + attendanceScore + techTotal + engagement + reputation;
+    academicBase +
+    attendanceScore +
+    communityScore +
+    techTotal +
+    engagement +
+    reputation;
 
-  // Bonuses
-  if (isLecturer) total += user.isVerified ? 10 : 5;
-  else total += (user.isCourseRep ? 3 : 0) + (user.isVerified ? 2 : 0);
+  //Bonuses
+  total += user.isVerified ? 5 : 0;
 
   // Tier Multiplier
   const tierMultipliers = { free: 1, pro: 1.05, premium: 1.1 };
   total *= tierMultipliers[user.tier] || 1;
 
   return Math.min(Math.round(total), 100);
-};
+};;

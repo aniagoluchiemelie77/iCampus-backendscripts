@@ -29,7 +29,7 @@ export default function (Posts, User) {
       const pipeline = [
         {
           $lookup: {
-            from: "users", // ensure this matches your User collection name
+            from: "users",
             localField: "userId.uid",
             foreignField: "uid",
             as: "authorDetails",
@@ -40,6 +40,7 @@ export default function (Posts, User) {
           $addFields: {
             rankingScore: {
               $add: [
+                // 1. Subscription Base Boost (Fixed 1000 pts)
                 {
                   $cond: [
                     { $eq: ["$authorDetails.isSubscriber", true] },
@@ -47,7 +48,31 @@ export default function (Posts, User) {
                     0,
                   ],
                 },
-                { $multiply: ["$impressions", 0.1] },
+
+                // 2. Impression Boost with Tier Multipliers
+                {
+                  $multiply: [
+                    "$impressions",
+                    0.1,
+                    {
+                      $switch: {
+                        branches: [
+                          {
+                            case: { $eq: ["$authorDetails.tier", "premium"] },
+                            then: 5,
+                          },
+                          {
+                            case: { $eq: ["$authorDetails.tier", "pro"] },
+                            then: 2,
+                          },
+                        ],
+                        default: 1,
+                      },
+                    },
+                  ],
+                },
+
+                // 3. Recency (Time)
                 { $divide: [{ $toLong: "$createdAt" }, 1000000000] },
               ],
             },
@@ -220,7 +245,17 @@ export default function (Posts, User) {
       if (!updatedPost) {
         return res.status(404).send("Post not found");
       }
-
+      const author = await User.findOne({ uid: updatedPost.userId.uid });
+      if (author && author.usertype !== "enterprise") {
+        await User.updateOne(
+          { uid: author.uid },
+          {
+            $inc: {
+              "monthlyStats.minutesActive": 0.5,
+            },
+          },
+        );
+      }
       // 2. Grab the socket instance
       const io = req.app.get("socketio");
 
@@ -440,7 +475,7 @@ export default function (Posts, User) {
     }
   });
   // 8. CREATE POST (with Mention and Follower Notifications)
-  router.post("/create", async (req, res) => {
+  router.post("/create", protect, async (req, res) => {
     try {
       const { userId, content, media, poll, isSubscriptionContent } = req.body;
       let processedMedia = media;
@@ -508,7 +543,6 @@ export default function (Posts, User) {
       const followers = await Follow.find({ followingId: userId }).select(
         "followerId",
       );
-
       followers.forEach((follow) => {
         if (
           !notifiedUids.has(follow.followerId) &&
@@ -529,6 +563,17 @@ export default function (Posts, User) {
         }
       });
 
+      //iScore
+      if (req.user.usertype !== "enterprise") {
+        await User.updateOne(
+          { uid: req.user.uid },
+          {
+            $inc: {
+              "monthlyStats.libraryUsageSessions": 1,
+            },
+          },
+        );
+      }
       res.status(201).json({
         message: "Post created successfully",
         data: newPost,

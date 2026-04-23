@@ -269,12 +269,10 @@ userSchema.index(
   { matriculation_number: 1, department: 1 },
   { unique: true, partialFilterExpression: { usertype: "student" } },
 );
-
 userSchema.index(
   { staff_id: 1, department: 1 },
   { unique: true, partialFilterExpression: { usertype: "lecturer" } },
 );
-
 export const verifyStudentSchema = new mongoose.Schema({
   firstname: String,
   lastname: String,
