@@ -466,6 +466,9 @@ export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
     type: String,
     default: () => new Date().toLocaleTimeString("en-US", { hour12: false }),
   },
+  logo: { type: String },
+  currentiScoreAvg: { type: Number },
+  previousiScoreAvg: { type: Number },
 });
 export const universitiesAndCollegesSchema = new mongoose.Schema({
   name: String,

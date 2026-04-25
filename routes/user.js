@@ -1339,6 +1339,44 @@ export default function (User) {
       res.json(getFallbackBooks());
     }
   });
+  // GET /leaderboard
+  router.get("/fetchLeaderBoards", async (req, res) => {
+    try {
+      // 1. Top 10 Students
+      const topStudents = await User.find({ usertype: "student" })
+        .sort({ currentIScore: -1 })
+        .limit(10)
+        .select(
+          "uid firstname lastname currentIScore email previousIScore profilePic department schoolName",
+        );
+
+      // 2. Top 10 Instructors (Lecturers + OtherUsers with high reviews)
+      const topInstructors = await User.find({
+        usertype: { $in: ["lecturer", "otherUser"] },
+      })
+        .sort({ currentIScore: -1, "monthlyStats.avgReview": -1 })
+        .limit(10)
+        .select(
+          "uid firstname lastname currentIScore email profilePic jobTitle previousIScore",
+        );
+
+      // 3. Top 10 Institutions
+      const topInstitutions = await OperationalInstitutions.find()
+        .sort({ currentiScoreAvg: -1 })
+        .limit(10);
+
+      res.status(200).json({
+        success: true,
+        data: {
+          students: topStudents,
+          instructors: topInstructors,
+          institutions: topInstitutions,
+        },
+      });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  });
 
   return router;
 }

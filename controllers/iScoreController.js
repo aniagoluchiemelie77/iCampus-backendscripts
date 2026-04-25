@@ -1,6 +1,40 @@
-import { Lectures, TestSubmission, Attendance } from "../tableDeclarations.js";
+import {
+  Lectures,
+  TestSubmission,
+  Attendance,
+  User,
+  OperationalInstitutions,
+} from "../tableDeclarations.js";
 
 const CARRY_FORWARD_WEIGHT = 0.5;
+
+export const updateInstitutionScores = async () => {
+  const stats = await User.aggregate([
+    { $match: { schoolCode: { $exists: true, $ne: null } } },
+    {
+      $group: {
+        _id: "$schoolCode",
+        avgCurrent: { $avg: "$currentIScore" },
+        avgPrevious: { $avg: "$previousIScore" },
+      },
+    },
+  ]);
+  const instBulkOps = stats.map((stat) => ({
+    updateOne: {
+      filter: { schoolCode: stat._id },
+      update: {
+        $set: {
+          currentiScoreAvg: stat.avgCurrent,
+          previousiScoreAvg: stat.avgPrevious,
+        },
+      },
+    },
+  }));
+
+  if (instBulkOps.length > 0) {
+    await OperationalInstitutions.bulkWrite(instBulkOps);
+  }
+};
 export const calculateUnifiedIScore = async (user) => {
   const stats = user.monthlyStats;
   const utype = user.usertype;
