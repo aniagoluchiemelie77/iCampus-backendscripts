@@ -1377,7 +1377,34 @@ export default function (User) {
       res.status(500).json({ message: error.message });
     }
   });
+  router.get("/search", async (req, res) => {
+    const { q, viewerRole, viewerTier } = req.query;
+    try {
+      const users = await User.find({
+        $or: [
+          { firstname: { $regex: q, $options: "i" } },
+          { lastname: { $regex: q, $options: "i" } },
+        ],
+      }).limit(20);
+      const safeResults = users.map((u) => {
+        const isPro = viewerTier === "pro" || viewerTier === "premium";
+        const isEnterprise = viewerRole === "enterprise";
 
+        return {
+          uid: u.uid,
+          firstname: u.firstname,
+          lastname: u.lastname,
+          profilePic: u.profilePic,
+          usertype: u.usertype,
+          displayScore:
+            isEnterprise || isPro ? Math.round(u.currentIScore) : "Locked",
+        };
+      });
+      res.json({ success: true, data: safeResults });
+    } catch (error) {
+      res.status(500).json({ message: error.message });
+    }
+  });
   return router;
 }
 //Mongod summon: mongod --dbpath D:\MongoDB\data
