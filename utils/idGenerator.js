@@ -39,10 +39,9 @@ export const generateUniqueCardNumber = async () => {
   while (!isUnique) {
     // 1. Generate 16 random digits
     const digits = Math.floor(
-      Math.random() * 9000000000000000 + 1000000000000000,
+      Math.random() * 900000000000000 + 100000000000000,
     ).toString();
-    const formatted = `iC-${digits.match(/.{1,4}/g).join(" ")}`;
-
+    const formatted = `7${digits.match(/.{1,4}/g).join(" ")}`;
     // 3. Check database to ensure it's unique
     const existingCard = await ITag.findOne({ cardNumber: formatted });
 

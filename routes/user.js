@@ -14,6 +14,7 @@ import { client } from "../workers/reditFile.js";
 import {
   UniversitiesAndColleges,
   Notification,
+  ITag,
   Product,
   Course,
   TransactionMiddleState,
@@ -715,19 +716,17 @@ export default function (User) {
       res.status(500).json({ message: "Server error" });
     }
   });
-  router.post("/upload-profile-image", protect, async (req, res) => {
+  router.post("/update-profile-pics", async (req, res) => {
     try {
-      const userId = req.user.id;
-      const { imageUrl } = req.body;
+      const { imageUrl, uid } = req.body;
 
       if (!imageUrl) {
         return res.status(400).json({ message: "Image URL is required" });
       }
-
       // Update user's profilePic in the database
-      const user = await User.findByIdAndUpdate(
-        userId,
-        { $push: { profilePic: imageUrl } }, // or overwrite if single image
+      const user = await User.findOneAndUpdate(
+        { uid },
+        { $push: { profilePic: { $each: [newImage], $position: 0 } } }, // Adds to front of array
         { new: true },
       );
 
@@ -1377,6 +1376,7 @@ export default function (User) {
       res.status(500).json({ message: error.message });
     }
   });
+  //Ranking screen search
   router.get("/search", async (req, res) => {
     const { q, viewerRole, viewerTier } = req.query;
     try {
@@ -1403,6 +1403,65 @@ export default function (User) {
       res.json({ success: true, data: safeResults });
     } catch (error) {
       res.status(500).json({ message: error.message });
+    }
+  });
+  //Profile screen search
+  router.get("/profile/search", async (req, res) => {
+    try {
+      const { uid } = req.params;
+      const { viewerUid, viewerTier, viewerRole } = req.query;
+
+      // 1. Fetch the Target User
+      const targetUser = await User.findOne({ uid })
+        .select(
+          "firstname lastname username profilePic tier isVerified usertype organizationName department schoolName email website itagusername currentIScore",
+        )
+        .lean();
+      if (!targetUser) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+      }
+
+      // 2. Parallel aggregation for performance
+      const [followersCount, followingCount, isFollowing, courses] =
+        await Promise.all([
+          Follow.countDocuments({ followingId: uid }), // People following this user
+          Follow.countDocuments({ followerId: uid }), // People this user follows
+          Follow.findOne({ followerId: viewerUid, followingId: uid }), // Check connection
+          targetUser.usertype === "lecturer" || "otherUser"
+            ? Course.find({ lecturerIds: uid })
+                .select(
+                  "courseTitle courseCode thumbnailUrl session semester isActive",
+                )
+                .lean()
+            : null,
+        ]);
+
+      // 3. Privacy Firewall Logic
+      const isOwner = viewerUid === uid;
+      const canSeeScore =
+        isOwner || viewerRole === "enterprise" || viewerTier !== "free";
+      //Fetch itag details
+      const iTagData = await ITag.findOne({ userId: uid }).lean();
+      // 4. Construct the "Safe" Profile Object
+      const profileData = {
+        followersCount,
+        followingCount,
+        isFollowing: !!isFollowing,
+        courses: courses || [],
+        iTagData: iTagData || [],
+        currentIScore: canSeeScore ? targetUser.currentIScore : "Locked",
+        ...targetUser,
+      };
+
+      res.status(200).json({
+        success: true,
+        data: profileData,
+      });
+    } catch (error) {
+      console.error("Profile Fetch Error:", error);
+      res.status(500).json({ success: false, message: "Server error" });
     }
   });
   return router;

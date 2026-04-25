@@ -138,7 +138,6 @@ export const courseSchema = new mongoose.Schema(
     isPublished: { type: Boolean, default: false },
     instructorName: String,
     courseDuration: String,
-
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true },
@@ -177,6 +176,7 @@ export const userBankOrCardDetails = new mongoose.Schema({
 export const userSchema = new mongoose.Schema({
   refreshTokens: [{ type: String }],
   uid: { type: String, index: true, required: true },
+  bio: { type: String },
   currentIScore: {
     type: Number,
     default: 5,
