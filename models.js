@@ -534,6 +534,7 @@ export const PostSchema = new mongoose.Schema(
 );
 export const followSchema = new mongoose.Schema(
   {
+    id: { type: String, unique: true },
     followerId: { type: String, ref: "User", index: true }, // The person doing the following
     followingId: { type: String, ref: "User", index: true }, // The person being followed
   },

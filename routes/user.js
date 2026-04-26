@@ -24,6 +24,7 @@ import {
   Exceptions,
   iTag,
   Lectures,
+  Follow,
 } from "../tableDeclarations.js";
 axiosRetry(axios, { retries: 3 });
 import {
@@ -1554,6 +1555,89 @@ export default function (User) {
       console.error("Comprehensive Profile Fetch Error:", error);
       res.status(500).json({ success: false, message: "Server error" });
     }
+  });
+  //Toggle Follow
+  router.post("/follow/toggle", async (req, res) => {
+    try {
+      const { followerId, followingId } = req.body;
+
+      if (!followerId || !followingId) {
+        return res.status(400).json({ success: false, message: "Missing IDs" });
+      }
+
+      if (followerId === followingId) {
+        return res
+          .status(400)
+          .json({ success: false, message: "You cannot follow yourself" });
+      }
+
+      // Check if the follow relationship already exists
+      const existingFollow = await Follow.findOne({ followerId, followingId });
+
+      if (existingFollow) {
+        // 1. UNFOLLOW LOGIC
+        await Follow.deleteOne({ id: existingFollow.id });
+        const targetUser = await User.findOne({ uid: followingId })
+          .select("firstname")
+          .lean();
+        return res.status(200).json({
+          success: true,
+          action: "unfollowed",
+          message: `Unfollowed ${targetUser.firstname} successfully`,
+        });
+      } else {
+        // 2. FOLLOW LOGIC
+        await Follow.create({ followerId, followingId });
+
+        const followerUser = await User.findOne({ uid: followerId })
+          .select("firstname")
+          .lean();
+        const followerName = followerUser ? followerUser.firstname : "Someone";
+
+        // Trigger a notification for the person being followed
+        // We don't 'await' this so the response stays fast
+        createNotification({
+          notificationId: generateNotificationId(),
+          recipientId: followingId,
+          category: "social",
+          actionType: "NEW_FOLLOWER",
+          title: "New Follower",
+          message: `${followerName} started following you`,
+          payload: { followerId },
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        }).catch((err) => console.error("Follow Notification Error:", err));
+
+        return res.status(200).json({
+          success: true,
+          action: "followed",
+          message: `Followed ${followerName} successfully`,
+        });
+      }
+    } catch (error) {
+      console.error("Follow Toggle Error:", error);
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  });
+  //iTag Edit
+  router.put("/itag/update", async (req, res) => {
+    const { userId, updates } = req.body;
+
+    const user = await User.findOne({ uid: userId });
+
+    let allowedUpdates = {};
+
+    if (user.tier === "pro") {
+      // Pro can only update username
+      if (updates.username) allowedUpdates.username = updates.username;
+    } else if (user.tier === "premium") {
+      allowedUpdates = updates;
+    } else {
+      return res.status(403).json({ message: "Feature locked for Free tier" });
+    }
+    await ITag.findOneAndUpdate({ userId }, { $set: allowedUpdates });
+    res.json({ success: true });
   });
   return router;
 }
