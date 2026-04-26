@@ -138,6 +138,7 @@ export const courseSchema = new mongoose.Schema(
     isPublished: { type: Boolean, default: false },
     instructorName: String,
     courseDuration: String,
+    description: { type: String },
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true },

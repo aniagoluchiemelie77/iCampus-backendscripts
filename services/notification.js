@@ -201,6 +201,12 @@ export const createNotification = async ({
           entityId = payload.lectureId;
           entityType = "lecture";
           break;
+        case "PROFILE_VIEW":
+          subject = "Someone viewed your profile";
+          break;
+        case "PROFILE_UPDATED":
+          subject = "Security Alert: Profile Change";
+          break;
       }
       if (htmlContent) {
         await sendEmail({
