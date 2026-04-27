@@ -717,7 +717,7 @@ export default function (User) {
       res.status(500).json({ message: "Server error" });
     }
   });
-  router.post("/update-profile-pics", async (req, res) => {
+  router.post("/update-profile-pics", protect, async (req, res) => {
     try {
       const { imageUrl, uid } = req.body;
 
@@ -1621,24 +1621,74 @@ export default function (User) {
     }
   });
   //iTag Edit
-  router.put("/itag/update", async (req, res) => {
-    const { userId, updates } = req.body;
+  router.put("/update-itag", protect, async (req, res) => {
+    try {
+      const { userId, updates } = req.body;
 
-    const user = await User.findOne({ uid: userId });
+      if (!userId) {
+        return res.status(400).json({
+          success: false,
+          message: "User ID is required",
+        });
+      }
 
-    let allowedUpdates = {};
+      // findOneAndUpdate with { new: true } returns the updated document
+      const updatedITag = await ITag.findOneAndUpdate(
+        { userId: userId },
+        { $set: updates },
+        { new: true, runValidators: true },
+      );
+      if (!updatedITag) {
+        return res.status(404).json({
+          success: false,
+          message: "iTag not found",
+        });
+      }
 
-    if (user.tier === "pro") {
-      // Pro can only update username
-      if (updates.username) allowedUpdates.username = updates.username;
-    } else if (user.tier === "premium") {
-      allowedUpdates = updates;
-    } else {
-      return res.status(403).json({ message: "Feature locked for Free tier" });
+      return res.status(200).json({
+        success: true,
+        message: "iTag updated successfully",
+        data: updatedITag,
+      });
+    } catch (error) {
+      console.error("Update Error:", error);
+
+      // Check for MongoDB duplicate key error (if username is changed to one that exists)
+      if (error.code === 11000) {
+        return res.status(400).json({
+          success: false,
+          message: "Username already exists",
+        });
+      }
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error",
+      });
     }
-    await ITag.findOneAndUpdate({ userId }, { $set: allowedUpdates });
-    res.json({ success: true });
   });
+  router.get("/check-itag/:val", async (req, res) => {
+    try {
+      const { val } = req.params;
+      const iTagData = await ITag.findOne({ username: val });
+
+      if (!iTagData) {
+        return res.status(404).json({
+          available: true,
+          message: "iTag username available",
+        });
+      }
+      return res.status(200).json({
+        available: false,
+        message: "iTag username already exists",
+      });
+    } catch (error) {
+      console.error("Error fetching iTag:", error);
+      return res.status(500).json({
+        message: "Server error",
+      });
+    }
+  });
+
   return router;
 }
 //Mongod summon: mongod --dbpath D:\MongoDB\data
