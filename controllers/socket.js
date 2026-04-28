@@ -10,7 +10,7 @@ import {
   getAttendeesForRoom,
 } from "./lectures.js";
 import { Deepgram } from "@deepgram/sdk";
-import { Lectures, User, Attendance } from "../tableDeclarations.js";
+import { Lectures, User, Attendance, Message } from "../tableDeclarations.js";
 import { calculateStudentIScore } from "../controllers/iScoreController.js";
 
 let io;
@@ -370,7 +370,61 @@ export const init = (httpServer) => {
       }
       console.log("User disconnected");
     });
-  }); // FIXED: Closing the io.on("connection") block
+    //P2P chat
+    socket.on("join_chat", ({ roomId }) => {
+      socket.join(roomId);
+    });
+    socket.on("send_private_message", async (data) => {
+      try {
+        // 1. Create the document from the incoming data
+        const newMessage = new Message({
+          id: data.id, // Your custom frontend ID
+          senderId: data.senderId,
+          recipientId: data.recipientId,
+          text: data.text,
+          attachments: data.attachments || [],
+          status: "sent",
+          timestamp: data.timestamp || new Date(),
+        });
+
+        // 2. Save to MongoDB
+        const savedMessage = await newMessage.save();
+
+        // 3. Define the room
+        const roomId = [data.senderId, data.recipientId].sort().join("_");
+        socket.to(roomId).emit("receive_message", savedMessage);
+      } catch (error) {
+        console.error("Socket Message Save Error:", error);
+        socket.emit("message_error", { error: "Message could not be saved" });
+      }
+    });
+    socket.on("msg_delivered", async ({ messageId, senderId }) => {
+      try {
+        // We use findOneAndUpdate because 'id' is a custom string field
+        const updatedMsg = await Message.findOneAndUpdate(
+          { id: messageId },
+          { status: "delivered" },
+          { new: true },
+        );
+
+        if (updatedMsg) {
+          socket.to(senderId).emit("status_update", {
+            messageId: messageId,
+            status: "delivered",
+          });
+        }
+      } catch (err) {
+        console.error("Error updating delivery status:", err);
+      }
+    });
+    socket.on("mark_as_seen", async ({ readerId, senderId }) => {
+      await Message.updateMany(
+        { senderId: senderId, recipientId: readerId, status: { $ne: "seen" } },
+        { $set: { status: "seen" } },
+      );
+      socket.to(senderId).emit("messages_seen", { readerId });
+    });
+  });
 
   return io;
 };

@@ -800,7 +800,25 @@ export const floatSchema = new mongoose.Schema({
   accruedInterest: Number,
   lastUpdated: { type: Date, default: Date.now },
 });
-
+export const messageSchema = new mongoose.Schema({
+  id: { type: String, required: true },
+  senderId: { type: String, required: true },
+  recipientId: { type: String, required: true },
+  text: String,
+  attachments: [
+    {
+      url: String,
+      fileType: String,
+      fileName: String,
+    },
+  ],
+  status: {
+    type: String,
+    enum: ["sent", "delivered", "seen"],
+    default: "sent",
+  },
+  timestamp: { type: Date, default: Date.now },
+});
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
 

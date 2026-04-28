@@ -12,6 +12,7 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import { client } from "../workers/reditFile.js";
 import {
+  Message,
   UniversitiesAndColleges,
   Notification,
   ITag,
@@ -1702,6 +1703,37 @@ export default function (User) {
       return res.status(500).json({
         message: "Server error",
       });
+    }
+  });
+  //Messages
+  router.get("/messages/:userId/:recipientId", async (req, res) => {
+    const { userId, recipientId } = req.params;
+    const { page = 1, limit = 20 } = req.query;
+
+    try {
+      const skip = (page - 1) * limit;
+      const messages = await Message.find({
+        $or: [
+          { senderId: userId, recipientId: recipientId },
+          { senderId: recipientId, recipientId: userId },
+        ],
+      })
+        .sort({ timestamp: -1 })
+        .skip(skip)
+        .limit(parseInt(limit));
+      const totalMessages = await Message.countDocuments({
+        $or: [
+          { senderId: userId, recipientId: recipientId },
+          { senderId: recipientId, recipientId: userId },
+        ],
+      });
+      res.json({
+        success: true,
+        data: messages.reverse(),
+        hasMore: skip + messages.length < totalMessages,
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
     }
   });
 
