@@ -176,6 +176,7 @@ export const userBankOrCardDetails = new mongoose.Schema({
 });
 export const userSchema = new mongoose.Schema({
   refreshTokens: [{ type: String }],
+  headline: { type: String },
   uid: { type: String, index: true, required: true },
   bio: { type: String },
   currentIScore: {

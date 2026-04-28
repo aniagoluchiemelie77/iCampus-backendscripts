@@ -1396,16 +1396,29 @@ export default function (User) {
       res.status(500).json({ message: error.message });
     }
   });
-  //Ranking screen search
+  // Ranking screen search / User detail fetch
   router.get("/search", async (req, res) => {
-    const { q, viewerRole, viewerTier } = req.query;
+    const { q, uid, viewerRole, viewerTier } = req.query;
+
     try {
-      const users = await User.find({
-        $or: [
-          { firstname: { $regex: q, $options: "i" } },
-          { lastname: { $regex: q, $options: "i" } },
-        ],
-      }).limit(20);
+      let users;
+
+      if (uid) {
+        const user = await User.findOne({ uid });
+        users = user ? [user] : [];
+      } else if (q) {
+        users = await User.find({
+          $or: [
+            { firstname: { $regex: q, $options: "i" } },
+            { lastname: { $regex: q, $options: "i" } },
+          ],
+        }).limit(20);
+      } else {
+        return res
+          .status(400)
+          .json({ success: false, message: "Query or UID required" });
+      }
+
       const safeResults = users.map((u) => {
         const isPro = viewerTier === "pro" || viewerTier === "premium";
         const isEnterprise = viewerRole === "enterprise";
@@ -1416,11 +1429,15 @@ export default function (User) {
           lastname: u.lastname,
           profilePic: u.profilePic,
           usertype: u.usertype,
+          tier: u.tier,
+          isVerified: u.isVerified,
+          organizationName: u.organizationName || "",
           displayScore:
             isEnterprise || isPro ? Math.round(u.currentIScore) : "Locked",
         };
       });
-      res.json({ success: true, data: safeResults });
+
+      res.json({ success: true, data: uid ? safeResults[0] : safeResults });
     } catch (error) {
       res.status(500).json({ message: error.message });
     }
@@ -1471,7 +1488,6 @@ export default function (User) {
 
         // Fetch Posts (including reposts)
         Post.find({ "userId.uid": uid }).sort({ createdAt: -1 }).lean(),
-
         // Fetch iTag details
         ITag.findOne({ userId: uid }).lean(),
       ]);
