@@ -1444,13 +1444,20 @@ export default function (User) {
     }
   });
   //Profile screen search
-  router.get("/profile/search", async (req, res) => {
+  router.get("/profile/search:identifier", async (req, res) => {
     try {
-      const { uid } = req.params;
+      const { identifier } = req.params;
       const { viewerUid, viewerTier, viewerRole, viewerFirstname } = req.query;
 
       // 1. Fetch the Target User
-      const targetUser = await User.findOne({ uid })
+      const targetUser = await User.findOne({
+        $or: [
+          { uid: identifier },
+          { username: identifier },
+          { firstname: identifier },
+          { lastname: identifier },
+        ],
+      })
         .select("-password -refreshTokens -iCashPin") // Exclude sensitive security data
         .lean();
       if (!targetUser) {
@@ -1467,30 +1474,41 @@ export default function (User) {
         courses,
         userPosts,
         iTagData,
+        bookmarkedPosts,
       ] = await Promise.all([
         // Fetch Followers details (populating from User identity)
-        Follow.find({ followingId: uid }).select("followerId").lean(),
+        Follow.find({ followingId: targetUser.uid })
+          .select("followerId")
+          .lean(),
 
         // Fetch Following details
-        Follow.find({ followerId: uid }).select("followingId").lean(),
+        Follow.find({ followerId: targetUser.uid })
+          .select("followingId")
+          .lean(),
 
         // Check if viewer follows target
-        Follow.findOne({ followerId: viewerUid, followingId: uid }),
+        Follow.findOne({ followerId: viewerUid, followingId: targetUser.uid }),
 
         // Fetch Courses (Academic/Professional)
         targetUser.usertype === "lecturer" ||
         targetUser.usertype === "otherUser"
-          ? Course.find({ lecturerIds: uid })
+          ? Course.find({ lecturerIds: targetUser.uid })
               .select(
                 "courseTitle courseCode thumbnailUrl session semester isActive description rating studentsEnrolled price",
               )
               .lean()
           : null,
 
-        // Fetch Posts (including reposts)
-        Post.find({ "userId.uid": uid }).sort({ createdAt: -1 }).lean(),
+        Post.find({
+          $or: [{ "userId.uid": uid }, { originalAuthor: uid }],
+        })
+          .sort({ createdAt: -1 })
+          .lean(),
         // Fetch iTag details
-        ITag.findOne({ userId: uid }).lean(),
+        ITag.findOne({ userId: targetUser.uid }).lean(),
+        Post.find({ postId: { $in: targetUser.bookmarks || [] } })
+          .sort({ createdAt: -1 })
+          .lean(),
       ]);
 
       // 3. Post-Aggregation Processing
@@ -1525,13 +1543,13 @@ export default function (User) {
       ]);
 
       // 4. Privacy & Notification Logic
-      const isOwner = viewerUid === uid;
+      const isOwner = viewerUid === targetUser.uid;
       const isPremiumViewer = viewerTier === "premium";
 
       if (!isOwner && !isPremiumViewer) {
         createNotification({
           notificationId: generateNotificationId(),
-          recipientId: uid,
+          recipientId: targetUser.uid,
           category: "social",
           actionType: "PROFILE_VIEW",
           title: "Profile View",
@@ -1556,8 +1574,9 @@ export default function (User) {
         followingCount: followingDetails.length,
         isFollowing: !!isFollowing,
         courses: formattedCourses,
-        posts: userPosts, // Includes original posts and reposts (isRepost: true)
+        posts: userPosts,
         iTagData: iTagData || null,
+        bookmarkedPosts: bookmarkedPosts,
         // Bookmarks and Likes are usually already part of the targetUser document
         // based on your UserSchema, but we ensure they are accessible here
         bookmarksCount: targetUser.bookmarks?.length || 0,

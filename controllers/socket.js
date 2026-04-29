@@ -376,7 +376,6 @@ export const init = (httpServer) => {
     });
     socket.on("send_private_message", async (data) => {
       try {
-        // 1. Create the document from the incoming data
         const newMessage = new Message({
           id: data.id, // Your custom frontend ID
           senderId: data.senderId,
@@ -386,11 +385,7 @@ export const init = (httpServer) => {
           status: "sent",
           timestamp: data.timestamp || new Date(),
         });
-
-        // 2. Save to MongoDB
         const savedMessage = await newMessage.save();
-
-        // 3. Define the room
         const roomId = [data.senderId, data.recipientId].sort().join("_");
         socket.to(roomId).emit("receive_message", savedMessage);
       } catch (error) {
@@ -400,7 +395,6 @@ export const init = (httpServer) => {
     });
     socket.on("msg_delivered", async ({ messageId, senderId }) => {
       try {
-        // We use findOneAndUpdate because 'id' is a custom string field
         const updatedMsg = await Message.findOneAndUpdate(
           { id: messageId },
           { status: "delivered" },

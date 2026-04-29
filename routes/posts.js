@@ -13,7 +13,7 @@ export default function (Posts, User) {
   const router = express.Router();
 
   //1. Fetch posts (Preference for subscribers)
-  router.get("/", async (req, res) => {
+  router.get("/fetchPosts", async (req, res) => {
     const limit = parseInt(req.query.limit) || 15;
     const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
     const isInitialLoad = !cursorScore;
@@ -30,9 +30,9 @@ export default function (Posts, User) {
         {
           $lookup: {
             from: "users",
-            localField: "userId.uid",
-            foreignField: "uid",
-            as: "authorDetails",
+            localField: "originalPostId",
+            foreignField: "postId",
+            as: "originalPostData",
           },
         },
         { $unwind: "$authorDetails" },
@@ -372,105 +372,130 @@ export default function (Posts, User) {
     }
   });
 
-  // 7. REPOST with Notifications to Original Author and Followers (Handle Mentions in Repost Content)
+  // 7. Toggle REPOST with Notifications to Original Author and Followers (Handle Mentions in Repost Content)
   router.post("/repost", async (req, res) => {
-    const { userId, originalPostId, content } = req.body;
-
+    const { userId, originalPostId } = req.body;
     try {
-      // 1. Fetch Author details to satisfy denormalized Schema
-      const author = await User.findOne({ uid: userId })
-        .select("firstname lastname username profilePic")
-        .lean();
-
-      if (!author) return res.status(404).json({ message: "User not found" });
-
-      const authorName = `${author.firstname} ${author.lastname}`;
-
-      // 2. Create and Save the repost matching PostSchema
-      const repost = new Posts({
-        postId: generatePostId(),
-        userId: {
-          uid: userId,
-          firstname: author.firstname,
-          lastname: author.lastname,
-          profilePic: author.profilePic,
-        },
-        content,
-        originalPostId,
+      // 1. Check if a repost already exists by this user for this specific original post
+      const existingRepost = await Post.findOne({
+        "userId.uid": userId,
+        originalPostId: originalPostId,
         isRepost: true,
-        createdAt: new Date(),
       });
-      await repost.save();
-
-      // 3. Increment original post's count AND get the original author's UID
-      const updatedOriginal = await Posts.findOneAndUpdate(
-        { postId: originalPostId },
-        { $inc: { repostsCount: 1 } },
-        { new: true },
-      );
-
-      // --- SOCKET EMISSIONS ---
       const io = req.app.get("socketio");
-      if (io) {
-        io.emit("new_post", repost);
-        if (updatedOriginal) {
+
+      if (existingRepost) {
+        // --- UN-REPOST LOGIC ---
+        await Post.deleteOne({ postId: existingRepost.postId });
+
+        const updatedOriginal = await Post.findOneAndUpdate(
+          { postId: originalPostId },
+          { $inc: { repostsCount: -1 } },
+          { new: true },
+        );
+
+        if (io && updatedOriginal) {
           io.emit("post_stats_updated", {
             postId: originalPostId,
-            stats: {
-              repostsCount: updatedOriginal.repostsCount,
-              likes: updatedOriginal.likes,
-              bookmarks: updatedOriginal.bookmarks,
-            },
+            stats: { repostsCount: updatedOriginal.repostsCount },
           });
         }
-      }
-      // --- NOTIFICATION LOGIC ---
-      let notifiedUids = new Set();
-      // 4. Notify the Original Post Author
-      if (updatedOriginal && updatedOriginal.userId.uid !== userId) {
-        notifiedUids.add(updatedOriginal.userId.uid);
-        createNotification({
-          notificationId: generateNotificationId(),
-          recipientId: updatedOriginal.userId.uid,
-          category: "social",
-          actionType: "POST_REPOSTED",
-          title: "Post Reposted",
-          message: `${authorName} shared your post.`,
-          payload: { postId: repost.postId, originalPostId },
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
+
+        return res.status(200).json({
+          action: "unreposted",
+          repostsCount: updatedOriginal.repostsCount,
         });
-      }
+      } else {
+        // --- REPOST LOGIC (Existing logic) ---
+        const author = await User.findOne({ uid: userId })
+          .select("firstname lastname profilePic")
+          .lean();
+        const originalPost = await Post.findOne({ postId: originalPostId });
+        if (!author || !originalPost)
+          return res
+            .status(404)
+            .json({ message: "Original post details not found." });
 
-      // 5. Notify Followers
-      const followers = await Follow.find({ followingId: userId }).select(
-        "followerId",
-      );
+        const repost = new Post({
+          postId: generatePostId(),
+          userId: {
+            uid: userId,
+            firstname: author.firstname,
+            lastname: author.lastname,
+            profilePic: author.profilePic,
+          },
+          originalAuthor: originalPost.userId,
+          media: originalPost.media,
+          content: originalPost.content,
+          originalPostId,
+          isRepost: true,
+        });
 
-      followers.forEach((follow) => {
-        if (
-          !notifiedUids.has(follow.followerId) &&
-          follow.followerId !== userId
-        ) {
+        await repost.save();
+
+        const updatedOriginal = await Post.findOneAndUpdate(
+          { postId: originalPostId },
+          { $inc: { repostsCount: 1 } },
+          { new: true },
+        );
+
+        if (io) {
+          io.emit("new_post", repost);
+          io.emit("post_stats_updated", {
+            postId: originalPostId,
+            stats: { repostsCount: updatedOriginal.repostsCount },
+          });
+        }
+        // --- NOTIFICATION LOGIC ---
+        let notifiedUids = new Set();
+        // 4. Notify the Original Post Author
+        if (updatedOriginal && updatedOriginal.userId.uid !== userId) {
+          notifiedUids.add(updatedOriginal.userId.uid);
           createNotification({
             notificationId: generateNotificationId(),
-            recipientId: follow.followerId,
+            recipientId: updatedOriginal.userId.uid,
             category: "social",
-            actionType: "NEW_POST",
-            title: `New Repost from ${authorName}`,
-            message: `${authorName} shared a post.`,
-            payload: { postId: repost.postId, authorId: userId },
+            actionType: "POST_REPOSTED",
+            title: "Post Reposted",
+            message: `${authorName} shared your post.`,
+            payload: { postId: repost.postId, originalPostId },
             sendPush: true,
             sendSocket: true,
             saveToDb: true,
           });
         }
-      });
 
-      res.status(201).json(repost);
+        // 5. Notify Followers
+        const followers = await Follow.find({ followingId: userId }).select(
+          "followerId",
+        );
+
+        followers.forEach((follow) => {
+          if (
+            !notifiedUids.has(follow.followerId) &&
+            follow.followerId !== userId
+          ) {
+            createNotification({
+              notificationId: generateNotificationId(),
+              recipientId: follow.followerId,
+              category: "social",
+              actionType: "NEW_POST",
+              title: `New Repost from ${authorName}`,
+              message: `${authorName} shared a post.`,
+              payload: { postId: repost.postId, authorId: userId },
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            });
+          }
+        });
+
+        return res.status(201).json({
+          action: "reposted",
+          repostsCount: updatedOriginal.repostsCount,
+        });
+      }
     } catch (err) {
-      console.error("Repost Error:", err);
       res.status(500).json({ error: err.message });
     }
   });
@@ -491,12 +516,7 @@ export default function (Posts, User) {
       const authorName = `${author.firstname} ${author.lastname}`;
       const newPost = new Posts({
         postId: generatePostId(),
-        userId: {
-          uid: userId,
-          firstname: author.firstname,
-          lastname: author.lastname,
-          profilePic: author.profilePic,
-        },
+        originalAuthor: userId,
         content,
         isSubscriptionContent: isSubscriptionContent || false,
         media: processedMedia,
