@@ -1755,6 +1755,72 @@ export default function (User) {
       res.status(500).json({ success: false, message: error.message });
     }
   });
+  //Messages List
+  router.get("/messages/conversations/:uid", async (req, res) => {
+    try {
+      const { uid } = req.params;
+      const page = parseInt(req.query.page) || 1;
+      const limit = 15;
+      const skip = (page - 1) * limit;
+
+      const conversations = await Message.aggregate([
+        { $match: { $or: [{ senderId: uid }, { recipientId: uid }] } },
+        { $sort: { timestamp: -1 } },
+        {
+          $group: {
+            id: {
+              $cond: [{ $eq: ["$senderId", uid] }, "$recipientId", "$senderId"],
+            },
+            lastMessage: { $first: "$$ROOT" },
+          },
+        },
+        { $sort: { "lastMessage.timestamp": -1 } },
+        { $skip: skip },
+        { $limit: limit },
+        {
+          $lookup: {
+            from: "users", // ensure this matches your collection name
+            localField: "id",
+            foreignField: "uid",
+            as: "otherUser",
+          },
+        },
+        { $unwind: "$otherUser" },
+        // 6. Shape the output
+        {
+          $project: {
+            id: 0,
+            otherUser: {
+              uid: 1,
+              firstname: 1,
+              lastname: 1,
+              profilePic: 1,
+            },
+            lastMessage: 1,
+          },
+        },
+      ]);
+
+      res.json({
+        success: true,
+        data: conversations,
+        hasMore: conversations.length === limit,
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, message: error.message });
+    }
+  });
+  router.post("/mark-all-read/:uid", async (req, res) => {
+    try {
+      await Message.updateMany(
+        { recipientId: req.params.uid, status: { $ne: "seen" } },
+        { $set: { status: "seen" } },
+      );
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
 
   return router;
 }

@@ -14,6 +14,7 @@ import {
   Lecturer,
   Event,
   Posts,
+  Message,
 } from "./tableDeclarations.js";
 import { connectQueue } from "./rabbitmq.js";
 import { client } from "./workers/reditFile.js";
@@ -50,7 +51,6 @@ app.use((req, res, next) => {
   next();
 });
 
-
 const MONGO_URI = "mongodb://127.0.0.1:27017/iCampus";
 client.on("error", (err) => {
   console.error("Redis Client Error:", err);
@@ -65,6 +65,9 @@ mongoose
 
     // Dynamic imports for routes
     const userRoutes = (await import("./routes/user.js")).default(User);
+    const messageRoutes = (await import("./routes/messages.js")).default(
+      Message,
+    );
     const userAccountDetailsRoute = (
       await import("./routes/userAccountDetails.js")
     ).default(User);
@@ -88,6 +91,7 @@ mongoose
     ).default(Lecturer);
 
     app.use("/users", userRoutes);
+    app.use("/users/messages", userRoutes);
     app.use("/user", userAccountDetailsRoute);
     app.use("/users/student/class", studentClassDetails);
     app.use("/users/lecturers/class", lecturerClassDetails);
