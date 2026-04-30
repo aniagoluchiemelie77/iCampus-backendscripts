@@ -531,6 +531,30 @@ export const PostSchema = new mongoose.Schema(
     originalAuthor: { type: String, default: null },
     repostsCount: { type: Number, default: 0 },
     sharesCount: { type: Number, default: 0 },
+    postType: {
+      type: String,
+      enum: ["media", "job", "event", "poll"],
+      default: "media",
+    },
+    jobMetadata: {
+      title: String,
+      company: String,
+      location: String,
+      type: {
+        type: String,
+        enum: ["Full-time", "Part-time", "Internship", "Contract"],
+      },
+      salaryRange: String,
+      applicationLink: String,
+    },
+    eventMetadata: {
+      title: String,
+      startDate: Date,
+      endDate: Date,
+      location: String,
+      isVirtual: { type: Boolean, default: false },
+      attendees: [{ type: String, ref: "User" }],
+    },
   },
   { timestamps: true },
 );

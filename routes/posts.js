@@ -425,8 +425,7 @@ export default function (Posts, User) {
             profilePic: author.profilePic,
           },
           originalAuthor: originalPost.userId,
-          media: originalPost.media,
-          content: originalPost.content,
+          ...originalPost.toObject(),
           originalPostId,
           isRepost: true,
         });
@@ -520,6 +519,7 @@ export default function (Posts, User) {
         content,
         isSubscriptionContent: isSubscriptionContent || false,
         media: processedMedia,
+        postType?: poll ? "poll" : "media",
         poll: poll
           ? {
               options: poll.options.map((opt, index) => ({
