@@ -425,9 +425,9 @@ export default function (Posts, User) {
             profilePic: author.profilePic,
           },
           originalAuthor: originalPost.userId,
-          ...originalPost.toObject(),
           originalPostId,
           isRepost: true,
+          ...originalPost.toObject(),
         });
 
         await repost.save();

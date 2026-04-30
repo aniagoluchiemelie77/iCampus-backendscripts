@@ -1562,8 +1562,6 @@ export default function (User) {
 
       const canSeeScore =
         isOwner || viewerRole === "enterprise" || viewerTier !== "free";
-
-      // 5. Construct Final Object
       const profileData = {
         ...targetUser,
         currentIScore: canSeeScore ? targetUser.currentIScore : "Locked",
@@ -1576,12 +1574,9 @@ export default function (User) {
         posts: userPosts,
         iTagData: iTagData || null,
         bookmarkedPosts: bookmarkedPosts,
-        // Bookmarks and Likes are usually already part of the targetUser document
-        // based on your UserSchema, but we ensure they are accessible here
         bookmarksCount: targetUser.bookmarks?.length || 0,
         likesCount: targetUser.likes?.length || 0,
       };
-
       res.status(200).json({
         success: true,
         data: profileData,
@@ -1727,14 +1722,20 @@ export default function (User) {
     try {
       const userId = req.user.uid;
       const updates = req.body;
-
-      // Security: Filter updates to prevent users from changing sensitive fields
       const allowedUpdates = [
         "bio",
         "skills",
+        "username",
         "headline",
+        "jobTitle",
         "website",
         "alternateEmails",
+        "firstname",
+        "lastname",
+        "email",
+        "profilePic",
+        "organizationName",
+        "department",
       ];
       const filteredUpdates = Object.keys(updates)
         .filter((key) => allowedUpdates.includes(key))
