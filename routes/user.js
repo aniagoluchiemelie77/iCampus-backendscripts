@@ -717,62 +717,6 @@ export default function (User) {
       res.status(500).json({ message: "Server error" });
     }
   });
-  router.post("/update-profile-pics", protect, async (req, res) => {
-    try {
-      const { imageUrl, uid } = req.body;
-
-      if (!imageUrl) {
-        return res
-          .status(400)
-          .json({ success: false, message: "Image URL is required" });
-      }
-
-      // 1. Update user's profilePic array (adding the new image to the front)
-      const user = await User.findOneAndUpdate(
-        { uid },
-        { $push: { profilePic: { $each: [imageUrl], $position: 0 } } },
-        { new: true },
-      ).select("uid firstname username");
-
-      if (!user) {
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found" });
-      }
-
-      // 2. Prepare timestamp strings
-      const now = new Date();
-      const formattedDate = now.toLocaleDateString();
-      const formattedTime = now.toLocaleTimeString();
-
-      // 3. Use your centralized createNotification utility
-      const notificationId = generateNotificationId();
-      await createNotification({
-        notificationId,
-        recipientId: uid,
-        category: "security",
-        actionType: "PROFILE_UPDATED",
-        title: "Profile Image Updated",
-        message: `Your profile image was successfully updated on ${formattedDate} at ${formattedTime}.`,
-        payload: {
-          newImageUrl: imageUrl,
-          timestamp: now.toISOString(),
-        },
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
-      });
-
-      return res.status(200).json({
-        success: true,
-        imageUrl,
-        message: "Profile image updated successfully",
-      });
-    } catch (error) {
-      console.error("Upload error:", error);
-      return res.status(500).json({ success: false, message: "Server error" });
-    }
-  });
   router.post(
     "/transactions/complete/:transactionId",
     protect,
@@ -1748,7 +1692,7 @@ export default function (User) {
         { uid: userId },
         { $set: filteredUpdates },
         { new: true },
-      );
+      ).select("-resetPinOTP -iCashPin -password -refreshTokens");
 
       res.status(200).json({
         success: true,

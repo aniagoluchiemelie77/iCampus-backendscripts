@@ -249,7 +249,7 @@ export const userSchema = new mongoose.Schema({
   coursesTeaching: [{ type: String }],
   userAccountDetails: [
     {
-      type: String, // or mongoose.Schema.Types.String
+      type: String,
       ref: "UserBankOrCardDetails",
     },
   ],
