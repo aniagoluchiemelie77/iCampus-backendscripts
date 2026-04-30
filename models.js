@@ -261,6 +261,8 @@ export const userSchema = new mongoose.Schema({
   resetPinOTP: { type: String },
   resetPinOTPExpires: { type: Date },
   isSuspended: { type: Boolean, default: false },
+  skills: [{ type: String }],
+  alternateEmails: [{ type: String }],
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },

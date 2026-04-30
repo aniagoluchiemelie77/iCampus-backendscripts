@@ -12,7 +12,6 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import { client } from "../workers/reditFile.js";
 import {
-  Message,
   UniversitiesAndColleges,
   Notification,
   ITag,
@@ -1444,7 +1443,7 @@ export default function (User) {
     }
   });
   //Profile screen search
-  router.get("/profile/search:identifier", async (req, res) => {
+  router.get("/profile/search:identifier", protect, async (req, res) => {
     try {
       const { identifier } = req.params;
       const { viewerUid, viewerTier, viewerRole, viewerFirstname } = req.query;
@@ -1724,101 +1723,38 @@ export default function (User) {
       });
     }
   });
-  //Messages
-  router.get("/messages/:userId/:recipientId", async (req, res) => {
-    const { userId, recipientId } = req.params;
-    const { page = 1, limit = 20 } = req.query;
-
+  router.patch("/update-profile", protect, async (req, res) => {
     try {
-      const skip = (page - 1) * limit;
-      const messages = await Message.find({
-        $or: [
-          { senderId: userId, recipientId: recipientId },
-          { senderId: recipientId, recipientId: userId },
-        ],
-      })
-        .sort({ timestamp: -1 })
-        .skip(skip)
-        .limit(parseInt(limit));
-      const totalMessages = await Message.countDocuments({
-        $or: [
-          { senderId: userId, recipientId: recipientId },
-          { senderId: recipientId, recipientId: userId },
-        ],
-      });
-      res.json({
-        success: true,
-        data: messages.reverse(),
-        hasMore: skip + messages.length < totalMessages,
-      });
-    } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
-    }
-  });
-  //Messages List
-  router.get("/messages/conversations/:uid", async (req, res) => {
-    try {
-      const { uid } = req.params;
-      const page = parseInt(req.query.page) || 1;
-      const limit = 15;
-      const skip = (page - 1) * limit;
+      const userId = req.user.uid;
+      const updates = req.body;
 
-      const conversations = await Message.aggregate([
-        { $match: { $or: [{ senderId: uid }, { recipientId: uid }] } },
-        { $sort: { timestamp: -1 } },
-        {
-          $group: {
-            id: {
-              $cond: [{ $eq: ["$senderId", uid] }, "$recipientId", "$senderId"],
-            },
-            lastMessage: { $first: "$$ROOT" },
-          },
-        },
-        { $sort: { "lastMessage.timestamp": -1 } },
-        { $skip: skip },
-        { $limit: limit },
-        {
-          $lookup: {
-            from: "users", // ensure this matches your collection name
-            localField: "id",
-            foreignField: "uid",
-            as: "otherUser",
-          },
-        },
-        { $unwind: "$otherUser" },
-        // 6. Shape the output
-        {
-          $project: {
-            id: 0,
-            otherUser: {
-              uid: 1,
-              firstname: 1,
-              lastname: 1,
-              profilePic: 1,
-            },
-            lastMessage: 1,
-          },
-        },
-      ]);
+      // Security: Filter updates to prevent users from changing sensitive fields
+      const allowedUpdates = [
+        "bio",
+        "skills",
+        "headline",
+        "website",
+        "alternateEmails",
+      ];
+      const filteredUpdates = Object.keys(updates)
+        .filter((key) => allowedUpdates.includes(key))
+        .reduce((obj, key) => {
+          obj[key] = updates[key];
+          return obj;
+        });
 
-      res.json({
-        success: true,
-        data: conversations,
-        hasMore: conversations.length === limit,
-      });
-    } catch (error) {
-      res.status(500).json({ success: false, message: error.message });
-    }
-  });
-  router.post("/mark-all-read/:uid", async (req, res) => {
-    try {
-      await Message.updateMany(
-        { recipientId: req.params.uid, status: { $ne: "seen" } },
-        { $set: { status: "seen" } },
+      const updatedUser = await User.findOneAndUpdate(
+        { uid: userId },
+        { $set: filteredUpdates },
+        { new: true },
       );
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ error: err.message });
+
+      res.status(200).json({
+        success: true,
+        data: updatedUser,
+      });
+    } catch (error) {
+      res.status(500).json({ success: false, message: "Server Error" });
     }
   });
 
