@@ -65,6 +65,7 @@ mongoose
 
     // Dynamic imports for routes
     const userRoutes = (await import("./routes/user.js")).default(User);
+    const webhooksRoutes = (await import("./routes/webhooks.js")).default(User);
     const messageRoutes = (await import("./routes/messages.js")).default(
       Message,
     );
@@ -86,11 +87,15 @@ mongoose
     const studentVerifyRoutes = (
       await import("./routes/verify/students.js")
     ).default(Student);
+    const userVerifyRoutes = (await import("./routes/verify/users.js")).default(
+      User,
+    );
     const lecturerVerifyRoutes = (
       await import("./routes/verify/lecturers.js")
     ).default(Lecturer);
 
     app.use("/users", userRoutes);
+    app.use("/webhooks", webhooksRoutes);
     app.use("/users/messages", userRoutes);
     app.use("/user", userAccountDetailsRoute);
     app.use("/users/student/class", studentClassDetails);
@@ -100,7 +105,7 @@ mongoose
     app.use("/store", productRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);
     app.use("/verifyInstructor", lecturerVerifyRoutes);
-
+    app.use("/verifyUser", userVerifyRoutes);
     // 6. Change app.listen to httpServer.listen
     httpServer.listen(5000, "0.0.0.0", () => {
       console.log("🚀 Backend & Socket.io running on port 5000");

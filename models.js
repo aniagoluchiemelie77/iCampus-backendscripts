@@ -263,6 +263,7 @@ export const userSchema = new mongoose.Schema({
   isSuspended: { type: Boolean, default: false },
   skills: [{ type: String }],
   alternateEmails: [{ type: String }],
+  personaInquiryId: { type: String, default: null },
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },

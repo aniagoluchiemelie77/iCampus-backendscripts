@@ -1,7 +1,7 @@
 import express from 'express';
 import { Lecturer } from "../../tableDeclarations.js";
 
-export default function lecturerVerifyRoutes() {
+export default function (Lecturer) {
   const router = express.Router();
 
   router.post("/", async (req, res) => {

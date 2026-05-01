@@ -1,7 +1,6 @@
-import express from 'express';
-import { Student } from "../../tableDeclarations.js";
+import express from "express";
 
-export default function studentVerifyRoutes() {
+export default function (Student) {
   const router = express.Router();
 
   router.post("/", async (req, res) => {
