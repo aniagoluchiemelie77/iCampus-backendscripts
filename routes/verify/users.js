@@ -7,16 +7,22 @@ export default function (User) {
   router.post("/persona/create-inquiry", protect, async (req, res) => {
     try {
       const userId = req.user.id;
+      const { userType } = req.body;
+
+      const INDIVIDUAL_TEMPLATE_ID = process.env.INDIVIDUAL_TEMPLATE_ID;
+      const ENTERPRISE_TEMPLATE_ID = process.env.ENTERPRISE_TEMPLATE_ID;
+      const selectedTemplate =
+        userType === "enterprise"
+          ? ENTERPRISE_TEMPLATE_ID
+          : INDIVIDUAL_TEMPLATE_ID;
+
       const response = await axios.post(
         "https://withpersona.com/api/v1/inquiries",
         {
           data: {
             attributes: {
-              // Provide your Template ID from the Persona Dashboard
-              "template-id": "tmpl_xxxxxxxxxxxxxx",
-              // Optional: link this inquiry to your internal user ID
+              "template-id": selectedTemplate,
               "reference-id": userId,
-              // Optional: specify environment
               environment: "sandbox",
             },
           },
