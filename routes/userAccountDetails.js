@@ -16,8 +16,15 @@ import {
   initializeBuy,
   initializeWithdraw,
 } from "../controllers/paymentController.js";
+import axios from "axios";
 import { v4 as uuidv4 } from "uuid";
 import mongoose from "mongoose";
+
+const USD_SUBSCRIPTION_PRICES = {
+  Pro: 1.11,
+  Premium: 3.69,
+  Free: 0,
+};
 
 export default function (User) {
   const router = express.Router();
@@ -414,7 +421,6 @@ export default function (User) {
       res.status(500).send(e.message);
     }
   });
-
   router.post("/transactions/export", protect, async (req, res) => {
     try {
       const { userId, startDate, endDate } = req.body;
@@ -595,6 +601,90 @@ export default function (User) {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: error.message });
+    }
+  });
+  router.post("/subscriptionPayments/verify", protect, async (req, res) => {
+    const { transactionId, tier, currentExchangeRate } = req.body;
+    const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
+    if (!transactionId) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Transaction ID is required" });
+    }
+    try {
+      const response = await axios.get(
+        `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`,
+        {
+          headers: {
+            Authorization: `Bearer ${SECRET_KEY}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+
+      const { status, currency, id, amount, customer } = response.data.data;
+      if (status !== "successful") {
+        return res
+          .status(400)
+          .json({ status: "error", message: "Transaction not successful" });
+      }
+      const baseUsdPrice = USD_SUBSCRIPTION_PRICES[tier];
+      if (baseUsdPrice === undefined) {
+        return res.status(400).json({ message: "Invalid tier selected" });
+      }
+      const expectedLocalPrice = baseUsdPrice * currentExchangeRate;
+      const margin = 1;
+      if (amount < expectedLocalPrice - margin) {
+        return res.status(400).json({
+          message: `Insufficient payment. Expected approx ${expectedLocalPrice} ${currency}`,
+        });
+      }
+      const updatedUser = await User.findOneAndUpdate(
+        { uid: req.user.uid },
+        {
+          $set: {
+            tier: tier,
+            isSubscribed: true,
+            subscriptionDate: new Date(),
+            lastTransactionId: id,
+          },
+        },
+        { new: true },
+      );
+      const userName = `${updatedUser.firstname} ${updatedUser.lastname}`;
+      await createNotification({
+        notificationId: `sub_${Date.now()}`,
+        recipientId: updatedUser.uid,
+        category: "finance",
+        actionType: "SUBSCRIPTION_UPGRADED",
+        title: "Subscription Successful",
+        message: `Your account has been upgraded to the ${tier} plan.`,
+        recipientEmail: updatedUser.email,
+        sendEmail: true,
+        payload: {
+          userName,
+          tier: tier,
+          amount: amount,
+          currency: currency,
+          transactionId: id,
+        },
+      });
+
+      return res.status(200).json({
+        status: "success",
+        message: "Subscription verified and activated",
+        data: { transactionId: id },
+        tier: updatedUser.tier,
+      });
+    } catch (error) {
+      console.error(
+        "FLW Verification Error:",
+        error.response?.data || error.message,
+      );
+      return res.status(500).json({
+        status: "error",
+        message: "Internal server error during verification",
+      });
     }
   });
   return router;

@@ -1,5 +1,6 @@
 import { ITag } from "../tableDeclarations.js";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 
 export function generateNotificationId(length = 7) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -55,4 +56,36 @@ export const generateUniqueCardNumber = async () => {
 export const generateUserUID = () => {
   const randomBytes = crypto.randomBytes(12).toString("hex");
   return `iC-u-${randomBytes}`;
+};
+export const generateUniqueDealId = (length = 10) => {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let result = "";
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+};
+export const generateCode = () =>
+  Math.floor(100000 + Math.random() * 900000).toString();
+
+export const generateTokens = async (user) => {
+  const accessToken = jwt.sign(
+    { id: user.uid, email: user.email },
+    process.env.JWT_SECRET,
+    { expiresIn: "30m" },
+  );
+
+  const refreshToken = jwt.sign(
+    { id: user.uid },
+    process.env.REFRESH_TOKEN_SECRET,
+    { expiresIn: "30d" },
+  );
+
+  // Save refresh token to DB
+  user.refreshTokens.push(refreshToken);
+  if (user.refreshTokens.length > 5) {
+    user.refreshTokens.shift();
+  }
+  await user.save();
+  return { accessToken, refreshToken };
 };

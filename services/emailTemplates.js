@@ -369,3 +369,66 @@ export const iCashSuccessfulPinResetTemplate = (userName, time) => {
   `;
   return emailWrapper(body);
 };
+export const subscriptionUpgradeTemplate = (
+  userName,
+  tier,
+  amount,
+  currency,
+  transactionId,
+) => {
+  const body = `
+    <div style="text-align: center; font-family: sans-serif; max-width: 500px; margin: auto;">
+      <div style="margin-bottom: 20px;">
+        <span style="background: ${colors.primary}; color: white; padding: 5px 15px; border-radius: 20px; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;">
+          Plan Activated
+        </span>
+      </div>
+      
+      <h2 style="color: ${colors.primary}; margin-bottom: 5px;">Welcome to ${tier}!</h2>
+      <p style="color: ${colors.text}; font-size: 15px;">Hello ${userName}, your iCampus account has been successfully upgraded.</p>
+
+      <div style="background: #f0fdf4; border: 1px solid #bbf7d0; padding: 30px; margin: 25px 0; border-radius: 16px;">
+        <div style="font-size: 14px; color: ${colors.text}; font-weight: 600; text-transform: uppercase; margin-bottom: 8px;">Active Subscription</div>
+        <div style="font-size: 36px; font-weight: 800; color: ${colors.primary};">
+          ${tier} Plan
+        </div>
+        <div style="font-size: 13px; color: ${colors.secondary}; margin-top: 5px; font-weight: 500;">
+          Full access granted
+        </div>
+      </div>
+
+      <div style="text-align: left; background: #fafafa; padding: 20px; border-radius: 12px; border: 1px solid #f1f5f9;">
+        <table style="width: 100%; font-size: 14px; border-collapse: collapse;">
+          <tr>
+            <td style="padding: 8px 0; color: ${colors.text};">Plan Tier</td>
+            <td style="padding: 8px 0; text-align: right; color: ${colors.text}; font-weight: 600;">${tier}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: ${colors.text};">Amount Paid</td>
+            <td style="padding: 8px 0; text-align: right; color: ${colors.text}; font-weight: 600;">${currency} ${amount.toLocaleString()}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #64748b;">Transaction ID</td>
+            <td style="padding: 8px 0; text-align: right; color: #64748b; font-family: monospace;">${transactionId}</td>
+          </tr>
+          <tr>
+            <td style="padding: 8px 0; color: #64748b;">Billing Cycle</td>
+            <td style="padding: 8px 0; text-align: right; color: #64748b;">Monthly</td>
+          </tr>
+        </table>
+      </div>
+
+      <p style="font-size: 13px; color: ${colors.secondary}; margin-top: 25px;">
+        You now have unlimited access to premium courses and exclusive campus features. <br/>
+        Thank you for being part of the <strong>iCampus</strong> community.
+      </p>
+      
+      <div style="margin-top: 30px;">
+        <a href=${branding.appDashboardUrl} style="background: ${colors.primary}; color: white; padding: 12px 25px; border-radius: 8px; text-decoration: none; font-weight: bold; font-size: 14px;">
+          Go to Dashboard
+        </a>
+      </div>
+    </div>
+  `;
+  return emailWrapper(body);
+};

@@ -32,21 +32,21 @@ import {
   generateNotificationId,
   generateUniqueCardNumber,
   generateUserUID,
+  generateUniqueDealId,
+  generateTokens,
+  generateCode,
 } from "../utils/idGenerator.js";
 import * as cheerio from "cheerio";
+
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-// Temporary in-memory store
 const verificationCodes = {};
-
 const now = new Date();
-
 const formattedTime = new Intl.DateTimeFormat("en-US", {
   hour: "numeric",
   minute: "numeric",
   hour12: true,
 }).format(now);
-
 const getOrdinalSuffix = (day) => {
   if (day > 3 && day < 21) return "th";
   switch (day % 10) {
@@ -63,41 +63,8 @@ const getOrdinalSuffix = (day) => {
 const day = now.getDate();
 const month = now.toLocaleString("default", { month: "short" }); // e.g., "Jan"
 const year = now.getFullYear();
-
 const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
 
-// Utility to generate 6-digit code
-const generateCode = () =>
-  Math.floor(100000 + Math.random() * 900000).toString();
-function generateUniqueDealId(length = 10) {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
-const generateTokens = async (user) => {
-  const accessToken = jwt.sign(
-    { id: user._id, email: user.email, uid: user.uid },
-    process.env.JWT_SECRET,
-    { expiresIn: "30m" }, // Short-lived
-  );
-
-  const refreshToken = jwt.sign(
-    { id: user._id },
-    process.env.REFRESH_TOKEN_SECRET, // Separate secret!
-    { expiresIn: "30d" }, // Long-lived
-  );
-
-  // Save refresh token to DB
-  user.refreshTokens.push(refreshToken);
-  if (user.refreshTokens.length > 5) {
-    user.refreshTokens.shift();
-  }
-  await user.save();
-  return { accessToken, refreshToken };
-};
 export default function (User) {
   const router = express.Router();
 
@@ -300,7 +267,7 @@ export default function (User) {
           if (err) return res.status(403).json({ message: "Token Expired" });
 
           const newAccessToken = jwt.sign(
-            { id: user._id, email: user.email, uid: user.uid },
+            { id: user.uid, email: user.email },
             process.env.JWT_SECRET,
             { expiresIn: "15m" },
           );
@@ -1750,6 +1717,52 @@ export default function (User) {
       });
     } catch (error) {
       res.status(500).json({ success: false, message: "Server Error" });
+    }
+  });
+  // Initiate payment charge (Flutterwave)
+  router.post("/payments/initiate-charge", async (req, res) => {
+    const { paymentType, paymentData } = req.body;
+    const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
+
+    try {
+      const flwResponse = await fetch(
+        `https://api.flutterwave.com/v3/charges?type=${paymentType}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${SECRET_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(paymentData),
+        },
+      );
+
+      const data = await flwResponse.json();
+      res.status(flwResponse.status).json({ success: true, data });
+    } catch (err) {
+      res
+        .status(500)
+        .json({ success: false, message: "Internal Server Error" });
+    }
+  });
+  router.get("/payments/banks/:countryCode", async (req, res) => {
+    const { countryCode } = req.params;
+
+    try {
+      const flwResponse = await fetch(
+        `https://api.flutterwave.com/v3/banks/${countryCode}`,
+        {
+          headers: {
+            Authorization: `Bearer ${process.env.FLUTTERWAVE_SECRET_KEY}`,
+          },
+        },
+      );
+      const data = await flwResponse.json();
+      res.status(flwResponse.status).json(data);
+    } catch (error) {
+      res
+        .status(500)
+        .json({ status: "error", message: "Failed to fetch banks" });
     }
   });
 

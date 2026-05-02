@@ -15,6 +15,7 @@ import {
   iCashSuccessfulPinResetTemplate,
   iCashPurchaseTemplate,
   iCashWithdrawalTemplate,
+  subscriptionUpgradeTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -164,6 +165,21 @@ export const createNotification = async ({
           message =
             message ||
             `You have successfully withdrawn ${payload.currency} ${payload.amountLocal.toLocaleString()}.`;
+          break;
+        case "SUBSCRIPTION_UPGRADED":
+          category = "finance";
+          subject = "Premium Access Activated";
+          title = "Subscription Upgraded";
+          message = `Congratulations! You are now on the ${payload.tier} plan.`;
+          if (sendEmail) {
+            htmlContent = subscriptionUpgradeTemplate(
+              payload.userName,
+              payload.tier,
+              payload.amount,
+              payload.currency,
+              payload.transactionId,
+            );
+          }
           break;
         case "ICASH_PIN_RESET":
           subject = "Security Alert: iCash PIN Reset";
