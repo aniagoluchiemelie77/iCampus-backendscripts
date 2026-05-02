@@ -174,8 +174,16 @@ export const userBankOrCardDetails = new mongoose.Schema({
     zip: String,
   },
 });
+const sessionSchema = new mongoose.Schema({
+  deviceId: { type: String, required: true },
+  deviceName: String,
+  deviceType: String,
+  ipAddress: String,
+  location: String,
+  lastUsed: { type: Date, default: Date.now },
+  refreshToken: { type: String, required: true },
+});
 export const userSchema = new mongoose.Schema({
-  refreshTokens: [{ type: String }],
   headline: { type: String },
   uid: { type: String, index: true, required: true },
   bio: { type: String },
@@ -212,9 +220,6 @@ export const userSchema = new mongoose.Schema({
   lastname: String,
   schoolName: String,
   email: { type: String, unique: true },
-  ipAddress: [String],
-  currentDeviceId: string,
-  deviceType: [String],
   coursesEnrolled: [String],
   accessToken: String,
   password: String,
@@ -264,6 +269,7 @@ export const userSchema = new mongoose.Schema({
   skills: [{ type: String }],
   alternateEmails: [{ type: String }],
   personaInquiryId: { type: String, default: null },
+  sessions: [sessionSchema],
 });
 userSchema.index(
   { matriculation_number: 1, department: 1 },

@@ -26,6 +26,7 @@ import {
   Lectures,
   Follow,
 } from "../tableDeclarations.js";
+import geoip from "geoip-lite";
 axiosRetry(axios, { retries: 3 });
 import {
   generateNotificationId,
@@ -112,6 +113,8 @@ export default function (User) {
       itagusername,
       firstname,
       lastname,
+      deviceId,
+      deviceName,
     } = req.body;
 
     try {
@@ -125,6 +128,9 @@ export default function (User) {
         return res.status(409).json({ message: "User already exists." });
       }
       const uid = generateUserUID();
+      const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+      const geo = geoip.lookup(ip);
+      const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 
       // 🔐 Hash password
       const hashedPassword = await bcrypt.hash(password, 10);
@@ -134,10 +140,10 @@ export default function (User) {
         uid,
         ...req.body,
         password: hashedPassword,
-        isVerified: true,
+        isVerified:
+          usertype === "student" || usertype === "lecturer" ? true : false,
+        sessions: [],
       });
-
-      await newUser.save();
       const iSCardEligible =
         usertype === "student" ||
         usertype === "lecturer" ||
@@ -158,11 +164,21 @@ export default function (User) {
 
       // 🔐 Generate JWT
       const { accessToken, refreshToken } = await generateTokens(newUser);
+      const initialSession = {
+        deviceId,
+        deviceName,
+        ipAddress: ip,
+        location,
+        refreshToken,
+        lastUsed: new Date(),
+      };
+      newUser.sessions.push(initialSession);
+      await newUser.save();
+      const { password: _, iCashPin: _, ...safeUser } = newUser.toObject();
 
       return res.status(201).json({
         message: "User created successfully",
-        email: newUser.email,
-        verified: true,
+        user: safeUser,
         accessToken,
         refreshToken,
       });
@@ -182,7 +198,7 @@ export default function (User) {
   });
 
   router.post("/login", authLimiter, async (req, res) => {
-    const { identifier, password, ipAddress, location } = req.body;
+    const { identifier, password, deviceId, deviceName } = req.body;
 
     try {
       const user = await User.findOne({ $or: [{ email: identifier }] });
@@ -192,12 +208,25 @@ export default function (User) {
       if (!isMatch) return res.status(401).json({ error: "Invalid password" });
 
       const { accessToken, refreshToken } = await generateTokens(user);
+      const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+      const geo = geoip.lookup(ip);
+      const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 
-      // --- SECURITY CHECK: NEW IP ---
-      if (!user.ipAddress.includes(ipAddress)) {
-        user.ipAddress.push(ipAddress);
-        if (user.isFirstLogin) user.isFirstLogin = false;
-        await user.save();
+      const sessionData = {
+        deviceId,
+        deviceName,
+        ipAddress: ip,
+        location,
+        refreshToken,
+        lastUsed: new Date(),
+      };
+      const existingSessionIndex = user.sessions.findIndex(
+        (s) => s.deviceId === deviceId,
+      );
+      if (existingSessionIndex > -1) {
+        user.sessions[existingSessionIndex] = sessionData;
+      } else {
+        user.sessions.push(sessionData);
         await createNotification({
           notificationId: generateNotificationId(),
           recipientId: user.uid,
@@ -205,10 +234,10 @@ export default function (User) {
           category: "auth",
           actionType: "NEW_LOGIN",
           title: "Security Alert: New Login",
-          message: `A login was detected from ${ipAddress} in ${location || "an unknown location"}.`,
+          message: `A login was detected from ${ip} in ${location || "an unknown location"}.`,
           payload: {
             userName: user.firstName || "User",
-            ipAddress: ipAddress,
+            ipAddress: ip,
             location: location || "Unknown",
           },
           sendEmailFlag: true,
@@ -217,10 +246,8 @@ export default function (User) {
           sendSocket: true,
           saveToDb: true,
         });
-      } else if (user.isFirstLogin) {
-        user.isFirstLogin = false;
-        await user.save();
       }
+      await user.save();
 
       const { password: _, ...safeUser } = user.toObject();
       res.status(200).json({
@@ -231,6 +258,29 @@ export default function (User) {
       });
     } catch (error) {
       res.status(500).json({ error: error.message || "Login error" });
+    }
+  });
+  router.post("/revoke-session", protect, async (req, res) => {
+    const { userId, deviceIdToRevoke } = req.body;
+
+    try {
+      const user = await User.findOne({ uid: userId });
+      if (!user) return res.status(404).json({ error: "User not found" });
+
+      // Filter out the session with the matching deviceId
+      const originalLength = user.sessions.length;
+      user.sessions = user.sessions.filter(
+        (s) => s.deviceId !== deviceIdToRevoke,
+      );
+
+      if (user.sessions.length === originalLength) {
+        return res.status(404).json({ error: "Session not found" });
+      }
+
+      await user.save();
+      res.status(200).json({ message: "Device logged out successfully" });
+    } catch (error) {
+      res.status(500).json({ error: "Could not revoke session" });
     }
   });
   router.post("/refresh-token", async (req, res) => {
