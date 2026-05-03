@@ -1,4 +1,5 @@
 import express from "express";
+import { protect } from "../middleware/auth.js";
 
 export default function (Message) {
   const router = express.Router();
@@ -34,7 +35,7 @@ export default function (Message) {
     }
   });
   //Messages List
-  router.get("/conversations/:uid", async (req, res) => {
+  router.get("/conversations/:uid", protect, async (req, res) => {
     try {
       const { uid } = req.params;
       const page = parseInt(req.query.page) || 1;
@@ -57,22 +58,24 @@ export default function (Message) {
         { $limit: limit },
         {
           $lookup: {
-            from: "users", // ensure this matches your collection name
+            from: "users",
             localField: "id",
             foreignField: "uid",
             as: "otherUser",
           },
         },
         { $unwind: "$otherUser" },
-        // 6. Shape the output
         {
           $project: {
             id: 0,
             otherUser: {
               uid: 1,
               firstname: 1,
+              username: 1,
               lastname: 1,
               profilePic: 1,
+              tier: 1,
+              organizationName: 1,
             },
             lastMessage: 1,
           },
@@ -89,7 +92,7 @@ export default function (Message) {
     }
   });
   //Mark as read
-  router.post("/mark-all-read/:uid", async (req, res) => {
+  router.post("/mark-all-read/:uid", protect, async (req, res) => {
     try {
       await Message.updateMany(
         { recipientId: req.params.uid, status: { $ne: "seen" } },
@@ -97,7 +100,7 @@ export default function (Message) {
       );
       res.json({ success: true });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ error: err.message, success: false });
     }
   });
   return router;

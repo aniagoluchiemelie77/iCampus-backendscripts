@@ -279,6 +279,7 @@ export default function (User) {
       res.status(500).json({ message: "Server Error" });
     }
   });
+  //
   router.patch("/:uid", async (req, res) => {
     try {
       const updatedUser = await User.findOneAndUpdate(
@@ -1358,9 +1359,8 @@ export default function (User) {
     }
   });
   // Ranking screen search / User detail fetch
-  router.get("/search", async (req, res) => {
+  router.get("/search", protect, async (req, res) => {
     const { q, uid, viewerRole, viewerTier } = req.query;
-
     try {
       let users;
 
@@ -1372,6 +1372,7 @@ export default function (User) {
           $or: [
             { firstname: { $regex: q, $options: "i" } },
             { lastname: { $regex: q, $options: "i" } },
+            { username: { $regex: q, $options: "i" } },
           ],
         }).limit(20);
       } else {
@@ -1387,6 +1388,7 @@ export default function (User) {
         return {
           uid: u.uid,
           firstname: u.firstname,
+          username: u.username,
           lastname: u.lastname,
           profilePic: u.profilePic,
           usertype: u.usertype,
@@ -1400,7 +1402,7 @@ export default function (User) {
 
       res.json({ success: true, data: uid ? safeResults[0] : safeResults });
     } catch (error) {
-      res.status(500).json({ message: error.message });
+      res.status(500).json({ message: error.message, success: false });
     }
   });
   //Profile screen search
@@ -1418,14 +1420,32 @@ export default function (User) {
           { lastname: identifier },
         ],
       })
-        .select("-password -refreshTokens -iCashPin") // Exclude sensitive security data
+        .select("-password -refreshTokens -iCashPin")
         .lean();
       if (!targetUser) {
         return res
           .status(404)
           .json({ success: false, message: "User not found" });
       }
+      const viewer = await User.findOne({ uid: viewerUid })
+        .select("blockedUsers")
+        .lean();
 
+      const isBlockedByViewer = (viewer?.blockedUsers || []).includes(
+        targetUser.uid,
+      );
+      const isViewerBlockedByTarget = (targetUser.blockedUsers || []).includes(
+        viewerUid,
+      );
+      if (isBlockedByViewer || isViewerBlockedByTarget) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "User not found or you have restricted access to this profile.",
+          isBlocked: true,
+          targetUid: targetUser.uid,
+        });
+      }
       // 2. Parallel aggregation for all profile sections
       const [
         followersList,
@@ -1763,6 +1783,50 @@ export default function (User) {
       res
         .status(500)
         .json({ status: "error", message: "Failed to fetch banks" });
+    }
+  });
+  router.post("/block/toggle", protect, async (req, res) => {
+    const { targetUserId } = req.body;
+    const userId = req.user.uid;
+
+    try {
+      const user = await User.findOne({ uid: userId });
+      const isBlocked = (user.blockedUsers || []).includes(targetUserId);
+
+      if (isBlocked) {
+        await User.updateOne(
+          { uid: userId },
+          { $pull: { blockedUsers: targetUserId } },
+        );
+        res.status(200).json({ action: "unblocked" });
+      } else {
+        await User.updateOne(
+          { uid: userId },
+          { $addToSet: { blockedUsers: targetUserId } },
+        );
+        await Follow.deleteMany({
+          $or: [
+            { followerId: userId, followingId: targetUserId },
+            { followerId: targetUserId, followingId: userId },
+          ],
+        });
+        res.status(200).json({ action: "blocked" });
+      }
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+  router.get("/blocked-list", protect, async (req, res) => {
+    try {
+      const user = await User.findOne({ uid: req.user.uid });
+      const blockedList = await User.find({
+        uid: { $in: user.blockedUsers || [] },
+      }).select(
+        "uid firstname lastname username profilePic tier organizationName",
+      );
+      res.status(200).json(blockedList);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 
