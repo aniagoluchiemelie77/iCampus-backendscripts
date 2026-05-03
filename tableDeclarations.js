@@ -27,6 +27,7 @@ import {
   followSchema,
   attendanceSchema,
   paymentMethodSchema,
+  userPreferencesSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -123,3 +124,8 @@ export const PaymentMethods = mongoose.model(
 );
 export const ITag = mongoose.model("ITag", iTagSchema, "iTags");
 export const Message = mongoose.model("Message", messageSchema, "messages");
+export const userPrefs = mongoose.model(
+  "userPrefs",
+  userPreferencesSchema,
+  "userPreferences",
+);

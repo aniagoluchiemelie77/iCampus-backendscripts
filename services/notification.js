@@ -1,5 +1,5 @@
 // services/notificationService.js
-import { Notification } from "../tableDeclarations.js";
+import { Notification, userPrefs } from "../tableDeclarations.js";
 import { getIO } from "../controllers/socket.js";
 import { sendEmail } from "./emailService.js";
 import { sendPushNotification } from "./pushNotification.js";
@@ -28,7 +28,7 @@ export const createNotification = async ({
   entityId = null,
   entityType = null,
   payload = {},
-  sendEmailFlag = false, // Optional: only email for important stuff
+  sendEmailFlag = false,
   recipientEmail = null,
   sendEmail = false,
   sendPush = true,
@@ -36,6 +36,28 @@ export const createNotification = async ({
   saveToDb = true,
 }) => {
   try {
+    const { recipientId, category, actionType } = params;
+    const prefs = await userPrefs.findOne({ userId: recipientId });
+    const isCritical = [
+      "NEW_LOGIN",
+      "ICASH_WITHDRAWAL",
+      "PASSWORD_CHANGED",
+    ].includes(actionType);
+    let canSendPush = sendPush;
+    let canSendEmail = sendEmail;
+    let canSendSocket = sendSocket;
+    if (prefs && !isCritical) {
+      if (prefs.notifications[category] === false) {
+        console.log(
+          `Notification suppressed: ${category} is disabled for user.`,
+        );
+        return null;
+      }
+      canSendPush = sendPush && prefs.channels.push;
+      canSendEmail = sendEmail && prefs.channels.email;
+      canSendSocket = sendSocket && prefs.channels.socket;
+    }
+
     let notificationRecord = null;
     if (saveToDb) {
       notificationRecord = new Notification({
@@ -50,14 +72,14 @@ export const createNotification = async ({
       });
       await notificationRecord.save();
     }
-    if (sendSocket) {
+    if (canSendSocket) {
       const io = getIO();
       io.to(recipientId).emit(
         "new_notification",
         notificationRecord || { title, message, payload },
       );
     }
-    if (sendEmail && recipientEmail) {
+    if (canSendEmail && recipientEmail) {
       let htmlContent = "";
       let subject = "iCampus Notification";
       switch (actionType) {
@@ -232,7 +254,7 @@ export const createNotification = async ({
         });
       }
     }
-    if (sendPush) {
+    if (canSendPush) {
       await sendPushNotification(recipientId, title, message, {
         category,
         actionType,

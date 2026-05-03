@@ -12,6 +12,7 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import { client } from "../workers/reditFile.js";
 import {
+  userPrefs,
   UniversitiesAndColleges,
   Notification,
   ITag,
@@ -1120,17 +1121,34 @@ export default function (User) {
   });
   router.post("/ai/chat", async (req, res) => {
     const { message, context, history, userId } = req.body;
+    const { appMetadata } = context;
     try {
       const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      let contextString = `You are iAssistant, an academic AI for the iCampus app. 
-    Current Context: ${context.type}. \n`;
+      const appRules = `
+        Here is your App Knowledge Base:
+        - iScore: Academic ranking (Higher = better performance).
+        - iCash: Campus P2P wallet. Transfers use @iTags.
+        - Enrollment: Users must register courses in the 'Academic' tab.
+        - Support: If a bug is reported, tell them to upload a screenshot.
+      `;
+      let contextString = `You are iAssistant, the official support agent and also academic AI for iCampus.
+        If a user asks an app-related question, use ${appRules} knowledge to answer.
+        User Status: ${appMetadata.tier} user, ${appMetadata.isVerified ? "Verified" : "Unverified"}.
+        Current Context: ${context.type}.
+        Role: ${appMetadata.usertype}.\n`;
 
       if (context.type === "course") {
         contextString += `Course: ${context.data.courseTitle} (${context.data.courseCode}). 
-      Dept: ${context.data.department}.`;
+        Dept: ${context.data.department}.`;
       } else if (context.type === "lecture") {
         contextString += `Lecture: ${context.data.topicName}. Type: ${context.data.lectureType}. 
-      Location: ${context.data.location}.`;
+        Location: ${context.data.location}.`;
+      }
+      if (
+        message.toLowerCase().includes("issue") ||
+        message.toLowerCase().includes("can't")
+      ) {
+        contextString += `The user is reporting an issue. Use the User Status to explain why they might be seeing errors (e.g., if they are 'free' tier, they might not have access to certain features).`;
       }
       const chat = model.startChat({
         history: [
@@ -1827,6 +1845,27 @@ export default function (User) {
       res.status(200).json(blockedList);
     } catch (err) {
       res.status(500).json({ error: err.message });
+    }
+  });
+  //
+  // router.patch("/preferences/:userId", protect, async (req, res) => {
+  router.patch("/preferences/:userId", protect, async (req, res) => {
+    const { userId } = req.params;
+    const updateData = req.body;
+
+    try {
+      const updatedPrefs = await userPrefs.findOneAndUpdate(
+        { userId: userId },
+        { $set: updateData },
+        { new: true, upsert: true },
+      );
+      res.status(200).json({
+        message: "Preferences updated successfully",
+        preferences: updatedPrefs,
+      });
+    } catch (error) {
+      console.error(error);
+      res.status(500).json({ error: "Server error updating preferences" });
     }
   });
 

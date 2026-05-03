@@ -183,6 +183,42 @@ const sessionSchema = new mongoose.Schema({
   lastUsed: { type: Date, default: Date.now },
   refreshToken: { type: String, required: true },
 });
+export const userPreferencesSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+    },
+    notifications: {
+      auth: { type: Boolean, default: true },
+      social: { type: Boolean, default: true },
+      classroom: { type: Boolean, default: true },
+      store: { type: Boolean, default: true },
+      finance: { type: Boolean, default: true },
+      profile: { type: Boolean, default: true },
+      security: { type: Boolean, default: true },
+    },
+    channels: {
+      push: { type: Boolean, default: true },
+      email: { type: Boolean, default: true },
+      socket: { type: Boolean, default: true },
+    },
+    theme: {
+      type: String,
+      enum: ["light", "dark", "system"],
+      default: "system",
+    },
+    language: { type: String, default: "en" },
+    quietHours: {
+      enabled: { type: Boolean, default: false },
+      start: { type: String }, // e.g., "22:00"
+      end: { type: String }, // e.g., "07:00"
+    },
+  },
+  { timestamps: true },
+);
 export const userSchema = new mongoose.Schema({
   headline: { type: String },
   uid: { type: String, index: true, required: true },
