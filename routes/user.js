@@ -36,6 +36,7 @@ import {
   generateUniqueDealId,
   generateTokens,
   generateCode,
+  generateUniqueReferralCode,
 } from "../utils/idGenerator.js";
 import * as cheerio from "cheerio";
 
@@ -84,7 +85,6 @@ export default function (User) {
       deviceId,
       deviceName,
     } = req.body;
-
     try {
       const existingUser = await User.findOne({
         usertype,
@@ -107,6 +107,7 @@ export default function (User) {
       const newUser = new User({
         uid,
         ...req.body,
+        referralCode: await generateUniqueReferralCode(req.body),
         password: hashedPassword,
         isVerified:
           usertype === "student" || usertype === "lecturer" ? true : false,
@@ -129,7 +130,6 @@ export default function (User) {
         });
         await newITag.save();
       }
-
       // 🔐 Generate JWT
       const { accessToken, refreshToken } = await generateTokens(newUser);
       const initialSession = {
@@ -229,7 +229,8 @@ export default function (User) {
     }
   });
   router.post("/revoke-session", protect, async (req, res) => {
-    const { userId, deviceIdToRevoke } = req.body;
+    const userId = req.user.id;
+    const { deviceIdToRevoke } = req.body;
 
     try {
       const user = await User.findOne({ uid: userId });

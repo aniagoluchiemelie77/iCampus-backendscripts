@@ -89,3 +89,31 @@ export const generateTokens = async (user) => {
   await user.save();
   return { accessToken, refreshToken };
 };
+const generateReferralCode = (name, length = 7) => {
+  const cleanName = name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
+  const prefix = cleanName.substring(0, 3);
+  const randomLength = Math.max(0, length - prefix.length);
+  const chars = "0123456789abcdefghijklmnopqrstuvwxyz";
+  let randomPart = "";
+  for (let i = 0; i < randomLength; i++) {
+    randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return `${prefix}${randomPart}`;
+};
+export const generateUniqueReferralCode = async (user) => {
+  let code;
+  let exists = true;
+  const nameToUse =
+    user.userType === "enterprise" ? user.organizationName : user.firstName;
+
+  while (exists) {
+    code = generateReferralCode(nameToUse);
+    const userWithCode = await User.findOne({ referralCode: code });
+
+    if (!userWithCode) {
+      exists = false;
+    }
+  }
+
+  return code;
+};

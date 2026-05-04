@@ -242,6 +242,7 @@ export const userSchema = new mongoose.Schema({
     default: "free",
   },
   itagusername: { type: String, unique: true },
+  referralCode: { type: String, unique: true, required: true },
   profilePic: [String],
   likes: [{ type: String }],
   bookmarks: [{ type: String }],
