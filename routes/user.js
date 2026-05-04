@@ -12,6 +12,9 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import { client } from "../workers/reditFile.js";
 import {
+  Posts,
+  UserBankOrCardDetails,
+  DeletedUser,
   userPrefs,
   UniversitiesAndColleges,
   Notification,
@@ -1867,6 +1870,69 @@ export default function (User) {
     } catch (error) {
       console.error(error);
       res.status(500).json({ error: "Server error updating preferences" });
+    }
+  });
+  //delete user
+  router.delete("/account/delete", protect, async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+    try {
+      const userUid = req.user.id;
+      const { reason } = req.body;
+
+      const user = await User.findOne({ uid: userUid });
+      if (!user) throw new Error("User not found");
+      await DeletedUser.create(
+        [
+          {
+            uid: userUid,
+            reason: reason || "N/A",
+            accountAgeDays: Math.floor(
+              (Date.now() - user.createdAt) / (1000 * 60 * 60 * 24),
+            ),
+            tierAtDeletion: user.tier,
+            finalBalance: user.balance || 0,
+          },
+        ],
+        { session },
+      );
+      await Promise.all([
+        User.findOneAndDelete({ uid: userUid }).session(session),
+        userPrefs.findOneAndDelete({ userId: userUid }).session(session),
+        UserBankOrCardDetails.deleteMany({ userId: userUid }).session(session),
+        ITag.findOneAndDelete({ userId: userUid }).session(session),
+        Follow.deleteMany({
+          $or: [{ followerId: userUid }, { followingId: userUid }],
+        }).session(session),
+      ]);
+      await Course.updateMany(
+        { $or: [{ studentsEnrolled: userUid }, { lecturerIds: userUid }] },
+        { $pull: { studentsEnrolled: userUid, lecturerIds: userUid } },
+      ).session(session);
+      await Posts.updateMany(
+        { "userId.uid": userUid },
+        {
+          $set: {
+            "userId.firstname": "Deleted",
+            "userId.lastname": "User",
+            "userId.uid": null,
+            "userId.profilePic": [],
+          },
+        },
+      ).session(session);
+
+      await session.commitTransaction();
+      res
+        .status(200)
+        .json({ status: true, message: "Account deleted successfully." });
+    } catch (error) {
+      await session.abortTransaction();
+      console.error("Cleanup Failed:", error);
+      res
+        .status(500)
+        .json({ status: false, message: "Error during account deletion." });
+    } finally {
+      session.endSession();
     }
   });
 

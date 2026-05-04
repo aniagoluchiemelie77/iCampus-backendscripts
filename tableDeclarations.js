@@ -4,6 +4,7 @@ import {
   messageSchema,
   notificationSchema,
   dealSchema,
+  deletedUserSchema,
   userBankOrCardDetails,
   courseSchema,
   transactionMiddleState,
@@ -128,4 +129,9 @@ export const userPrefs = mongoose.model(
   "userPrefs",
   userPreferencesSchema,
   "userPreferences",
+);
+export const DeletedUser = mongoose.model(
+  "DeletedUser",
+  deletedUserSchema,
+  "deletedUser",
 );

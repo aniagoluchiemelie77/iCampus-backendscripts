@@ -890,6 +890,16 @@ export const messageSchema = new mongoose.Schema({
   },
   timestamp: { type: Date, default: Date.now },
 });
+export const deletedUserSchema = new mongoose.Schema({
+  uid: { type: String, required: true },
+  reason: { type: String },
+  accountAgeDays: { type: Number },
+  tierAtDeletion: { type: String },
+  finalBalance: { type: Number },
+  deletedAt: { type: Date, default: Date.now },
+  schoolName: String,
+  department: String,
+});
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
 
