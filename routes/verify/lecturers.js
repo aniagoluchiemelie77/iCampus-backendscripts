@@ -4,12 +4,14 @@ import { Lecturer } from "../../tableDeclarations.js";
 export default function (Lecturer) {
   const router = express.Router();
 
-  router.post("/", async (req, res) => {
+  router.post("/verify", async (req, res) => {
     const { school_name, staff_id: incomingStaffId } = req.body;
     console.log("Incoming payload:", req.body);
 
     if (!school_name || !incomingStaffId) {
-      return res.status(400).json({ message: "Missing required fields" });
+      return res
+        .status(400)
+        .json({ message: "Missing required fields", verified: false });
     }
 
     const normalize = (str) => str.trim().toLowerCase(); // Lowercase for better matching
@@ -33,13 +35,8 @@ export default function (Lecturer) {
       }
 
       // Safely destructure without variable name conflicts
-      const {
-        firstname,
-        lastname,
-        department,
-        phone_number,
-        staff_id, // Using the DB field name
-      } = lecturer;
+      const { firstname, lastname, department, phone_number, staff_id } =
+        lecturer;
 
       return res.json({
         firstname,
@@ -48,10 +45,11 @@ export default function (Lecturer) {
         phone_number,
         school_name: lecturer.school_name, // Return the official name from DB
         staff_id: lecturer.staff_id,
+        verified: true,
       });
     } catch (err) {
       console.error("Verification error:", err);
-      return res.status(500).json({ message: "Server error" });
+      return res.status(500).json({ message: "Server error", verified: false });
     }
   });
   return router;

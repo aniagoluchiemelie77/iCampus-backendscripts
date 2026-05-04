@@ -259,7 +259,8 @@ export const userSchema = new mongoose.Schema({
   email: { type: String, unique: true },
   coursesEnrolled: [String],
   accessToken: String,
-  password: String,
+  password: { type: String, default: null },
+  providerId: { type: String, default: null },
   department: String,
   pointsBalance: {
     type: Number,

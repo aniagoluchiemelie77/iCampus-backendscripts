@@ -87,6 +87,7 @@ export default function (User) {
       lastname,
       deviceId,
       deviceName,
+      providerId,
     } = req.body;
     try {
       const existingUser = await User.findOne({
@@ -96,7 +97,9 @@ export default function (User) {
       }).lean();
 
       if (existingUser) {
-        return res.status(409).json({ message: "User already exists." });
+        return res
+          .status(409)
+          .json({ message: "User already exists.", success: false });
       }
       const uid = generateUserUID();
       const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
@@ -104,7 +107,10 @@ export default function (User) {
       const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 
       // 🔐 Hash password
-      const hashedPassword = await bcrypt.hash(password, 10);
+      let hashedPassword = null;
+      if (password && password !== "SOCIAL_AUTH") {
+        hashedPassword = await bcrypt.hash(password, 10);
+      }
 
       // ⚡ Create user
       const newUser = new User({
@@ -113,7 +119,10 @@ export default function (User) {
         referralCode: await generateUniqueReferralCode(req.body),
         password: hashedPassword,
         isVerified:
-          usertype === "student" || usertype === "lecturer" ? true : false,
+          usertype === "student" || usertype === "lecturer" || providerId
+            ? true
+            : false,
+        providerId: providerId || "",
         sessions: [],
       });
       const iSCardEligible =
@@ -149,6 +158,7 @@ export default function (User) {
 
       return res.status(201).json({
         message: "User created successfully",
+        success: true,
         user: safeUser,
         accessToken,
         refreshToken,
@@ -159,11 +169,13 @@ export default function (User) {
       if (error.code === 11000) {
         return res.status(409).json({
           message: "Duplicate entry: User already exists.",
+          success: false,
         });
       }
 
       return res.status(500).json({
         message: error.message || "Failed to save user",
+        success: false,
       });
     }
   });
@@ -374,7 +386,6 @@ export default function (User) {
 
       return res.status(200).json({
         message: "Verification code sent",
-        email,
         codeSent: true,
       });
     } catch (error) {
@@ -472,20 +483,20 @@ export default function (User) {
       if (!record) {
         return res
           .status(404)
-          .json({ message: "No verification request found" });
+          .json({ message: "No verification request found", verified: false });
       }
-
-      // 🔐 Hash incoming code to compare with stored hash
       const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
 
       if (record.code !== hashedCode) {
-        return res.status(400).json({ message: "Invalid verification code" });
+        return res
+          .status(400)
+          .json({ message: "Invalid verification code", verified: false });
       }
 
       if (record.expiresAt < new Date()) {
         return res
           .status(400)
-          .json({ message: "Verification code has expired" });
+          .json({ message: "Verification code has expired", verified: false });
       }
 
       return res.status(200).json({
@@ -494,7 +505,7 @@ export default function (User) {
       });
     } catch (error) {
       console.error("verifyEmailCode error:", error);
-      return res.status(500).json({ message: "Server error" });
+      return res.status(500).json({ message: "Server error", verified: false });
     }
   });
 
