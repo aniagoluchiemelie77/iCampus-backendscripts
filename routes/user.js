@@ -404,9 +404,7 @@ export default function (User) {
         });
       }
       const normalizedCountry = country.trim();
-      // ✅ Build a cache key based on the country
       const cacheKey = `institutions: ${normalizedCountry}`;
-      // 1️⃣ Try to read from Redis cache first
       console.log("PING before GET:", await client.ping());
 
       try {
@@ -450,7 +448,7 @@ export default function (User) {
       // MONGODB SEARCH (OPTIMIZED)
       // -------------------------------
       const institutions = await UniversitiesAndColleges.find({
-        country: normalizedCountry, // ✅ exact match, no regex
+        country: normalizedCountry,
       })
         .sort({ name: 1 })
         .lean();

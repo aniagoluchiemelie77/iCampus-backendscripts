@@ -5,18 +5,12 @@ export default function (Student) {
 
   router.post("/verify", async (req, res) => {
     const { school_name, matriculation_number } = req.body;
-
     if (!school_name || !matriculation_number) {
       return res.status(400).json({ message: "Missing required fields" });
     }
-
-    // Normalize function to clean up school names
     const normalize = (str) => str.trim();
-
     const incomingSchool = normalize(school_name);
-
     try {
-      // Find student by matric number only
       console.log(
         "Searching for student with matric number:",
         matriculation_number,
