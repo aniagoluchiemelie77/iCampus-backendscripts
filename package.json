@@ -25,6 +25,7 @@
     "firebase-admin": "^13.7.0",
     "geoip-lite": "^2.0.1",
     "gm": "^1.25.1",
+    "google-auth-library": "^10.6.2",
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.11.0",
     "mongoose": "^8.18.0",

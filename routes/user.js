@@ -42,6 +42,10 @@ import {
   generateUniqueReferralCode,
 } from "../utils/idGenerator.js";
 import * as cheerio from "cheerio";
+import {
+  verifyGoogleToken,
+  verifyGithubToken,
+} from "../api/foreignFetchApis.js";
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -181,15 +185,31 @@ export default function (User) {
   });
 
   router.post("/login", authLimiter, async (req, res) => {
-    const { identifier, password, deviceId, deviceName } = req.body;
+    const {
+      identifier,
+      password,
+      deviceId,
+      deviceName,
+      socialProvider,
+      idToken,
+    } = req.body.credentials || req.body;
 
     try {
-      const user = await User.findOne({ $or: [{ email: identifier }] });
+      const user = await User.findOne({ email: identifier });
       if (!user) return res.status(404).json({ error: "User not found" });
-
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) return res.status(401).json({ error: "Invalid password" });
-
+      if (socialProvider === "google") {
+        const isValid = await verifyGoogleToken(idToken, identifier);
+        if (!isValid)
+          return res.status(401).json({ error: "Invalid Google token" });
+      } else if (socialProvider === "github") {
+        const isValid = await verifyGithubToken(idToken, identifier);
+        if (!isValid)
+          return res.status(401).json({ error: "Invalid GitHub token" });
+      } else {
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch)
+          return res.status(401).json({ error: "Invalid password" });
+      }
       const { accessToken, refreshToken } = await generateTokens(user);
       const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
       const geo = geoip.lookup(ip);
@@ -203,36 +223,34 @@ export default function (User) {
         refreshToken,
         lastUsed: new Date(),
       };
+
+      // 4. Update Session List
       const existingSessionIndex = user.sessions.findIndex(
         (s) => s.deviceId === deviceId,
       );
+
       if (existingSessionIndex > -1) {
         user.sessions[existingSessionIndex] = sessionData;
       } else {
         user.sessions.push(sessionData);
         await createNotification({
-          notificationId: generateNotificationId(),
           recipientId: user.uid,
           recipientEmail: user.email,
           category: "auth",
           actionType: "NEW_LOGIN",
           title: "Security Alert: New Login",
-          message: `A login was detected from ${ip} in ${location || "an unknown location"}.`,
-          payload: {
-            userName: user.firstName || "User",
-            ipAddress: ip,
-            location: location || "Unknown",
-          },
-          sendEmailFlag: true,
+          message: `A login was detected from ${ip} in ${location}.`,
           sendEmail: true,
-          sendPush: true,
-          sendSocket: true,
           saveToDb: true,
         });
       }
       await user.save();
-
-      const { password: _, ...safeUser } = user.toObject();
+      const {
+        password: _,
+        iCashPin: _,
+        userAccountDetails: _,
+        ...safeUser
+      } = user.toObject();
       res.status(200).json({
         message: "Login successful",
         user: safeUser,
@@ -240,6 +258,7 @@ export default function (User) {
         refreshToken,
       });
     } catch (error) {
+      console.error("Login Error:", error);
       res.status(500).json({ error: error.message || "Login error" });
     }
   });
@@ -361,8 +380,6 @@ export default function (User) {
         { code: hashedCode, expiresAt },
         { upsert: true, new: true },
       );
-
-      // 🐇 RabbitMQ: Send structured notification job
       const channel = getChannel();
       await channel.assertQueue("emailQueue");
 
@@ -475,15 +492,19 @@ export default function (User) {
       if (!email || !code) {
         return res.status(400).json({ message: "Email and code are required" });
       }
+      const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
 
-      const record = await EmailVerification.findOne({ email }).lean();
+      const record = await EmailVerification.findOneAndDelete({
+        email,
+        code: hashedCode,
+        expiresAt: { $gt: new Date() },
+      });
 
       if (!record) {
         return res
           .status(404)
           .json({ message: "No verification request found", verified: false });
       }
-      const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
 
       if (record.code !== hashedCode) {
         return res
@@ -500,6 +521,7 @@ export default function (User) {
       return res.status(200).json({
         message: "Email verified successfully",
         verified: true,
+        email,
       });
     } catch (error) {
       console.error("verifyEmailCode error:", error);
@@ -522,15 +544,33 @@ export default function (User) {
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
-
-      const code = generateCode();
-
-      // Store code in your temporary object/Redis
-      verificationCodes[email] = {
-        code,
-        expiresAt: Date.now() + 12 * 60 * 60 * 1000, // 12 hours
-      };
-
+      const existingRecord = await EmailVerification.findOne({ email });
+      if (existingRecord) {
+        const timeSinceLastSent = Date.now() - (existingRecord.updatedAt || 0);
+        if (timeSinceLastSent < 60000) {
+          // 60 second cooldown
+          return res.status(429).json({
+            message: "Please wait before requesting another code.",
+          });
+        }
+      }
+      const code = Math.floor(100000 + Math.random() * 900000).toString();
+      const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
+      const durationMs = 60 * 60 * 1000; //1 hr
+      const expiresAt = new Date(Date.now() + durationMs);
+      const readableExpires = expiresAt.toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true,
+      });
+      await EmailVerification.findOneAndUpdate(
+        { email },
+        { code: hashedCode, expiresAt },
+        { upsert: true, new: true },
+      );
       // --- UNIFIED NOTIFICATION ---
       await createNotification({
         notificationId: generateNotificationId(),
@@ -539,34 +579,25 @@ export default function (User) {
         category: "security",
         actionType: "PASSWORD_RESET_CODE",
         title: "Password Reset Code",
-        message: `Your 6-digit verification code is ${code}. It expires in 12 hours.`,
+        message: `Your 6-digit verification code is ${code}. It expires in ${readableExpires}.`,
         payload: {
           code: code,
           userName: user.firstName || "User",
+          expiryTime: readableExpires,
         },
         sendEmail: true, // Critical for password reset
-        sendPush: true, // Helpful if they are on their phone
+        sendPush: true,
         sendSocket: true,
-        saveToDb: false, // Usually, we don't save sensitive codes to the notification DB
+        saveToDb: false,
       });
-
-      res.status(201).json({
+      res.status(200).json({
         message: "Verification code sent, check your email",
+        email,
       });
     } catch (error) {
       console.error("Forgot Password Error:", error);
       res.status(500).json({ message: "Internal Server Error" });
     }
-  });
-  router.post("/verifyCode", (req, res) => {
-    const { email, code } = req.body;
-    const record = verificationCodes[email];
-    if (!record || record.code !== code || Date.now() > record.expiresAt) {
-      return res.status(400).json({ message: "Invalid or expired code" });
-    }
-    // Mark as verified, don't delete yet
-    verificationCodes[email].verified = true;
-    res.status(200).json({ message: "Code verified", email: email });
   });
   router.post("/changePassword", async (req, res) => {
     const { email, password, confirmPassword } = req.body;

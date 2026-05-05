@@ -149,7 +149,11 @@ export const createNotification = async ({
           break;
         case "PASSWORD_RESET_CODE":
           subject = "Your iCampus Verification Code";
-          htmlContent = passwordResetTemplate(payload.userName, payload.code);
+          htmlContent = passwordResetTemplate(
+            payload.userName,
+            payload.code,
+            payload.expiryTime,
+          );
           break;
         case "EMAIL_VERIFICATION":
           subject = "Verify your iCampus Account";

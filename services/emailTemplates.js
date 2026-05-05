@@ -190,11 +190,11 @@ export const testAnalysisTemplate = (
   return emailWrapper(body);
 };
 
-export const passwordResetTemplate = (userName, code) => {
+export const passwordResetTemplate = (userName, code, expiryTime) => {
   const body = `
     <div style="text-align: center;">
       <h2 style="color: ${theme.colors.primary};">Password Reset Request</h2>
-      <p>Hi ${userName}, use the code below to reset your iCampus account password:</p>
+      <p style="color: ${theme.colors.text}; margin-vertical: 20px">Hi ${userName}, use the code below to reset your iCampus account password:</p>
       
       <div style="background: #f4f4f4; padding: 20px; margin: 20px 0; border-radius: 8px;">
         <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: ${theme.colors.primary};">
@@ -202,8 +202,8 @@ export const passwordResetTemplate = (userName, code) => {
         </span>
       </div>
 
-      <p style="font-size: 13px; color: #666;">
-        This code is valid for <strong>12 hours</strong>. If you did not request this, please ignore.
+      <p style="font-size: 13px; color: ${theme.colors.secondary};">
+        This code is valid for <strong>${expiryTime}</strong>. If you did not request this, please ignore.
       </p>
     </div>
   `;

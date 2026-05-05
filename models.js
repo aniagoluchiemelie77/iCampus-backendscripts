@@ -260,7 +260,11 @@ export const userSchema = new mongoose.Schema({
   coursesEnrolled: [String],
   accessToken: String,
   password: { type: String, default: null },
-  providerId: { type: String, default: null },
+  providerId: {
+    type: String,
+    enum: ["google", "github", "password"],
+    required: true,
+  },
   department: String,
   pointsBalance: {
     type: Number,
