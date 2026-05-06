@@ -1975,6 +1975,62 @@ export default function (User) {
       session.endSession();
     }
   });
+  router.post("/password/verify", protect, async (req, res) => {
+    const { password } = req.body;
+    try {
+      const user = await User.findOne({ uid: req.user.id }).select("+password");
+      if (!user) {
+        return res
+          .status(404)
+          .json({ success: false, message: "User not found" });
+      }
+      const isMatch = await bcrypt.compare(password, user.password);
+      if (!isMatch) {
+        return res
+          .status(401)
+          .json({ success: false, message: "Incorrect current password" });
+      }
+      res.status(200).json({ success: true, message: "Password verified" });
+    } catch (error) {
+      res.status(500).json({ success: false, message: "Server error" });
+    }
+  });
+  router.put("/password/update", protect, async (req, res) => {
+    const { newPassword } = req.body;
+    try {
+      const user = await User.findOne({ uid: req.user.id });
+      const hashedPassword = await bcrypt.hash(newPassword, 10);
+      user.password = hashedPassword;
+      await user.save();
+      const now = new Date();
+      const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
+      await createNotification({
+        notificationId: generateNotificationId(),
+        recipientId: user.uid,
+        recipientEmail: user.email,
+        category: "auth",
+        actionType: "PASSWORD_CHANGED",
+        title: "Password Changed",
+        message: `Your password was successfully updated on ${formattedTime}.`,
+        payload: {
+          userName: user.firstName || "User",
+          time: formattedTime,
+        },
+        sendEmailFlag: true,
+        sendEmail: true,
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      });
+      res
+        .status(200)
+        .json({ success: true, message: "Password updated successfully" });
+    } catch (error) {
+      res
+        .status(500)
+        .json({ success: false, message: "Could not update password" });
+    }
+  });
 
   return router;
 }
