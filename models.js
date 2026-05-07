@@ -502,6 +502,11 @@ export const EmailVerificationSchema = new mongoose.Schema({
     required: true,
   },
 });
+export const phoneVerificationSchema = new mongoose.Schema({
+  phoneNumber: { type: String, required: true, index: true },
+  code: { type: String, required: true },
+  expiresAt: { type: Date, required: true, expires: 900 },
+});
 export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
   schoolName: {
     type: String,

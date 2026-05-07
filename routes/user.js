@@ -12,6 +12,7 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import { client } from "../workers/reditFile.js";
 import {
+  PhoneNumberVerification,
   Posts,
   UserBankOrCardDetails,
   DeletedUser,
@@ -2077,6 +2078,69 @@ export default function (User) {
       { new: true },
     );
     res.json({ success: true, recoveryEmails: updatedUser.recoveryEmails });
+  });
+  router.delete("/phone-number", protect, async (req, res) => {
+    try {
+      const { phoneNumber } = req.body;
+      const userUid = req.user.id;
+
+      if (!phoneNumber) {
+        return res.status(400).json({ message: "Phone number is required" });
+      }
+      const updatedUser = await User.findOneAndUpdate(
+        { uid: userUid },
+        { $pull: { phoneNumbers: { number: phoneNumber } } },
+        { new: true },
+      );
+      if (!updatedUser) {
+        return res.status(404).json({ message: "User not found" });
+      }
+      return res.status(200).json({
+        message: "Phone number deleted successfully",
+        phoneNumbers: updatedUser.phoneNumbers,
+      });
+    } catch (error) {
+      console.error("Delete phone error:", error);
+      return res.status(500).json({ message: "Server error" });
+    }
+  });
+  router.post("/verify-phone-otp", protect, async (req, res) => {
+    const { phoneNumber, codeInput } = req.body;
+
+    const hashedInput = crypto
+      .createHash("sha256")
+      .update(codeInput)
+      .digest("hex");
+
+    const verificationRecord = await PhoneNumberVerification.findOne({
+      phoneNumber: phoneNumber,
+      code: hashedInput,
+    });
+
+    if (!verificationRecord) {
+      return res.status(400).json({ message: "Invalid or expired code" });
+    }
+
+    // Use { new: true } to get the user document AFTER the $set is applied
+    const updatedUser = await User.findOneAndUpdate(
+      { uid: req.user.id, "phoneNumbers.number": phoneNumber },
+      { $set: { "phoneNumbers.$.isVerified": true } },
+      { new: true },
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    // Clean up the OTP record
+    await PhoneNumberVerification.deleteOne({ _id: verificationRecord._id });
+
+    // Return the updated phoneNumbers array for Redux
+    res.status(200).json({
+      success: true,
+      message: "Phone verified!",
+      phoneNumbers: updatedUser.phoneNumbers,
+    });
   });
 
   return router;

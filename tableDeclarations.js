@@ -29,6 +29,7 @@ import {
   attendanceSchema,
   paymentMethodSchema,
   userPreferencesSchema,
+  phoneVerificationSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -134,4 +135,9 @@ export const DeletedUser = mongoose.model(
   "DeletedUser",
   deletedUserSchema,
   "deletedUser",
+);
+export const PhoneNumberVerification = mongoose.model(
+  "PhoneNumberVerification",
+  phoneVerificationSchema,
+  "phoneNumberVerification",
 );
