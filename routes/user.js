@@ -10,6 +10,7 @@ import { createNotification } from "../services/notificationService.js";
 import { getFallbackBooks } from "../utils/libraryHelpers.js";
 import { generateExpiryDate } from "../utils/dateHelper.js";
 import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
+import twilio from "twilio";
 import { client } from "../workers/reditFile.js";
 import {
   PhoneNumberVerification,
@@ -47,6 +48,8 @@ import {
   verifyGoogleToken,
   verifyGithubToken,
 } from "../api/foreignFetchApis.js";
+const accountSid = process.env.TWILIO_ACCOUNT_SID;
+const authToken = process.env.TWILIO_AUTH_TOKEN;
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -2141,6 +2144,37 @@ export default function (User) {
       message: "Phone verified!",
       phoneNumbers: updatedUser.phoneNumbers,
     });
+  });
+  router.post("/send-phone-otp", protect, async (req, res) => {
+    const client = twilio(accountSid, authToken);
+    const { phoneNumber, channel } = req.body;
+    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedCode = crypto
+      .createHash("sha256")
+      .update(otpCode)
+      .digest("hex");
+    await PhoneNumberVerification.findOneAndUpdate(
+      { phoneNumber },
+      { code: hashedCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
+      { upsert: true },
+    );
+
+    try {
+      const message = await client.messages.create({
+        from: `${channel}:${process.env.TWILIO_WHATSAPP_NUMBER}`,
+        contentSid: process.env.TWILIO_CONTENT_SID,
+        contentVariables: JSON.stringify({ 1: otpCode }),
+        to: `${channel}:${phoneNumber}`,
+      });
+
+      console.log("WhatsApp sent:", message.sid);
+      res.status(200).json({ success: true, message: "OTP sent to WhatsApp" });
+    } catch (error) {
+      console.error("Twilio Error:", error);
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to send WhatsApp message" });
+    }
   });
 
   return router;
