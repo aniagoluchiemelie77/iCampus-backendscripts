@@ -30,19 +30,25 @@ export const createNotification = async ({
   payload = {},
   sendEmailFlag = false,
   recipientEmail = null,
+  recoveryEmails = [],
   sendEmail = false,
   sendPush = true,
   sendSocket = true,
   saveToDb = true,
 }) => {
   try {
-    const { recipientId, category, actionType } = params;
     const prefs = await userPrefs.findOne({ userId: recipientId });
     const isCritical = [
       "NEW_LOGIN",
       "ICASH_WITHDRAWAL",
       "PASSWORD_CHANGED",
     ].includes(actionType);
+    const verifiedRecoveries = recoveryEmails
+      .filter((item) => item.isVerified)
+      .map((item) => item.email);
+    const recipients = [
+      ...new Set([recipientEmail, ...verifiedRecoveries]),
+    ].filter(Boolean);
     let canSendPush = sendPush;
     let canSendEmail = sendEmail;
     let canSendSocket = sendSocket;
@@ -79,7 +85,7 @@ export const createNotification = async ({
         notificationRecord || { title, message, payload },
       );
     }
-    if (canSendEmail && recipientEmail) {
+    if (canSendEmail && recipients.length > 0) {
       let htmlContent = "";
       let subject = "iCampus Notification";
       switch (actionType) {
@@ -97,6 +103,7 @@ export const createNotification = async ({
           htmlContent = loginAlertTemplate(
             payload.userName,
             payload.ipAddress,
+            payload.location,
             new Date().toLocaleString(),
           );
           break;
@@ -250,12 +257,22 @@ export const createNotification = async ({
           subject = "Security Alert: Profile Change";
           break;
       }
-      if (htmlContent) {
-        await sendEmail({
-          to: recipientEmail,
-          subject,
-          html: htmlContent,
-        });
+      if (htmlContent && recipients.length > 0) {
+        const targets = isCritical
+          ? recipients
+          : [recipientEmail].filter(Boolean);
+        await Promise.all(
+          targets.map((email) =>
+            sendEmail({
+              to: email,
+              subject:
+                isCritical && email !== recipientEmail
+                  ? `[Security Alert] ${subject}`
+                  : subject,
+              html: htmlContent,
+            }),
+          ),
+        );
       }
     }
     if (canSendPush) {
@@ -271,5 +288,3 @@ export const createNotification = async ({
     console.error("Notification Error:", error);
   }
 };
-
-module.exports = { createNotification };

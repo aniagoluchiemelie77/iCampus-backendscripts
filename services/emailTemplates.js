@@ -51,7 +51,7 @@ export const purchaseTemplate = (
   return emailWrapper(body);
 };
 
-export const loginAlertTemplate = (userName, ipAddress, time) => {
+export const loginAlertTemplate = (userName, ipAddress, location, time) => {
   const body = `
     <h2 style="color: ${colors.danger}; margin-top: 0;">Security Alert</h2>
     <p>Hello ${userName},</p>
@@ -59,6 +59,7 @@ export const loginAlertTemplate = (userName, ipAddress, time) => {
     <div style="background: #fff5f5; border-left: 4px solid ${colors.danger}; padding: 15px; margin: 20px 0;">
       <strong>Details:</strong><br>
       IP: ${ipAddress}<br>
+      Location: ${location}
       Time: ${time}
     </div>
     <p style="font-size: 14px;">If this was not you, please change your password immediately in the <strong>Profile</strong> section of the app.</p>

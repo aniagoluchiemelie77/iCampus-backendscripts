@@ -309,7 +309,13 @@ export const userSchema = new mongoose.Schema({
   resetPinOTPExpires: { type: Date },
   isSuspended: { type: Boolean, default: false },
   skills: [{ type: String }],
-  alternateEmails: [{ type: String }],
+  recoveryEmails: [
+    {
+      email: { type: String, required: true },
+      isVerified: { type: Boolean, default: false },
+      addedAt: { type: Date, default: Date.now },
+    },
+  ],
   personaInquiryId: { type: String, default: null },
   sessions: [sessionSchema],
 });

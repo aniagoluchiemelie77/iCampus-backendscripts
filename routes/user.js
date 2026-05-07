@@ -236,9 +236,15 @@ export default function (User) {
         await createNotification({
           recipientId: user.uid,
           recipientEmail: user.email,
+          recoveryEmails: user.recoveryEmails,
           category: "auth",
           actionType: "NEW_LOGIN",
           title: "Security Alert: New Login",
+          payload: {
+            userName: user.firstname,
+            ipAddress: ip,
+            location: location,
+          },
           message: `A login was detected from ${ip} in ${location}.`,
           sendEmail: true,
           saveToDb: true,
@@ -601,8 +607,6 @@ export default function (User) {
   });
   router.post("/changePassword", async (req, res) => {
     const { email, password, confirmPassword } = req.body;
-
-    // 1. Validation Logic
     const record = verificationCodes[email];
     if (!record || !record.verified) {
       return res
@@ -636,6 +640,7 @@ export default function (User) {
         notificationId: generateNotificationId(),
         recipientId: user.uid,
         recipientEmail: user.email,
+        recoveryEmails: user.recoveryEmails,
         category: "auth",
         actionType: "PASSWORD_CHANGED",
         title: "Password Changed",
@@ -2008,12 +2013,13 @@ export default function (User) {
         notificationId: generateNotificationId(),
         recipientId: user.uid,
         recipientEmail: user.email,
+        recoveryEmails: user.recoveryEmails,
         category: "auth",
         actionType: "PASSWORD_CHANGED",
         title: "Password Changed",
         message: `Your password was successfully updated on ${formattedTime}.`,
         payload: {
-          userName: user.firstName || "User",
+          userName: user.firstname || "User",
           time: formattedTime,
         },
         sendEmailFlag: true,
@@ -2030,6 +2036,47 @@ export default function (User) {
         .status(500)
         .json({ success: false, message: "Could not update password" });
     }
+  });
+  router.patch("/update-emails", protect, async (req, res) => {
+    const { email, type } = req.body;
+    const userUid = req.user.id;
+    let update = {};
+
+    if (type === "primary") {
+      update = { $set: { email: email } };
+    } else if (type === "secondary") {
+      update = {
+        $addToSet: {
+          recoveryEmails: { email, isVerified: true, addedAt: new Date() },
+        },
+      };
+    } else {
+      return res
+        .status(400)
+        .json({ message: "Invalid update type", success: false });
+    }
+    const updatedUser = await User.findOneAndUpdate({ uid: userUid }, update, {
+      new: true,
+    });
+    if (!updatedUser) {
+      return res
+        .status(404)
+        .json({ message: "User not found", success: false });
+    }
+    return res.status(200).json({
+      message: `${type === "primary" ? "Primary" : "Recovery"} email updated`,
+      success: true,
+    });
+  });
+  router.delete("/recovery-email", protect, async (req, res) => {
+    const { emailToDelete } = req.body;
+    const userUid = req.user.iid;
+    const updatedUser = await User.findOneAndUpdate(
+      { uid: userUid },
+      { $pull: { recoveryEmails: { email: emailToDelete } } },
+      { new: true },
+    );
+    res.json({ success: true, recoveryEmails: updatedUser.recoveryEmails });
   });
 
   return router;

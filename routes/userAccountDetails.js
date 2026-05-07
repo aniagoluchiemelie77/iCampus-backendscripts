@@ -157,6 +157,7 @@ export default function (User) {
     createNotification({
       notificationId: generateNotificationId(),
       recipientEmail: user.email,
+      recoveryEmails: user.recoveryEmails,
       recipientId: user.uid,
       category: "security",
       actionType: "ICASH_PIN_RESET",
