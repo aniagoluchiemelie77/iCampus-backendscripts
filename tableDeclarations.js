@@ -7,7 +7,6 @@ import {
   deletedUserSchema,
   userBankOrCardDetails,
   courseSchema,
-  transactionMiddleState,
   verifyStudentSchema,
   verifyLecturerSchema,
   storeCategoriesSchema,
@@ -30,6 +29,7 @@ import {
   paymentMethodSchema,
   userPreferencesSchema,
   phoneVerificationSchema,
+  orderSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -57,13 +57,6 @@ export const User =
 export const Notification =
   mongoose.models.Notification ||
   mongoose.model("Notification", notificationSchema, "notifications");
-export const TransactionMiddleState =
-  mongoose.models.TransactionMiddleState ||
-  mongoose.model(
-    "TransactionMiddleState",
-    transactionMiddleState,
-    "trans-mid-state",
-  );
 export const Course =
   mongoose.models.Course || mongoose.model("Course", courseSchema, "courses");
 export const UserBankOrCardDetails =
@@ -140,4 +133,9 @@ export const PhoneNumberVerification = mongoose.model(
   "PhoneNumberVerification",
   phoneVerificationSchema,
   "phoneNumberVerification",
+);
+export const ProductOrder = mongoose.model(
+  "ProductOrder",
+  orderSchema,
+  "productOrder",
 );

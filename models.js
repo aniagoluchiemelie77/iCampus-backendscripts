@@ -1,36 +1,4 @@
 import mongoose from "mongoose";
-
-const purchaseItemSchema = new mongoose.Schema(
-  {
-    productId: String,
-    title: String,
-    quantity: Number,
-    priceInPoints: Number,
-    selectedSize: String,
-    selectedColor: String,
-    selectedQuantity: String,
-    fileUrl: String,
-  },
-  { _id: false },
-);
-const purchaseHistorySchema = new mongoose.Schema(
-  {
-    id: String,
-    date: {
-      type: Date,
-      default: Date.now,
-    },
-    totalProductsPurchased: Number,
-    totalPointsSpent: Number,
-    items: [purchaseItemSchema],
-    status: {
-      type: String,
-      enum: ["pending", "approved", "rejected"],
-      default: "pending",
-    },
-  },
-  { _id: false },
-);
 export const attendanceSchema = new mongoose.Schema({
   studentId: { type: String, required: true },
   lectureId: { type: String, required: true },
@@ -290,8 +258,8 @@ export const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
-  deals: [{ type: String, ref: "Deal" }],
-  purchaseHistory: [purchaseHistorySchema],
+  purchaseHistory: [{ type: String }],
+  salesHistory: [{ type: String }],
   coursesEnrolled: [{ type: String }],
   coursesTeaching: [{ type: String }],
   userAccountDetails: [
@@ -343,32 +311,80 @@ export const storeCategoriesSchema = new mongoose.Schema({
   icon: String,
 });
 export const productSchema = new mongoose.Schema({
-  id: Number,
-  quantity: { type: String },
-  inStock: { type: String },
-  productId: { type: String, required: true },
-  category: { type: String, required: true },
-  schoolName: { type: String, required: true },
+  productId: { type: String, required: true, index: true },
   sellerId: { type: String, required: true },
+  schoolName: { type: String },
+  type: {
+    type: String,
+    enum: ["physical", "course", "file"],
+    required: true,
+  },
+  category: { type: String },
   title: { type: String, required: true },
-  mediaUrls: [{ type: String }], // ✅ array of strings
-  colors: [{ type: String }], // ✅ array of product colors
-  sizes: [{ type: String }], // ✅ array of product sizes
-  type: { type: String, enum: ["product", "File"], required: true },
-  priceInPoints: { type: Number, required: true },
-  createdAt: { type: Date, default: Date.now },
-  isAvailable: { type: Boolean, default: true },
-  favCount: { type: Number, default: 0 },
-  ratings: [{ type: Number }], // ✅ array of numbers
   description: { type: String },
-  lockedWithPassword: { type: Boolean, default: false },
-  password: { type: String }, // optional, only if locked
-  isFile: { type: Boolean, default: false },
-  fileUrl: { type: String },
-  fileSizeInMB: { type: Number },
-  downloadCount: { type: Number, default: 0 },
+  priceInPoints: { type: Number, default: 0 },
+  mediaUrls: [{ type: String }],
+  physicalDetails: {
+    colors: [{ type: String, default: null }],
+    sizes: [{ type: String, default: null }],
+    inStock: { type: Number, default: 0 },
+    weightKg: { type: Number, default: 0 },
+    sellerGateways: [
+      {
+        type: String,
+        enum: ["drop_off", "home_delivery"],
+      },
+    ],
+    isNationalShippingAvailable: { type: Boolean, default: false },
+  },
+  courseDetails: {
+    courseId: { type: String, default: null },
+    lecturerIds: [{ type: String, default: null }],
+    duration: { type: String, default: null },
+    totalReviews: { type: Number, default: 0 },
+    studentsEnrolledCount: { type: Number, default: 0 },
+    studentsEnrolled: [{ type: String, default: null }],
+  },
+  fileDetails: {
+    fileName: { type: String, default: null },
+    fileSizeInMB: { type: Number, default: 0 },
+    fileFormat: { type: String, default: null },
+    fileUrl: { type: String, default: null },
+    hasPassword: { type: Boolean, default: false },
+  },
+  ratings: [
+    {
+      userId: { type: String, default: null },
+      score: { type: Number, default: 0 },
+      comment: { type: String, default: null },
+    },
+  ],
+  favCount: { type: Number, default: 0 },
+  isAvailable: { type: Boolean, default: true },
+  createdAt: { type: String, default: null },
 });
-
+export const orderSchema = new mongoose.Schema({
+  orderId: { type: String, required: true, index: true },
+  buyerId: { type: String, required: true },
+  sellerId: { type: String, required: true },
+  productId: { type: String, required: true },
+  amountPaid: { type: Number, required: true },
+  status: {
+    type: String,
+    enum: ["pending_delivery", "completed", "cancelled"],
+    default: "pending_delivery",
+  },
+  deliveryMethod: {
+    type: String,
+    enum: ["drop_off", "home_delivery"],
+    default: "drop_off",
+  },
+  verificationQrCode: { type: String, required: true },
+  isVerifiedByScan: { type: Boolean, default: true },
+  generatedFilePassword: { type: String, default: null },
+  createdAt: { type: String, required: true },
+  completedAt: { type: String },
+});
 export const notificationSchema = new mongoose.Schema(
   {
     notificationId: { type: String, required: true },
@@ -400,21 +416,6 @@ export const notificationSchema = new mongoose.Schema(
       entityType: String, // 'Post', 'Test', 'Transaction'
     },
     payload: { type: Object }, // Any extra data (IP address, old vs new time)
-  },
-  { timestamps: true },
-);
-export const transactionMiddleState = new mongoose.Schema(
-  {
-    transactionId: { type: String, required: true, unique: true },
-    sellerId: { type: String, required: true },
-    buyerId: { type: String, required: true },
-    priceInPoints: { type: Number, required: true },
-    status: {
-      type: String,
-      enum: ["pending", "completed", "rejected"],
-      default: "pending",
-    },
-    productIdArrays: [{ type: String }],
   },
   { timestamps: true },
 );

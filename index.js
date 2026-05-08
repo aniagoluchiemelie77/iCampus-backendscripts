@@ -78,10 +78,7 @@ mongoose
     const lecturerClassDetails = (
       await import("./routes/class/lecturers.js")
     ).default(User);
-    const productRoutes = (await import("./routes/store/products.js")).default(
-      ProductCategory,
-      Product,
-    );
+    const storeRoutes = (await import("./routes/store.js")).default(Product);
     const postRoutes = (await import("./routes/posts.js")).default(Posts, User);
     const eventsRoute = (await import("./routes/userEvents.js")).default(Event);
     const studentVerifyRoutes = (
@@ -102,7 +99,7 @@ mongoose
     app.use("/users/lecturers/class", lecturerClassDetails);
     app.use("/user/events", eventsRoute);
     app.use("/posts", postRoutes);
-    app.use("/store", productRoutes);
+    app.use("/store", storeRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);
     app.use("/verifyInstructor", lecturerVerifyRoutes);
     app.use("/verifyUser", userVerifyRoutes);
