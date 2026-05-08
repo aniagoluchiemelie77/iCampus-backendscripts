@@ -13,7 +13,7 @@ export default function (Posts, User) {
   const router = express.Router();
 
   //1. Fetch posts (Preference for subscribers)
-  router.get("/fetchPosts", async (req, res) => {
+  router.get("/fetchPosts", protect, async (req, res) => {
     const limit = parseInt(req.query.limit) || 15;
     const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
     const isInitialLoad = !cursorScore;
@@ -117,23 +117,21 @@ export default function (Posts, User) {
   });
 
   // 2. TOGGLE LIKE
-  router.post("/:postId/like", async (req, res) => {
+  router.post("/:postId/like", protect, async (req, res) => {
     const { postId } = req.params;
-    const { userId } = req.body; // Expecting the MongoDB _id or unique uid string
+    const userId = req.user.id;
 
     try {
       const post = await Posts.findOne({ postId });
       if (!post) return res.status(404).send("Post not found");
-
       const isLiked = post.likes.includes(userId);
-
-      // If liked: remove from both. If not liked: add to both.
       const postUpdate = isLiked
         ? { $pull: { likes: userId } }
         : { $push: { likes: userId } };
       const userUpdate = isLiked
         ? { $pull: { likes: postId } }
         : { $push: { likes: postId } };
+      const message = isLiked ? 'You unliked a post.' : "You liked a post.";
 
       // Update Post and User in parallel
       const [updatedPost] = await Promise.all([
@@ -171,22 +169,21 @@ export default function (Posts, User) {
           },
         });
       }
-
-      res.json(updatedPost);
+      res.json({updatedPost, message});
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ message: err.message });
     }
   });
 
   // 3. TOGGLE BOOKMARK (Updates both Post and User)
-  router.patch("/:postId/bookmark", async (req, res) => {
+  router.patch("/:postId/bookmark", protect, async (req, res) => {
     const { postId } = req.params;
-    const { userId } = req.body;
+    const userId = req.user.id;
 
     try {
       // 1. First, check if the post exists
       const post = await Posts.findOne({ postId });
-      if (!post) return res.status(404).send("Post not found");
+      if (!post) return res.status(404).json({message: "Post not found"});
 
       const isBookmarked = (post.bookmarks ?? []).includes(userId);
 
@@ -223,15 +220,16 @@ export default function (Posts, User) {
       res.status(200).json({
         isBookmarked: !isBookmarked,
         count: updatedPost.bookmarks.length,
+        message: isBookmarked ? 'You removed a post from your bookmarks' : 'You bookmarked a post'
       });
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ message: err.message });
     }
   });
 
   // 4. INCREMENT IMPRESSION
   // 4. INCREMENT IMPRESSION
-  router.patch("/:postId/impression", async (req, res) => {
+  router.patch("/:postId/impression", protect, async (req, res) => {
     try {
       const { postId } = req.params;
 
@@ -279,9 +277,10 @@ export default function (Posts, User) {
   });
 
   // 5. ADD COMMENT
-  router.post("/:postId/comment", async (req, res) => {
+  router.post("/:postId/comment", protect, async (req, res) => {
     const { postId } = req.params;
-    const { userId, comment, parentId } = req.body;
+    const { comment, parentId } = req.body;
+    const userId = req.user.id;
     try {
       const tempCommentId = Math.random().toString(36).slice(2, 11);
 
@@ -373,19 +372,18 @@ export default function (Posts, User) {
   });
 
   // 7. Toggle REPOST with Notifications to Original Author and Followers (Handle Mentions in Repost Content)
-  router.post("/repost", async (req, res) => {
-    const { userId, originalPostId } = req.body;
+  router.post("/repost", protect, async (req, res) => {
+    const { originalPostId, isRepost} = req.body;
+    const userId = req.user.id;
     try {
-      // 1. Check if a repost already exists by this user for this specific original post
       const existingRepost = await Post.findOne({
         "userId.uid": userId,
         originalPostId: originalPostId,
-        isRepost: true,
+        isRepost
       });
       const io = req.app.get("socketio");
 
       if (existingRepost) {
-        // --- UN-REPOST LOGIC ---
         await Post.deleteOne({ postId: existingRepost.postId });
 
         const updatedOriginal = await Post.findOneAndUpdate(
@@ -402,13 +400,12 @@ export default function (Posts, User) {
         }
 
         return res.status(200).json({
-          action: "unreposted",
+          message: "You undid a repost action",
           repostsCount: updatedOriginal.repostsCount,
         });
       } else {
-        // --- REPOST LOGIC (Existing logic) ---
         const author = await User.findOne({ uid: userId })
-          .select("firstname lastname profilePic")
+          .select("firstname lastname profilePic tier organizationName username")
           .lean();
         const originalPost = await Post.findOne({ postId: originalPostId });
         if (!author || !originalPost)
@@ -423,10 +420,13 @@ export default function (Posts, User) {
             firstname: author.firstname,
             lastname: author.lastname,
             profilePic: author.profilePic,
+            tier: author.tier,
+            organizationName: author.organizationName,
+            username: author.username
           },
           originalAuthor: originalPost.userId,
           originalPostId,
-          isRepost: true,
+          isRepost,
           ...originalPost.toObject(),
         });
 
@@ -490,12 +490,12 @@ export default function (Posts, User) {
         });
 
         return res.status(201).json({
-          action: "reposted",
+          message: "Post repost action completed successfully.",
           repostsCount: updatedOriginal.repostsCount,
         });
       }
     } catch (err) {
-      res.status(500).json({ error: err.message });
+      res.status(500).json({ message: err.message });
     }
   });
   // 8. CREATE POST (with Mention and Follower Notifications)
@@ -605,7 +605,7 @@ export default function (Posts, User) {
   });
 
   //9. --- VOTE IN POLL ---
-  router.patch("/vote", async (req, res) => {
+  router.patch("/vote", protect, async (req, res) => {
     const { postId, optionId, userId } = req.body; // Expecting userId string
 
     try {
@@ -655,39 +655,51 @@ export default function (Posts, User) {
     }
   });
 
-  //10. fetch posts using postId
-  router.get("/:postId", protect, async (req, res) => {
-    try {
-      const { postId } = req.params;
-      const post = await Posts.aggregate([
-        { $match: { postId: postId } }, // Find the specific post
-        {
-          $lookup: {
-            from: "users",
-            localField: "userId.uid",
-            foreignField: "uid",
-            as: "authorDetails",
-          },
-        },
-        { $unwind: "$authorDetails" },
-        {
-          $project: {
-            "authorDetails.password": 0,
-            "authorDetails.email": 0, // Privacy
-          },
-        },
-      ]);
+ // 10. fetch posts using postId
+router.get("/:postId", protect, async (req, res) => {
+  try {
+    const { postId } = req.params;
 
-      if (!post || post.length === 0) {
-        return res.status(404).json({ error: "Post not found" });
-      }
+    const post = await Posts.aggregate([
+      { $match: { postId: postId } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId.uid",
+          foreignField: "uid",
+          as: "authorDetails",
+        },
+      },
+      { $unwind: "$authorDetails" },
+      {
+        $project: {
+          // Keep all post fields
+          postId: 1,
+          content: 1,
+          createdAt: 1,
+          userId: 1,
+          // Add other specific post fields here if necessary, or use $$ROOT
+          
+          // Selectively include user fields
+          "authorDetails.firstname": 1,
+          "authorDetails.lastname": 1,
+          "authorDetails.username": 1,
+          "authorDetails.tier": 1,
+          "authorDetails.organizationName": 1,
+        },
+      },
+    ]);
 
-      res.json(post[0]);
-    } catch (err) {
-      console.error("Fetch single post error:", err);
-      res.status(500).json({ error: err.message });
+    if (!post || post.length === 0) {
+      return res.status(404).json({ error: "Post not found" });
     }
-  });
+
+    res.json(post[0]);
+  } catch (err) {
+    console.error("Fetch single post error:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
   return router;
 }

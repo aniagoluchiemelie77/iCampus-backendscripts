@@ -550,6 +550,9 @@ export const PostSchema = new mongoose.Schema(
       firstname: { type: String, default: null },
       lastname: { type: String, default: null },
       profilePic: { type: [String], default: null },
+      tier: { type: String, default: null },
+      organizationName: { type: String, default: null },
+      username: { type: String, default: null },
     },
     priorityScore: { type: Number, default: 0 },
     isSubscriptionContent: { type: Boolean, default: false },
@@ -576,8 +579,7 @@ export const PostSchema = new mongoose.Schema(
       {
         commentId: { type: String, required: true },
         userId: {
-          type: mongoose.Schema.Types.ObjectId,
-          ref: "User",
+          type: String,
           required: true,
         },
         comment: { type: String, required: true },

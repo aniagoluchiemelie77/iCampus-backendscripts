@@ -1772,7 +1772,7 @@ export default function (User) {
   });
   router.patch("/update-profile", protect, async (req, res) => {
     try {
-      const userId = req.user.uid;
+      const userId = req.user.id;
       const updates = req.body;
       const allowedUpdates = [
         "bio",
