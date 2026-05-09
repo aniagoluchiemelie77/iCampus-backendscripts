@@ -2,6 +2,7 @@ import express from "express";
 import mongoose from "mongoose";
 import { protect } from "../middleware/auth.js";
 import { User } from "../tableDeclarations.js";
+import { fetchAllProducts } from "../controllers/storeControllers.js";
 
 export default function (Product) {
   const router = express.Router();
@@ -38,34 +39,52 @@ export default function (Product) {
     }
   });
   router.patch("/cart/toggle", protect, async (req, res) => {
-    const { productId, action } = req.body;
+    // Destructure the new selection details from the body
+    const {
+      productId,
+      action,
+      selectedSize,
+      selectedColor,
+      quantity = 1,
+    } = req.body;
     const userId = req.user.id;
-    const user = await User.findOne({ uid: userId });
-    if (!user) return res.status(404).json({ message: "User not found" });
+
     try {
-      let updateQuery;
+      const user = await User.findOne({ uid: userId });
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      let updatedUser;
+
       if (action === "add") {
-        updateQuery = { $addToSet: { cart: productId } };
+        const cartItem = {
+          productId,
+          quantity,
+          selectedSize,
+          selectedColor,
+        };
+        updatedUser = await User.findOneAndUpdate(
+          { uid: userId },
+          { $addToSet: { cart: cartItem } },
+          { new: true },
+        ).select("cart");
       } else if (action === "remove") {
-        updateQuery = { $pull: { cart: productId } };
-      } else {
-        return res.status(400).json({ message: "Invalid action" });
-      }
-
-      const updatedUser = await User.findOneAndUpdate(
-        { uid: userId },
-        updateQuery,
-        { new: true },
-      ).select("cart");
-
-      if (!updatedUser) {
-        return res.status(404).json({ message: "User not found" });
+        updatedUser = await User.findOneAndUpdate(
+          { uid: userId },
+          { $pull: { cart: { productId: productId } } },
+          { new: true },
+        ).select("cart");
+      } else if (action === "update") {
+        updatedUser = await User.findOneAndUpdate(
+          { uid: userId, "cart.productId": productId },
+          { $set: { "cart.$.quantity": quantity } },
+          { new: true },
+        ).select("cart");
       }
 
       res.status(200).json({
         success: true,
         cart: updatedUser.cart,
-        message: `Product ${action === "add" ? "added to" : "removed from"} cart`,
+        message: `Cart updated successfully`,
       });
     } catch (error) {
       res.status(500).json({ success: false, message: error.message });
@@ -98,6 +117,7 @@ export default function (Product) {
       res.status(500).json({ success: false, message: error.message });
     }
   });
+  router.get("/fetch-all-products", protect, fetchAllProducts);
 
   return router;
 }

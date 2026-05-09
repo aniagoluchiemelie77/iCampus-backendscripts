@@ -248,7 +248,14 @@ export const userSchema = new mongoose.Schema({
   phone_number: String,
   matricNumber: String,
   staffId: String,
-  cart: [{ type: String }],
+  cart: [
+    {
+      productId: { type: String, default: null },
+      quantity: { type: Number, default: 0 },
+      selectedColor: { type: String, default: null },
+      selectedSize: { type: String, default: null },
+    },
+  ],
   favorites: [{ type: String }],
   isVerified: {
     type: Boolean,
