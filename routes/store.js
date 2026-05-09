@@ -2,7 +2,12 @@ import express from "express";
 import mongoose from "mongoose";
 import { protect } from "../middleware/auth.js";
 import { User } from "../tableDeclarations.js";
-import { fetchAllProducts } from "../controllers/storeControllers.js";
+import {
+  fetchAllProducts,
+  clearUserCart,
+  bulkAddToCart,
+  clearFavorites,
+} from "../controllers/storeControllers.js";
 
 export default function (Product) {
   const router = express.Router();
@@ -39,7 +44,6 @@ export default function (Product) {
     }
   });
   router.patch("/cart/toggle", protect, async (req, res) => {
-    // Destructure the new selection details from the body
     const {
       productId,
       action,
@@ -118,6 +122,9 @@ export default function (Product) {
     }
   });
   router.get("/fetch-all-products", protect, fetchAllProducts);
+  router.delete("/cart/delete-all", protect, clearUserCart);
+  router.delete("/favorites/delete-all", protect, clearFavorites);
+  router.post("/favorites-to-cart/bulk-add", protect, bulkAddToCart);
 
   return router;
 }
