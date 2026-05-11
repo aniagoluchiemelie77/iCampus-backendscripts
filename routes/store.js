@@ -8,6 +8,7 @@ import {
   bulkAddToCart,
   initializeCheckout,
   clearFavorites,
+  completeOrderDelivery,
 } from "../controllers/storeControllers.js";
 
 export default function (Product) {
@@ -127,6 +128,7 @@ export default function (Product) {
   router.delete("/favorites/delete-all", protect, clearFavorites);
   router.post("/favorites-to-cart/bulk-add", protect, bulkAddToCart);
   router.post("/initialize-checkout", protect, initializeCheckout);
+  router.post("/orders/complete-delivery", protect, completeOrderDelivery);
 
   return router;
 }

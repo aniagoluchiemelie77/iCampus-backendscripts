@@ -18,6 +18,8 @@ import {
   iCashWithdrawalTemplate,
   subscriptionUpgradeTemplate,
   marketplacePurchaseTemplate,
+  orderCompletedTemplate,
+  orderReviewTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -153,6 +155,28 @@ export const createNotification = async ({
             payload.testTitle,
             payload.dueDate || "Check app for details",
           );
+          break;
+        case "ORDER_COMPLETED":
+          subject = `Payment Released: ${payload.productName}`;
+          if (sendEmail) {
+            htmlContent = orderCompletedTemplate(
+              payload.userName,
+              payload.productName,
+              payload.amount,
+              payload.orderId,
+              payload.role,
+            );
+          }
+          break;
+        case "ORDER_REVIEW_REQUEST":
+          subject = `How was your purchase of ${payload.productName}?`;
+          if (sendEmail) {
+            htmlContent = orderReviewTemplate(
+              payload.userName,
+              payload.productName,
+              payload.orderId,
+            );
+          }
           break;
         case "MATERIAL_UPLOADED":
           subject = "New Course Material Available"; // Fallback if ever needed

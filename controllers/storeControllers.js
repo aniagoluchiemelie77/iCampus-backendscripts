@@ -1,7 +1,7 @@
 import {
   Product,
   User,
-  Order,
+  ProductOrder,
   UserDownloads,
   Transactions,
 } from "../tableDeclarations.js";
@@ -165,10 +165,9 @@ export const initializeCheckout = async (req, res) => {
     session.startTransaction();
     const buyer = await User.findOne({ uid: buyerId }).session(session);
     if (!buyer || buyer.pointsBalance < totals.grandTotal) {
-      res.status(401).json({
-        success: false,
-        message: "Insufficient balance or user not found",
-      });
+      throw new Error(
+        "Insufficient iCash balance to complete purchase or user not found.",
+      );
     }
     buyer.pointsBalance -= totals.grandTotal;
     await buyer.save({ session });
@@ -195,10 +194,8 @@ export const initializeCheckout = async (req, res) => {
         session,
       );
       if (!product || !seller)
-        res.status(401).json({
-          success: false,
-          message: "Product or Seller info not found",
-        });
+        throw new Error("Product or Seller info not found.");
+
       const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
       let filePassword = null;
       const isDropOff = item.deliveryMethod === "drop_off";
@@ -212,8 +209,19 @@ export const initializeCheckout = async (req, res) => {
           { $addToSet: { ownedProducts: product.productId } },
           { upsert: true, session },
         );
+      } else {
+        const currentStock = product?.amountInStock || 1;
+        if (currentStock < item.quantity) {
+          throw new Error(
+            `Insufficient stock for ${product.title}. Available: ${currentStock}`,
+          );
+        }
+        product?.amountInStock -= item.quantity;
+        if (product?.amountInStock === 0) {
+          product.isAvailable = false;
+        }
       }
-      const newOrder = new Order({
+      const newOrder = new ProductOrder({
         orderId,
         buyerId,
         sellerId: item.sellerId,
@@ -229,9 +237,8 @@ export const initializeCheckout = async (req, res) => {
         createdAt: new Date().toISOString(),
       });
       await newOrder.save({ session });
-
-      seller.pointsBalance += item.price * item.quantity;
       await seller.save({ session });
+      await product.save({ session });
       const sellerTxId = `TXS-${uuidv4().split("-")[0].toUpperCase()}`;
       const sellerTransaction = new Transactions({
         transactionId: sellerTxId,
@@ -269,11 +276,135 @@ export const initializeCheckout = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+export const completeOrderDelivery = async (req, res) => {
+  const { orderId } = req.body;
+  const scannerUid = req.user.id;
+  const session = await mongoose.startSession();
+  try {
+    session.startTransaction();
+    const order = await ProductOrder.findOne({ orderId }).session(session);
+    if (!order) throw new Error("Product order not found.");
+    if (order.status !== "pending_delivery")
+      throw new Error("Product order is already processed or cancelled.");
+    const isSeller = order.sellerId === scannerUid;
+    const isAgent = order.agentId === scannerUid;
+    if (!isSeller && !isAgent) {
+      throw new Error("You are not authorized to verify this delivery.");
+    }
+    const product = await Product.findOne({
+      productId: order.productId,
+    }).session(session);
+    const seller = await User.findOne({ uid: order.sellerId }).session(session);
+    const buyer = await User.findOne({ uid: order.buyerId }).session(session);
+    if (!seller) throw new Error("Seller account no longer exists.");
+    let sellerEarnings = order.amountPaid;
+    let agentEarnings = 0;
+    if (order.deliveryMethod === "drop_off" && order.agentId) {
+      const agent = await User.findOne({ uid: order.agentId }).session(session);
+      if (!agent) throw new Error("Drop-off agent not found.");
+      agentEarnings = order.amountPaid * 0.06;
+      sellerEarnings -= agentEarnings;
+      agent.pointsBalance += agentEarnings;
+      await agent.save({ session });
+      await new Transactions({
+        transactionId: `TXA-${uuidv4().split("-")[0].toUpperCase()}`,
+        userId: agent.uid,
+        type: "payment",
+        amountICash: agentEarnings,
+        status: "success",
+        payType: "in",
+        title: `Delivery Fee: ${product.title}`,
+        reference: `REF-${orderId}`,
+        createdAt: new Date(),
+      }).save({ session });
+      await createNotification({
+        notificationId: uuidv4(),
+        recipientId: agent.uid,
+        recipientEmail: agent.email,
+        category: "finance",
+        actionType: "ORDER_COMPLETED",
+        title: "Delivery Commission Earned",
+        message: `You earned ${agentEarnings} iCash for verifying order #${orderId}`,
+        payload: {
+          amount: agentEarnings,
+          userName: agent.firstname,
+          productName: product.title,
+          orderId: orderId,
+          role: "agent",
+        },
+        sendEmail: true,
+      });
+    }
+    seller.pointsBalance += sellerEarnings;
+    await seller.save({ session });
+
+    order.status = "completed";
+    order.completedAt = new Date().toISOString();
+    await order.save({ session });
+
+    await createNotification({
+      notificationId: uuidv4(),
+      recipientId: seller.uid,
+      recipientEmail: seller.email,
+      category: "finance",
+      actionType: "ORDER_COMPLETED",
+      title: "Payment Received",
+      message: `Your sale for ${product.title} has been completed and funds released.`,
+      payload: {
+        amount: sellerEarnings,
+        userName: seller.firstname,
+        productName: product.title,
+        orderId: orderId,
+        role: "seller",
+      },
+      sendEmail: true,
+    });
+    await new Transactions({
+      transactionId: `TXA-${uuidv4().split("-")[0].toUpperCase()}`,
+      userId: seller.uid,
+      type: "payment",
+      amountICash: sellerEarnings,
+      status: "success",
+      payType: "in",
+      title: `Delivery Fee: ${product.title}`,
+      reference: `REF-${orderId}`,
+      createdAt: new Date(),
+    }).save({ session });
+    await createNotification({
+      notificationId: uuidv4(),
+      recipientId: order.buyerId,
+      category: "store",
+      actionType: "ORDER_REVIEW_REQUEST",
+      title: "Share your experience",
+      message: `How was your ${product.title}? Rate your experience to help the icampus community.`,
+      payload: {
+        orderId: order.orderId,
+        productName: product.title,
+        userName: buyer ? buyer.firstname : "Valued User",
+      },
+    });
+    await session.commitTransaction();
+    session.endSession();
+
+    res.status(200).json({
+      success: true,
+      orderId,
+      settlementAmount: isSeller ? sellerEarnings : agentEarnings,
+      role: isSeller ? "seller" : "agent",
+      message: "Delivery verified and payments settled.",
+      productName: product.title,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    res.status(400).json({ success: false, message: error.message });
+  }
+};
 export const cancelOrder = async (orderId) => {
   const session = await mongoose.startSession();
   try {
     session.startTransaction();
-    const order = await Order.findOne({ orderId }).session(session);
+    const order = await ProductOrder.findOne({ orderId }).session(session);
     if (order.status !== "pending_delivery")
       throw new Error("Cannot cancel a completed order");
     await User.findOneAndUpdate(
@@ -294,12 +425,12 @@ export const cancelOrder = async (orderId) => {
       type: "payment",
       amountICash: order.amountPaid,
       payType: "in",
-      title: `Refund for Order #${orderId}`,
+      title: `Refund for ProductOrder #${orderId}`,
       status: "success",
     });
     await refundTx.save({ session });
 
-    // 4. Update Order Status
+    // 4. Update ProductOrder Status
     order.status = "cancelled";
     await order.save({ session });
 

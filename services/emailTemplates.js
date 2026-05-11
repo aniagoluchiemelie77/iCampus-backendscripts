@@ -519,3 +519,63 @@ export const marketplacePurchaseTemplate = (
   `;
   return emailWrapper(body);
 };
+export const orderCompletedTemplate = (
+  userName,
+  productName,
+  amount,
+  orderId,
+  role,
+) => {
+  const isAgent = role === "agent";
+
+  const roleSpecificMessage = isAgent
+    ? `<p style="color: ${colors.text}">You have successfully verified the delivery for <strong>${productName}</strong>. Your commission has been credited.</p>`
+    : `<p style="color: ${colors.text}">The buyer has received <strong>${productName}</strong>. The escrow funds have been released to your balance.</p>`;
+
+  const body = `
+    <h2 style="color: ${colors.success}; margin-top: 0;">Tranaction Completed, Payment Released!</h2>
+    <p style="color: ${colors.text}">Hi ${userName},</p>
+    ${roleSpecificMessage}
+    
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <p style="color: ${colors.text}; margin: 0;"><strong>Order ID:</strong> #${orderId}</p>
+      <p style="color: ${colors.primary}; margin: 0;"><strong>Amount Credited:</strong> ${amount.toLocaleString()} iCash</p>
+    </div>
+
+    <div style="background: #e7f3ff; border: 1px solid #d1e7ff; padding: 15px; border-radius: 5px; margin: 15px 0;">
+      <p style="margin: 0; font-weight: bold; color: ${colors.secondary};">Transaction Finalized</p>
+      <p style="font-size: 13px; margin: 5px 0; color: ${colors.text};">
+        The funds are now available in your iCash wallet for withdrawal or internal purchases.
+      </p>
+    </div>
+
+    <p style="font-size: 13px; color:${colors.secondary};">You can view the breakdown of this transaction in your <strong>Wallet History</strong>.</p>
+  `;
+
+  return emailWrapper(body);
+};
+export const orderReviewTemplate = (userName, productName, orderId) => {
+  const body = `
+    <h2 style="color: ${colors.primary}; margin-top: 0;">We value your feedback</h2>
+    <p style="color: ${colors.text}">Hi ${userName},</p>
+    <p style="color: ${colors.text}">Your order <strong>#${orderId}</strong> for <strong>${productName}</strong> has been marked as completed.</p>
+    
+    <div style="background: #fff3cd; border-left: 5px solid #ffc107; padding: 15px; margin: 20px 0;">
+      <p style="margin: 0; font-weight: bold; color: #856404;">Help the Community</p>
+      <p style="font-size: 14px; color: ${colors.text}; margin: 5px 0;">
+        Ratings directly impact a seller's <strong>iScore</strong>. By leaving a review, you help other students and staff find reliable items.
+      </p>
+    </div>
+
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="https://icampus.app/reviews/${orderId}" 
+         style="background-color: ${colors.primary}; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+         Rate Product & Seller
+      </a>
+    </div>
+
+    <p style="font-size: 13px; color:${colors.secondary};">What did you think of the purchase process? Open the app to rate the app's delivery method too!</p>
+  `;
+
+  return emailWrapper(body);
+};

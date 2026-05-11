@@ -329,6 +329,7 @@ export const productSchema = new mongoose.Schema({
   productId: { type: String, required: true, index: true },
   sellerId: { type: String, required: true },
   schoolName: { type: String },
+  amountInStock: { type: Number, default: 1 },
   type: {
     type: String,
     enum: ["physical", "course", "file"],
