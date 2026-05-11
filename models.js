@@ -317,6 +317,14 @@ export const storeCategoriesSchema = new mongoose.Schema({
   schoolName: String,
   icon: String,
 });
+export const dropOffStation = new mongoose.Schema({
+  id: { type: String, required: true, index: true },
+  name: { type: String, required: true },
+  address: { type: String, required: true },
+  code: { type: String },
+  contactPerson: { type: String },
+  agentId: { type: String, required: true },
+});
 export const productSchema = new mongoose.Schema({
   productId: { type: String, required: true, index: true },
   sellerId: { type: String, required: true },
@@ -343,6 +351,7 @@ export const productSchema = new mongoose.Schema({
       },
     ],
     isNationalShippingAvailable: { type: Boolean, default: false },
+    dropOffAddress: [dropOffStation],
   },
   courseDetails: {
     courseId: { type: String, default: null },
@@ -376,6 +385,7 @@ export const orderSchema = new mongoose.Schema({
   sellerId: { type: String, required: true },
   productId: { type: String, required: true },
   amountPaid: { type: Number, required: true },
+  agentId: { type: String, default: null },
   status: {
     type: String,
     enum: ["pending_delivery", "completed", "cancelled"],
@@ -385,6 +395,12 @@ export const orderSchema = new mongoose.Schema({
     type: String,
     enum: ["drop_off", "home_delivery"],
     default: "drop_off",
+  },
+  selectedStation: {
+    id: String,
+    name: String,
+    address: String,
+    agentId: String,
   },
   verificationQrCode: { type: String, required: true },
   isVerifiedByScan: { type: Boolean, default: true },
@@ -426,7 +442,34 @@ export const notificationSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
-
+export const userDownloadsSchema = new mongoose.Schema(
+  {
+    userId: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+    },
+    ownedProducts: [
+      {
+        productId: String,
+      },
+    ],
+    purchaseHistory: [
+      {
+        productId: String,
+        purchasedAt: { type: Date, default: Date.now },
+      },
+    ],
+    lastAccessed: {
+      type: Date,
+      default: Date.now,
+    },
+  },
+  {
+    timestamps: true,
+  },
+);
 export const verifyLecturerSchema = new mongoose.Schema({
   firstname: String,
   lastname: String,
@@ -928,6 +971,7 @@ export const deletedUserSchema = new mongoose.Schema({
 });
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
+userDownloadsSchema.index({ userId: 1 });
 
 // Indexing for faster lookups when checking monthly limits
 exceptionSchema.index({ studentId: 1, date: -1 });

@@ -5,6 +5,7 @@ import { sendEmail } from "./emailService.js";
 import { sendPushNotification } from "./pushNotification.js";
 import {
   purchaseTemplate,
+  newOrderTemplate,
   passwordResetTemplate,
   testAnalysisTemplate,
   lectureScheduledTemplate,
@@ -16,6 +17,7 @@ import {
   iCashPurchaseTemplate,
   iCashWithdrawalTemplate,
   subscriptionUpgradeTemplate,
+  marketplacePurchaseTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -97,6 +99,35 @@ export const createNotification = async ({
             payload.amount,
             payload.downloadUrl,
           );
+          break;
+        case "MARKET_PURCHASE_DEBIT":
+          subject = `Receipt: ${payload.productName}`;
+          if (sendEmail) {
+            htmlContent = marketplacePurchaseTemplate(
+              payload.userName,
+              payload.productName,
+              payload.amount,
+              payload.orderId,
+              payload.productType,
+              payload.password,
+            );
+          }
+          break;
+        case "NEW_ORDER":
+          subject = `New Sale: ${payload.productName}`;
+          if (sendEmail) {
+            htmlContent = newOrderTemplate(
+              payload.userName,
+              payload.productName,
+              payload.amount,
+              payload.orderId,
+              payload.deliveryMethod,
+              payload.stationName,
+              payload.stationAddress,
+              payload.buyerAddress,
+              payload.buyerPhoneNumber,
+            );
+          }
           break;
         case "NEW_LOGIN":
           subject = "Security Alert: New Login Detected";

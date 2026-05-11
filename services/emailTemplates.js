@@ -433,3 +433,89 @@ export const subscriptionUpgradeTemplate = (
   `;
   return emailWrapper(body);
 };
+export const newOrderTemplate = (
+  buyerName,
+  productName,
+  amount,
+  orderId,
+  method,
+  stationName,
+  stationAddress,
+  buyerAddress,
+  buyerPhoneNumber,
+) => {
+  const isHomeDelivery = method === "home_delivery";
+
+  const instructionBlock = isHomeDelivery
+    ? `
+      <h3 style="color:${colors.text};">Home Delivery Instructions</h3>
+      <p>Deliver the item to the buyer's address:</p>
+      <p style="background: #fff; border: 1px solid #ddd; padding: 10px;"><strong>${buyerAddress || "Check app for address"}, Buyer's phone number: ${buyerPhoneNumber}</strong></p>
+      <p><strong>Action:</strong> Once you arrive, you must scan the Order QR code from the buyer's phone to complete the transaction and receive your payment.</p>
+    `
+    : `
+      <h3 style="color: ${colors.text};">Station Drop-off Instructions</h3>
+      <p>Please deliver the item to the following station:</p>
+      <p style="background: #fff; border: 1px solid #ddd; padding: 10px;"><strong>${stationName}</strong><br/>${stationAddress}</p>
+      <p><strong>Action:</strong> Hand the item to the station agent. The agent will scan the buyer's QR code when they come for pick-up to finalize the payment to both you and the agent.</p>
+    `;
+
+  return `
+    <div style="font-family: sans-serif; line-height: 1.6; color: #333; max-width: 600px;">
+      <h2 style="color: ${colors.primary};">You've made a sale</h2>
+      <p>Hi there, <strong>${buyerName}</strong> just purchased <strong>${productName}</strong>.</p>
+      
+      <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 20px 0;">
+        <p><strong>Order ID:</strong> ${orderId}</p>
+        <p style="color: ${colors.primary};"><strong>Total Earnings:</strong> ${amount.toLocaleString()} iCash</p>
+        <hr style="border: 0; border-top: 1px solid #eee;" />
+        ${instructionBlock}
+      </div>
+
+      <p>Thank you for using iCampus!</p>
+    </div>
+  `;
+};
+export const marketplacePurchaseTemplate = (
+  userName,
+  productName,
+  amount,
+  orderId,
+  type,
+  password,
+) => {
+  let instructions = "";
+  if (type === "course") {
+    instructions = `
+      <p>This course has been added to your library. You can access it anytime under <strong>"My Downloads"</strong> section in the iCampus app.</p>
+    `;
+  } else if (type === "physical") {
+    instructions = `
+      <p>Please head to your chosen collection point if it's not home delivery. Present the <strong>QR Code</strong> found in your order details to the seller or agent to collect your item.</p>
+    `;
+  } else if (type === "file") {
+    instructions = `
+      <div style="background: #fff3cd; border: 1px solid #ffeeba; padding: 15px; border-radius: 5px; margin: 15px 0;">
+        <p style="margin: 0; font-weight: bold; color: #856404;">File Password:</p>
+        <p style="font-size: 22px; font-family: monospace; letter-spacing: 2px; margin: 5px 0;">${password}</p>
+        <p style="font-size: 12px; margin: 0;">Use this password to open your document after downloading it from the app.</p>
+      </div>
+    `;
+  }
+
+  const body = `
+    <h2 style="color: ${colors.success}; margin-top: 0;">Order Confirmed! ✅</h2>
+    <p style="color: ${colors.text}">Hi ${userName},</p>
+    <p style="color: ${colors.text}">Your purchase of <strong>${productName}</strong> was successful.</p>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <p style="color: ${colors.text};margin: 0;"><strong>Order ID:</strong> #${orderId}</p>
+      <p style="color: ${colors.primary};margin: 0;"><strong>Amount Deducted:</strong> ${amount.toLocaleString()} Points</p>
+    </div>
+
+    ${instructions}
+
+    <p style="font-size: 13px; color:${colors.secondary};">View your full receipt and order status in the <strong>Orders</strong> tab of your profile.</p>
+  `;
+  return emailWrapper(body);
+};

@@ -7,6 +7,7 @@ import {
   deletedUserSchema,
   userBankOrCardDetails,
   courseSchema,
+  userDownloadsSchema,
   verifyStudentSchema,
   verifyLecturerSchema,
   storeCategoriesSchema,
@@ -138,4 +139,9 @@ export const ProductOrder = mongoose.model(
   "ProductOrder",
   orderSchema,
   "productOrder",
+);
+export const UserDownloads = mongoose.model(
+  "UserDownloads",
+  userDownloadsSchema,
+  "userDownloads",
 );

@@ -6,6 +6,7 @@ import {
   fetchAllProducts,
   clearUserCart,
   bulkAddToCart,
+  initializeCheckout,
   clearFavorites,
 } from "../controllers/storeControllers.js";
 
@@ -125,6 +126,7 @@ export default function (Product) {
   router.delete("/cart/delete-all", protect, clearUserCart);
   router.delete("/favorites/delete-all", protect, clearFavorites);
   router.post("/favorites-to-cart/bulk-add", protect, bulkAddToCart);
+  router.post("/initialize-checkout", protect, initializeCheckout);
 
   return router;
 }
