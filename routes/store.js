@@ -8,6 +8,8 @@ import {
   bulkAddToCart,
   initializeCheckout,
   clearFavorites,
+  getPendingOrders,
+  cancelOrder,
   completeOrderDelivery,
 } from "../controllers/storeControllers.js";
 
@@ -129,7 +131,8 @@ export default function (Product) {
   router.post("/favorites-to-cart/bulk-add", protect, bulkAddToCart);
   router.post("/initialize-checkout", protect, initializeCheckout);
   router.post("/orders/complete-delivery", protect, completeOrderDelivery);
-
+  router.get("/orders/pending", protect, getPendingOrders);
+  router.post("/orders/cancel", protect, cancelOrder);
   return router;
 }
 

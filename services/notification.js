@@ -20,6 +20,7 @@ import {
   marketplacePurchaseTemplate,
   orderCompletedTemplate,
   orderReviewTemplate,
+  orderCancelledEmailTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -114,6 +115,16 @@ export const createNotification = async ({
               payload.fileUrl,
             );
           }
+          break;
+        case "ORDER_CANCELLED":
+          emailHtml = orderCancelledEmailTemplate(
+            recipientName,
+            payload.productName,
+            payload.orderId,
+            payload.reason,
+            payload.buyerName,
+          );
+          subject = `Action Required: Order #${payload.orderId} Cancelled`;
           break;
         case "NEW_ORDER":
           subject = `New Sale: ${payload.productName}`;

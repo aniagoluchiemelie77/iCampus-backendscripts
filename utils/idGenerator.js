@@ -24,6 +24,7 @@ export function generateTransactionId(type = "payment") {
     p2p_received: "PRCV",
     payment: "PAYM",
     exceptionsDividend: "DIVI",
+    refund: "RFND",
   };
 
   const typePrefix = typeMap[type] || "GENR";

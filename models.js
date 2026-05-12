@@ -386,12 +386,14 @@ export const orderSchema = new mongoose.Schema({
   sellerId: { type: String, required: true },
   productId: { type: String, required: true },
   amountPaid: { type: Number, required: true },
+  quantity: { type: Number, required: true },
   agentId: { type: String, default: null },
   status: {
     type: String,
     enum: ["pending_delivery", "completed", "cancelled"],
     default: "pending_delivery",
   },
+  cancellationReason: { type: String, default: null },
   deliveryMethod: {
     type: String,
     enum: ["drop_off", "home_delivery"],
@@ -843,6 +845,7 @@ export const transactionSchema = new mongoose.Schema({
       "p2p_received",
       "payment",
       "exceptionsDividend",
+      "refund",
     ],
   },
   amountICash: Number,

@@ -245,6 +245,7 @@ export const initializeCheckout = async (req, res) => {
         productId: item.productId,
         productName: product.title,
         amountPaid: itemTotal,
+        quantity: item.quantity,
         status: product.type === "physical" ? "pending_delivery" : "completed",
         fileUrl: product.type === "file" ? product.fileUrl : null,
         deliveryMethod: item.deliveryMethod,
@@ -409,44 +410,87 @@ export const completeOrderDelivery = async (req, res) => {
     res.status(400).json({ success: false, message: error.message });
   }
 };
-export const cancelOrder = async (orderId) => {
+export const cancelOrder = async (req, res) => {
+  const { orderId, reason } = req.body;
+  const userId = req.user.id;
   const session = await mongoose.startSession();
+
   try {
     session.startTransaction();
-    const order = await ProductOrder.findOne({ orderId }).session(session);
-    if (order.status !== "pending_delivery")
-      throw new Error("Cannot cancel a completed order");
-    await User.findOneAndUpdate(
-      { uid: order.buyerId },
-      { $inc: { pointsBalance: order.amountPaid } },
-      { session },
-    );
-    await User.findOneAndUpdate(
-      { uid: order.sellerId },
-      { $inc: { pointsBalance: -order.amountPaid } },
-      { session },
-    );
+    const order = await ProductOrder.findOne({
+      orderId: orderId,
+      buyerId: userId,
+    }).session(session);
+    if (!order || order.status !== "pending_delivery") {
+      throw new Error(
+        "Order not found or you do not have permission to cancel it.",
+      );
+    }
+    const buyer = await User.findOne({ uid: order.buyerId }).session(session);
+    const seller = await User.findOne({ uid: order.sellerId }).session(session);
+    const product = await Product.findOne({
+      productId: order.productId,
+    }).session(session);
 
-    // 3. Create Refund Transaction Record
-    const refundTx = new Transaction({
-      transactionId: `REFUND-${uuidv4()}`,
-      userId: order.buyerId,
-      type: "payment",
-      amountICash: order.amountPaid,
-      payType: "in",
-      title: `Refund for ProductOrder #${orderId}`,
-      status: "success",
-    });
-    await refundTx.save({ session });
-
-    // 4. Update ProductOrder Status
+    if (!seller) throw new Error("Seller not found.");
+    buyer.pointsBalance += order.amountPaid;
+    await buyer.save({ session });
+    if (product && product.type === "physical") {
+      product.amountInStock += order.quantity || 1;
+      product.isAvailable = true;
+      await product.save({ session });
+    }
     order.status = "cancelled";
+    order.cancellationReason = reason;
     await order.save({ session });
-
+    await new Transactions({
+      transactionId: generateTransactionId("refund"),
+      userId: buyer.uid,
+      type: "refund",
+      amountICash: order.amountPaid,
+      status: "success",
+      payType: "in",
+      title: `Refund: ${product.title}`,
+      reference: `REF-${orderId}`,
+      createdAt: new Date(),
+    }).save({ session });
+    await createNotification({
+      notificationId: generateNotificationId("store"),
+      recipientId: seller.uid,
+      recipientEmail: seller.email,
+      category: "store",
+      actionType: "ORDER_CANCELLED",
+      title: "Order Cancelled by Buyer",
+      message: `The order for "${product.title}" (#${orderId}) was cancelled. Reason: ${reason}`,
+      payload: {
+        orderId: orderId,
+        productName: product.title,
+        reason: reason,
+        buyerName: buyer.firstname,
+      },
+      sendEmail: true,
+    });
     await session.commitTransaction();
-    return { success: true };
+    res.status(200).json({
+      success: true,
+      message: "Order cancelled, buyer refunded, and seller notified.",
+    });
   } catch (error) {
     await session.abortTransaction();
-    throw error;
+    res.status(400).json({ success: false, message: error.message });
+  } finally {
+    session.endSession();
+  }
+};
+export const getPendingOrders = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const orders = await ProductOrder.find({
+      buyerId: userId,
+      status: "pending_delivery",
+    }).sort({ createdAt: -1 });
+    res.status(200).json({ success: true, data: orders });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };

@@ -592,3 +592,35 @@ export const orderReviewTemplate = (userName, productName, orderId) => {
 
   return emailWrapper(body);
 };
+export const orderCancelledEmailTemplate = (
+  sellerName,
+  productName,
+  orderId,
+  reason,
+  buyerName,
+) => {
+  const body = `
+    <h2 style="color: ${colors.primary}; margin-top: 0;">Order Cancelled</h2>
+    <p style="color: ${colors.text}">Hi ${sellerName},</p>
+    <p style="color: ${colors.text}">
+      The order for <strong>${productName}</strong> (ID: #${orderId}) has been cancelled by the buyer, <strong>${buyerName}</strong>.
+    </p>
+    
+    <div style="background: #fff5f5; border-left: 4px solid #ff4444; padding: 15px; margin: 20px 0;">
+      <p style="margin: 0; font-weight: bold; color: #ff4444;">Reason for Cancellation:</p>
+      <p style="margin: 5px 0; font-style: italic; color: ${colors.text};">"${reason}"</p>
+    </div>
+
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <p style="color: ${colors.text}; margin: 0;">
+        <strong>Inventory Update:</strong> The item has been automatically added back to your stock and is visible in the marketplace again.
+      </p>
+    </div>
+
+    <p style="color: ${colors.secondary}; font-size: 13px;">
+      No further action is required on your part. If you have already dispatched this item, please contact support immediately.
+    </p>
+  `;
+
+  return emailWrapper(body);
+};
