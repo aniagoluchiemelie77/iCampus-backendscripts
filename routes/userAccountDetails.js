@@ -280,9 +280,9 @@ export default function (User) {
       await sender.save({ session });
       await recipient.save({ session });
 
-      // 5. Create Transaction Records (Dual-entry)
-      const senderTransactionId = generateTransactionId();
-      const senderTx = new Transaction({
+      // 5. Create Transactions Records (Dual-entry)
+      const senderTransactionId = generateTransactionId("p2p_sent");
+      const senderTx = new Transactions({
         transactionId: senderTransactionId,
         userId: senderId,
         type: "p2p_sent",
@@ -293,8 +293,8 @@ export default function (User) {
         reference: transactionRef,
         metadata: { recipientId, note: description },
       });
-      const receipientTransactionId = generateTransactionId();
-      const recipientTx = new Transaction({
+      const receipientTransactionId = generateTransactionId("p2p_received");
+      const recipientTx = new Transactions({
         transactionId: receipientTransactionId,
         userId: recipientId,
         type: "p2p_received",
@@ -516,13 +516,13 @@ export default function (User) {
           .fontSize(14)
           .text(`${expense.toLocaleString()} iCash`, 350, chartY + 32);
 
-        // --- Section 3: Transaction History Table ---
+        // --- Section 3: Transactions History Table ---
         doc.moveDown(5);
         doc
           .fillColor("#000")
           .font("Helvetica-Bold")
           .fontSize(12)
-          .text("Transaction History");
+          .text("Transactions History");
         doc.moveDown();
 
         // Table Header
@@ -608,7 +608,7 @@ export default function (User) {
     if (!transactionId) {
       return res
         .status(400)
-        .json({ status: "error", message: "Transaction ID is required" });
+        .json({ status: "error", message: "Transactions ID is required" });
     }
     try {
       const response = await axios.get(
@@ -625,7 +625,7 @@ export default function (User) {
       if (status !== "successful") {
         return res
           .status(400)
-          .json({ status: "error", message: "Transaction not successful" });
+          .json({ status: "error", message: "Transactions not successful" });
       }
       const baseUsdPrice = USD_SUBSCRIPTION_PRICES[tier];
       if (baseUsdPrice === undefined) {

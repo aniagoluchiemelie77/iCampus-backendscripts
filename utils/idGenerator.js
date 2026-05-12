@@ -2,19 +2,42 @@ import { ITag } from "../tableDeclarations.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
-/**
- * Format: CATEGORY-YYMMDDHHMM-RANDOM
- * Example: finance-2605121930-4829
- */
 export function generateNotificationId(category) {
   const now = new Date();
-  const timestamp = now.toISOString()
-    .replace(/[-T:.Z]/g, '')
+  const timestamp = now
+    .toISOString()
+    .replace(/[-T:.Z]/g, "")
     .slice(2, 12);
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
   const cat = category.toLowerCase();
-
+  /**
+   * Format: CATEGORY-YYMMDDHHMM-RANDOM
+   * Example: finance-2605121930-4829
+   */
   return `${cat}-${timestamp}-${randomSuffix}`;
+}
+export function generateTransactionId(type = "payment") {
+  const typeMap = {
+    buy: "BUYY",
+    withdraw: "WITH",
+    p2p_sent: "PSNT",
+    p2p_received: "PRCV",
+    payment: "PAYM",
+    exceptionsDividend: "DIVI",
+  };
+
+  const typePrefix = typeMap[type] || "GENR";
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+  const timeStr =
+    now.getHours().toString().padStart(2, "0") +
+    now.getMinutes().toString().padStart(2, "0");
+  const randomStr = Math.random().toString(36).substring(2, 5).toUpperCase();
+  /**
+   * Format: TX-[TYPE]-[YYMMDD]-[HHMM]-[RANDOM]
+   * Example: TX-WITH-260512-2145-K9L
+   */
+  return `TX-${typePrefix}-${dateStr}-${timeStr}-${randomStr}`;
 }
 export function generatePostId(length = 8) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -32,13 +55,6 @@ export function userAccountDetailsId(length = 10) {
   }
   return result;
 }
-export const generateTransactionId = () => {
-  const prefix = "iCn_trns";
-  const timestamp = Date.now(); // Current time in milliseconds
-  const randomStr = Math.random().toString(36).substring(2, 8); // 6 character random alphanumeric string
-
-  return `${prefix}_${timestamp}_${randomStr}`;
-};
 export const generateUniqueCardNumber = async () => {
   let isUnique = false;
   let cardNumber = "";

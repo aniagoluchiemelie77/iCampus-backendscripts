@@ -111,7 +111,7 @@ export const createNotification = async ({
               payload.amount,
               payload.orderId,
               payload.productType,
-              payload.password,
+              payload.fileUrl,
             );
           }
           break;

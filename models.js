@@ -405,7 +405,7 @@ export const orderSchema = new mongoose.Schema({
   },
   verificationQrCode: { type: String, required: true },
   isVerifiedByScan: { type: Boolean, default: true },
-  generatedFilePassword: { type: String, default: null },
+  fileUrl: { type: String, default: null },
   createdAt: { type: String, required: true },
   completedAt: { type: String },
 });
@@ -843,7 +843,6 @@ export const transactionSchema = new mongoose.Schema({
       "p2p_received",
       "payment",
       "exceptionsDividend",
-      "icash_pin_reset",
     ],
   },
   amountICash: Number,

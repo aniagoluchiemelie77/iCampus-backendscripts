@@ -482,7 +482,7 @@ export const marketplacePurchaseTemplate = (
   amount,
   orderId,
   type,
-  password,
+  fileUrl,
 ) => {
   let instructions = "";
   if (type === "course") {
@@ -495,10 +495,23 @@ export const marketplacePurchaseTemplate = (
     `;
   } else if (type === "file") {
     instructions = `
-      <div style="background: #fff3cd; border: 1px solid #ffeeba; padding: 15px; border-radius: 5px; margin: 15px 0;">
-        <p style="margin: 0; font-weight: bold; color: #856404;">File Password:</p>
-        <p style="font-size: 22px; font-family: monospace; letter-spacing: 2px; margin: 5px 0;">${password}</p>
-        <p style="font-size: 12px; margin: 0;">Use this password to open your document after downloading it from the app.</p>
+      <div style="margin: 25px 0; text-align: center;">
+        <p style="color: ${colors.text}; margin-bottom: 15px;">Your file is ready for download:</p>
+        <a href="${fileUrl}" 
+           style="background-color: ${colors.primary}; 
+                  color: ${colors.white}; 
+                  padding: 14px 25px; 
+                  text-decoration: none; 
+                  border-radius: 5px; 
+                  font-weight: bold; 
+                  display: inline-block;
+                  box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+           Download File
+        </a>
+        <p style="font-size: 11px; color: ${colors.secondary}; margin-top: 15px;">
+          If the button doesn't work, copy this link into your browser:<br>
+          <span style="word-break: break-all; color: ${colors.primary};">${fileUrl}</span>
+        </p>
       </div>
     `;
   }

@@ -4,6 +4,7 @@ import {
   Course,
   Lectures,
   Assessment,
+  Transactions,
   TestSubmission,
 } from "../../tableDeclarations.js";
 import { createNotification } from "../../services/notificationService.js";
@@ -11,7 +12,10 @@ import { customAlphabet } from "nanoid";
 import PDFDocument from "pdfkit-table";
 const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const nano = customAlphabet(alphabet, 6);
-import { generateNotificationId } from "../../utils/idGenerator.js";
+import {
+  generateNotificationId,
+  generateTransactionId,
+} from "../../utils/idGenerator.js";
 
 export const generateAssessmentId = (courseCode = "GEN") => {
   const year = new Date().getFullYear();
@@ -295,15 +299,15 @@ export default function (User) {
           lecturer.pointsBalance =
             (lecturer.pointsBalance || 0) + dividendAmount;
           await lecturer.save();
+          const transactionId = generateTransactionId("exceptionsDividend");
           await Transactions.create({
-            transactionId: `TX-${Date.now()}-${Math.random().toString(36).toUpperCase().substring(2, 7)}`,
+            transactionId,
             userId: lecturer.uid,
             type: "exceptionsDividend",
             amountICash: dividendAmount,
-            amountLocal: dividendAmount * 1000, // NGN equivalent
             status: "success",
             payType: "in",
-            title: `Exception Dividend for ${exception.courseTitle}`,
+            title: `Lectures Exception Dividend for ${exception.courseTitle}`,
             reference: `EXC-REF-${id}`,
             metadata: {
               recipientId: lecturer.uid,

@@ -19,7 +19,7 @@ export const handleFlutterwaveWebhook = async (req, res) => {
     const amountPaid = data.amount;
     const currency = data.currency;
     if (type === "icash_purchase") {
-      const transactionId = generateTransactionId();
+      const transactionId = generateTransactionId('buy');
       const iCashToCredit = Math.floor(iCashAmount);
       const title = `${iCashToCredit} iCash purchased for ${data.currency} ${amountPaid}`;
       const updatedUser = await User.findOneAndUpdate(
@@ -222,7 +222,7 @@ export const initializeWithdraw = async (req, res) => {
   const { iCashAmount, amountToReceive, fee, currency, bankDetails } = req.body;
   const userId = req.user.uid;
   const idempotencyKey = `wd-${userId}-${Date.now().toString().substring(0, 10)}`;
-  const transactionId = generateTransactionId();
+  const transactionId = generateTransactionId('withdraw');
   const title = "iCash Withdrawal",
   const user = await User.findOne({ uid: userId });
   if (user.iCashBalance < iCashAmount) {

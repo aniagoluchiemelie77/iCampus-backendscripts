@@ -16,7 +16,7 @@ async function sendOrderNotifications(buyer, processedItems) {
     order,
     sellerEmail,
     product,
-    filePassword,
+    fileUrl,
     sellerId,
   } of processedItems) {
     await createNotification({
@@ -55,8 +55,8 @@ async function sendOrderNotifications(buyer, processedItems) {
       actionType: "MARKET_PURCHASE_DEBIT",
       title: "Purchase Confirmed",
       message: `Your purchase of ${product.title} was successful. ${
-        filePassword
-          ? "File Password: " + filePassword
+        fileUrl
+          ? "Download File "
           : "Scan your QR code at the station or to seller to complete the transaction."
       }`,
       entityId: order.orderId,
@@ -66,7 +66,7 @@ async function sendOrderNotifications(buyer, processedItems) {
         productName: product.title,
         productType: product.type,
         amount: order.amountPaid,
-        password: filePassword,
+        fileUrl: fileUrl,
         userName: buyer.firstname,
       },
       sendPush: true,
@@ -163,8 +163,7 @@ export const initializeCheckout = async (req, res) => {
   const { items, totals, buyerId, shippingContact } = req.body;
   const session = await mongoose.startSession();
   const TAX_RATE = 0.02;
-  const totalTaxAmount = totals.grandTotal * TAX_RATE;
-  console.log(totalTaxAmount);
+  const PAYOUT_FACTOR = 1 - TAX_RATE;
   try {
     session.startTransaction();
     const buyer = await User.findOne({ uid: buyerId }).session(session);
@@ -204,15 +203,30 @@ export const initializeCheckout = async (req, res) => {
       const isDropOff = item.deliveryMethod === "drop_off";
       const stationAgentId =
         isDropOff && item.selectedStation ? item.selectedStation.agentId : null;
-      if (product.type === "file") {
-        filePassword = Math.random().toString(36).slice(-8);
-      } else if (product.type === "course") {
+      const itemTotal = item.price * item.quantity;
+      if (product.type === "file" || product.type === "course") {
+        const netEarnings = itemTotal * PAYOUT_FACTOR;
+        seller.pointsBalance += netEarnings;
+        await seller.save({ session });
+        await new Transactions({
+          transactionId: `TXS-${uuidv4().split("-")[0].toUpperCase()}`,
+          userId: seller.uid,
+          type: "payment",
+          amountICash: netEarnings,
+          status: "success",
+          payType: "in",
+          title: `Payment for ${product.title}`,
+          reference: `REF-${orderId}`,
+          createdAt: new Date(),
+        }).save({ session });
+      }
+      if (product.type === "course") {
         await UserDownloads.findOneAndUpdate(
           { userId: buyerId },
           { $addToSet: { ownedProducts: product.productId } },
           { upsert: true, session },
         );
-      } else {
+      } else if (product.type === "physical") {
         const currentStock = product?.amountInStock || 1;
         if (currentStock < item.quantity) {
           throw new Error(
@@ -229,11 +243,12 @@ export const initializeCheckout = async (req, res) => {
         buyerId,
         sellerId: item.sellerId,
         productId: item.productId,
-        amountPaid: item.price * item.quantity,
+        productName: product.title,
+        amountPaid: itemTotal,
         status: product.type === "physical" ? "pending_delivery" : "completed",
+        fileUrl: product.type === "file" ? product.fileUrl : null,
         deliveryMethod: item.deliveryMethod,
         verificationQrCode: orderId,
-        generatedFilePassword: filePassword,
         agentId: stationAgentId,
         selectedStation: item.selectedStation || null,
         selectedStation: item.selectedStation || null,
@@ -244,10 +259,10 @@ export const initializeCheckout = async (req, res) => {
       await product.save({ session });
       processedResults.push({
         order: newOrder,
+        fileUrl: product.fileUrl,
         sellerEmail: seller.email,
         sellerId: seller.uid,
         product,
-        filePassword,
         buyerAddress: shippingContact.address,
         buyerPhoneNumber: shippingContact.phone,
         deliveryMethod: item.deliveryMethod,
@@ -269,6 +284,8 @@ export const completeOrderDelivery = async (req, res) => {
   const { orderId } = req.body;
   const scannerUid = req.user.id;
   const session = await mongoose.startSession();
+  const TAX_RATE = 0.02;
+  const AGENT_RATE = 0.06;
   try {
     session.startTransaction();
     const order = await ProductOrder.findOne({ orderId }).session(session);
@@ -286,12 +303,15 @@ export const completeOrderDelivery = async (req, res) => {
     const seller = await User.findOne({ uid: order.sellerId }).session(session);
     const buyer = await User.findOne({ uid: order.buyerId }).session(session);
     if (!seller) throw new Error("Seller account no longer exists.");
-    let sellerEarnings = order.amountPaid;
+    const totalHeld = order.amountPaid;
+    const taxAmount = totalHeld * TAX_RATE;
+    const payableAmount = totalHeld - taxAmount;
+    let sellerEarnings = payableAmount;
     let agentEarnings = 0;
     if (order.deliveryMethod === "drop_off" && order.agentId) {
       const agent = await User.findOne({ uid: order.agentId }).session(session);
       if (!agent) throw new Error("Drop-off agent not found.");
-      agentEarnings = order.amountPaid * 0.06;
+      agentEarnings = payableAmount * AGENT_RATE;
       sellerEarnings -= agentEarnings;
       agent.pointsBalance += agentEarnings;
       await agent.save({ session });

@@ -5,6 +5,7 @@ import {
   Course,
   TestSubmission,
   Assessment,
+  Transactions,
   Lectures,
   Attendance,
   Review,
@@ -12,7 +13,10 @@ import {
 import { upload } from "../../workers/multerWorker.js";
 import { createNotification } from "../../services/notificationService.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-import { generateNotificationId } from "../../utils/idGenerator.js";
+import {
+  generateNotificationId,
+  generateTransactionId,
+} from "../../utils/idGenerator.js";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const generateCourseId = (length = 10) => {
@@ -295,6 +299,17 @@ export default function (User) {
 
       // 2. Process Transaction & Create Record
       user.pointsBalance -= EXCEPTION_COST;
+      const senderTransactionId = generateTransactionId("payment");
+      await Transactions.create({
+        transactionId: senderTransactionId,
+        userId: user.uid,
+        type: "payment",
+        amountICash: EXCEPTION_COST,
+        status: "success",
+        payType: "out",
+        title: "Lectures Exception Purchase",
+        reference: `EXC-REF-${senderTransactionId}`,
+      });
 
       const exception = new CourseException({
         id: new mongoose.Types.ObjectId().toString(),
