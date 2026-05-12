@@ -155,7 +155,7 @@ export default function (User) {
     user.iCashAttempts = 0;
     await user.save();
     createNotification({
-      notificationId: generateNotificationId(),
+      notificationId: generateNotificationId("security"),
       recipientEmail: user.email,
       recoveryEmails: user.recoveryEmails,
       recipientId: user.uid,
@@ -313,8 +313,8 @@ export default function (User) {
 
       // --- 7. Notifications (Triggered after successful commit) ---
       // A. Notification for the SENDER (Debit Alert)
-      const senderNotificationId = generateNotificationId();
-      const receipientNotificationId = generateNotificationId();
+      const senderNotificationId = generateNotificationId("finance");
+      const receipientNotificationId = generateNotificationId("finance");
       createNotification({
         notificationId: senderNotificationId,
         recipientId: senderUid,
@@ -332,7 +332,6 @@ export default function (User) {
         sendSocket: true,
         sendPush: true,
       });
-      // B. Notification for the RECIPIENT (Credit Alert)
       createNotification({
         notificationId: receipientNotificationId,
         recipientId: recipientId,
@@ -348,7 +347,6 @@ export default function (User) {
         sendSocket: true,
         sendPush: true,
       });
-
       res.status(200).json({ message: "Transfer successful", transactionRef });
     } catch (error) {
       await session.abortTransaction();

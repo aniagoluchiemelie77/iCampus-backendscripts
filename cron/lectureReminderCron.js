@@ -31,18 +31,18 @@ cron.schedule("*/5 * * * *", async () => {
       // Notify every enrolled student
       const notifications = students.map(student => {
         return createNotification({
-          notificationId: generateNotificationId(),
+          notificationId: generateNotificationId("classroom"),
           recipientId: student.uid,
           category: "classroom",
-          actionType: "LECTURE_REMINDER", // Add this case to your notificationService
+          actionType: "LECTURE_REMINDER",
           title: `Class Starting Soon: ${course.courseCode}`,
-          message: `Your ${lecture.lectureType} lecture on "${lecture.topicName}" starts in 45 minutes at ${lecture.location || 'Online'}.`,
+          message: `Your ${lecture.lectureType} lecture on "${lecture.topicName}" starts in 45 minutes at ${lecture.location || "Online"}.`,
           payload: {
             courseId: course.courseId,
             lectureId: lecture.id,
             topicName: lecture.topicName,
             startTime: lecture.startTime,
-            location: lecture.location
+            location: lecture.location,
           },
           sendPush: true,
           sendSocket: true,

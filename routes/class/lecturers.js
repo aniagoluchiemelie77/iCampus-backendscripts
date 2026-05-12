@@ -123,7 +123,7 @@ export default function (User) {
       // Fire and forget: update the notification bell for all students
       students.forEach((student) => {
         createNotification({
-          notificationId: generateNotificationId(),
+          notificationId: generateNotificationId("classroom"),
           recipientId: student.uid,
           category: "classroom",
           actionType: "CONTENT_UPDATED",
@@ -173,7 +173,7 @@ export default function (User) {
 
         students.forEach((student) => {
           createNotification({
-            notificationId: generateNotificationId(),
+            notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
             category: "classroom",
             actionType: "MATERIAL_UPLOADED",
@@ -247,7 +247,7 @@ export default function (User) {
 
         students.forEach((student) => {
           createNotification({
-            notificationId: generateNotificationId(),
+            notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
             category: "classroom",
             actionType: "ASSIGNMENT_CREATED",
@@ -321,7 +321,7 @@ export default function (User) {
       const student = await User.findOne({ uid: exception.userId });
       if (student) {
         createNotification({
-          notificationId: generateNotificationId(),
+          notificationId: generateNotificationId("classroom"),
           recipientId: student.uid,
           category: "classroom",
           actionType: "EXCEPTION_UPDATED",
@@ -424,7 +424,7 @@ export default function (User) {
 
         const notificationPromises = students.map((student) =>
           createNotification({
-            notificationId: generateNotificationId(),
+            notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
             recipientEmail: student.email,
             category: "academic", // Changed from 'classroom' to match your frontend icon logic
@@ -568,7 +568,7 @@ export default function (User) {
 
         students.forEach((student) => {
           createNotification({
-            notificationId: generateNotificationId(),
+            notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
             category: "classroom",
             actionType: "TEST_CREATED",
@@ -887,7 +887,7 @@ export default function (User) {
         // 3. Send Notifications
         const notificationPromises = students.map((student) =>
           createNotification({
-            notificationId: generateNotificationId(),
+            notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
             recipientEmail: student.email,
             category: "classroom",
@@ -954,7 +954,7 @@ export default function (User) {
         // 5. Trigger notifications via your utility
         const notificationPromises = students.map((student) =>
           createNotification({
-            notificationId: generateNotificationId(),
+            notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
             recipientEmail: student.email,
             category: "classroom",

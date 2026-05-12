@@ -143,7 +143,7 @@ export default function (Posts, User) {
           "firstname lastname",
         );
         createNotification({
-          notificationId: generateNotificationId(),
+          notificationId: generateNotificationId('social'),
           recipientId: post.userId.uid,
           category: "social",
           actionType: "POST_LIKED",
@@ -331,7 +331,7 @@ export default function (Posts, User) {
       }
       if (postAuthorId !== userId) {
         createNotification({
-          notificationId: generateNotificationId(),
+          notificationId: generateNotificationId('social'),
           recipientId: postAuthorId,
           category: "social",
           actionType: "POST_COMMENTED",
@@ -451,7 +451,7 @@ export default function (Posts, User) {
         if (updatedOriginal && updatedOriginal.userId.uid !== userId) {
           notifiedUids.add(updatedOriginal.userId.uid);
           createNotification({
-            notificationId: generateNotificationId(),
+            notificationId: generateNotificationId('social'),
             recipientId: updatedOriginal.userId.uid,
             category: "social",
             actionType: "POST_REPOSTED",
@@ -475,7 +475,7 @@ export default function (Posts, User) {
             follow.followerId !== userId
           ) {
             createNotification({
-              notificationId: generateNotificationId(),
+              notificationId: generateNotificationId('social'),
               recipientId: follow.followerId,
               category: "social",
               actionType: "NEW_POST",
@@ -546,7 +546,7 @@ export default function (Posts, User) {
         mentionedUsers.forEach((user) => {
           notifiedUids.add(user.uid);
           createNotification({
-            notificationId: generateNotificationId(),
+            notificationId: generateNotificationId('social'),
             recipientId: user.uid,
             category: "social",
             actionType: "POST_MENTION",
@@ -569,7 +569,7 @@ export default function (Posts, User) {
           follow.followerId !== userId
         ) {
           createNotification({
-            notificationId: generateNotificationId(),
+            notificationId: generateNotificationId('social'),
             recipientId: follow.followerId,
             category: "social",
             actionType: "NEW_POST",
@@ -638,7 +638,7 @@ export default function (Posts, User) {
         updatedPost.userId.uid !== userId
       ) {
         createNotification({
-          notificationId: generateNotificationId(),
+          notificationId: generateNotificationId('social'),
           recipientId: updatedPost.userId.uid,
           category: "social",
           actionType: "POLL_MILESTONE",

@@ -9,6 +9,7 @@ import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
 import { v4 as uuidv4 } from "uuid";
 import mongoose from "mongoose";
+import { generateNotificationId } from "../utils/idGenerator.js";
 
 async function sendOrderNotifications(buyer, processedItems) {
   for (const {
@@ -19,7 +20,7 @@ async function sendOrderNotifications(buyer, processedItems) {
     sellerId,
   } of processedItems) {
     await createNotification({
-      notificationId: uuidv4(),
+      notificationId: generateNotificationId("store"),
       recipientId: sellerId,
       recipientEmail: sellerEmail,
       category: "store",
@@ -47,7 +48,7 @@ async function sendOrderNotifications(buyer, processedItems) {
       saveToDb: true,
     });
     await createNotification({
-      notificationId: uuidv4(),
+      notificationId: generateNotificationId("store"),
       recipientId: buyer.uid,
       recipientEmail: buyer.email,
       category: "finance",
@@ -161,6 +162,9 @@ export const clearFavorites = async (req, res) => {
 export const initializeCheckout = async (req, res) => {
   const { items, totals, buyerId, shippingContact } = req.body;
   const session = await mongoose.startSession();
+  const TAX_RATE = 0.02;
+  const totalTaxAmount = totals.grandTotal * TAX_RATE;
+  console.log(totalTaxAmount);
   try {
     session.startTransaction();
     const buyer = await User.findOne({ uid: buyerId }).session(session);
@@ -184,7 +188,6 @@ export const initializeCheckout = async (req, res) => {
       createdAt: new Date(),
     });
     await buyerTransaction.save({ session });
-
     const processedResults = [];
     for (const item of items) {
       const product = await Product.findOne({
@@ -239,20 +242,6 @@ export const initializeCheckout = async (req, res) => {
       await newOrder.save({ session });
       await seller.save({ session });
       await product.save({ session });
-      const sellerTxId = `TXS-${uuidv4().split("-")[0].toUpperCase()}`;
-      const sellerTransaction = new Transactions({
-        transactionId: sellerTxId,
-        userId: seller.uid,
-        type: "payment",
-        amountICash: item.price * item.quantity,
-        status: "success",
-        payType: "in",
-        title: `Sale of ${product.title}`,
-        reference: `REF-${orderId}`,
-        metadata: { recipientId: buyerId },
-        createdAt: new Date(),
-      });
-      await sellerTransaction.save({ session });
       processedResults.push({
         order: newOrder,
         sellerEmail: seller.email,
@@ -318,7 +307,7 @@ export const completeOrderDelivery = async (req, res) => {
         createdAt: new Date(),
       }).save({ session });
       await createNotification({
-        notificationId: uuidv4(),
+        notificationId: generateNotificationId("store"),
         recipientId: agent.uid,
         recipientEmail: agent.email,
         category: "finance",
@@ -343,7 +332,7 @@ export const completeOrderDelivery = async (req, res) => {
     await order.save({ session });
 
     await createNotification({
-      notificationId: uuidv4(),
+      notificationId: generateNotificationId("store"),
       recipientId: seller.uid,
       recipientEmail: seller.email,
       category: "finance",
@@ -371,7 +360,7 @@ export const completeOrderDelivery = async (req, res) => {
       createdAt: new Date(),
     }).save({ session });
     await createNotification({
-      notificationId: uuidv4(),
+      notificationId: generateNotificationId("store"),
       recipientId: order.buyerId,
       category: "store",
       actionType: "ORDER_REVIEW_REQUEST",

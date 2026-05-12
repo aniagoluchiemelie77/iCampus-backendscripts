@@ -43,7 +43,7 @@ export const handleFlutterwaveWebhook = async (req, res) => {
         createdAt: Date.now(),
       });
       createNotification({
-        notificationId: generateNotificationId(),
+        notificationId: generateNotificationId('finance'),
         recipientId: userId,
         recipientEmail: updatedUser.email,
         category: "finance",
@@ -270,7 +270,7 @@ export const initializeWithdraw = async (req, res) => {
     if (response.data.status === "success") {
       await Transactions.findOneAndUpdate({ transactionId }, { status: "success" });
       createNotification({
-        notificationId: generateNotificationId(),
+        notificationId: generateNotificationId('finance'),
         recipientId: userId,
         recipientEmail: user.email,
         category: "finance",

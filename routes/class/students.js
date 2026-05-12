@@ -224,7 +224,7 @@ export default function (User) {
         });
         // --- NOTIFY STUDENT (Socket + Push + DB) ---
         createNotification({
-          notificationId: generateNotificationId(),
+          notificationId: generateNotificationId("classroom"),
           recipientId: req.user.uid,
           category: "academic",
           actionType: "COURSES_EXTRACTED",
@@ -314,7 +314,7 @@ export default function (User) {
 
       // 3. NOTIFY STUDENT (Socket + Push + DB Only)
       createNotification({
-        notificationId: generateNotificationId(),
+        notificationId: generateNotificationId("classroom"),
         recipientId: user.uid,
         category: "finance", // Using finance because iCash was spent
         actionType: "EXCEPTION_SUBMITTED",
@@ -401,7 +401,7 @@ export default function (User) {
       const test = await Assessment.findOne({ id: testId });
 
       createNotification({
-        notificationId: generateNotificationId(),
+        notificationId: generateNotificationId("classroom"),
         recipientId: updatedUser.uid,
         category: "academic",
         actionType: "TEST_SUBMITTED",

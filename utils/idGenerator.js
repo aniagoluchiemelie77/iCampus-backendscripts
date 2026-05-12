@@ -2,13 +2,19 @@ import { ITag } from "../tableDeclarations.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
-export function generateNotificationId(length = 7) {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return `iC-n-${result}`;
+/**
+ * Format: CATEGORY-YYMMDDHHMM-RANDOM
+ * Example: finance-2605121930-4829
+ */
+export function generateNotificationId(category) {
+  const now = new Date();
+  const timestamp = now.toISOString()
+    .replace(/[-T:.Z]/g, '')
+    .slice(2, 12);
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+  const cat = category.toLowerCase();
+
+  return `${cat}-${timestamp}-${randomSuffix}`;
 }
 export function generatePostId(length = 8) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";

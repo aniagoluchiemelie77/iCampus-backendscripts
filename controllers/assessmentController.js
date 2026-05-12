@@ -25,23 +25,23 @@ export const processAssessmentAnalysis = async (testId) => {
 
   if (lecturer) {
     await createNotification({
-        notificationId: generateNotificationId(),
+      notificationId: generateNotificationId("classroom"),
       recipientId: lecturer.uid,
       recipientEmail: lecturer.email,
-      category: 'academic',
-      actionType: 'TEST_ANALYSIS_READY',
-      title: 'Assessment Report Ready',
+      category: "academic",
+      actionType: "TEST_ANALYSIS_READY",
+      title: "Assessment Report Ready",
       message: `The analysis for "${test.title}" is ready. ${submissions.length} submitted, ${absentees.length} missed.`,
-      payload: { 
-        testId: test.id, 
+      payload: {
+        testId: test.id,
         testTitle: test.title,
         submissionCount: submissions.length,
-        absenteeCount: absentees.length
+        absenteeCount: absentees.length,
       },
-      sendEmail: true,   // Reports are high-value; email is appropriate
-      sendPush: true,    // Alert the lecturer immediately
-      sendSocket: true, 
-      saveToDb: true
+      sendEmail: true, // Reports are high-value; email is appropriate
+      sendPush: true, // Alert the lecturer immediately
+      sendSocket: true,
+      saveToDb: true,
     });
   }
   

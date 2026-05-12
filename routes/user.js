@@ -394,7 +394,7 @@ export default function (User) {
       await channel.assertQueue("emailQueue");
 
       const notificationJob = {
-        notificationId: generateNotificationId(),
+        notificationId: generateNotificationId("auth"),
         recipientEmail: email,
         category: "security",
         actionType: "EMAIL_VERIFICATION",
@@ -583,7 +583,7 @@ export default function (User) {
       );
       // --- UNIFIED NOTIFICATION ---
       await createNotification({
-        notificationId: generateNotificationId(),
+        notificationId: generateNotificationId("security"),
         recipientId: user.uid,
         recipientEmail: email,
         category: "security",
@@ -641,7 +641,7 @@ export default function (User) {
       const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
 
       await createNotification({
-        notificationId: generateNotificationId(),
+        notificationId: generateNotificationId("security"),
         recipientId: user.uid,
         recipientEmail: user.email,
         recoveryEmails: user.recoveryEmails,
@@ -789,134 +789,6 @@ export default function (User) {
       res.status(500).json({ message: "Server error" });
     }
   });
-  router.post(
-    "/transactions/complete/:transactionId",
-    protect,
-    async (req, res) => {
-      try {
-        const { transactionId } = req.params;
-        const { uid } = req.body;
-
-        const transaction = await TransactionMiddleState.findOne({
-          transactionId,
-          sellerId: uid,
-        });
-
-        if (!transaction) {
-          return res
-            .status(404)
-            .json({ message: "Transaction not found for this seller" });
-        }
-
-        const now = new Date();
-        const createdAt = new Date(transaction.createdAt);
-        const hoursDiff = (now - createdAt) / (1000 * 60 * 60);
-
-        if (hoursDiff > 96) {
-          transaction.status = "rejected";
-          await transaction.save();
-          return res
-            .status(400)
-            .json({ message: "Transaction expired after 96 hours" });
-        }
-
-        const seller = await User.findOne({ uid });
-        const buyer = await User.findOne({ uid: transaction.buyerId });
-        if (!seller)
-          return res.status(404).json({ message: "Seller not found" });
-        if (!buyer) return res.status(404).json({ message: "Buyer not found" });
-
-        const transactionsTotalPriceInPoints = transaction.priceInPoints;
-        seller.pointsBalance += transactionsTotalPriceInPoints;
-        await seller.save();
-
-        transaction.status = "completed";
-        await transaction.save();
-
-        const productIds = transaction.productIdArrays;
-        const products = await Product.find({ productId: { $in: productIds } });
-
-        const productTitles = products.map((p) => p.title).join(", ");
-        const dealItems = products.map((p) => ({
-          productId: p.productId,
-          productTitle: p.title,
-          priceInPoints: p.priceInPoints,
-        }));
-
-        // Create Deal
-        const dealId = generateUniqueDealId();
-        await Deals.create({
-          dealId,
-          sellerId: transaction.sellerId,
-          buyerId: transaction.buyerId,
-          totalPriceInPoints: transactionsTotalPriceInPoints,
-          dealStatus: "completed",
-          items: dealItems,
-          dealDate: new Date(),
-        });
-
-        // Push dealId to both users
-        await User.updateOne(
-          { uid: transaction.sellerId },
-          { $push: { deals: dealId } },
-        );
-        await User.updateOne(
-          { uid: transaction.buyerId },
-          { $push: { deals: dealId } },
-        );
-
-        // Notify Seller
-        const sellerMessage = `Purchase of your products: ${productTitles} has been successfully completed. A total of ${transactionsTotalPriceInPoints} points has been added to your balance.`;
-        await Notification.create({
-          userId: uid,
-          notificationId: generateNotificationId(),
-          title: "Successful Purchase Payment",
-          message: sellerMessage,
-          isPublic: false,
-          isRead: false,
-          createdAt: new Date(),
-          type: "transactions",
-          status: "success",
-        });
-
-        // Notify Buyer
-        const buyerMessage = `Thanks for your purchase! We'd love your feedback on these products: ${productTitles}. Tap below to rate your experience.`;
-        await Notification.create({
-          userId: buyer.uid,
-          notificationId: generateNotificationId(),
-          title: "Rate Your Purchase",
-          message: buyerMessage,
-          isPublic: false,
-          isRead: false,
-          createdAt: new Date(),
-          type: "rate",
-        });
-
-        //Delete the transaction mid state
-        await TransactionMiddleState.deleteOne({ transactionId });
-        await addUserRecord(
-          uid,
-          "transaction",
-          "completed",
-          `Transaction ${transactionId} completed. Products: ${productTitles}. Points received: ${transactionsTotalPriceInPoints}`,
-        );
-        await addUserRecord(
-          buyer.uid,
-          "transaction",
-          "completed",
-          `Transaction ${transactionId} completed. Products: ${productTitles} worth ${transactionsTotalPriceInPoints} points.`,
-        );
-        res.status(200).json({
-          message: "Transaction completed and points transferred",
-          productIdArrays: productIds,
-          transactionsTotalPriceInPoints,
-        });
-      } catch (error) {
-        console.error("Error completing transaction:", error);
-        res.status(500).json({ message: "Server error" });
-      }
-    },
-  );
   router.get("/exceptions/course/:courseId", protect, async (req, res) => {
     try {
       const { courseId } = req.params;
@@ -1599,7 +1471,7 @@ export default function (User) {
 
       if (!isOwner && !isPremiumViewer) {
         createNotification({
-          notificationId: generateNotificationId(),
+          notificationId: generateNotificationId("profile"),
           recipientId: targetUser.uid,
           category: "social",
           actionType: "PROFILE_VIEW",
@@ -1679,7 +1551,7 @@ export default function (User) {
         // Trigger a notification for the person being followed
         // We don't 'await' this so the response stays fast
         createNotification({
-          notificationId: generateNotificationId(),
+          notificationId: generateNotificationId("social"),
           recipientId: followingId,
           category: "social",
           actionType: "NEW_FOLLOWER",
@@ -2014,7 +1886,7 @@ export default function (User) {
       const now = new Date();
       const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
       await createNotification({
-        notificationId: generateNotificationId(),
+        notificationId: generateNotificationId("security"),
         recipientId: user.uid,
         recipientEmail: user.email,
         recoveryEmails: user.recoveryEmails,
