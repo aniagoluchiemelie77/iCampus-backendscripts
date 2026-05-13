@@ -12,6 +12,7 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import twilio from "twilio";
 import { client } from "../workers/reditFile.js";
+import { getDownloads } from "../controllers/fetchActions.js";
 import {
   PhoneNumberVerification,
   Posts,
@@ -1353,8 +1354,6 @@ export default function (User) {
     try {
       const { identifier } = req.params;
       const { viewerUid, viewerTier, viewerRole, viewerFirstname } = req.query;
-
-      // 1. Fetch the Target User
       const targetUser = await User.findOne({
         $or: [
           { uid: identifier },
@@ -2048,6 +2047,7 @@ export default function (User) {
         .json({ success: false, message: "Failed to send WhatsApp message" });
     }
   });
+  router.get("/downloads/fetch-all", protect, getDownloads);
 
   return router;
 }
