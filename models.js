@@ -359,8 +359,16 @@ export const productSchema = new mongoose.Schema({
     lecturerIds: [{ type: String, default: null }],
     duration: { type: String, default: null },
     totalReviews: { type: Number, default: 0 },
-    studentsEnrolledCount: { type: Number, default: 0 },
     studentsEnrolled: [{ type: String, default: null }],
+    totalLessons: { type: Number, default: 0 },
+    content: [
+      {
+        title: { type: String, default: null },
+        videoUrl: { type: String, default: null },
+        duration: { type: Number, default: 0 },
+        isFreePreview: { type: Boolean, default: false },
+      },
+    ],
   },
   fileDetails: {
     fileName: { type: String, default: null },
@@ -456,6 +464,14 @@ export const userDownloadsSchema = new mongoose.Schema(
     ownedProducts: [
       {
         productId: String,
+        progress: {
+          type: Number,
+          default: 0,
+          min: 0,
+          max: 100,
+        },
+        completedLessons: [String],
+        lastWatched: { type: Date, default: Date.now },
       },
     ],
     purchaseHistory: [
