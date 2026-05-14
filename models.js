@@ -434,6 +434,7 @@ export const notificationSchema = new mongoose.Schema(
         "finance",
         "profile",
         "security",
+        "reminder",
       ],
       required: true,
     },
@@ -987,6 +988,15 @@ export const deletedUserSchema = new mongoose.Schema({
   deletedAt: { type: Date, default: Date.now },
   schoolName: String,
   department: String,
+});
+export const certificateSchema = new mongoose.Schema({
+  certificateId: { type: String, required: true, unique: true },
+  uid: { type: String, required: true, index: true },
+  productId: { type: String, required: true },
+  studentName: String,
+  courseTitle: String,
+  pdfUrl: String,
+  issuedAt: { type: Date, default: Date.now },
 });
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });

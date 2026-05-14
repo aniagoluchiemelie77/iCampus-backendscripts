@@ -4,6 +4,7 @@ import { getIO } from "../controllers/socket.js";
 import { sendEmail } from "./emailService.js";
 import { sendPushNotification } from "./pushNotification.js";
 import {
+  courseCompletionEmailTemplate,
   purchaseTemplate,
   newOrderTemplate,
   passwordResetTemplate,
@@ -194,6 +195,27 @@ export const createNotification = async ({
           break;
         case "ASSIGNMENT_CREATED":
           subject = "New Assignment Posted";
+          break;
+        case "COURSE_COMPLETED":
+          subject = `Congratulations on finishing ${payload.productName}! 🎓`;
+          if (sendEmail) {
+            htmlContent = courseCompletionEmailTemplate(
+              payload.userName,
+              payload.productName,
+              payload.pdfUrl,
+              payload.productId,
+            );
+          }
+          title = title || "Course Completed!";
+          message =
+            message ||
+            `You've officially finished ${payload.productName}. Well done!`;
+          break;
+        case "LEARNING_REMINDER":
+          subject = "Ready to continue your learning journey?";
+          title = title || "Don't break your streak!";
+          message =
+            message || `Pick up where you left off in ${payload.productName}.`;
           break;
         case "EXCEPTION_UPDATED":
           subject = `Update on your Exception: ${payload.courseCode}`;

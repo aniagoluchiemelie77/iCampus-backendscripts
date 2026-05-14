@@ -31,6 +31,7 @@ import {
   userPreferencesSchema,
   phoneVerificationSchema,
   orderSchema,
+  certificateSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -144,4 +145,9 @@ export const UserDownloads = mongoose.model(
   "UserDownloads",
   userDownloadsSchema,
   "userDownloads",
+);
+export const Certificate = mongoose.model(
+  "Certificate",
+  certificateSchema,
+  "downloadCertificate",
 );

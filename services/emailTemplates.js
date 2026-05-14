@@ -624,3 +624,39 @@ export const orderCancelledEmailTemplate = (
 
   return emailWrapper(body);
 };
+export const courseCompletionEmailTemplate = (
+  userName,
+  productName,
+  pdfUrl,
+  productId,
+) => {
+  const body = `
+    <h2 style="color: ${colors.primary}; margin-top: 0;">Congratulations!</h2>
+    <p style="color: ${colors.text}">Hi ${userName},</p>
+    <p style="color: ${colors.text}">
+      Huge news! You have officially completed <strong>${productName}</strong>. This is a significant milestone in your learning journey at iCampus.
+    </p>
+    
+    <div style="text-align: center; margin: 30px 0;">
+      <a href="${pdfUrl}" style="background-color: ${colors.primary}; color: #ffffff; padding: 15px 25px; text-decoration: none; border-radius: 8px; font-weight: bold; display: inline-block;">
+        Download My Certificate
+      </a>
+    </div>
+
+    <div style="background: #f0f7ff; border-left: 4px solid ${colors.secondary}; padding: 15px; margin: 20px 0;">
+      <p style="margin: 0; font-weight: bold; color: ${colors.secondary};">Share the Knowledge:</p>
+      <p style="margin: 5px 0; color: ${colors.text};">
+        How was your experience? Your feedback helps the iCampus community grow.
+      </p>
+      <a href="https://useicampus.edu/reviews/${productId}" style="color: ${colors.primary}; font-weight: bold; text-decoration: underline;">
+        Leave a Review for this Course
+      </a>
+    </div>
+
+    <p style="color: ${colors.text}; font-size: 14px;">
+      Your hard work is paying off. Keep the momentum going—check your library for your next challenge!
+    </p>
+  `;
+
+  return emailWrapper(body);
+};

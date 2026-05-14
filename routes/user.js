@@ -7,6 +7,7 @@ import { getChannel } from "../rabbitmq.js";
 import axios from "axios";
 import jwt from "jsonwebtoken";
 import { createNotification } from "../services/notificationService.js";
+import { handleGenerateCertificate } from "../controllers/classActions.js";
 import { getFallbackBooks } from "../utils/libraryHelpers.js";
 import { generateExpiryDate } from "../utils/dateHelper.js";
 import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
@@ -14,6 +15,7 @@ import twilio from "twilio";
 import { client } from "../workers/reditFile.js";
 import { getDownloads } from "../controllers/fetchActions.js";
 import {
+  UserDownloads,
   PhoneNumberVerification,
   Posts,
   UserBankOrCardDetails,
@@ -2048,6 +2050,41 @@ export default function (User) {
     }
   });
   router.get("/downloads/fetch-all", protect, getDownloads);
+  router.patch("/downloads/update-progress", protect, async (req, res) => {
+    const { productId, progress, completedLessons, lastWatched } = req.body;
+    const userId = req.user.id;
+    try {
+      const updatedUserDownloads = await UserDownloads.findOneAndUpdate(
+        {
+          userId: userId,
+          "ownedProducts.productId": productId,
+        },
+        {
+          $set: {
+            "ownedProducts.$.progress": progress,
+            "ownedProducts.$.completedLessons": completedLessons,
+            "ownedProducts.$.lastWatched": lastWatched,
+            lastAccessed: new Date(),
+          },
+        },
+        { new: true },
+      );
+
+      if (!updatedUserDownloads) {
+        return res
+          .status(404)
+          .json({ message: "Product not found in user's library" });
+      }
+      res.status(200).json({ success: true, data: updatedUserDownloads });
+    } catch (error) {
+      res.status(500).json({ message: "Server Error", error });
+    }
+  });
+  router.post(
+    "/downloads/generate-certificate",
+    protect,
+    handleGenerateCertificate,
+  );
 
   return router;
 }
