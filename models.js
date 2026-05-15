@@ -325,11 +325,18 @@ export const dropOffStation = new mongoose.Schema({
   contactPerson: { type: String },
   agentId: { type: String, required: true },
 });
+export const impressionLogSchema = new mongoose.Schema({
+  userId: String,
+  productId: String,
+  monthYear: String,
+});
 export const productSchema = new mongoose.Schema({
   productId: { type: String, required: true, index: true },
   sellerId: { type: String, required: true },
   schoolName: { type: String },
   amountInStock: { type: Number, default: 1 },
+  impressions: { type: Number, default: 1 },
+  sales: { type: Number, default: 0 },
   type: {
     type: String,
     enum: ["physical", "course", "file"],
@@ -1001,6 +1008,10 @@ export const certificateSchema = new mongoose.Schema({
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
 userDownloadsSchema.index({ userId: 1 });
+impressionLogSchema.index(
+  { userId: 1, productId: 1, monthYear: 1 },
+  { unique: true },
+);
 
 // Indexing for faster lookups when checking monthly limits
 exceptionSchema.index({ studentId: 1, date: -1 });

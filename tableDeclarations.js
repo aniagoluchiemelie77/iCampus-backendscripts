@@ -32,6 +32,7 @@ import {
   phoneVerificationSchema,
   orderSchema,
   certificateSchema,
+  impressionLogSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -150,4 +151,9 @@ export const Certificate = mongoose.model(
   "Certificate",
   certificateSchema,
   "downloadCertificate",
+);
+export const ProductImpression = mongoose.model(
+  "ProductImpression",
+  impressionLogSchema,
+  "productImpression",
 );

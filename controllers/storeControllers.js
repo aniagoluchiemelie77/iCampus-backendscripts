@@ -4,6 +4,7 @@ import {
   ProductOrder,
   UserDownloads,
   Transactions,
+  ProductImpression,
 } from "../tableDeclarations.js";
 import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
@@ -89,7 +90,7 @@ export const fetchAllProducts = async (req, res) => {
     }
     const products = await Product.find({})
       .select(
-        "title isAvailable priceInPoints mediaUrls productId courseDetails category description ratings fileDetails type sellerId physicalDetails",
+        "title isAvailable priceInPoints mediaUrls productId courseDetails impressions sales category description ratings fileDetails type sellerId physicalDetails",
       )
       .lean();
     await redis.set(CACHE_KEY, JSON.stringify(products), {
@@ -207,6 +208,7 @@ export const initializeCheckout = async (req, res) => {
       if (product.type === "file" || product.type === "course") {
         const netEarnings = itemTotal * PAYOUT_FACTOR;
         seller.pointsBalance += netEarnings;
+        const salesIncrement = item.quantity || 1;
         await seller.save({ session });
         await new Transactions({
           transactionId: `TXS-${uuidv4().split("-")[0].toUpperCase()}`,
@@ -219,6 +221,11 @@ export const initializeCheckout = async (req, res) => {
           reference: `REF-${orderId}`,
           createdAt: new Date(),
         }).save({ session });
+        await Product.findOneAndUpdate(
+          { productId: product.productId },
+          { $inc: { sales: salesIncrement } },
+          { session },
+        );
       }
       if (product.type === "course") {
         await UserDownloads.findOneAndUpdate(
@@ -290,6 +297,7 @@ export const completeOrderDelivery = async (req, res) => {
   try {
     session.startTransaction();
     const order = await ProductOrder.findOne({ orderId }).session(session);
+    const salesIncrement = order.quantity || 1;
     if (!order) throw new Error("Product order not found.");
     if (order.status !== "pending_delivery")
       throw new Error("Product order is already processed or cancelled.");
@@ -298,9 +306,11 @@ export const completeOrderDelivery = async (req, res) => {
     if (!isSeller && !isAgent) {
       throw new Error("You are not authorized to verify this delivery.");
     }
-    const product = await Product.findOne({
-      productId: order.productId,
-    }).session(session);
+    const product = await Product.findOneAndUpdate(
+      { productId: order.productId },
+      { $inc: { sales: salesIncrement } },
+      { session },
+    );
     const seller = await User.findOne({ uid: order.sellerId }).session(session);
     const buyer = await User.findOne({ uid: order.buyerId }).session(session);
     if (!seller) throw new Error("Seller account no longer exists.");
@@ -490,6 +500,38 @@ export const getPendingOrders = async (req, res) => {
       status: "pending_delivery",
     }).sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: orders });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const logProductImpression = async (req, res) => {
+  const { productId } = req.body;
+  const userId = req.user.id;
+  const currentMonthYear = new Date().toISOString().slice(0, 7);
+  try {
+    const logExists = await ProductImpression.findOne({
+      userId,
+      productId,
+      monthYear: currentMonthYear,
+    });
+    if (!logExists) {
+      await ProductImpression.create({
+        userId,
+        productId,
+        monthYear: currentMonthYear,
+      });
+      await Product.findOneAndUpdate(
+        { productId },
+        { $inc: { impressions: 1 } },
+      );
+      return res
+        .status(200)
+        .json({ success: true, message: "Impression logged" });
+    }
+    res.status(200).json({
+      success: true,
+      message: `${productId} impressions increment by ${userId} for ${currentMonthYear}`,
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

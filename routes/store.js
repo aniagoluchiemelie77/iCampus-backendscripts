@@ -11,6 +11,7 @@ import {
   getPendingOrders,
   cancelOrder,
   completeOrderDelivery,
+  logProductImpression,
 } from "../controllers/storeControllers.js";
 
 export default function (Product) {
@@ -133,6 +134,7 @@ export default function (Product) {
   router.post("/orders/complete-delivery", protect, completeOrderDelivery);
   router.get("/orders/pending", protect, getPendingOrders);
   router.post("/orders/cancel", protect, cancelOrder);
+  router.patch("/product/toggle-impressions", protect, logProductImpression);
   return router;
 }
 
