@@ -5,6 +5,7 @@ import {
   UserDownloads,
   Transactions,
   ProductImpression,
+  ProductSales,
 } from "../tableDeclarations.js";
 import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
@@ -226,6 +227,15 @@ export const initializeCheckout = async (req, res) => {
           { $inc: { sales: salesIncrement } },
           { session },
         );
+        await new ProductSales({
+          sellerId: item.sellerId,
+          productId: item.productId,
+          productType: product.type,
+          quantity: item.quantity,
+          amountPaid: itemTotal,
+          buyerId,
+          netEarnings: netEarnings,
+        }).save({ session });
       }
       if (product.type === "course") {
         await UserDownloads.findOneAndUpdate(
@@ -403,6 +413,16 @@ export const completeOrderDelivery = async (req, res) => {
         userName: buyer ? buyer.firstname : "Valued User",
       },
     });
+    await new ProductSales({
+      sellerId: order.sellerId,
+      productId: order.productId,
+      orderId,
+      productType: "physical",
+      quantity: order.quantity || 1,
+      buyerId: order.buyerId,
+      amountPaid: order.amountPaid,
+      netEarnings: sellerEarnings,
+    }).save({ session });
     await session.commitTransaction();
     session.endSession();
 
@@ -534,5 +554,31 @@ export const logProductImpression = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+export const getSellerSalesHistory = async (req, res) => {
+  try {
+    const sellerId = req.user.id;
+    if (!sellerId) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: Seller ID missing",
+      });
+    }
+    const sales = await ProductSales.find({ sellerId })
+      .sort({ createdAt: -1 })
+      .lean();
+    res.status(200).json({
+      success: true,
+      count: sales.length,
+      data: sales,
+    });
+  } catch (error) {
+    console.error("getSellerSalesHistory Error:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching sales records",
+    });
   }
 };

@@ -426,6 +426,17 @@ export const orderSchema = new mongoose.Schema({
   createdAt: { type: String, required: true },
   completedAt: { type: String },
 });
+export const productSalesSchema = new mongoose.Schema({
+  sellerId: { type: String, required: true, index: true },
+  productId: { type: String, required: true },
+  orderId: { type: String, default: null },
+  productType: { type: String, enum: ["physical", "file", "course"] },
+  quantity: { type: Number, default: 1 },
+  amountPaid: { type: Number, required: true },
+  netEarnings: { type: Number, required: true },
+  buyerId: { type: String, required: true },
+  createdAt: { type: Date, default: Date.now },
+});
 export const notificationSchema = new mongoose.Schema(
   {
     notificationId: { type: String, required: true },

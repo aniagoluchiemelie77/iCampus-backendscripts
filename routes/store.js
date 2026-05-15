@@ -12,6 +12,7 @@ import {
   cancelOrder,
   completeOrderDelivery,
   logProductImpression,
+  getSellerSalesHistory,
 } from "../controllers/storeControllers.js";
 
 export default function (Product) {
@@ -135,6 +136,7 @@ export default function (Product) {
   router.get("/orders/pending", protect, getPendingOrders);
   router.post("/orders/cancel", protect, cancelOrder);
   router.patch("/product/toggle-impressions", protect, logProductImpression);
+  router.get("/sales/history", protect, getSellerSalesHistory);
   return router;
 }
 

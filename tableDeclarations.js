@@ -33,6 +33,7 @@ import {
   orderSchema,
   certificateSchema,
   impressionLogSchema,
+  ProductSalesSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -156,4 +157,9 @@ export const ProductImpression = mongoose.model(
   "ProductImpression",
   impressionLogSchema,
   "productImpression",
+);
+export const ProductSales = mongoose.model(
+  "ProductSales",
+  productSalesSchema,
+  "productSales",
 );
