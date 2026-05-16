@@ -6,13 +6,9 @@ import {
 
 export const fetchSellerReviews = async (req, res) => {
     try {
-        const sellerId = req.user.id; 
-
-        // 1. Get Seller's Products
-        const products = await Product.find({ sellerId }).select('productId');
-        const productIds = products.map(p => p.productId.toString());
-
-        // 2. Get the Reviews
+        const sellerId = req.user.id;
+        const products = await Product.find({ sellerId }).select("productId");
+        const productIds = products.map((p) => p.productId.toString());
         const reviews = await Reviews.find({
             $or: [
                 { targetId: sellerId, targetType: 'seller' },
