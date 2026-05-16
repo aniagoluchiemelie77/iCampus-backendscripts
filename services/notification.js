@@ -4,6 +4,7 @@ import { getIO } from "../controllers/socket.js";
 import { sendEmail } from "./emailService.js";
 import { sendPushNotification } from "./pushNotification.js";
 import {
+  welcomeEmailTemplate,
   courseCompletionEmailTemplate,
   purchaseTemplate,
   newOrderTemplate,
@@ -103,6 +104,16 @@ export const createNotification = async ({
             payload.amount,
             payload.downloadUrl,
           );
+          break;
+        case "WELCOME_USER":
+          subject = "Welcome to iCampus!";
+          if (sendEmail) {
+            htmlContent = welcomeEmailTemplate(payload.userName);
+          }
+          title = title || "Welcome aboard!";
+          message =
+            message ||
+            `Hi ${payload.userName}, welcome to the iCampus community!`;
           break;
         case "MARKET_PURCHASE_DEBIT":
           subject = `Receipt: ${payload.productName}`;

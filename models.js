@@ -440,8 +440,9 @@ export const productSalesSchema = new mongoose.Schema({
 export const notificationSchema = new mongoose.Schema(
   {
     notificationId: { type: String, required: true },
-    recipientId: { type: String, required: true, index: true }, // Who gets it
-    senderId: { type: String }, // Who triggered it (optional)
+    recipientId: { type: String, required: true, index: true },
+    recipientEmail: { type: String },
+    senderId: { type: String },
     category: {
       type: String,
       enum: [
@@ -453,22 +454,22 @@ export const notificationSchema = new mongoose.Schema(
         "profile",
         "security",
         "reminder",
+        "signup",
       ],
       required: true,
     },
     currency: {
       type: String,
     },
-    actionType: { type: String, required: true }, // e.g., 'TEST_CREATED', 'NEW_FOLLOWER'
+    actionType: { type: String },
     title: { type: String, required: true },
     message: { type: String, required: true },
     isRead: { type: Boolean, default: false },
-    // Use a flexible object for different IDs based on the category
     relatedEntity: {
-      entityId: String, // Could be postId, testId, purchaseId
-      entityType: String, // 'Post', 'Test', 'Transaction'
+      entityId: String,
+      entityType: String,
     },
-    payload: { type: Object }, // Any extra data (IP address, old vs new time)
+    payload: { type: Object },
   },
   { timestamps: true },
 );

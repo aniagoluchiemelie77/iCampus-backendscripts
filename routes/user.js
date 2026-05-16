@@ -15,6 +15,17 @@ import twilio from "twilio";
 import { client } from "../workers/reditFile.js";
 import { getDownloads } from "../controllers/fetchActions.js";
 import {
+  SignUp,
+  Login,
+  RefreshToken,
+  fetchInstitutionByCountry,
+  ValidateInstitution,
+  ValidateEmail,
+  VerifyEmailUsingCode,
+  ForgotPassword,
+  ChangePassword,
+} from "../controllers/signinActions.js";
+import {
   UserDownloads,
   PhoneNumberVerification,
   Posts,
@@ -84,197 +95,8 @@ const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
 export default function (User) {
   const router = express.Router();
 
-  router.post("/register", async (req, res) => {
-    console.log("Incoming payload:", req.body);
-
-    const {
-      usertype,
-      matriculation_number,
-      staff_id,
-      department,
-      password,
-      itagusername,
-      firstname,
-      lastname,
-      deviceId,
-      deviceName,
-      providerId,
-    } = req.body;
-    try {
-      const existingUser = await User.findOne({
-        usertype,
-        ...(usertype === "student" && { matriculation_number, department }),
-        ...(usertype === "lecturer" && { staff_id, department }),
-      }).lean();
-
-      if (existingUser) {
-        return res
-          .status(409)
-          .json({ message: "User already exists.", success: false });
-      }
-      const uid = generateUserUID();
-      const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-      const geo = geoip.lookup(ip);
-      const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
-
-      // 🔐 Hash password
-      let hashedPassword = null;
-      if (password && password !== "SOCIAL_AUTH") {
-        hashedPassword = await bcrypt.hash(password, 10);
-      }
-
-      // ⚡ Create user
-      const newUser = new User({
-        uid,
-        ...req.body,
-        referralCode: await generateUniqueReferralCode(req.body),
-        password: hashedPassword,
-        isVerified:
-          usertype === "student" || usertype === "lecturer" || providerId
-            ? true
-            : false,
-        providerId: providerId || "",
-        sessions: [],
-      });
-      const iSCardEligible =
-        usertype === "student" ||
-        usertype === "lecturer" ||
-        usertype === "otherUser";
-      if (iSCardEligible) {
-        const newCardNumber = await generateUniqueCardNumber();
-        const expiryDate = await generateExpiryDate();
-        const newITag = new iTag({
-          userId: uid,
-          username: itagusername,
-          cardHolderName: `${firstname} ${lastname}`,
-          cardNumber: newCardNumber,
-          tier: "free",
-          expiryDate,
-        });
-        await newITag.save();
-      }
-      // 🔐 Generate JWT
-      const { accessToken, refreshToken } = await generateTokens(newUser);
-      const initialSession = {
-        deviceId,
-        deviceName,
-        ipAddress: ip,
-        location,
-        refreshToken,
-        lastUsed: new Date(),
-      };
-      newUser.sessions.push(initialSession);
-      await newUser.save();
-      const { password: _, iCashPin: _, ...safeUser } = newUser.toObject();
-
-      return res.status(201).json({
-        message: "User created successfully",
-        success: true,
-        user: safeUser,
-        accessToken,
-        refreshToken,
-      });
-    } catch (error) {
-      console.error("❌ Insert failed:", error);
-
-      if (error.code === 11000) {
-        return res.status(409).json({
-          message: "Duplicate entry: User already exists.",
-          success: false,
-        });
-      }
-
-      return res.status(500).json({
-        message: error.message || "Failed to save user",
-        success: false,
-      });
-    }
-  });
-
-  router.post("/login", authLimiter, async (req, res) => {
-    const {
-      identifier,
-      password,
-      deviceId,
-      deviceName,
-      socialProvider,
-      idToken,
-    } = req.body.credentials || req.body;
-
-    try {
-      const user = await User.findOne({ email: identifier });
-      if (!user) return res.status(404).json({ error: "User not found" });
-      if (socialProvider === "google") {
-        const isValid = await verifyGoogleToken(idToken, identifier);
-        if (!isValid)
-          return res.status(401).json({ error: "Invalid Google token" });
-      } else if (socialProvider === "github") {
-        const isValid = await verifyGithubToken(idToken, identifier);
-        if (!isValid)
-          return res.status(401).json({ error: "Invalid GitHub token" });
-      } else {
-        const isMatch = await bcrypt.compare(password, user.password);
-        if (!isMatch)
-          return res.status(401).json({ error: "Invalid password" });
-      }
-      const { accessToken, refreshToken } = await generateTokens(user);
-      const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-      const geo = geoip.lookup(ip);
-      const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
-
-      const sessionData = {
-        deviceId,
-        deviceName,
-        ipAddress: ip,
-        location,
-        refreshToken,
-        lastUsed: new Date(),
-      };
-
-      // 4. Update Session List
-      const existingSessionIndex = user.sessions.findIndex(
-        (s) => s.deviceId === deviceId,
-      );
-
-      if (existingSessionIndex > -1) {
-        user.sessions[existingSessionIndex] = sessionData;
-      } else {
-        user.sessions.push(sessionData);
-        await createNotification({
-          recipientId: user.uid,
-          recipientEmail: user.email,
-          recoveryEmails: user.recoveryEmails,
-          category: "auth",
-          actionType: "NEW_LOGIN",
-          title: "Security Alert: New Login",
-          payload: {
-            userName: user.firstname,
-            ipAddress: ip,
-            location: location,
-          },
-          message: `A login was detected from ${ip} in ${location}.`,
-          sendEmail: true,
-          saveToDb: true,
-        });
-      }
-      await user.save();
-      const {
-        password: _,
-        iCashPin: _,
-        userAccountDetails: _,
-        ...safeUser
-      } = user.toObject();
-      res.status(200).json({
-        message: "Login successful",
-        user: safeUser,
-        accessToken,
-        refreshToken,
-      });
-    } catch (error) {
-      console.error("Login Error:", error);
-      res.status(500).json({ error: error.message || "Login error" });
-    }
-  });
+  router.post("/register", SignUp);
+  router.post("/login", authLimiter, Login);
   router.post("/revoke-session", protect, async (req, res) => {
     const userId = req.user.id;
     const { deviceIdToRevoke } = req.body;
@@ -299,36 +121,7 @@ export default function (User) {
       res.status(500).json({ error: "Could not revoke session" });
     }
   });
-  router.post("/refresh-token", async (req, res) => {
-    const { refreshToken } = req.body;
-    if (!refreshToken)
-      return res.status(401).json({ message: "Refresh Token Required" });
-
-    try {
-      const user = await User.findOne({ refreshTokens: refreshToken });
-      if (!user)
-        return res.status(403).json({ message: "Invalid Refresh Token" });
-
-      jwt.verify(
-        refreshToken,
-        process.env.REFRESH_TOKEN_SECRET,
-        (err, decoded) => {
-          if (err) return res.status(403).json({ message: "Token Expired" });
-
-          const newAccessToken = jwt.sign(
-            { id: user.uid, email: user.email },
-            process.env.JWT_SECRET,
-            { expiresIn: "15m" },
-          );
-
-          res.json({ accessToken: newAccessToken });
-        },
-      );
-    } catch (e) {
-      res.status(500).json({ message: "Server Error" });
-    }
-  });
-  //
+  router.post("/refresh-token", RefreshToken);
   router.patch("/:uid", async (req, res) => {
     try {
       const updatedUser = await User.findOneAndUpdate(
@@ -345,332 +138,12 @@ export default function (User) {
       res.status(500).json({ error: error.message });
     }
   });
-  router.post("/institutions/validate", async (req, res) => {
-    try {
-      const { schoolName } = req.body;
-
-      if (!schoolName) {
-        return res.status(400).json({ message: "School name required" });
-      }
-
-      // ✅ Normalize input to avoid regex (faster + index-friendly)
-      const normalized = schoolName.trim().toLowerCase();
-
-      // ⚠️ Ensure your DB stores normalizedSchoolName for fast lookup
-      const institution = await OperationalInstitutions.findOne({
-        schoolName: normalized,
-      }).lean(); // ✅ .lean() for faster read
-
-      if (!institution) {
-        return res.status(404).json({
-          message: "iCampus not yet operational in specified institution",
-        });
-      }
-
-      return res.status(200).json({
-        message: "Institution verified",
-        schoolName: institution.schoolName,
-        schoolCode: institution.schoolCode,
-        verified: true,
-      });
-    } catch (error) {
-      console.error("Institution validation error:", error);
-      res.status(500).json({ message: "Server error" });
-    }
-  });
-
-  router.post("/verifyEmail", async (req, res) => {
-    try {
-      const { email } = req.body;
-      if (!email) return res.status(400).json({ message: "Email is required" });
-
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
-      const expiresAt = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
-
-      await EmailVerification.findOneAndUpdate(
-        { email },
-        { code: hashedCode, expiresAt },
-        { upsert: true, new: true },
-      );
-      const channel = getChannel();
-      await channel.assertQueue("emailQueue");
-
-      const notificationJob = {
-        notificationId: generateNotificationId("auth"),
-        recipientEmail: email,
-        category: "security",
-        actionType: "EMAIL_VERIFICATION",
-        title: "Verify your Email",
-        message: `Your verification code is ${code}. It expires in 15 minutes.`,
-        payload: { code },
-        sendEmail: true,
-        sendPush: false, // User likely isn't logged in yet
-        saveToDb: false, // Don't save transient OTPs to permanent DB
-      };
-
-      channel.sendToQueue(
-        "emailQueue",
-        Buffer.from(JSON.stringify(notificationJob)),
-      );
-
-      return res.status(200).json({
-        message: "Verification code sent",
-        codeSent: true,
-      });
-    } catch (error) {
-      console.error("Email verification error:", error);
-      return res.status(500).json({ message: "Server error" });
-    }
-  });
-
-  router.get("/institutions", async (req, res) => {
-    try {
-      const { country } = req.query;
-
-      if (!country) {
-        return res.status(400).json({
-          message: "Country is required",
-        });
-      }
-      const normalizedCountry = country.trim();
-      const cacheKey = `institutions: ${normalizedCountry}`;
-      console.log("PING before GET:", await client.ping());
-
-      try {
-        const start = Date.now();
-        const cached = await client.get(cacheKey);
-        const end = Date.now();
-
-        console.log("Redis GET completed in", end - start, "ms");
-        console.log("Redis GET result type:", typeof cached);
-        console.log("Redis GET raw value length:", cached?.length || 0);
-
-        if (cached) {
-          const data = JSON.parse(cached);
-          return res.json({ cached: true, ...data });
-        }
-      } catch (err) {
-        console.error("Redis GET error:", err);
-      }
-
-      // -------------------------------
-      // GOOGLE PLACES API (COMMENTED OUT)
-      // -------------------------------
-      /*
-    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
-    console.log("Pre fetch");
-    const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=universities+in+${encodeURIComponent(country)}&key=${apiKey}`;
-    const response = await axios.get(url);
-    console.log("Google raw response:", response.data);
-    console.log("Post fetch");
-
-    const institutions = response.data.results.map((item) => ({
-      name: item.name,
-      address: item.formatted_address,
-      place_id: item.place_id,
-      rating: item.rating,
-      types: item.types,
-    }));
-    */
-
-      // -------------------------------
-      // MONGODB SEARCH (OPTIMIZED)
-      // -------------------------------
-      const institutions = await UniversitiesAndColleges.find({
-        country: normalizedCountry,
-      })
-        .sort({ name: 1 })
-        .lean();
-      const responsePayload = {
-        count: institutions.length,
-        institutions,
-      };
-      await client.setEx(
-        cacheKey,
-        3600, // TTL in seconds
-        JSON.stringify(responsePayload),
-      );
-      return res.json(responsePayload);
-    } catch (error) {
-      console.error("Institutions fetch error:", error.message);
-      return res.status(500).json({ message: "Server error" });
-    }
-  });
-
-  router.post("/verifyEmailCode", authLimiter, async (req, res) => {
-    try {
-      const { email, code } = req.body;
-
-      if (!email || !code) {
-        return res.status(400).json({ message: "Email and code are required" });
-      }
-      const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
-
-      const record = await EmailVerification.findOneAndDelete({
-        email,
-        code: hashedCode,
-        expiresAt: { $gt: new Date() },
-      });
-
-      if (!record) {
-        return res
-          .status(404)
-          .json({ message: "No verification request found", verified: false });
-      }
-
-      if (record.code !== hashedCode) {
-        return res
-          .status(400)
-          .json({ message: "Invalid verification code", verified: false });
-      }
-
-      if (record.expiresAt < new Date()) {
-        return res
-          .status(400)
-          .json({ message: "Verification code has expired", verified: false });
-      }
-
-      return res.status(200).json({
-        message: "Email verified successfully",
-        verified: true,
-        email,
-      });
-    } catch (error) {
-      console.error("verifyEmailCode error:", error);
-      return res.status(500).json({ message: "Server error", verified: false });
-    }
-  });
-
-  router.get("/status", async (req, res) => {
-    const { email } = req.query;
-    if (!email) return res.status(400).send("Missing email");
-    const user = await User.findOne({ email });
-    if (!user) return res.status(404).send("User not found");
-    res.status(200).json({ isVerified: user.isVerified });
-  });
-  router.post("/forgotPassword", async (req, res) => {
-    try {
-      const { email } = req.body;
-      const user = await User.findOne({ email });
-
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      const existingRecord = await EmailVerification.findOne({ email });
-      if (existingRecord) {
-        const timeSinceLastSent = Date.now() - (existingRecord.updatedAt || 0);
-        if (timeSinceLastSent < 60000) {
-          // 60 second cooldown
-          return res.status(429).json({
-            message: "Please wait before requesting another code.",
-          });
-        }
-      }
-      const code = Math.floor(100000 + Math.random() * 900000).toString();
-      const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
-      const durationMs = 60 * 60 * 1000; //1 hr
-      const expiresAt = new Date(Date.now() + durationMs);
-      const readableExpires = expiresAt.toLocaleString("en-US", {
-        month: "short",
-        day: "numeric",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true,
-      });
-      await EmailVerification.findOneAndUpdate(
-        { email },
-        { code: hashedCode, expiresAt },
-        { upsert: true, new: true },
-      );
-      // --- UNIFIED NOTIFICATION ---
-      await createNotification({
-        notificationId: generateNotificationId("security"),
-        recipientId: user.uid,
-        recipientEmail: email,
-        category: "security",
-        actionType: "PASSWORD_RESET_CODE",
-        title: "Password Reset Code",
-        message: `Your 6-digit verification code is ${code}. It expires in ${readableExpires}.`,
-        payload: {
-          code: code,
-          userName: user.firstName || "User",
-          expiryTime: readableExpires,
-        },
-        sendEmail: true, // Critical for password reset
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: false,
-      });
-      res.status(200).json({
-        message: "Verification code sent, check your email",
-        email,
-      });
-    } catch (error) {
-      console.error("Forgot Password Error:", error);
-      res.status(500).json({ message: "Internal Server Error" });
-    }
-  });
-  router.post("/changePassword", async (req, res) => {
-    const { email, password, confirmPassword } = req.body;
-    const record = verificationCodes[email];
-    if (!record || !record.verified) {
-      return res
-        .status(403)
-        .json({ message: "Email not verified for password reset" });
-    }
-
-    if (!password || !confirmPassword || password !== confirmPassword) {
-      return res
-        .status(400)
-        .json({ message: "Passwords do not match or are missing" });
-    }
-
-    try {
-      const user = await User.findOne({ email });
-      if (!user) return res.status(404).json({ message: "User not found" });
-
-      // 2. Update Password
-      const hashedPassword = await bcrypt.hash(password, 10);
-      user.password = hashedPassword;
-
-      // Optional security: Clear refresh tokens to force re-login on all devices
-      user.refreshTokens = [];
-      await user.save();
-
-      // 3. Trigger Omnichannel Notification
-      const now = new Date();
-      const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
-
-      await createNotification({
-        notificationId: generateNotificationId("security"),
-        recipientId: user.uid,
-        recipientEmail: user.email,
-        recoveryEmails: user.recoveryEmails,
-        category: "auth",
-        actionType: "PASSWORD_CHANGED",
-        title: "Password Changed",
-        message: `Your password was successfully updated on ${formattedTime}.`,
-        payload: {
-          userName: user.firstName || "User",
-          time: formattedTime,
-        },
-        sendEmailFlag: true,
-        sendEmail: true,
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
-      });
-      // 4. Cleanup
-      delete verificationCodes[email];
-
-      res.status(200).json({ message: "Password changed successfully" });
-    } catch (error) {
-      console.error("Password change error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
+  router.post("/institutions/validate", ValidateInstitution);
+  router.post("/verifyEmail", ValidateEmail);
+  router.get("/institutions", fetchInstitutionByCountry);
+  router.post("/verifyEmailCode", authLimiter, VerifyEmailUsingCode);
+  router.post("/forgotPassword", ForgotPassword);
+  router.post("/changePassword", ChangePassword);
   router.get("/notifications", async (req, res) => {
     try {
       // 1. Destructure based on what the Frontend is actually sending
@@ -711,7 +184,6 @@ export default function (User) {
       res.status(500).json({ message: "Server error" });
     }
   });
-  // GET a single notification by ID
   router.get("/notifications/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -817,8 +289,6 @@ export default function (User) {
       const uniqueCategories = await Course.distinct("niche", {
         isPublished: true,
       });
-
-      // 2. Filter out any null or empty strings and sort alphabetically
       const filteredCategories = uniqueCategories
         .filter((cat) => !!cat)
         .sort((a, b) => a.localeCompare(b));
@@ -833,7 +303,6 @@ export default function (User) {
     const { transaction_id, courseId, userId } = req.body;
 
     try {
-      // 1. Call Flutterwave to verify the transaction
       const response = await axios.get(
         `https://api.flutterwave.com/v3/transactions/${transaction_id}/verify`,
         {
@@ -883,7 +352,6 @@ export default function (User) {
       res.status(500).json({ message: "Internal server error" });
     }
   });
-  //Fetch course details only if user is enrolled
   router.get("/courses/:courseId", protect, async (req, res) => {
     try {
       const { courseId } = req.params;
@@ -964,7 +432,6 @@ export default function (User) {
       res.status(500).json({ message: error.message });
     }
   });
-  // GET /api/lectures/:lectureId
   router.get("/courses/lectures/:lectureId", async (req, res) => {
     try {
       const { lectureId } = req.params;
@@ -988,7 +455,6 @@ export default function (User) {
         .json({ error: "Server error while fetching lecture details" });
     }
   });
-  // router.get('/users/:uid', ...)
   router.get("/:uid", async (req, res) => {
     try {
       const { uid } = req.params;
@@ -1005,7 +471,6 @@ export default function (User) {
       res.status(500).json({ error: "Internal Server Error" });
     }
   });
-  // Check if user has an ongoing lecture
   router.get("/lectures/ongoing/:userId", async (req, res) => {
     try {
       const { userId } = req.params;
@@ -1030,7 +495,6 @@ export default function (User) {
       res.status(500).json({ error: err.message });
     }
   });
-  // GET /api/lectures/:lectureId (Fetch lectures using videoUrl)
   router.get("/lectures/details", async (req, res) => {
     try {
       const { url } = req.query;
@@ -1124,7 +588,6 @@ export default function (User) {
       res.status(500).json({ message: "Server error" });
     }
   });
-  //Library routes
   router.get("/library/search", async (req, res) => {
     const { q, userId } = req.query;
     const searchUrl = `https://1lib.sk/s/${encodeURIComponent(q)}`;
@@ -1194,8 +657,6 @@ export default function (User) {
       res.status(500).json({ error: "Failed to connect to the library" });
     }
   });
-
-  // GET /library/featured
   router.get("/library/featured", async (req, res) => {
     try {
       const rawDept = req.query.department;
@@ -1266,7 +727,6 @@ export default function (User) {
       res.json(getFallbackBooks());
     }
   });
-  // GET /leaderboard
   router.get("/fetchLeaderBoards", async (req, res) => {
     try {
       // 1. Top 10 Students
@@ -1304,7 +764,6 @@ export default function (User) {
       res.status(500).json({ message: error.message });
     }
   });
-  // Ranking screen search / User detail fetch
   router.get("/search", protect, async (req, res) => {
     const { q, uid, viewerRole, viewerTier } = req.query;
     try {
@@ -1351,7 +810,6 @@ export default function (User) {
       res.status(500).json({ message: error.message, success: false });
     }
   });
-  //Profile screen search
   router.get("/profile/search:identifier", protect, async (req, res) => {
     try {
       const { identifier } = req.params;
@@ -1511,7 +969,6 @@ export default function (User) {
       res.status(500).json({ success: false, message: "Server error" });
     }
   });
-  //Toggle Follow
   router.post("/follow/toggle", async (req, res) => {
     try {
       const { followerId, followingId } = req.body;
@@ -1575,7 +1032,6 @@ export default function (User) {
       res.status(500).json({ success: false, message: "Server error" });
     }
   });
-  //iTag Edit
   router.put("/update-itag", protect, async (req, res) => {
     try {
       const { userId, updates } = req.body;
@@ -1683,7 +1139,6 @@ export default function (User) {
       res.status(500).json({ success: false, message: "Server Error" });
     }
   });
-  // Initiate payment charge (Flutterwave)
   router.post("/payments/initiate-charge", async (req, res) => {
     const { paymentType, paymentData } = req.body;
     const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
@@ -1773,8 +1228,6 @@ export default function (User) {
       res.status(500).json({ error: err.message });
     }
   });
-  //
-  // router.patch("/preferences/:userId", protect, async (req, res) => {
   router.patch("/preferences/:userId", protect, async (req, res) => {
     const { userId } = req.params;
     const updateData = req.body;
@@ -1794,7 +1247,6 @@ export default function (User) {
       res.status(500).json({ error: "Server error updating preferences" });
     }
   });
-  //delete user
   router.delete("/account/delete", protect, async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();

@@ -11,7 +11,10 @@ import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
 import { v4 as uuidv4 } from "uuid";
 import mongoose from "mongoose";
-import { generateNotificationId } from "../utils/idGenerator.js";
+import {
+  generateNotificationId,
+  generateTransactionId,
+} from "../utils/idGenerator.js";
 
 async function sendOrderNotifications(buyer, processedItems) {
   for (const {
@@ -176,7 +179,7 @@ export const initializeCheckout = async (req, res) => {
     }
     buyer.pointsBalance -= totals.grandTotal;
     await buyer.save({ session });
-    const buyerTxId = `TXB-${uuidv4().split("-")[0].toUpperCase()}`;
+    const buyerTxId = generateTransactionId("payment");
     const buyerTransaction = new Transactions({
       transactionId: buyerTxId,
       userId: buyerId,
@@ -212,7 +215,7 @@ export const initializeCheckout = async (req, res) => {
         const salesIncrement = item.quantity || 1;
         await seller.save({ session });
         await new Transactions({
-          transactionId: `TXS-${uuidv4().split("-")[0].toUpperCase()}`,
+          transactionId: generateTransactionId("payment"),
           userId: seller.uid,
           type: "payment",
           amountICash: netEarnings,
@@ -337,7 +340,7 @@ export const completeOrderDelivery = async (req, res) => {
       agent.pointsBalance += agentEarnings;
       await agent.save({ session });
       await new Transactions({
-        transactionId: `TXA-${uuidv4().split("-")[0].toUpperCase()}`,
+        transactionId: generateTransactionId("payment"),
         userId: agent.uid,
         type: "payment",
         amountICash: agentEarnings,
@@ -390,7 +393,7 @@ export const completeOrderDelivery = async (req, res) => {
       sendEmail: true,
     });
     await new Transactions({
-      transactionId: `TXA-${uuidv4().split("-")[0].toUpperCase()}`,
+      transactionId: generateTransactionId("payment"),
       userId: seller.uid,
       type: "payment",
       amountICash: sellerEarnings,
@@ -556,7 +559,6 @@ export const logProductImpression = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
 export const getSellerSalesHistory = async (req, res) => {
   try {
     const sellerId = req.user.id;

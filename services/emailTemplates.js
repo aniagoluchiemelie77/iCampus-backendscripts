@@ -4,7 +4,7 @@ import { theme } from "./emailTheme.js";
 const { colors, branding, typography } = theme;
 
 // A reusable Wrapper (Header/Footer) to keep it DRY
-const emailWrapper = (content) => `
+export const emailWrapper = (content) => `
   <div style="background-color: ${colors.background}; padding: 40px 0; font-family: ${typography.fontFamily};">
     <div style="max-width: 600px; margin: 0 auto; background: ${colors.white}; border-radius: 8px; overflow: hidden; border: 1px solid #e1e4e8;">
       <div style="background-color: ${colors.primary}; padding: 20px; text-align: center;">
@@ -22,7 +22,26 @@ const emailWrapper = (content) => `
     </div>
   </div>
 `;
+export const welcomeEmailTemplate = (userName) => {
+  const body = `
+    <h1 style="color: ${colors.primary}; margin-top: 0;">Welcome to iCampus</h1>
+    <p>Hi ${userName},</p>
+    <p>We're thrilled to have you join our community. iCampus is designed to make your academic journey seamless, social, and rewarding.</p>
+    
+    <div style="background: #f9f9f9; border-radius: 8px; padding: 20px; margin: 20px 0; border: 1px solid #eee;">
+      <h3 style="margin-top: 0; font-size: 16px;">What's Next?</h3>
+      <ul style="padding-left: 20px; color: ${colors.text};">
+        <li>Complete your profile to connect with peers.</li>
+        <li>Check your <strong>iTag</strong> to view your digital ID.</li>
+        <li>Explore course materials and upcoming lectures.</li>
+      </ul>
+    </div>
 
+    <p style="color: ${colors.secondary};">If you have any questions, simply reply to this email. We're here to help!</p>
+    <p style="color: ${colors.secondary};">Happy Learning,<br>The iCampus Team</p>
+  `;
+  return emailWrapper(body);
+};
 export const purchaseTemplate = (
   userName,
   productName,

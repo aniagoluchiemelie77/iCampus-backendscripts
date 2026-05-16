@@ -1,11 +1,6 @@
 import { OAuth2Client } from 'google-auth-library';
 const client = new OAuth2Client(process.env.WEB_CLIENT_ID);
 
-/**
- * Verifies a Google ID Token
- * @param {string} idToken - The JWT from the mobile app
- * @param {string} claimedEmail - The email the user claims to have
- */
 async function verifyGoogleToken(idToken, claimedEmail) {
   try {
     const ticket = await client.verifyIdToken({
@@ -19,11 +14,7 @@ async function verifyGoogleToken(idToken, claimedEmail) {
     return false;
   }
 }
-/**
- * Verifies a GitHub Access Token
- * @param {string} accessToken - The token from the mobile app
- * @param {string} claimedEmail - The email the user claims to have
- */
+
 async function verifyGithubToken(accessToken, claimedEmail) {
   try {
     const response = await fetch('https://api.github.com/user', {
