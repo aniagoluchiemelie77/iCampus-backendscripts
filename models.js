@@ -437,6 +437,25 @@ export const productSalesSchema = new mongoose.Schema({
   buyerId: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
 });
+export const reviewSchema = new mongoose.Schema({
+  reviewerId: { type: String, required: true },
+  targetId: { type: String, required: true },
+  targetType: {
+    type: String,
+    required: true,
+    enum: ["product", "seller", "agent", "course", "lecturer"],
+  },
+  orderId: { type: String },
+  rating: { type: Number, required: true, min: 1, max: 5 },
+  comment: { type: String },
+  mediaUrls: [String],
+  attributes: {
+    deliverySpeed: Number,
+    accuracy: Number,
+    clarity: Number,
+  },
+  createdAt: { type: Date, default: Date.now },
+});
 export const notificationSchema = new mongoose.Schema(
   {
     notificationId: { type: String, required: true },
@@ -632,7 +651,7 @@ export const universitiesAndCollegesSchema = new mongoose.Schema({
   alpha_two_code: String,
   state_province: String,
 });
-export const PostSchema = new mongoose.Schema(
+export const postSchema = new mongoose.Schema(
   {
     postId: { type: String, required: true, unique: true },
     userId: {
@@ -1028,6 +1047,6 @@ impressionLogSchema.index(
 // Indexing for faster lookups when checking monthly limits
 exceptionSchema.index({ studentId: 1, date: -1 });
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-// Add this to the end of your PostSchema file
-PostSchema.index({ userId: 1, createdAt: -1 });
+// Add this to the end of your postSchema file
+postSchema.index({ userId: 1, createdAt: -1 });
 attendanceSchema.index({ studentId: 1, lectureId: 1 }, { unique: true });

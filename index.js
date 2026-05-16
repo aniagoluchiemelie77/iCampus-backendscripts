@@ -65,6 +65,7 @@ mongoose
 
     // Dynamic imports for routes
     const userRoutes = (await import("./routes/user.js")).default(User);
+    const reviewsRoutes = (await import("./routes/reviews.js")).default(User);
     const webhooksRoutes = (await import("./routes/webhooks.js")).default(User);
     const messageRoutes = (await import("./routes/messages.js")).default(
       Message,
@@ -92,8 +93,9 @@ mongoose
     ).default(Lecturer);
 
     app.use("/users", userRoutes);
+    app.use("/reviews", reviewsRoutes);
     app.use("/webhooks", webhooksRoutes);
-    app.use("/users/messages", userRoutes);
+    app.use("/users/messages", messageRoutes);
     app.use("/user", userAccountDetailsRoute);
     app.use("/users/student/class", studentClassDetails);
     app.use("/users/lecturers/class", lecturerClassDetails);

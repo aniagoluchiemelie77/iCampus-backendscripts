@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import {
+  reviewSchema,
   iTagSchema,
   messageSchema,
   notificationSchema,
@@ -19,7 +20,7 @@ import {
   transactionSchema,
   iCampusOperationalInstitutionSchema,
   universitiesAndCollegesSchema,
-  PostSchema,
+  postSchema,
   reviewSchema,
   exceptionSchema,
   lectureSchema,
@@ -41,7 +42,7 @@ export const Student = mongoose.model(
   verifyStudentSchema,
   "students",
 );
-export const Posts = mongoose.model("Posts", PostSchema, "posts");
+export const Posts = mongoose.model("Posts", postSchema, "posts");
 export const Lecturer = mongoose.model(
   "Lecturer",
   verifyLecturerSchema,
@@ -163,3 +164,4 @@ export const ProductSales = mongoose.model(
   productSalesSchema,
   "productSales",
 );
+export const Reviews = mongoose.model("Reviews", reviewSchema, "reviews");
