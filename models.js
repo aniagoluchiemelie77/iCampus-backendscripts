@@ -237,7 +237,13 @@ export const userSchema = new mongoose.Schema({
   pointsBalance: {
     type: Number,
     default: 0,
-    get: (v) => parseFloat(v.toFixed(2)), // Always return 2 dp
+    get: (v) => parseFloat(v.toFixed(2)),
+    set: (v) => parseFloat(v.toFixed(2)),
+  },
+  pendingSalesBalance: {
+    type: Number,
+    default: 0,
+    get: (v) => parseFloat(v.toFixed(2)),
     set: (v) => parseFloat(v.toFixed(2)),
   },
   hasSubscribed: { type: Boolean, default: false },

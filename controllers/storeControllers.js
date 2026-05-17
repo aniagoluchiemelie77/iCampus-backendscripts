@@ -211,7 +211,7 @@ export const initializeCheckout = async (req, res) => {
       const itemTotal = item.price * item.quantity;
       if (product.type === "file" || product.type === "course") {
         const netEarnings = itemTotal * PAYOUT_FACTOR;
-        seller.pointsBalance += netEarnings;
+        seller.pendingSalesBalance += netEarnings;
         const salesIncrement = item.quantity || 1;
         await seller.save({ session });
         await new Transactions({
@@ -337,7 +337,7 @@ export const completeOrderDelivery = async (req, res) => {
       if (!agent) throw new Error("Drop-off agent not found.");
       agentEarnings = payableAmount * AGENT_RATE;
       sellerEarnings -= agentEarnings;
-      agent.pointsBalance += agentEarnings;
+      agent.pendingSalesBalance += agentEarnings;
       await agent.save({ session });
       await new Transactions({
         transactionId: generateTransactionId("payment"),
@@ -368,7 +368,7 @@ export const completeOrderDelivery = async (req, res) => {
         sendEmail: true,
       });
     }
-    seller.pointsBalance += sellerEarnings;
+    seller.pendingSalesBalance += sellerEarnings;
     await seller.save({ session });
 
     order.status = "completed";
