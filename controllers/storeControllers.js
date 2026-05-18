@@ -337,7 +337,7 @@ export const completeOrderDelivery = async (req, res) => {
         category: "finance",
         actionType: "ORDER_COMPLETED",
         title: "Delivery Commission Earned",
-        message: `You earned ${agentEarnings} iCash for verifying order #${orderId}.`,
+        message: `You earned ${agentEarnings} iCash for verifying order #${orderId}, proceed to payout to withdraw to your iCash wallet.`,
         payload: {
           amount: agentEarnings,
           userName: agent.firstname,
@@ -362,7 +362,7 @@ export const completeOrderDelivery = async (req, res) => {
       category: "finance",
       actionType: "ORDER_COMPLETED",
       title: "Payment Received",
-      message: `Your sale for ${product.title} has been completed and funds released.`,
+      message: `Your sale for ${product.title} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
       payload: {
         amount: sellerEarnings,
         userName: seller.firstname,
@@ -587,12 +587,18 @@ export const requestPayout = async (req, res) => {
 
   try {
     const user = await User.findOne({ uid: userId }).session(session);
+
+    if (!user) {
+      throw new Error("User not found.");
+    }
+
     if (user.pendingSalesBalance < amount) {
       throw new Error("Insufficient pending balance.");
     }
     user.pendingSalesBalance -= amount;
     user.pointsBalance += amount;
     const payoutId = generatePayoutId(userId);
+    const transactionId = generateTransactionId("payment");
     const newPayout = await Payout.create(
       [
         {
@@ -607,10 +613,11 @@ export const requestPayout = async (req, res) => {
       ],
       { session },
     );
+
     user.payoutHistory.push(newPayout[0].payoutId);
     await user.save({ session });
-    await new Transactions({
-      transactionId: generateTransactionId("payment"),
+    const transaction = new Transactions({
+      transactionId,
       userId,
       type: "payment",
       amountICash: amount,
@@ -619,12 +626,34 @@ export const requestPayout = async (req, res) => {
       title: `Sales Payout`,
       reference: `REF-${payoutId}`,
       createdAt: new Date(),
-    }).save({ session });
-
+    });
+    await transaction.save({ session });
     await session.commitTransaction();
-    return { success: true };
+    await createNotification({
+      notificationId: generateNotificationId("store"),
+      recipientId: userId,
+      category: "finance",
+      actionType: "SALES_PAYOUT_SUCCESS",
+      title: "Sales Payout Credited",
+      message: `${amount.toLocaleString()} iCash from your sales has been added to your wallet.`,
+      recipientEmail: user.email,
+      sendEmail: true,
+      sendPush: true,
+      payload: {
+        username: user.firstname || user.lastname,
+        amount: amount,
+        payoutId: payoutId,
+        transactionId: transactionId,
+      },
+    });
+    return {
+      success: true,
+      newPointsBalance: user.pointsBalance,
+      transactionId: transactionId,
+    };
   } catch (error) {
     await session.abortTransaction();
+    console.error("Payout Error:", error);
     throw error;
   } finally {
     session.endSession();

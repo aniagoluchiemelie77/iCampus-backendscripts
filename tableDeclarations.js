@@ -4,14 +4,12 @@ import {
   iTagSchema,
   messageSchema,
   notificationSchema,
-  dealSchema,
   deletedUserSchema,
   userBankOrCardDetails,
   courseSchema,
   userDownloadsSchema,
   verifyStudentSchema,
   verifyLecturerSchema,
-  storeCategoriesSchema,
   eventSchema,
   productSchema,
   userRecordsSchema,
@@ -19,7 +17,6 @@ import {
   EmailVerificationSchema,
   transactionSchema,
   iCampusOperationalInstitutionSchema,
-  universitiesAndCollegesSchema,
   postSchema,
   reviewSchema,
   exceptionSchema,
@@ -34,7 +31,7 @@ import {
   orderSchema,
   certificateSchema,
   impressionLogSchema,
-  ProductSalesSchema,
+  productSalesSchema,
   payoutSchema,
 } from "./models.js";
 
@@ -48,11 +45,6 @@ export const Lecturer = mongoose.model(
   "Lecturer",
   verifyLecturerSchema,
   "lecturers",
-);
-export const ProductCategory = mongoose.model(
-  "Category",
-  storeCategoriesSchema,
-  "store-categories",
 );
 export const Event = mongoose.model("Event", eventSchema, "events");
 export const Product =
@@ -72,8 +64,6 @@ export const UserBankOrCardDetails =
     userBankOrCardDetails,
     "userBankDetails",
   );
-export const Deals =
-  mongoose.models.Deals || mongoose.model("Deals", dealSchema, "userDealings");
 export const UserRecords =
   mongoose.models.UserRecords ||
   mongoose.model("UserRecords", userRecordsSchema, "records");
@@ -84,11 +74,6 @@ export const EmailVerification = mongoose.model(
 export const OperationalInstitutions = mongoose.model(
   "OperationalInstitutions",
   iCampusOperationalInstitutionSchema,
-);
-export const UniversitiesAndColleges = mongoose.model(
-  "UniversitiesAndColleges",
-  universitiesAndCollegesSchema,
-  "UniversitiesAndColleges",
 );
 export const Exceptions = mongoose.model(
   "Exceptions",

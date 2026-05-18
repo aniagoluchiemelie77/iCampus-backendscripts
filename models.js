@@ -280,7 +280,6 @@ export const userSchema = new mongoose.Schema({
     get: (v) => parseFloat(v.toFixed(2)),
     set: (v) => parseFloat(v.toFixed(2)),
   },
-  payoutHistory: [payoutSchema],
   hasSubscribed: { type: Boolean, default: false },
   blockedUsers: [{ type: String }],
   createdAt: Date,
@@ -351,12 +350,6 @@ export const verifyStudentSchema = new mongoose.Schema({
   phone_number: String,
   matriculation_number: String,
   school_name: String,
-});
-export const storeCategoriesSchema = new mongoose.Schema({
-  id: Number,
-  categoryName: String,
-  schoolName: String,
-  icon: String,
 });
 export const dropOffStation = new mongoose.Schema({
   id: { type: String, required: true, index: true },
@@ -608,39 +601,6 @@ export const eventSchema = new mongoose.Schema({
   tags: { type: [String] }, // Array of tags
   createdAt: { type: String, default: () => new Date().toISOString() },
 });
-export const dealSchema = new mongoose.Schema(
-  {
-    dealId: { type: String, required: true, unique: true },
-    sellerId: { type: String, required: true }, // user.uid of seller
-    buyerId: { type: String, required: true }, // user.uid of buyer
-    totalPriceInPoints: { type: Number, required: true },
-    dealStatus: {
-      type: String,
-      enum: ["pending", "completed", "cancelled"],
-      default: "pending",
-    },
-    items: [
-      {
-        productId: { type: String, required: true },
-        productTitle: { type: String, required: true },
-        priceInPoints: { type: Number, required: true },
-      },
-    ],
-    dealDate: { type: Date, default: Date.now },
-  },
-  { timestamps: true },
-);
-const userRecordEntrySchema = new mongoose.Schema({
-  type: String,
-  status: String,
-  message: String,
-  refDate: String,
-  refTime: String,
-});
-export const userRecordsSchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  records: [userRecordEntrySchema],
-});
 export const EmailVerificationSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   code: {
@@ -683,14 +643,6 @@ export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
   logo: { type: String },
   currentiScoreAvg: { type: Number },
   previousiScoreAvg: { type: Number },
-});
-export const universitiesAndCollegesSchema = new mongoose.Schema({
-  name: String,
-  domains: [String],
-  web_pages: [String],
-  country: String,
-  alpha_two_code: String,
-  state_province: String,
 });
 export const postSchema = new mongoose.Schema(
   {

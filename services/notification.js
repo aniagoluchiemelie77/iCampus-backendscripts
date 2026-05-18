@@ -23,6 +23,7 @@ import {
   orderCompletedTemplate,
   orderReviewTemplate,
   orderCancelledEmailTemplate,
+  salesPayoutTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -114,6 +115,20 @@ export const createNotification = async ({
           message =
             message ||
             `Hi ${payload.userName}, welcome to the iCampus community!`;
+          break;
+        case "SALES_PAYOUT_SUCCESS":
+          subject = "Funds Received: Your Sales Payout is here!";
+          if (sendEmail) {
+            htmlContent = salesPayoutTemplate(
+              payload.username,
+              payload.amount,
+              payload.transactionId,
+            );
+          }
+          title = title || "Sales Payout Successful";
+          message =
+            message ||
+            `${payload.amount.toLocaleString()} iCash has been moved to your wallet.`;
           break;
         case "MARKET_PURCHASE_DEBIT":
           subject = `Receipt: ${payload.productName}`;

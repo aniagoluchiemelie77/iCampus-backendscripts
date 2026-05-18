@@ -561,8 +561,8 @@ export const orderCompletedTemplate = (
   const isAgent = role === "agent";
 
   const roleSpecificMessage = isAgent
-    ? `<p style="color: ${colors.text}">You have successfully verified the delivery for <strong>${productName}</strong>. Your commission has been credited.</p>`
-    : `<p style="color: ${colors.text}">The buyer has received <strong>${productName}</strong>. The escrow funds have been released to your balance.</p>`;
+    ? `<p style="color: ${colors.text}">You have successfully verified the delivery for <strong>${productName}</strong>, your commission has been credited. Proceed to payout to withdraw to your iCash wallet.</p>`
+    : `<p style="color: ${colors.text}">The buyer has received <strong>${productName}</strong>, proceed to payout to withdraw your sales proceeds to your iCash wallet.</p>`;
 
   const body = `
     <h2 style="color: ${colors.success}; margin-top: 0;">Tranaction Completed, Payment Released!</h2>
@@ -577,7 +577,7 @@ export const orderCompletedTemplate = (
     <div style="background: #e7f3ff; border: 1px solid #d1e7ff; padding: 15px; border-radius: 5px; margin: 15px 0;">
       <p style="margin: 0; font-weight: bold; color: ${colors.secondary};">Transaction Finalized</p>
       <p style="font-size: 13px; margin: 5px 0; color: ${colors.text};">
-        The funds are now available in your iCash wallet for withdrawal or internal purchases.
+        The funds are now available for withdrawal to your iCash wallet.
       </p>
     </div>
 
@@ -674,6 +674,37 @@ export const courseCompletionEmailTemplate = (
 
     <p style="color: ${colors.text}; font-size: 14px;">
       Your hard work is paying off. Keep the momentum going—check your library for your next challenge!
+    </p>
+  `;
+
+  return emailWrapper(body);
+};
+export const salesPayoutTemplate = (username, amount, transactionId) => {
+  const body = `
+    <h2 style="color: ${colors.success}; margin-top: 0;">Payout Successful!</h2>
+    <p style="color: ${colors.text}">Hi ${username},</p>
+    <p style="color: ${colors.text}">Your request to move your sales proceeds to your main wallet has been processed. The funds are now available for immediate use.</p>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <p style="color: #666; margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Amount Transferred</p>
+      <p style="color: ${colors.primary}; margin: 5px 0; font-size: 24px; font-weight: bold;">${amount.toLocaleString()} iCash</p>
+      
+      <div style="height: 1px; background: #eee; margin: 10px 0;"></div>
+      
+      <p style="color: ${colors.text}; margin: 0; font-size: 13px;"><strong>Transaction ID:</strong> #${transactionId}</p>
+    </div>
+
+    <div style="background: #fff9e6; border: 1px solid #ffeeba; padding: 15px; border-radius: 5px; margin: 15px 0;">
+      <p style="margin: 0; font-weight: bold; color: #856404;">What can you do now?</p>
+      <ul style="font-size: 13px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
+        <li>Purchase course materials or items on the Marketplace.</li>
+        <li>Send iCash to other students on campus.</li>
+        <li>Withdraw funds to your linked bank account.</li>
+      </ul>
+    </div>
+
+    <p style="font-size: 13px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
+      Thank you for being a part of the <strong>iCampus</strong> sales ecosystem!
     </p>
   `;
 
