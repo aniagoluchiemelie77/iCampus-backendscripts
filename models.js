@@ -371,6 +371,19 @@ export const productSchema = new mongoose.Schema({
   amountInStock: { type: Number, default: 1 },
   impressions: { type: Number, default: 1 },
   sales: { type: Number, default: 0 },
+  niche: {
+    type: String,
+    enum: [
+      "Electronics",
+      "Courses",
+      "Documents",
+      "Fashion",
+      "Stationery",
+      "Snacks and Deserts",
+      "Food",
+    ],
+    required: true,
+  },
   type: {
     type: String,
     enum: ["physical", "course", "file"],
