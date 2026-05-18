@@ -17,7 +17,6 @@ import {
   generateTransactionId,
   generatePayoutId,
 } from "../utils/idGenerator.js";
-
 async function sendOrderNotifications(buyer, processedItems) {
   for (const {
     order,
