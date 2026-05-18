@@ -4,6 +4,7 @@ import { protect } from "../middleware/auth.js";
 import { User } from "../tableDeclarations.js";
 import {
   fetchAllProducts,
+  getPayoutHistory,
   clearUserCart,
   bulkAddToCart,
   initializeCheckout,
@@ -13,6 +14,7 @@ import {
   completeOrderDelivery,
   logProductImpression,
   getSellerSalesHistory,
+  requestPayout,
 } from "../controllers/storeControllers.js";
 
 export default function (Product) {
@@ -137,6 +139,8 @@ export default function (Product) {
   router.post("/orders/cancel", protect, cancelOrder);
   router.patch("/product/toggle-impressions", protect, logProductImpression);
   router.get("/sales/history", protect, getSellerSalesHistory);
+  router.get("/payouts/fetch-history", protect, getPayoutHistory);
+  router.post("/payouts/request-payout", protect, requestPayout);
   return router;
 }
 

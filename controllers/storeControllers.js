@@ -6,6 +6,7 @@ import {
   Transactions,
   ProductImpression,
   ProductSales,
+  Payout,
 } from "../tableDeclarations.js";
 import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
@@ -14,6 +15,7 @@ import mongoose from "mongoose";
 import {
   generateNotificationId,
   generateTransactionId,
+  generatePayoutId,
 } from "../utils/idGenerator.js";
 
 async function sendOrderNotifications(buyer, processedItems) {
@@ -214,17 +216,6 @@ export const initializeCheckout = async (req, res) => {
         seller.pendingSalesBalance += netEarnings;
         const salesIncrement = item.quantity || 1;
         await seller.save({ session });
-        await new Transactions({
-          transactionId: generateTransactionId("payment"),
-          userId: seller.uid,
-          type: "payment",
-          amountICash: netEarnings,
-          status: "success",
-          payType: "in",
-          title: `Payment for ${product.title}`,
-          reference: `REF-${orderId}`,
-          createdAt: new Date(),
-        }).save({ session });
         await Product.findOneAndUpdate(
           { productId: product.productId },
           { $inc: { sales: salesIncrement } },
@@ -339,17 +330,6 @@ export const completeOrderDelivery = async (req, res) => {
       sellerEarnings -= agentEarnings;
       agent.pendingSalesBalance += agentEarnings;
       await agent.save({ session });
-      await new Transactions({
-        transactionId: generateTransactionId("payment"),
-        userId: agent.uid,
-        type: "payment",
-        amountICash: agentEarnings,
-        status: "success",
-        payType: "in",
-        title: `Delivery Fee: ${product.title}`,
-        reference: `REF-${orderId}`,
-        createdAt: new Date(),
-      }).save({ session });
       await createNotification({
         notificationId: generateNotificationId("store"),
         recipientId: agent.uid,
@@ -357,7 +337,7 @@ export const completeOrderDelivery = async (req, res) => {
         category: "finance",
         actionType: "ORDER_COMPLETED",
         title: "Delivery Commission Earned",
-        message: `You earned ${agentEarnings} iCash for verifying order #${orderId}`,
+        message: `You earned ${agentEarnings} iCash for verifying order #${orderId}.`,
         payload: {
           amount: agentEarnings,
           userName: agent.firstname,
@@ -392,17 +372,6 @@ export const completeOrderDelivery = async (req, res) => {
       },
       sendEmail: true,
     });
-    await new Transactions({
-      transactionId: generateTransactionId("payment"),
-      userId: seller.uid,
-      type: "payment",
-      amountICash: sellerEarnings,
-      status: "success",
-      payType: "in",
-      title: `Delivery Fee: ${product.title}`,
-      reference: `REF-${orderId}`,
-      createdAt: new Date(),
-    }).save({ session });
     await createNotification({
       notificationId: generateNotificationId("store"),
       recipientId: order.buyerId,
@@ -582,5 +551,82 @@ export const getSellerSalesHistory = async (req, res) => {
       success: false,
       message: "Internal server error while fetching sales records",
     });
+  }
+};
+export const getPayoutHistory = async (req, res) => {
+  try {
+    const userUid = req.user.id;
+    if (!userUid) {
+      return res.status(400).json({
+        success: false,
+        message: "User identification missing.",
+      });
+    }
+    const history = await Payout.find({ sellerUid: userUid })
+      .sort({ createdAt: -1 })
+      .select("-__v");
+    return res.status(200).json({
+      success: true,
+      data: history,
+      message: "Payout history retrieved successfully.",
+    });
+  } catch (error) {
+    console.error("Fetch Payout Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "An internal error occurred while fetching payout history.",
+      error: error.message,
+    });
+  }
+};
+export const requestPayout = async (req, res) => {
+  const { amount } = req.body;
+  const userId = req.user.id;
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const user = await User.findOne({ uid: userId }).session(session);
+    if (user.pendingSalesBalance < amount) {
+      throw new Error("Insufficient pending balance.");
+    }
+    user.pendingSalesBalance -= amount;
+    user.pointsBalance += amount;
+    const payoutId = generatePayoutId(userId);
+    const newPayout = await Payout.create(
+      [
+        {
+          payoutId,
+          sellerUid: userId,
+          amount: amount,
+          status: "completed",
+          method: "Internal Transfer",
+          reference: `REF-${payoutId}`,
+          processedAt: new Date(),
+        },
+      ],
+      { session },
+    );
+    user.payoutHistory.push(newPayout[0].payoutId);
+    await user.save({ session });
+    await new Transactions({
+      transactionId: generateTransactionId("payment"),
+      userId,
+      type: "payment",
+      amountICash: amount,
+      status: "success",
+      payType: "in",
+      title: `Sales Payout`,
+      reference: `REF-${payoutId}`,
+      createdAt: new Date(),
+    }).save({ session });
+
+    await session.commitTransaction();
+    return { success: true };
+  } catch (error) {
+    await session.abortTransaction();
+    throw error;
+  } finally {
+    session.endSession();
   }
 };

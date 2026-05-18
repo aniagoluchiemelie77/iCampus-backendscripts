@@ -35,6 +35,7 @@ import {
   certificateSchema,
   impressionLogSchema,
   ProductSalesSchema,
+  payoutSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -165,3 +166,4 @@ export const ProductSales = mongoose.model(
   "productSales",
 );
 export const Reviews = mongoose.model("Reviews", reviewSchema, "reviews");
+export const Payout = mongoose.model("Payout", payoutSchema, "payout");

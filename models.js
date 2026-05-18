@@ -187,6 +187,40 @@ export const userPreferencesSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+export const payoutSchema = new mongoose.Schema(
+  {
+    payoutId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    sellerUid: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    amount: {
+      type: Number,
+      required: true,
+      min: [1, "Minimum payout is 1.00"],
+    },
+    status: {
+      type: String,
+      enum: ["processing", "completed", "failed", "cancelled"],
+      default: "processing",
+    },
+    method: {
+      type: String,
+      required: true,
+    },
+    reference: {
+      type: String,
+      unique: true,
+    },
+    processedAt: { type: Date },
+  },
+  { timestamps: true },
+);
 export const userSchema = new mongoose.Schema({
   headline: { type: String },
   uid: { type: String, index: true, required: true },
@@ -246,6 +280,7 @@ export const userSchema = new mongoose.Schema({
     get: (v) => parseFloat(v.toFixed(2)),
     set: (v) => parseFloat(v.toFixed(2)),
   },
+  payoutHistory: [payoutSchema],
   hasSubscribed: { type: Boolean, default: false },
   blockedUsers: [{ type: String }],
   createdAt: Date,
