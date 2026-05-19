@@ -74,9 +74,9 @@ export const addUserRecord = async (userId, type, status, message) => {
 };
 
 const CATEGORY_MAX_PRICES = {
-  file: 2000, // Maximum 2,000 iCash for notes/PDFs
-  course: 15000, // Maximum 15,000 iCash for premium masterclasses
-  physical: 50000, // Maximum 50,000 iCash for heavy gear/electronics
+  file: 1000,
+  course: 10000,
+  physical: 50000,
 };
 productSchema.pre("save", function (next) {
   const price = this.price;
