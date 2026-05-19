@@ -1,8 +1,8 @@
-import jwt from 'jsonwebtoken';
-import admin from 'firebase-admin';
+import jwt from "jsonwebtoken";
+import admin from "firebase-admin";
 const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-import {User, UserRecords} from '../tableDeclarations.js'; 
-import rateLimit from 'express-rate-limit';
+import { User, UserRecords } from "../tableDeclarations.js";
+import rateLimit from "express-rate-limit";
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccountPath),
@@ -72,3 +72,39 @@ export const addUserRecord = async (userId, type, status, message) => {
     { upsert: true },
   );
 };
+
+const CATEGORY_MAX_PRICES = {
+  file: 2000, // Maximum 2,000 iCash for notes/PDFs
+  course: 15000, // Maximum 15,000 iCash for premium masterclasses
+  physical: 50000, // Maximum 50,000 iCash for heavy gear/electronics
+};
+productSchema.pre("save", function (next) {
+  const price = this.price;
+  const type = this.productType;
+
+  // Rule 1: Check against hard ecosystem category limits
+  const maxAllowed = CATEGORY_MAX_PRICES[type];
+  if (maxAllowed && price > maxAllowed) {
+    return next(
+      new Error(
+        `Price exploitation protection: Maximum limit for type '${type}' is ${maxAllowed} iCash.`,
+      ),
+    );
+  }
+
+  // Rule 2: Anti-scalping protection for flipped secondary assets
+  if (this.isResale && this.originalPurchasePrice) {
+    const maxMarkupMultiplier = 1.3; // Maximum 30% price inflation allowed
+    const absoluteCeiling = this.originalPurchasePrice * maxMarkupMultiplier;
+
+    if (price > absoluteCeiling) {
+      return next(
+        new Error(
+          `Anti-scalping block: Resale prices cannot be inflated by more than 30%. Maximum allowed price for this item is ${absoluteCeiling.toFixed(2)} iCash.`,
+        ),
+      );
+    }
+  }
+
+  next();
+});

@@ -16,6 +16,7 @@ import {
   generateNotificationId,
   generateTransactionId,
 } from "../../utils/idGenerator.js";
+import { uploadAndVerifyLessonVideo } from "../../controllers/lectures.js";
 
 export const generateAssessmentId = (courseCode = "GEN") => {
   const year = new Date().getFullYear();
@@ -1036,5 +1037,6 @@ export default function (User) {
       res.status(500).json({ message: "Internal Server Error" });
     }
   });
+  router.post("/upload-video", protect, uploadAndVerifyLessonVideo);
   return router;
 }
