@@ -74,9 +74,9 @@ export const addUserRecord = async (userId, type, status, message) => {
 };
 
 const CATEGORY_MAX_PRICES = {
-  file: 1000,
-  course: 10000,
-  physical: 50000,
+  file: 100,
+  course: 500,
+  physical: 1000,
 };
 productSchema.pre("save", function (next) {
   const price = this.price;
