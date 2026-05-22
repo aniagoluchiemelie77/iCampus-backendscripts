@@ -938,3 +938,69 @@ export const saveProductController = async (req, res) => {
     });
   }
 };
+export const deleteProductController = async (req, res) => {
+  try {
+    const userUid = req.user.uid;
+    const { productId } = req.params;
+
+    if (!productId) {
+      return res.status(400).json({
+        success: false,
+        message: "Missing required product identification parameter.",
+      });
+    }
+
+    // Find and delete the product ONLY if it belongs to the authenticated user
+    const product = await Product.findOneAndDelete({
+      productId: productId,
+      sellerId: userUid,
+    });
+
+    if (!product) {
+      return res.status(404).json({
+        success: false,
+        message: "Product record not found or unauthorized deletion access.",
+      });
+    }
+
+    // Optional: If you use a physical storage setup (like file system unlinking)
+    // and want to clean up uploaded product files when deleted, you would loop
+    // through product.fileDetails here and run fs.unlink().
+
+    // Fetch seller context for the notification wrapper logic
+    const seller = await User.findOne({ uid: userUid }).lean();
+    const sellerEmail = seller ? seller.email : req.user.email;
+
+    // Create a localized push/dashboard notification record for the deletion footprint
+    await createNotification({
+      notificationId: generateNotificationId("store"),
+      recipientId: userUid,
+      recipientEmail: sellerEmail,
+      category: "store",
+      actionType: "PRODUCT_DELETION",
+      title: "Product Listing Removed",
+      message: `Your marketplace item "${product.title}" has been successfully taken down.`,
+      entityId: productId,
+      entityType: "product",
+      sendEmail: false, // Usually turned off for simple intentional deletions, set to true if preferred
+      payload: {
+        productId: productId,
+        productName: product.title,
+      },
+    }).catch((err) =>
+      console.error("Non-blocking deletion log emission failure:", err),
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Product entry successfully unlinked and purged.",
+      data: { productId },
+    });
+  } catch (error) {
+    console.error("Global crash layer hit in deleteProductController:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal application routing anomaly.",
+    });
+  }
+};
