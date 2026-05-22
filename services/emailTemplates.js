@@ -710,3 +710,77 @@ export const salesPayoutTemplate = (username, amount, transactionId) => {
 
   return emailWrapper(body);
 };
+export const productCreationTemplate = (
+  username,
+  productName,
+  price,
+  productId,
+) => {
+  const body = `
+    <h2 style="color: ${colors.success}; margin-top: 0;">Product Listed Successfully!</h2>
+    <p style="color: ${colors.text}">Hi ${username},</p>
+    <p style="color: ${colors.text}">Your product has been approved and is now live on the campus digital marketplace. Other students can view and purchase it immediately.</p>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <p style="color: #666; margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Item Details</p>
+      <p style="color: ${colors.text}; margin: 5px 0 0 0; font-size: 16px; font-weight: bold;">${productName}</p>
+      <p style="color: ${colors.primary}; margin: 5px 0; font-size: 24px; font-weight: bold;">${price.toLocaleString()} iCash</p>
+      
+      <div style="height: 1px; background: #eee; margin: 10px 0;"></div>
+      
+      <p style="color: ${colors.text}; margin: 0; font-size: 13px;"><strong>Product ID:</strong> #${productId}</p>
+    </div>
+
+    <div style="background: #e8f4fd; border: 1px solid #bee5eb; padding: 15px; border-radius: 5px; margin: 15px 0;">
+      <p style="margin: 0; font-weight: bold; color: #1d648a;">What happens next?</p>
+      <ul style="font-size: 13px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
+        <li>Track your views and sales directly from your seller dashboard.</li>
+        <li>Once a student purchases this item, earnings will move to your sales wallet.</li>
+        <li>Ensure your item description remains accurate to avoid listing reports.</li>
+      </ul>
+    </div>
+
+    <p style="font-size: 13px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
+      Thank you for powering the <strong>iCampus</strong> digital marketplace!
+    </p>
+  `;
+
+  return emailWrapper(body);
+};
+export const productUpdateTemplate = (
+  username,
+  productName,
+  price,
+  productId,
+) => {
+  const body = `
+    <h2 style="color: ${colors.success}; margin-top: 0;">Changes Saved Successfully!</h2>
+    <p style="color: ${colors.text}">Hi ${username},</p>
+    <p style="color: ${colors.text}">Your recent updates to your marketplace listing have been successfully processed and are now live for all users to see.</p>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <p style="color: #666; margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Updated Details</p>
+      <p style="color: ${colors.text}; margin: 5px 0 0 0; font-size: 16px; font-weight: bold;">${productName}</p>
+      <p style="color: ${colors.primary}; margin: 5px 0; font-size: 24px; font-weight: bold;">${price.toLocaleString()} iCash</p>
+      
+      <div style="height: 1px; background: #eee; margin: 10px 0;"></div>
+      
+      <p style="color: ${colors.text}; margin: 0; font-size: 13px;"><strong>Product ID:</strong> #${productId}</p>
+    </div>
+
+    <div style="background: #eafaf1; border: 1px solid #c3e6cb; padding: 15px; border-radius: 5px; margin: 15px 0;">
+      <p style="margin: 0; font-weight: bold; color: #1e7e34;">What should you check?</p>
+      <ul style="font-size: 13px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
+        <li>Review your product page in the app to ensure formatting looks correct.</li>
+        <li>If you updated stock amounts or addresses, double-check your dashboard metrics.</li>
+        <li>Active carts containing this item have been automatically updated with your new price.</li>
+      </ul>
+    </div>
+
+    <p style="font-size: 13px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
+      Thank you for maintaining an active presence in the <strong>iCampus</strong> digital marketplace!
+    </p>
+  `;
+
+  return emailWrapper(body);
+};

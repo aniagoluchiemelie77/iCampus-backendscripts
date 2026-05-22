@@ -40,21 +40,30 @@ export function generateTransactionId(type = "payment") {
    */
   return `TX-${typePrefix}-${dateStr}-${timeStr}-${randomStr}`;
 }
-/**
- * Generates a unique Payout ID
- * Format: PY-YYMMDD-HHMM-USERID_SHORT-RAND
- * Example: PY-260518-0845-A7B2-X9
- */
 export function generatePayoutId(userId) {
   const now = new Date();
   const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
-  const timeStr = 
-    now.getHours().toString().padStart(2, "0") + 
+  const timeStr =
+    now.getHours().toString().padStart(2, "0") +
     now.getMinutes().toString().padStart(2, "0");
   const userPart = userId ? userId.toString().slice(-4).toUpperCase() : "ANON";
   const randomStr = Math.random().toString(36).substring(2, 4).toUpperCase();
   //PY-YYMMDD-HHMM-Last 4 characters of UID-2 random characters
   return `PY-${dateStr}-${timeStr}-${userPart}-${randomStr}`;
+}
+export function generateProductId(userId) {
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+  const timeStr =
+    now.getHours().toString().padStart(2, "0") +
+    now.getMinutes().toString().padStart(2, "0");
+
+  const userStr = userId ? userId.toString() : "ANON";
+  const userPart = userStr.slice(-4).toUpperCase();
+  const randomStr = Math.random().toString(36).substring(2, 4).toUpperCase();
+
+  // PR-YYMMDD-HHMM-Last 4 characters of UID-2 random characters
+  return `PR-${dateStr}-${timeStr}-${userPart}-${randomStr}`;
 }
 export function generatePostId(length = 8) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";

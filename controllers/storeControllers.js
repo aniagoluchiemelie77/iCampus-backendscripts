@@ -8,6 +8,7 @@ import {
   ProductSales,
   Payout,
   DropOffStation,
+  Follow,
 } from "../tableDeclarations.js";
 import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
@@ -17,6 +18,7 @@ import {
   generateNotificationId,
   generateTransactionId,
   generatePayoutId,
+  generateProductId,
 } from "../utils/idGenerator.js";
 import { calculateHaversineDistance } from "../utils/distanceCalHelper.js";
 
@@ -82,6 +84,85 @@ async function sendOrderNotifications(buyer, processedItems) {
       sendEmail: true,
       saveToDb: true,
     });
+  }
+}
+async function processNotificationFanOut(
+  sellerUid,
+  sellerName,
+  product,
+  isEditing,
+) {
+  if (isEditing) return;
+  try {
+    const followers = await Follow.find({ followingId: sellerUid }).lean();
+    const sellerUser = await User.findOne({ uid: sellerUid })
+      .select("email")
+      .lean();
+    const notificationPromises = [];
+    if (sellerUser && sellerUser.email) {
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("store"),
+          recipientId: sellerUid,
+          recipientEmail: sellerUser.email,
+          category: "store",
+          actionType: "PRODUCT_CREATION",
+          title: "Product Published",
+          message: `Your item "${product.title}" has been successfully listed on the platform.`,
+          entityId: product.productId,
+          entityType: "product",
+          sendEmail: true,
+          payload: {
+            productId: product.productId,
+            productType: product.productType,
+            productName: product.title,
+          },
+        }),
+      );
+    }
+    if (followers && followers.length > 0) {
+      const followerIds = followers.map((f) => f.followerId);
+      const followerUsers = await User.find({ uid: { $in: followerIds } })
+        .select("uid email")
+        .lean();
+      const emailMap = new Map(followerUsers.map((u) => [u.uid, u.email]));
+
+      // Build out delivery tasks for every follower who has an email on file
+      followers.forEach((follower) => {
+        const recipientEmail = emailMap.get(follower.followerId);
+
+        if (recipientEmail) {
+          notificationPromises.push(
+            createNotification({
+              notificationId: generateNotificationId("store"),
+              recipientId: follower.followerId,
+              recipientEmail: recipientEmail,
+              category: "store",
+              actionType: "NEW_PRODUCT",
+              title: sellerName,
+              message: `has published a brand new item: "${product.title}"! Check it out now.`,
+              entityId: product.productId,
+              entityType: "product",
+              sendEmail: true,
+              payload: {
+                productId: product.productId,
+                productType: product.productType,
+                productName: product.title,
+                userName: sellerName,
+              },
+            }),
+          );
+        }
+      });
+    }
+    if (notificationPromises.length > 0) {
+      await Promise.all(notificationPromises);
+    }
+  } catch (error) {
+    console.error(
+      "Critical failure during background fan-out notification loop:",
+      error,
+    );
   }
 }
 export const fetchAllProducts = async (req, res) => {
@@ -699,6 +780,161 @@ export const getDropOffStations = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Internal server error processing station data",
+    });
+  }
+};
+export const saveProductController = async (req, res) => {
+  try {
+    const userUid = req.user.uid;
+    const { productId } = req.params;
+    const isEditing = !!productId;
+    const { title, description, productType, price } = req.body;
+
+    if (!title || !description || !productType || !price) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required product fields." });
+    }
+
+    let physicalDetails = null;
+    let courseDetails = null;
+    let lessons = [];
+    if (productType === "course") {
+      const rawLecturersText = req.body.additionalLecturersRaw || "";
+      let lecturerIds = [];
+
+      if (rawLecturersText.trim()) {
+        const inputNames = rawLecturersText
+          .split(/[,;\n]+/)
+          .map((name) => name.trim())
+          .filter(Boolean);
+
+        if (inputNames.length > 0) {
+          const searchConditions = inputNames.flatMap((name) => [
+            { firstname: { $regex: new RegExp(`^${name}$`, "i") } },
+            { lastname: { $regex: new RegExp(`^${name}$`, "i") } },
+            { username: { $regex: new RegExp(`^${name}$`, "i") } },
+            {
+              $expr: {
+                $regexMatch: {
+                  input: { $concat: ["$firstname", " ", "$lastname"] },
+                  regex: name,
+                  options: "i",
+                },
+              },
+            },
+          ]);
+          const foundUsers = await User.find({ $or: searchConditions })
+            .select("uid")
+            .lean();
+          lecturerIds = [...new Set(foundUsers.map((u) => u.uid))];
+        }
+      }
+      courseDetails = {
+        additionalLecturersRaw: rawLecturersText,
+        lecturerIds: lecturerIds,
+      };
+      lessons = req.body.lessons ? JSON.parse(req.body.lessons) : [];
+    }
+    if (productType === "physical") {
+      physicalDetails = {
+        weightKg: Number(req.body.weightKg) || 0,
+        inStock: Number(req.body.inStock) || 0,
+        colors: req.body.colors ? JSON.parse(req.body.colors) : [],
+        sizes: req.body.sizes ? JSON.parse(req.body.sizes) : [],
+        sellerGateways: req.body.sellerGateways
+          ? JSON.parse(req.body.sellerGateways)
+          : [],
+        dropOffAddress: req.body.dropOffAddress
+          ? JSON.parse(req.body.dropOffAddress)
+          : [],
+      };
+    }
+
+    let fileDetails = null;
+    if (productType === "file" && req.file) {
+      fileDetails = {
+        url: req.file.path,
+        name: req.file.originalname,
+        type: req.file.mimetype,
+      };
+    }
+    let product;
+    if (isEditing) {
+      product = await Product.findOneAndUpdate(
+        { productId: productId, sellerId: userUid },
+        {
+          title,
+          description,
+          productType,
+          price,
+          physicalDetails,
+          courseDetails,
+          lessons,
+          fileDetails,
+        },
+        { new: true },
+      );
+      if (!product) {
+        return res.status(404).json({
+          success: false,
+          message: "Product record not found or unauthorized editing access.",
+        });
+      }
+      const sellerEmail = seller ? seller.email : req.user.email;
+      await createNotification({
+        notificationId: generateNotificationId("store"),
+        recipientId: userUid,
+        recipientEmail: req.user.email,
+        category: "store",
+        actionType: "PRODUCT_UPDATE",
+        title: "Product Updated Successfully",
+        message: `Your changes to "${product.title}" have been successfully saved.`,
+        entityId: product.productId,
+        entityType: "product",
+        sendEmail: true,
+        payload: {
+          productId: product.productId,
+          productType: product.productType,
+          productName: product.title,
+          price: product.price,
+        },
+      });
+    } else {
+      const newCustomId = generateProductId(userUid);
+      product = new Product({
+        productId: newCustomId,
+        sellerId: userUid,
+        title,
+        description,
+        productType,
+        price,
+        physicalDetails,
+        courseDetails,
+        lessons,
+        fileDetails,
+      });
+      await product.save();
+    }
+    const seller = await User.findOne({ uid: userUid }).lean();
+    const sellerName = seller ? seller.firstname : "A creator you follow";
+    processNotificationFanOut(userUid, sellerName, product, isEditing).catch(
+      (err) =>
+        console.error("Background task pipeline error context captured:", err),
+    );
+
+    return res.status(isEditing ? 200 : 201).json({
+      success: true,
+      message: isEditing
+        ? "Product entry successfully patched."
+        : "Product entry successfully saved.",
+      data: product,
+    });
+  } catch (error) {
+    console.error("Global crash layer hit in saveProductController:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal application routing anomaly.",
     });
   }
 };

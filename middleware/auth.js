@@ -3,6 +3,8 @@ import admin from "firebase-admin";
 const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
 import { User, UserRecords } from "../tableDeclarations.js";
 import rateLimit from "express-rate-limit";
+import multer from "multer";
+import path from "path";
 
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccountPath),
@@ -73,38 +75,20 @@ export const addUserRecord = async (userId, type, status, message) => {
   );
 };
 
-const CATEGORY_MAX_PRICES = {
-  file: 100,
-  course: 500,
-  physical: 1000,
-};
-productSchema.pre("save", function (next) {
-  const price = this.price;
-  const type = this.productType;
-
-  // Rule 1: Check against hard ecosystem category limits
-  const maxAllowed = CATEGORY_MAX_PRICES[type];
-  if (maxAllowed && price > maxAllowed) {
-    return next(
-      new Error(
-        `Price exploitation protection: Maximum limit for type '${type}' is ${maxAllowed} iCash.`,
-      ),
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, "uploads/");
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
+    cb(
+      null,
+      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname),
     );
-  }
+  },
+});
 
-  // Rule 2: Anti-scalping protection for flipped secondary assets
-  if (this.isResale && this.originalPurchasePrice) {
-    const maxMarkupMultiplier = 1.3; // Maximum 30% price inflation allowed
-    const absoluteCeiling = this.originalPurchasePrice * maxMarkupMultiplier;
-
-    if (price > absoluteCeiling) {
-      return next(
-        new Error(
-          `Anti-scalping block: Resale prices cannot be inflated by more than 30%. Maximum allowed price for this item is ${absoluteCeiling.toFixed(2)} iCash.`,
-        ),
-      );
-    }
-  }
-
-  next();
+export const upload = multer({
+  storage: storage,
+  limits: { fileSize: 1024 * 1024 * 25 },
 });

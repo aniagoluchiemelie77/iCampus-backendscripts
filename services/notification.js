@@ -5,6 +5,7 @@ import { sendEmail } from "./emailService.js";
 import { sendPushNotification } from "./pushNotification.js";
 import {
   welcomeEmailTemplate,
+  productUpdateTemplate,
   courseCompletionEmailTemplate,
   purchaseTemplate,
   newOrderTemplate,
@@ -24,6 +25,7 @@ import {
   orderReviewTemplate,
   orderCancelledEmailTemplate,
   salesPayoutTemplate,
+  productCreationTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -115,6 +117,31 @@ export const createNotification = async ({
           message =
             message ||
             `Hi ${payload.userName}, welcome to the iCampus community!`;
+          break;
+        case "PRODUCT_CREATION":
+          const { username, productName, price, productId } = payload;
+          emailHtml = productCreationTemplate(
+            username,
+            productName,
+            price,
+            productId,
+          );
+          emailSubject = ` Product Listed Successfully: ${productName}`;
+          break;
+        case "PRODUCT_UPDATE":
+          const {
+            productId: updatedId,
+            productName: updatedName,
+            price: updatedPrice,
+          } = payload;
+
+          emailHtml = productUpdateTemplate(
+            username,
+            updatedName,
+            updatedPrice,
+            updatedId,
+          );
+          emailSubject = `Changes Saved: ${updatedName}`;
           break;
         case "SALES_PAYOUT_SUCCESS":
           subject = "Funds Received: Your Sales Payout is here!";

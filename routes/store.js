@@ -16,7 +16,9 @@ import {
   logProductImpression,
   getSellerSalesHistory,
   requestPayout,
+  saveProductController,
 } from "../controllers/storeControllers.js";
+import { upload } from "../middleware/auth.js";
 
 export default function (Product) {
   const router = express.Router();
@@ -143,6 +145,18 @@ export default function (Product) {
   router.get("/payouts/fetch-history", protect, getPayoutHistory);
   router.post("/payouts/request-payout", protect, requestPayout);
   router.get("/drop-off-stations/fetch", protect, getDropOffStations);
+  router.post(
+    "/products/create",
+    protect,
+    upload.array("files", 5),
+    saveProductController,
+  );
+  router.put(
+    "/products/edit/:productId",
+    protect,
+    upload.array("files", 5),
+    saveProductController,
+  );
   return router;
 }
 
