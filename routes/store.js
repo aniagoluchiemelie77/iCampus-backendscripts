@@ -11,6 +11,7 @@ import {
   clearFavorites,
   getPendingOrders,
   cancelOrder,
+  getDropOffStations,
   completeOrderDelivery,
   logProductImpression,
   getSellerSalesHistory,
@@ -141,6 +142,7 @@ export default function (Product) {
   router.get("/sales/history", protect, getSellerSalesHistory);
   router.get("/payouts/fetch-history", protect, getPayoutHistory);
   router.post("/payouts/request-payout", protect, requestPayout);
+  router.get("/drop-off-stations/fetch", protect, getDropOffStations);
   return router;
 }
 

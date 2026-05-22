@@ -358,6 +358,8 @@ export const dropOffStation = new mongoose.Schema({
   code: { type: String },
   contactPerson: { type: String },
   agentId: { type: String, required: true },
+  latitude: { type: Number },
+  longitude: { type: Number },
 });
 export const impressionLogSchema = new mongoose.Schema({
   userId: String,

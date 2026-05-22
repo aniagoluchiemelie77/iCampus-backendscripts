@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import {
+  dropOffStation,
   reviewSchema,
   iTagSchema,
   messageSchema,
@@ -152,3 +153,8 @@ export const ProductSales = mongoose.model(
 );
 export const Reviews = mongoose.model("Reviews", reviewSchema, "reviews");
 export const Payout = mongoose.model("Payout", payoutSchema, "payout");
+export const DropOffStation = mongoose.model(
+  "DropOffStation",
+  dropOffStation,
+  "dropOffStations",
+);

@@ -7,6 +7,7 @@ import {
   ProductImpression,
   ProductSales,
   Payout,
+  DropOffStation,
 } from "../tableDeclarations.js";
 import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
@@ -17,6 +18,8 @@ import {
   generateTransactionId,
   generatePayoutId,
 } from "../utils/idGenerator.js";
+import { calculateHaversineDistance } from "../utils/distanceCalHelper.js";
+
 async function sendOrderNotifications(buyer, processedItems) {
   for (const {
     order,
@@ -656,5 +659,46 @@ export const requestPayout = async (req, res) => {
     throw error;
   } finally {
     session.endSession();
+  }
+};
+export const getDropOffStations = async (req, res) => {
+  try {
+    const { lat, lng } = req.query;
+    const stations = await DropOffStation.find({}).lean();
+    if (!lat || !lng) {
+      return res.status(200).json({
+        success: true,
+        message: "Stations fetched successfully",
+        data: stations,
+      });
+    }
+    const userLat = parseFloat(lat);
+    const userLng = parseFloat(lng);
+    const stationsWithDistance = stations
+      .map((station) => {
+        const distance = calculateHaversineDistance(
+          userLat,
+          userLng,
+          station.latitude,
+          station.longitude,
+          "km",
+        );
+        return {
+          ...station,
+          distance: distance,
+        };
+      })
+      .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+    return res.status(200).json({
+      success: true,
+      message: "Closest stations fetched successfully",
+      data: stationsWithDistance,
+    });
+  } catch (error) {
+    console.error("Error fetching stations:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error processing station data",
+    });
   }
 };
