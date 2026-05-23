@@ -942,15 +942,12 @@ export const deleteProductController = async (req, res) => {
   try {
     const userUid = req.user.uid;
     const { productId } = req.params;
-
     if (!productId) {
       return res.status(400).json({
         success: false,
         message: "Missing required product identification parameter.",
       });
     }
-
-    // Find and delete the product ONLY if it belongs to the authenticated user
     const product = await Product.findOneAndDelete({
       productId: productId,
       sellerId: userUid,
@@ -979,10 +976,10 @@ export const deleteProductController = async (req, res) => {
       category: "store",
       actionType: "PRODUCT_DELETION",
       title: "Product Listing Removed",
-      message: `Your marketplace item "${product.title}" has been successfully taken down.`,
+      message: `Your marketplace item "${product.title}" has been successfully deleted.`,
       entityId: productId,
       entityType: "product",
-      sendEmail: false, // Usually turned off for simple intentional deletions, set to true if preferred
+      sendEmail: false,
       payload: {
         productId: productId,
         productName: product.title,

@@ -17,6 +17,7 @@ import {
   getSellerSalesHistory,
   requestPayout,
   saveProductController,
+  deleteProductController,
 } from "../controllers/storeControllers.js";
 import { upload } from "../middleware/auth.js";
 
@@ -145,7 +146,11 @@ export default function (Product) {
   router.get("/payouts/fetch-history", protect, getPayoutHistory);
   router.post("/payouts/request-payout", protect, requestPayout);
   router.get("/drop-off-stations/fetch", protect, getDropOffStations);
-  router.delete("/delete/:productId", protect, deleteProductController);
+  router.delete(
+    "/products/delete/:productId",
+    protect,
+    deleteProductController,
+  );
   router.post(
     "/products/create",
     protect,
