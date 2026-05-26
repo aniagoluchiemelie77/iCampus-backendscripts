@@ -154,13 +154,14 @@ export default function (Product) {
   router.post(
     "/products/create",
     protect,
-    upload.array("files", 5),
+    upload.single("digitalAsset"),
     saveProductController,
   );
+
   router.put(
     "/products/edit/:productId",
     protect,
-    upload.array("files", 5),
+    upload.single("digitalAsset"),
     saveProductController,
   );
   return router;

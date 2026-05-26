@@ -784,3 +784,34 @@ export const productUpdateTemplate = (
 
   return emailWrapper(body);
 };
+export const productDeletionTemplate = (username, productName, productId) => {
+  const body = `
+    <h2 style="color: ${colors.primary}; margin-top: 0;">Listing Removed Successfully</h2>
+    <p style="color: ${colors.text}">Hi ${username},</p>
+    <p style="color: ${colors.text}">This is confirmation that your marketplace listing has been removed from the platform and is no longer visible to buyers.</p>
+    
+    <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid ${colors.primary};">
+      <p style="color: #666; margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Removed Product Details</p>
+      <p style="color: ${colors.text}; margin: 5px 0 0 0; font-size: 16px; font-weight: bold;">${productName}</p>
+      
+      <div style="height: 1px; background: #eee; margin: 10px 0;"></div>
+      
+      <p style="color: ${colors.text}; margin: 0; font-size: 13px;"><strong>Product ID:</strong> #${productId}</p>
+    </div>
+
+    <div style="background: #fff3cd; border: 1px solid #ffeeba; padding: 15px; border-radius: 5px; margin: 15px 0;">
+      <p style="margin: 0; font-weight: bold; color: #856404;">Important Notices Regarding Purged Assets:</p>
+      <ul style="font-size: 13px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
+        <li><strong>Media Cleanup:</strong> Any linked video clips, file assets, and thumbnail sets associated with this instance have been removed from our cloud storage networks.</li>
+        <li><strong>User Interactions:</strong> Active buyer shopping carts or pending checkout sequences containing this item have been cleared.</li>
+        <li><strong>History Records:</strong> Completed transaction history or financial logs involving past distributions of this product will remain saved on your profile for accounting documentation.</li>
+      </ul>
+    </div>
+
+    <p style="font-size: 13px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
+      Thank you for being part of the <strong>iCampus</strong> digital marketplace!
+    </p>
+  `;
+
+  return emailWrapper(body);
+};

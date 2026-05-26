@@ -14,6 +14,7 @@ import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
 import { v4 as uuidv4 } from "uuid";
 import mongoose from "mongoose";
+import { storage } from "../config/firebaseAdmin.js";
 import {
   generateNotificationId,
   generateTransactionId,
@@ -21,6 +22,7 @@ import {
   generateProductId,
 } from "../utils/idGenerator.js";
 import { calculateHaversineDistance } from "../utils/distanceCalHelper.js";
+import fs from "fs/promises";
 
 async function sendOrderNotifications(buyer, processedItems) {
   for (const {
@@ -788,15 +790,25 @@ export const saveProductController = async (req, res) => {
     const userUid = req.user.uid;
     const { productId } = req.params;
     const isEditing = !!productId;
-    const { title, description, productType, price } = req.body;
+    const { title, description, productType, price, mediaUrls } = req.body;
 
     if (!title || !description || !productType || !price) {
+      if (req.file) await fs.unlink(req.file.path).catch(() => {});
       return res
         .status(400)
         .json({ success: false, message: "Missing required product fields." });
     }
-
-    let physicalDetails = null;
+    let productThumbnails = [];
+    if (mediaUrls) {
+      try {
+        productThumbnails =
+          typeof mediaUrls === "string" && mediaUrls.startsWith("[")
+            ? JSON.parse(mediaUrls)
+            : [mediaUrls];
+      } catch (e) {
+        productThumbnails = [mediaUrls];
+      }
+    }
     let courseDetails = null;
     let lessons = [];
     if (productType === "course") {
@@ -836,6 +848,7 @@ export const saveProductController = async (req, res) => {
       };
       lessons = req.body.lessons ? JSON.parse(req.body.lessons) : [];
     }
+    let physicalDetails = null;
     if (productType === "physical") {
       physicalDetails = {
         weightKg: Number(req.body.weightKg) || 0,
@@ -850,16 +863,50 @@ export const saveProductController = async (req, res) => {
           : [],
       };
     }
-
     let fileDetails = null;
-    if (productType === "file" && req.file) {
-      fileDetails = {
-        url: req.file.path,
-        name: req.file.originalname,
-        type: req.file.mimetype,
-      };
+
+    if (isEditing) {
+      const existingProduct = await Product.findOne({
+        productId,
+        sellerId: userUid,
+      });
+
+      if (!existingProduct) {
+        if (req.file) await fs.unlink(req.file.path).catch(() => {});
+        return res
+          .status(404)
+          .json({ success: false, message: "Product not found." });
+      }
+
+      if (productType === "file") {
+        if (req.file) {
+          if (existingProduct.fileDetails?.url) {
+            await fs
+              .unlink(existingProduct.fileDetails.url)
+              .catch((err) =>
+                console.error("Failed to delete stale digital asset:", err),
+              );
+          }
+          fileDetails = {
+            url: req.file.path,
+            name: req.file.originalname,
+            type: req.file.mimetype,
+          };
+        } else {
+          fileDetails = existingProduct.fileDetails;
+        }
+      }
+    } else {
+      if (productType === "file" && req.file) {
+        fileDetails = {
+          url: req.file.path,
+          name: req.file.originalname,
+          type: req.file.mimetype,
+        };
+      }
     }
     let product;
+
     if (isEditing) {
       product = await Product.findOneAndUpdate(
         { productId: productId, sellerId: userUid },
@@ -872,6 +919,7 @@ export const saveProductController = async (req, res) => {
           courseDetails,
           lessons,
           fileDetails,
+          mediaUrls: productThumbnails,
         },
         { new: true },
       );
@@ -881,7 +929,6 @@ export const saveProductController = async (req, res) => {
           message: "Product record not found or unauthorized editing access.",
         });
       }
-      const sellerEmail = seller ? seller.email : req.user.email;
       await createNotification({
         notificationId: generateNotificationId("store"),
         recipientId: userUid,
@@ -899,7 +946,12 @@ export const saveProductController = async (req, res) => {
           productName: product.title,
           price: product.price,
         },
-      });
+      }).catch((err) =>
+        console.error(
+          "Non-blocking update notification tracking failure:",
+          err,
+        ),
+      );
     } else {
       const newCustomId = generateProductId(userUid);
       product = new Product({
@@ -913,11 +965,15 @@ export const saveProductController = async (req, res) => {
         courseDetails,
         lessons,
         fileDetails,
+        mediaUrls: productThumbnails,
       });
       await product.save();
     }
+
+    // 6. Handle Background Fan-out Pipelines
     const seller = await User.findOne({ uid: userUid }).lean();
     const sellerName = seller ? seller.firstname : "A creator you follow";
+
     processNotificationFanOut(userUid, sellerName, product, isEditing).catch(
       (err) =>
         console.error("Background task pipeline error context captured:", err),
@@ -931,6 +987,7 @@ export const saveProductController = async (req, res) => {
       data: product,
     });
   } catch (error) {
+    if (req.file) await fs.unlink(req.file.path).catch(() => {});
     console.error("Global crash layer hit in saveProductController:", error);
     return res.status(500).json({
       success: false,
@@ -942,6 +999,7 @@ export const deleteProductController = async (req, res) => {
   try {
     const userUid = req.user.uid;
     const { productId } = req.params;
+
     if (!productId) {
       return res.status(400).json({
         success: false,
@@ -959,16 +1017,55 @@ export const deleteProductController = async (req, res) => {
         message: "Product record not found or unauthorized deletion access.",
       });
     }
+    if (product.productType === "file" && product.fileDetails?.fileUrl) {
+      fs.unlink(product.fileDetails.fileUrl).catch((err) =>
+        console.error(
+          `Failed to delete local file asset at ${product.fileDetails.fileUrl}:`,
+          err,
+        ),
+      );
+    }
+    if (product.thumbnails) {
+      const thumbnailUrls = Array.isArray(product.thumbnails)
+        ? product.thumbnails
+        : [product.thumbnails];
 
-    // Optional: If you use a physical storage setup (like file system unlinking)
-    // and want to clean up uploaded product files when deleted, you would loop
-    // through product.fileDetails here and run fs.unlink().
+      const bucket = storage().bucket();
 
-    // Fetch seller context for the notification wrapper logic
+      thumbnailUrls.forEach((url) => {
+        if (url.includes("firebasestorage.googleapis.com")) {
+          try {
+            const decodedUrl = decodeURIComponent(url);
+            const pathStartIndex = decodedUrl.indexOf("/o/") + 3;
+            const pathEndIndex = decodedUrl.indexOf("?");
+            const filePath =
+              pathEndIndex !== -1
+                ? decodedUrl.substring(pathStartIndex, pathEndIndex)
+                : decodedUrl.substring(pathStartIndex);
+
+            bucket
+              .file(filePath)
+              .delete()
+              .catch((err) =>
+                console.error(
+                  `Firebase file deletion failed for path: ${filePath}`,
+                  err,
+                ),
+              );
+          } catch (parseError) {
+            console.error(
+              `Error parsing Firebase URL for deletion: ${url}`,
+              parseError,
+            );
+          }
+        }
+      });
+    }
+
     const seller = await User.findOne({ uid: userUid }).lean();
     const sellerEmail = seller ? seller.email : req.user.email;
+    const sellerName = seller ? seller.firstname : req.user.firstname;
 
-    // Create a localized push/dashboard notification record for the deletion footprint
     await createNotification({
       notificationId: generateNotificationId("store"),
       recipientId: userUid,
@@ -981,13 +1078,13 @@ export const deleteProductController = async (req, res) => {
       entityType: "product",
       sendEmail: false,
       payload: {
+        username: sellerName,
         productId: productId,
         productName: product.title,
       },
     }).catch((err) =>
       console.error("Non-blocking deletion log emission failure:", err),
     );
-
     return res.status(200).json({
       success: true,
       message: "Product entry successfully unlinked and purged.",

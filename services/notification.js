@@ -26,6 +26,7 @@ import {
   orderCancelledEmailTemplate,
   salesPayoutTemplate,
   productCreationTemplate,
+  productDeletionTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -117,6 +118,11 @@ export const createNotification = async ({
           message =
             message ||
             `Hi ${payload.userName}, welcome to the iCampus community!`;
+          break;
+        case "PRODUCT_DELETION":
+          const { productName, productId, username } = payload;
+          emailSubject = `Marketplace Listing Removed: ${productName}`;
+          emailBody = productDeletionTemplate(username, productName, productId);
           break;
         case "PRODUCT_CREATION":
           const { username, productName, price, productId } = payload;
