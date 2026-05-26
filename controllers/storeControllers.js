@@ -497,6 +497,7 @@ export const completeOrderDelivery = async (req, res) => {
       payload: {
         orderId: order.orderId,
         productName: product.title,
+        targetId: order.productId,
         userName: buyer ? buyer.firstname : "Valued User",
       },
     });

@@ -98,7 +98,6 @@ export const Attendance = mongoose.model(
   attendanceSchema,
   "lectureAttendance",
 );
-export const Reviews = mongoose.model("Reviews", reviewSchema, "reviews");
 export const Transactions = mongoose.model(
   "Transactions",
   transactionSchema,

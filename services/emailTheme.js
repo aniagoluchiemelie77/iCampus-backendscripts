@@ -15,9 +15,10 @@ export const theme = {
   branding: {
     logoUrl: "https://icampus.com/assets/logo-email.png",
     companyName: "iCampus",
-    supportEmail: "support@useicampus.com",
-    websiteUrl: "https://icampus.com",
-    appDashboardUrl: "https://useicampus.com/dashboard",
+    supportEmail: "support@useicampus.io",
+    websiteUrl: "https://icampus.io",
+    appDashboardUrl: "https://useicampus.io/dashboard",
+    appReviewsScreenUrl: "https://useicampus.io/reviews",
   },
   typography: {
     fontFamily: "'Helvetica Neue', Helvetica, Arial, sans-serif",

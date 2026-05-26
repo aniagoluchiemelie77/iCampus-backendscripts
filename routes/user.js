@@ -14,6 +14,7 @@ import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import twilio from "twilio";
 import { client } from "../workers/reditFile.js";
 import { getDownloads } from "../controllers/fetchActions.js";
+import { createReviewController } from "../controllers/userActionsController.js";
 import {
   SignUp,
   Login,
@@ -74,23 +75,6 @@ const formattedTime = new Intl.DateTimeFormat("en-US", {
   minute: "numeric",
   hour12: true,
 }).format(now);
-const getOrdinalSuffix = (day) => {
-  if (day > 3 && day < 21) return "th";
-  switch (day % 10) {
-    case 1:
-      return "st";
-    case 2:
-      return "nd";
-    case 3:
-      return "rd";
-    default:
-      return "th";
-  }
-};
-const day = now.getDate();
-const month = now.toLocaleString("default", { month: "short" }); // e.g., "Jan"
-const year = now.getFullYear();
-const formattedDate = `${day}${getOrdinalSuffix(day)} ${month} ${year}`;
 
 export default function (User) {
   const router = express.Router();
@@ -1537,6 +1521,7 @@ export default function (User) {
     protect,
     handleGenerateCertificate,
   );
+  router.post("/reviews/create", createReviewController);
 
   return router;
 }

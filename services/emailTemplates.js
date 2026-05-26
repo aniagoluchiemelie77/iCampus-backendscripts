@@ -69,7 +69,6 @@ export const purchaseTemplate = (
   `;
   return emailWrapper(body);
 };
-
 export const loginAlertTemplate = (userName, ipAddress, location, time) => {
   const body = `
     <h2 style="color: ${colors.danger}; margin-top: 0;">Security Alert</h2>
@@ -586,7 +585,14 @@ export const orderCompletedTemplate = (
 
   return emailWrapper(body);
 };
-export const orderReviewTemplate = (userName, productName, orderId) => {
+export const orderReviewTemplate = (
+  userName,
+  productName,
+  orderId,
+  targetId,
+  productType = "product",
+) => {
+  const reviewUrl = `${branding.appReviewsScreenUrl}?productType=${productType}&targetId=${targetId}`;
   const body = `
     <h2 style="color: ${colors.primary}; margin-top: 0;">We value your feedback</h2>
     <p style="color: ${colors.text}">Hi ${userName},</p>
@@ -600,12 +606,11 @@ export const orderReviewTemplate = (userName, productName, orderId) => {
     </div>
 
     <div style="text-align: center; margin: 30px 0;">
-      <a href="https://icampus.app/reviews/${orderId}" 
+      <a href="${reviewUrl}" 
          style="background-color: ${colors.primary}; color: white; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
          Rate Product & Seller
       </a>
     </div>
-
     <p style="font-size: 13px; color:${colors.secondary};">What did you think of the purchase process? Open the app to rate the app's delivery method too!</p>
   `;
 
@@ -648,7 +653,9 @@ export const courseCompletionEmailTemplate = (
   productName,
   pdfUrl,
   productId,
+  productType = "course",
 ) => {
+  const reviewUrl = `${branding.appReviewsScreenUrl}?productType=${productType}&targetId=${productId}`;
   const body = `
     <h2 style="color: ${colors.primary}; margin-top: 0;">Congratulations!</h2>
     <p style="color: ${colors.text}">Hi ${userName},</p>
@@ -667,7 +674,7 @@ export const courseCompletionEmailTemplate = (
       <p style="margin: 5px 0; color: ${colors.text};">
         How was your experience? Your feedback helps the iCampus community grow.
       </p>
-      <a href="https://useicampus.edu/reviews/${productId}" style="color: ${colors.primary}; font-weight: bold; text-decoration: underline;">
+      <a href="${reviewUrl}" style="color: ${colors.primary}; font-weight: bold; text-decoration: underline;">
         Leave a Review for this Course
       </a>
     </div>

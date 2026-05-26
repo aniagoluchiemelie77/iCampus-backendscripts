@@ -246,6 +246,7 @@ export const createNotification = async ({
               payload.userName,
               payload.productName,
               payload.orderId,
+              payload.targetId,
             );
           }
           break;
