@@ -14,7 +14,21 @@ import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import twilio from "twilio";
 import { client } from "../workers/reditFile.js";
 import { getDownloads } from "../controllers/fetchActions.js";
-import { createReviewController } from "../controllers/userActionsController.js";
+import {
+  createReviewController,
+  deleteAccount,
+  createNewPasswordInApp,
+  verifyPhoneNumberOTP,
+  deleteRecoveryEmail,
+  updateEmails,
+  toggleBlockedUsers,
+  deletePhoneNumber,
+  customizeItag,
+  verifyPasswordInapp,
+  revokeLoggedInDeviceSession,
+  patchUserPreferences,
+  sendPhoneNumberOTP,
+} from "../controllers/userActionsController.js";
 import {
   SignUp,
   Login,
@@ -63,8 +77,6 @@ import {
   verifyGoogleToken,
   verifyGithubToken,
 } from "../api/foreignFetchApis.js";
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -81,30 +93,7 @@ export default function (User) {
 
   router.post("/register", SignUp);
   router.post("/login", authLimiter, Login);
-  router.post("/revoke-session", protect, async (req, res) => {
-    const userId = req.user.id;
-    const { deviceIdToRevoke } = req.body;
-
-    try {
-      const user = await User.findOne({ uid: userId });
-      if (!user) return res.status(404).json({ error: "User not found" });
-
-      // Filter out the session with the matching deviceId
-      const originalLength = user.sessions.length;
-      user.sessions = user.sessions.filter(
-        (s) => s.deviceId !== deviceIdToRevoke,
-      );
-
-      if (user.sessions.length === originalLength) {
-        return res.status(404).json({ error: "Session not found" });
-      }
-
-      await user.save();
-      res.status(200).json({ message: "Device logged out successfully" });
-    } catch (error) {
-      res.status(500).json({ error: "Could not revoke session" });
-    }
-  });
+  router.post("/revoke-session", protect, revokeLoggedInDeviceSession);
   router.post("/refresh-token", RefreshToken);
   router.patch("/:uid", async (req, res) => {
     try {
@@ -202,7 +191,6 @@ export default function (User) {
         .json({ message: "Server error fetching notification details" });
     }
   });
-  // router.js
   router.patch("/notifications/mark-all-read/:userId", async (req, res) => {
     try {
       const { userId } = req.params;
@@ -966,12 +954,9 @@ export default function (User) {
           .status(400)
           .json({ success: false, message: "You cannot follow yourself" });
       }
-
-      // Check if the follow relationship already exists
       const existingFollow = await Follow.findOne({ followerId, followingId });
 
       if (existingFollow) {
-        // 1. UNFOLLOW LOGIC
         await Follow.deleteOne({ id: existingFollow.id });
         const targetUser = await User.findOne({ uid: followingId })
           .select("firstname")
@@ -982,16 +967,11 @@ export default function (User) {
           message: `Unfollowed ${targetUser.firstname} successfully`,
         });
       } else {
-        // 2. FOLLOW LOGIC
         await Follow.create({ followerId, followingId });
-
         const followerUser = await User.findOne({ uid: followerId })
           .select("firstname")
           .lean();
         const followerName = followerUser ? followerUser.firstname : "Someone";
-
-        // Trigger a notification for the person being followed
-        // We don't 'await' this so the response stays fast
         createNotification({
           notificationId: generateNotificationId("social"),
           recipientId: followingId,
@@ -1016,51 +996,7 @@ export default function (User) {
       res.status(500).json({ success: false, message: "Server error" });
     }
   });
-  router.put("/update-itag", protect, async (req, res) => {
-    try {
-      const { userId, updates } = req.body;
-
-      if (!userId) {
-        return res.status(400).json({
-          success: false,
-          message: "User ID is required",
-        });
-      }
-
-      // findOneAndUpdate with { new: true } returns the updated document
-      const updatedITag = await ITag.findOneAndUpdate(
-        { userId: userId },
-        { $set: updates },
-        { new: true, runValidators: true },
-      );
-      if (!updatedITag) {
-        return res.status(404).json({
-          success: false,
-          message: "iTag not found",
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: "iTag updated successfully",
-        data: updatedITag,
-      });
-    } catch (error) {
-      console.error("Update Error:", error);
-
-      // Check for MongoDB duplicate key error (if username is changed to one that exists)
-      if (error.code === 11000) {
-        return res.status(400).json({
-          success: false,
-          message: "Username already exists",
-        });
-      }
-      return res.status(500).json({
-        success: false,
-        message: "Internal server error",
-      });
-    }
-  });
+  router.put("/update-itag", protect, customizeItag);
   router.get("/check-itag/:val", async (req, res) => {
     try {
       const { val } = req.params;
@@ -1168,37 +1104,7 @@ export default function (User) {
         .json({ status: "error", message: "Failed to fetch banks" });
     }
   });
-  router.post("/block/toggle", protect, async (req, res) => {
-    const { targetUserId } = req.body;
-    const userId = req.user.uid;
-
-    try {
-      const user = await User.findOne({ uid: userId });
-      const isBlocked = (user.blockedUsers || []).includes(targetUserId);
-
-      if (isBlocked) {
-        await User.updateOne(
-          { uid: userId },
-          { $pull: { blockedUsers: targetUserId } },
-        );
-        res.status(200).json({ action: "unblocked" });
-      } else {
-        await User.updateOne(
-          { uid: userId },
-          { $addToSet: { blockedUsers: targetUserId } },
-        );
-        await Follow.deleteMany({
-          $or: [
-            { followerId: userId, followingId: targetUserId },
-            { followerId: targetUserId, followingId: userId },
-          ],
-        });
-        res.status(200).json({ action: "blocked" });
-      }
-    } catch (err) {
-      res.status(500).json({ error: err.message });
-    }
-  });
+  router.post("/block/toggle", protect, toggleBlockedUsers);
   router.get("/blocked-list", protect, async (req, res) => {
     try {
       const user = await User.findOne({ uid: req.user.uid });
@@ -1212,279 +1118,15 @@ export default function (User) {
       res.status(500).json({ error: err.message });
     }
   });
-  router.patch("/preferences/:userId", protect, async (req, res) => {
-    const { userId } = req.params;
-    const updateData = req.body;
-
-    try {
-      const updatedPrefs = await userPrefs.findOneAndUpdate(
-        { userId: userId },
-        { $set: updateData },
-        { new: true, upsert: true },
-      );
-      res.status(200).json({
-        message: "Preferences updated successfully",
-        preferences: updatedPrefs,
-      });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: "Server error updating preferences" });
-    }
-  });
-  router.delete("/account/delete", protect, async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    try {
-      const userUid = req.user.id;
-      const { reason } = req.body;
-
-      const user = await User.findOne({ uid: userUid });
-      if (!user) throw new Error("User not found");
-      await DeletedUser.create(
-        [
-          {
-            uid: userUid,
-            reason: reason || "N/A",
-            accountAgeDays: Math.floor(
-              (Date.now() - user.createdAt) / (1000 * 60 * 60 * 24),
-            ),
-            tierAtDeletion: user.tier,
-            finalBalance: user.balance || 0,
-          },
-        ],
-        { session },
-      );
-      await Promise.all([
-        User.findOneAndDelete({ uid: userUid }).session(session),
-        userPrefs.findOneAndDelete({ userId: userUid }).session(session),
-        UserBankOrCardDetails.deleteMany({ userId: userUid }).session(session),
-        ITag.findOneAndDelete({ userId: userUid }).session(session),
-        Follow.deleteMany({
-          $or: [{ followerId: userUid }, { followingId: userUid }],
-        }).session(session),
-      ]);
-      await Course.updateMany(
-        { $or: [{ studentsEnrolled: userUid }, { lecturerIds: userUid }] },
-        { $pull: { studentsEnrolled: userUid, lecturerIds: userUid } },
-      ).session(session);
-      await Posts.updateMany(
-        { "userId.uid": userUid },
-        {
-          $set: {
-            "userId.firstname": "Deleted",
-            "userId.lastname": "User",
-            "userId.uid": null,
-            "userId.profilePic": [],
-          },
-        },
-      ).session(session);
-
-      await session.commitTransaction();
-      res
-        .status(200)
-        .json({ status: true, message: "Account deleted successfully." });
-    } catch (error) {
-      await session.abortTransaction();
-      console.error("Cleanup Failed:", error);
-      res
-        .status(500)
-        .json({ status: false, message: "Error during account deletion." });
-    } finally {
-      session.endSession();
-    }
-  });
-  router.post("/password/verify", protect, async (req, res) => {
-    const { password } = req.body;
-    try {
-      const user = await User.findOne({ uid: req.user.id }).select("+password");
-      if (!user) {
-        return res
-          .status(404)
-          .json({ success: false, message: "User not found" });
-      }
-      const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) {
-        return res
-          .status(401)
-          .json({ success: false, message: "Incorrect current password" });
-      }
-      res.status(200).json({ success: true, message: "Password verified" });
-    } catch (error) {
-      res.status(500).json({ success: false, message: "Server error" });
-    }
-  });
-  router.put("/password/update", protect, async (req, res) => {
-    const { newPassword } = req.body;
-    try {
-      const user = await User.findOne({ uid: req.user.id });
-      const hashedPassword = await bcrypt.hash(newPassword, 10);
-      user.password = hashedPassword;
-      await user.save();
-      const now = new Date();
-      const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
-      await createNotification({
-        notificationId: generateNotificationId("security"),
-        recipientId: user.uid,
-        recipientEmail: user.email,
-        recoveryEmails: user.recoveryEmails,
-        category: "auth",
-        actionType: "PASSWORD_CHANGED",
-        title: "Password Changed",
-        message: `Your password was successfully updated on ${formattedTime}.`,
-        payload: {
-          userName: user.firstname || "User",
-          time: formattedTime,
-        },
-        sendEmailFlag: true,
-        sendEmail: true,
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
-      });
-      res
-        .status(200)
-        .json({ success: true, message: "Password updated successfully" });
-    } catch (error) {
-      res
-        .status(500)
-        .json({ success: false, message: "Could not update password" });
-    }
-  });
-  router.patch("/update-emails", protect, async (req, res) => {
-    const { email, type } = req.body;
-    const userUid = req.user.id;
-    let update = {};
-
-    if (type === "primary") {
-      update = { $set: { email: email } };
-    } else if (type === "secondary") {
-      update = {
-        $addToSet: {
-          recoveryEmails: { email, isVerified: true, addedAt: new Date() },
-        },
-      };
-    } else {
-      return res
-        .status(400)
-        .json({ message: "Invalid update type", success: false });
-    }
-    const updatedUser = await User.findOneAndUpdate({ uid: userUid }, update, {
-      new: true,
-    });
-    if (!updatedUser) {
-      return res
-        .status(404)
-        .json({ message: "User not found", success: false });
-    }
-    return res.status(200).json({
-      message: `${type === "primary" ? "Primary" : "Recovery"} email updated`,
-      success: true,
-    });
-  });
-  router.delete("/recovery-email", protect, async (req, res) => {
-    const { emailToDelete } = req.body;
-    const userUid = req.user.iid;
-    const updatedUser = await User.findOneAndUpdate(
-      { uid: userUid },
-      { $pull: { recoveryEmails: { email: emailToDelete } } },
-      { new: true },
-    );
-    res.json({ success: true, recoveryEmails: updatedUser.recoveryEmails });
-  });
-  router.delete("/phone-number", protect, async (req, res) => {
-    try {
-      const { phoneNumber } = req.body;
-      const userUid = req.user.id;
-
-      if (!phoneNumber) {
-        return res.status(400).json({ message: "Phone number is required" });
-      }
-      const updatedUser = await User.findOneAndUpdate(
-        { uid: userUid },
-        { $pull: { phoneNumbers: { number: phoneNumber } } },
-        { new: true },
-      );
-      if (!updatedUser) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      return res.status(200).json({
-        message: "Phone number deleted successfully",
-        phoneNumbers: updatedUser.phoneNumbers,
-      });
-    } catch (error) {
-      console.error("Delete phone error:", error);
-      return res.status(500).json({ message: "Server error" });
-    }
-  });
-  router.post("/verify-phone-otp", protect, async (req, res) => {
-    const { phoneNumber, codeInput } = req.body;
-
-    const hashedInput = crypto
-      .createHash("sha256")
-      .update(codeInput)
-      .digest("hex");
-
-    const verificationRecord = await PhoneNumberVerification.findOne({
-      phoneNumber: phoneNumber,
-      code: hashedInput,
-    });
-
-    if (!verificationRecord) {
-      return res.status(400).json({ message: "Invalid or expired code" });
-    }
-
-    // Use { new: true } to get the user document AFTER the $set is applied
-    const updatedUser = await User.findOneAndUpdate(
-      { uid: req.user.id, "phoneNumbers.number": phoneNumber },
-      { $set: { "phoneNumbers.$.isVerified": true } },
-      { new: true },
-    );
-
-    if (!updatedUser) {
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    // Clean up the OTP record
-    await PhoneNumberVerification.deleteOne({ _id: verificationRecord._id });
-
-    // Return the updated phoneNumbers array for Redux
-    res.status(200).json({
-      success: true,
-      message: "Phone verified!",
-      phoneNumbers: updatedUser.phoneNumbers,
-    });
-  });
-  router.post("/send-phone-otp", protect, async (req, res) => {
-    const client = twilio(accountSid, authToken);
-    const { phoneNumber, channel } = req.body;
-    const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-    const hashedCode = crypto
-      .createHash("sha256")
-      .update(otpCode)
-      .digest("hex");
-    await PhoneNumberVerification.findOneAndUpdate(
-      { phoneNumber },
-      { code: hashedCode, expiresAt: new Date(Date.now() + 15 * 60 * 1000) },
-      { upsert: true },
-    );
-
-    try {
-      const message = await client.messages.create({
-        from: `${channel}:${process.env.TWILIO_WHATSAPP_NUMBER}`,
-        contentSid: process.env.TWILIO_CONTENT_SID,
-        contentVariables: JSON.stringify({ 1: otpCode }),
-        to: `${channel}:${phoneNumber}`,
-      });
-
-      console.log("WhatsApp sent:", message.sid);
-      res.status(200).json({ success: true, message: "OTP sent to WhatsApp" });
-    } catch (error) {
-      console.error("Twilio Error:", error);
-      res
-        .status(500)
-        .json({ success: false, message: "Failed to send WhatsApp message" });
-    }
-  });
+  router.patch("/preferences/:userId", protect, patchUserPreferences);
+  router.delete("/account/delete", protect, deleteAccount);
+  router.post("/password/verify", protect, verifyPasswordInapp);
+  router.put("/password/update", protect, createNewPasswordInApp);
+  router.patch("/update-emails", protect, updateEmails);
+  router.delete("/recovery-email", protect, deleteRecoveryEmail);
+  router.delete("/phone-number", protect, deletePhoneNumber);
+  router.post("/verify-phone-otp", protect, verifyPhoneNumberOTP);
+  router.post("/send-phone-otp", protect, sendPhoneNumberOTP);
   router.get("/downloads/fetch-all", protect, getDownloads);
   router.patch("/downloads/update-progress", protect, async (req, res) => {
     const { productId, progress, completedLessons, lastWatched } = req.body;

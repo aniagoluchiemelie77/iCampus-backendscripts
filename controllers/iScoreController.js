@@ -7,7 +7,6 @@ import {
   Reviews,
 } from "../tableDeclarations.js";
 
-const CARRY_FORWARD_WEIGHT = 0.5;
 
 export const updateInstitutionScores = async () => {
   const stats = await User.aggregate([
@@ -138,7 +137,7 @@ export const calculateUnifiedIScore = async (user) => {
 
   const tierMultipliers = { free: 1, pro: 1.05, premium: 1.1 };
   total *= tierMultipliers[user.tier] || 1;
-  const CARRY_FORWARD_WEIGHT = 0.5;
+  const CARRY_FORWARD_WEIGHT = 0.3;
   const previousScore = user.currentIScore || 0;
   let finalScore =
     previousScore * CARRY_FORWARD_WEIGHT + total * (1 - CARRY_FORWARD_WEIGHT);
