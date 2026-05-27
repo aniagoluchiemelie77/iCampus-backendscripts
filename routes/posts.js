@@ -8,6 +8,7 @@ import {
 } from "../utils/idGenerator.js";
 import { extractMentions } from "../utils/postMentionsRegex.js";
 import { protect } from "../middleware/auth.js";
+import { createPost, updatePost } from "../controllers/postActions.js";
 
 export default function (Posts, User) {
   const router = express.Router();
@@ -131,7 +132,7 @@ export default function (Posts, User) {
       const userUpdate = isLiked
         ? { $pull: { likes: postId } }
         : { $push: { likes: postId } };
-      const message = isLiked ? 'You unliked a post.' : "You liked a post.";
+      const message = isLiked ? "You unliked a post." : "You liked a post.";
 
       // Update Post and User in parallel
       const [updatedPost] = await Promise.all([
@@ -143,7 +144,7 @@ export default function (Posts, User) {
           "firstname lastname",
         );
         createNotification({
-          notificationId: generateNotificationId('social'),
+          notificationId: generateNotificationId("social"),
           recipientId: post.userId.uid,
           category: "social",
           actionType: "POST_LIKED",
@@ -169,7 +170,7 @@ export default function (Posts, User) {
           },
         });
       }
-      res.json({updatedPost, message});
+      res.json({ updatedPost, message });
     } catch (err) {
       res.status(500).json({ message: err.message });
     }
@@ -183,7 +184,7 @@ export default function (Posts, User) {
     try {
       // 1. First, check if the post exists
       const post = await Posts.findOne({ postId });
-      if (!post) return res.status(404).json({message: "Post not found"});
+      if (!post) return res.status(404).json({ message: "Post not found" });
 
       const isBookmarked = (post.bookmarks ?? []).includes(userId);
 
@@ -220,7 +221,9 @@ export default function (Posts, User) {
       res.status(200).json({
         isBookmarked: !isBookmarked,
         count: updatedPost.bookmarks.length,
-        message: isBookmarked ? 'You removed a post from your bookmarks' : 'You bookmarked a post'
+        message: isBookmarked
+          ? "You removed a post from your bookmarks"
+          : "You bookmarked a post",
       });
     } catch (err) {
       res.status(500).json({ message: err.message });
@@ -331,7 +334,7 @@ export default function (Posts, User) {
       }
       if (postAuthorId !== userId) {
         createNotification({
-          notificationId: generateNotificationId('social'),
+          notificationId: generateNotificationId("social"),
           recipientId: postAuthorId,
           category: "social",
           actionType: "POST_COMMENTED",
@@ -373,13 +376,13 @@ export default function (Posts, User) {
 
   // 7. Toggle REPOST with Notifications to Original Author and Followers (Handle Mentions in Repost Content)
   router.post("/repost", protect, async (req, res) => {
-    const { originalPostId, isRepost} = req.body;
+    const { originalPostId, isRepost } = req.body;
     const userId = req.user.id;
     try {
       const existingRepost = await Post.findOne({
         "userId.uid": userId,
         originalPostId: originalPostId,
-        isRepost
+        isRepost,
       });
       const io = req.app.get("socketio");
 
@@ -405,7 +408,9 @@ export default function (Posts, User) {
         });
       } else {
         const author = await User.findOne({ uid: userId })
-          .select("firstname lastname profilePic tier organizationName username")
+          .select(
+            "firstname lastname profilePic tier organizationName username",
+          )
           .lean();
         const originalPost = await Post.findOne({ postId: originalPostId });
         if (!author || !originalPost)
@@ -422,7 +427,7 @@ export default function (Posts, User) {
             profilePic: author.profilePic,
             tier: author.tier,
             organizationName: author.organizationName,
-            username: author.username
+            username: author.username,
           },
           originalAuthor: originalPost.userId,
           originalPostId,
@@ -451,7 +456,7 @@ export default function (Posts, User) {
         if (updatedOriginal && updatedOriginal.userId.uid !== userId) {
           notifiedUids.add(updatedOriginal.userId.uid);
           createNotification({
-            notificationId: generateNotificationId('social'),
+            notificationId: generateNotificationId("social"),
             recipientId: updatedOriginal.userId.uid,
             category: "social",
             actionType: "POST_REPOSTED",
@@ -475,7 +480,7 @@ export default function (Posts, User) {
             follow.followerId !== userId
           ) {
             createNotification({
-              notificationId: generateNotificationId('social'),
+              notificationId: generateNotificationId("social"),
               recipientId: follow.followerId,
               category: "social",
               actionType: "NEW_POST",
@@ -498,111 +503,8 @@ export default function (Posts, User) {
       res.status(500).json({ message: err.message });
     }
   });
-  // 8. CREATE POST (with Mention and Follower Notifications)
-  router.post("/create", protect, async (req, res) => {
-    try {
-      const { userId, content, media, poll, isSubscriptionContent } = req.body;
-      let processedMedia = media;
-      if (media?.mediaType === "video" && Array.isArray(media.url)) {
-        processedMedia.url = [media.url[0]];
-      }
-      const author = await User.findOne({ uid: userId }).select(
-        "firstname lastname username profilePic",
-      );
-      if (!author) {
-        return res.status(404).json({ message: "Author not found" });
-      }
-      const authorName = `${author.firstname} ${author.lastname}`;
-      const newPost = new Posts({
-        postId: generatePostId(),
-        originalAuthor: userId,
-        content,
-        isSubscriptionContent: isSubscriptionContent || false,
-        media: processedMedia,
-        postType?: poll ? "poll" : "media",
-        poll: poll
-          ? {
-              options: poll.options.map((opt, index) => ({
-                optionId: `opt_${Date.now()}_${index}`,
-                text: opt.text,
-                votes: [],
-              })),
-              totalVotes: 0,
-              expiresAt:
-                poll.expiresAt ||
-                new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // Default 7 days
-            }
-          : null,
-      });
-      await newPost.save();
-      // 3. Handle Mentions (@username)
-      const mentionedUsernames = extractMentions(content);
-      let notifiedUids = new Set();
-      if (mentionedUsernames.length > 0) {
-        const mentionedUsers = await User.find({
-          username: { $in: mentionedUsernames },
-        }).select("uid");
-
-        mentionedUsers.forEach((user) => {
-          notifiedUids.add(user.uid);
-          createNotification({
-            notificationId: generateNotificationId('social'),
-            recipientId: user.uid,
-            category: "social",
-            actionType: "POST_MENTION",
-            title: "You were mentioned",
-            message: `${authorName} mentioned you in a post.`,
-            payload: { postId: newPost._id, authorId: userId },
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-      }
-      // 4. Notify Followers
-      const followers = await Follow.find({ followingId: userId }).select(
-        "followerId",
-      );
-      followers.forEach((follow) => {
-        if (
-          !notifiedUids.has(follow.followerId) &&
-          follow.followerId !== userId
-        ) {
-          createNotification({
-            notificationId: generateNotificationId('social'),
-            recipientId: follow.followerId,
-            category: "social",
-            actionType: "NEW_POST",
-            title: `New Post from ${authorName}`,
-            message: `${authorName} just shared a new update.`,
-            payload: { postId: newPost._id, authorId: userId },
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        }
-      });
-
-      //iScore
-      if (req.user.usertype !== "enterprise") {
-        await User.updateOne(
-          { uid: req.user.uid },
-          {
-            $inc: {
-              "monthlyStats.libraryUsageSessions": 1,
-            },
-          },
-        );
-      }
-      res.status(201).json({
-        message: "Post created successfully",
-        data: newPost,
-      });
-    } catch (error) {
-      console.error("Create Post Error:", error);
-      res.status(500).json({ message: error.message });
-    }
-  });
+  router.post("/create", protect, createPost);
+  router.put("/:postId/update", protect, updatePost);
 
   //9. --- VOTE IN POLL ---
   router.patch("/vote", protect, async (req, res) => {
@@ -638,7 +540,7 @@ export default function (Posts, User) {
         updatedPost.userId.uid !== userId
       ) {
         createNotification({
-          notificationId: generateNotificationId('social'),
+          notificationId: generateNotificationId("social"),
           recipientId: updatedPost.userId.uid,
           category: "social",
           actionType: "POLL_MILESTONE",
@@ -655,51 +557,51 @@ export default function (Posts, User) {
     }
   });
 
- // 10. fetch posts using postId
-router.get("/:postId", protect, async (req, res) => {
-  try {
-    const { postId } = req.params;
+  // 10. fetch posts using postId
+  router.get("/:postId", protect, async (req, res) => {
+    try {
+      const { postId } = req.params;
 
-    const post = await Posts.aggregate([
-      { $match: { postId: postId } },
-      {
-        $lookup: {
-          from: "users",
-          localField: "userId.uid",
-          foreignField: "uid",
-          as: "authorDetails",
+      const post = await Posts.aggregate([
+        { $match: { postId: postId } },
+        {
+          $lookup: {
+            from: "users",
+            localField: "userId.uid",
+            foreignField: "uid",
+            as: "authorDetails",
+          },
         },
-      },
-      { $unwind: "$authorDetails" },
-      {
-        $project: {
-          // Keep all post fields
-          postId: 1,
-          content: 1,
-          createdAt: 1,
-          userId: 1,
-          // Add other specific post fields here if necessary, or use $$ROOT
-          
-          // Selectively include user fields
-          "authorDetails.firstname": 1,
-          "authorDetails.lastname": 1,
-          "authorDetails.username": 1,
-          "authorDetails.tier": 1,
-          "authorDetails.organizationName": 1,
-        },
-      },
-    ]);
+        { $unwind: "$authorDetails" },
+        {
+          $project: {
+            // Keep all post fields
+            postId: 1,
+            content: 1,
+            createdAt: 1,
+            userId: 1,
+            // Add other specific post fields here if necessary, or use $$ROOT
 
-    if (!post || post.length === 0) {
-      return res.status(404).json({ error: "Post not found" });
+            // Selectively include user fields
+            "authorDetails.firstname": 1,
+            "authorDetails.lastname": 1,
+            "authorDetails.username": 1,
+            "authorDetails.tier": 1,
+            "authorDetails.organizationName": 1,
+          },
+        },
+      ]);
+
+      if (!post || post.length === 0) {
+        return res.status(404).json({ error: "Post not found" });
+      }
+
+      res.json(post[0]);
+    } catch (err) {
+      console.error("Fetch single post error:", err);
+      res.status(500).json({ error: err.message });
     }
-
-    res.json(post[0]);
-  } catch (err) {
-    console.error("Fetch single post error:", err);
-    res.status(500).json({ error: err.message });
-  }
-});
+  });
 
   return router;
 }

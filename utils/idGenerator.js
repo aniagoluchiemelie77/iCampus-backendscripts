@@ -65,13 +65,21 @@ export function generateProductId(userId) {
   // PR-YYMMDD-HHMM-Last 4 characters of UID-2 random characters
   return `PR-${dateStr}-${timeStr}-${userPart}-${randomStr}`;
 }
-export function generatePostId(length = 8) {
-  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
-  let result = "";
-  for (let i = 0; i < length; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
+export function generatePostId() {
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+  const timeStr =
+    now.getHours().toString().padStart(2, "0") +
+    now.getMinutes().toString().padStart(2, "0");
+  let randomStr = "";
+  for (let i = 0; i < 4; i++) {
+    randomStr += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-  return result;
+  /**
+   * Format: PST-[YYMMDD]-[HHMM]-[RANDOM]
+   */
+  return `PST-${dateStr}-${timeStr}-${randomStr}`;
 }
 export function userAccountDetailsId(length = 10) {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";

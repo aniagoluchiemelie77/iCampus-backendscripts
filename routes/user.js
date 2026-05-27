@@ -13,7 +13,7 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import { authLimiter, addUserRecord, protect } from "../middleware/auth.js";
 import twilio from "twilio";
 import { client } from "../workers/reditFile.js";
-import { getDownloads } from "../controllers/fetchActions.js";
+import { getDownloads, fetchConnections } from "../controllers/fetchActions.js";
 import {
   createReviewController,
   deleteAccount,
@@ -782,6 +782,7 @@ export default function (User) {
       res.status(500).json({ message: error.message, success: false });
     }
   });
+  router.get("/fetch-connections", protect, fetchConnections);
   router.get("/profile/search:identifier", protect, async (req, res) => {
     try {
       const { identifier } = req.params;
