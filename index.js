@@ -30,8 +30,6 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 const io = init(httpServer);
-
-// 5. Make 'io' accessible to all routes via req.app.get("socketio")
 init(httpServer);
 
 app.use(cors());
@@ -60,17 +58,12 @@ mongoose
   .connect(MONGO_URI)
   .then(async () => {
     console.log("✅ MongoDB connected");
-
-    // Dynamic imports for routes
     const userRoutes = (await import("./routes/user.js")).default(User);
-    const reviewsRoutes = (await import("./routes/reviews.js")).default(User);
+    const reviewsRoutes = await import("./routes/reviews.js");
     const webhooksRoutes = (await import("./routes/webhooks.js")).default(User);
-    const messageRoutes = (await import("./routes/messages.js")).default(
-      Message,
-    );
-    const userAccountDetailsRoute = (
-      await import("./routes/userAccountDetails.js")
-    ).default(User);
+    const messageRoutes = await import("./routes/messages.js");
+    const userAccountDetailsRoute =
+      await import("./routes/userAccountDetails.js");
     const studentClassDetails = (
       await import("./routes/class/students.js")
     ).default(User);

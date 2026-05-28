@@ -1,6 +1,6 @@
 import { PaymentMethods } from "../tableDeclarations.js";
 import axios from "axios";
-import { User, Transactions } from "../tableDeclarations.js";
+import { User, Transactions, AccountStatement } from "../tableDeclarations.js";
 import {
   generateTransactionId,
   generateNotificationId,
@@ -8,6 +8,11 @@ import {
 import { createNotification } from "../services/notification.js";
 import { fetchLiveRateBackend } from "../utils/foreignAPIGetters.js";
 import mongoose from "mongoose";
+import { theme } from "../services/emailTheme";
+import { storage } from "../config/firebaseAdmin.js";
+import {generateStatementPDF} from '../templates/transactionHistoryTemplate.js';
+import { sendEmail } from "../services/emailService.js";
+import {encryptCardDetails} from '../utils/encryptionHelper.js';
 
 const USD_SUBSCRIPTION_PRICES = {
   Pro: 1.11,
@@ -507,4 +512,190 @@ export const verifySubscriptionFlwPayment = async (req, res) => {
         message: "Internal server error during verification",
       });
     }
-  }
+  };
+export const generateTransactionHistory = async (req, res) => {
+    try {
+      const { colors } = theme;
+      const { startDate, endDate } = req.body;
+      const userId = req.user.id;
+      const user = await User.findOne({ uid: userId });
+      if (!user) return res.status(404).json({ message: "User not found" });
+
+      const start = new Date(startDate);
+      const end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+      const existingStatement = await AccountStatement.findOne({
+        userId,
+        startDate: start,
+        endDate: end,
+      });
+
+      let firebaseUrl;
+      let income = existingStatement?.income || 0;
+      let expense = existingStatement?.expense || 0;
+      let pdfBuffer;
+
+      if (existingStatement) {
+        firebaseUrl = existingStatement.pdfUrl;
+        const bucket = storage.bucket();
+        const filePath = `statements/${userId}/AccountStatement-${start.getTime()}-${end.getTime()}.pdf`;
+        const file = bucket.file(filePath);
+
+        const [downloadBuffer] = await file.download();
+        pdfBuffer = downloadBuffer;
+      } else {
+        const reportData = await Transactions.aggregate([
+          {
+            $match: {
+              userId,
+              createdAt: { $gte: start, $lte: end },
+            },
+          },
+          {
+            $facet: {
+              stats: [
+                {
+                  $group: { _id: "$payType", total: { $sum: "$amountICash" } },
+                },
+              ],
+              history: [{ $sort: { createdAt: -1 } }],
+            },
+          },
+        ]);
+
+        const stats = reportData[0]?.stats || [];
+        const history = reportData[0]?.history || [];
+
+        income = stats.find((s) => s._id === "in")?.total || 0;
+        expense = stats.find((s) => s._id === "out")?.total || 0;
+        pdfBuffer = await generateStatementPDF({
+          user,
+          start,
+          end,
+          income,
+          expense,
+          history,
+        });
+        const bucket = storage.bucket();
+        const fileName = `statements/${userId}/AccountStatement-${start.getTime()}-${end.getTime()}.pdf`;
+        const file = bucket.file(fileName);
+
+        await file.save(pdfBuffer, {
+          metadata: { contentType: "application/pdf" },
+          public: true,
+        });
+
+        firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+        const newStatement = new AccountStatement({
+          userId,
+          startDate: start,
+          endDate: end,
+          pdfUrl: firebaseUrl,
+          income,
+          expense,
+        });
+        await newStatement.save();
+      }
+      const emailHtml = `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; padding: 20px;">
+        <h2 style="color: ${colors.primary};">Your iCash AccountStatement is Ready</h2>
+        <p style="color: ${colors.text};">Hi ${user.firstname},</p>
+        <p style="color: ${colors.text};">Attached is your transaction report for <b>${start.toDateString()}</b> to <b>${end.toDateString()}</b>.</p>
+        <hr/>
+        <p><b>Summary:</b></p>
+        <p style="color: ${colors.success};">Total Received: ${income.toLocaleString()} iCash</p>
+        <p style="color:${colors.primary};">Total Spent: ${expense.toLocaleString()} iCash</p>
+        <br/>
+        <p style="color: ${colors.text};">Thank you for using iCampus.</p>
+      </div>
+    `;
+
+      await sendEmail({
+        to: user.email,
+        subject: `iCash AccountStatement: ${user.firstname}`,
+        text: `Your iCash statement from ${start.toLocaleDateString()} is attached.`,
+        html: emailHtml,
+        attachments: [
+          {
+            filename: `iCash_Statement_${start.toISOString().split("T")[0]}.pdf`,
+            content: pdfBuffer,
+          },
+        ],
+      });
+
+      res.json({
+        success: true,
+        message: "AccountStatement processed successfully!",
+        pdfUrl: firebaseUrl,
+      });
+    } catch (error) {
+      console.error("AccountStatement Flow Error:", error);
+      res.status(500).json({ success: false, error: error.message });
+    }
+  };
+export const initiateFlwCharge =  async (req, res) => {
+    const { paymentType, cardData, isInternational, currencyCode } = req.body;
+    const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
+    const ENCRYPTION_KEY = process.env.FLUTTERWAVE_CLIENT_EKEY;
+
+    try {
+      let finalPayload = {};
+      if (paymentType === "card") {
+        const cardObject = JSON.stringify({
+          card_number: cardData.number.replace(/\s/g, ""),
+          cvv: cardData.cvv,
+          expiry_month: cardData.month,
+          expiry_year: cardData.year,
+          pin: cardData.pin,
+          billing_address: cardData.address,
+          billing_city: cardData.city,
+          billing_state: cardData.state,
+          billing_zip: cardData.zipcode,
+          billing_country: cardData.country || "US",
+        });
+        const encryptedData = encryptCardDetails(ENCRYPTION_KEY, cardObject);
+        finalPayload = {
+          client: encryptedData,
+          currency: currencyCode || "NGN",
+          amount: "50", 
+          fullname:
+            cardData.name ||
+            `${req.user.firstname || ""} ${req.user.lastname || ""}`.trim() ||
+            "User",
+          email: req.user.email,
+          tx_ref: `link-card-${Date.now()}`,
+          meta: {
+            userId: req.user.uid,
+            purpose: "linking_card",
+          },
+          authorization: {
+            mode: isInternational ? "avs_noauth" : "pin",
+          },
+        };
+      } else {
+        finalPayload = req.body.paymentData;
+      }
+      const flwResponse = await fetch(
+        `https://api.flutterwave.com/v3/charges?type=${paymentType}`,
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${SECRET_KEY}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(finalPayload),
+        },
+      );
+
+      const data = await flwResponse.json();
+      res.status(flwResponse.status).json({ success: true, data });
+    } catch (err) {
+      console.error("Flutterwave Server Error:", err);
+      res
+        .status(500)
+        .json({
+          success: false,
+          message: "Internal Server Error Processing Payment",
+        });
+    }
+  };

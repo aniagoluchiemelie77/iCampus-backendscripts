@@ -34,6 +34,7 @@ import {
   impressionLogSchema,
   productSalesSchema,
   payoutSchema,
+  statementSchema,
 } from "./models.js";
 
 export const Student = mongoose.model(
@@ -156,4 +157,9 @@ export const DropOffStation = mongoose.model(
   "DropOffStation",
   dropOffStation,
   "dropOffStations",
+);
+export const AccountStatement = mongoose.model(
+  "AccountStatement",
+  statementSchema,
+  "accountStatement",
 );

@@ -6,8 +6,21 @@ import {
   Posts,
   Transactions,
   ITag,
+  Message,
+  Notification,
+  Course,
+  Exceptions,
+  Lectures,
+  OperationalInstitutions,
 } from "../tableDeclarations.js";
 import { client } from "../workers/reditFile.js";
+import { createNotification } from "../services/notificationService.js";
+import { generateNotificationId } from "../utils/idGenerator.js";
+import axiosRetry from "axios-retry";
+import axios from "axios";
+import * as cheerio from "cheerio";
+import { getFallbackBooks } from "../utils/libraryHelpers.js";
+axiosRetry(axios, { retries: 3 });
 
 export const getDownloads = async (req, res) => {
   try {
@@ -303,5 +316,541 @@ export const fetchItagByUsername = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+export const fetchAllUserConversations = async (req, res) => {
+  try {
+    const uid = req.user.id;
+    const page = parseInt(req.query.page) || 1;
+    const limit = 15;
+    const skip = (page - 1) * limit;
+
+    const conversations = await Message.aggregate([
+      { $match: { $or: [{ senderId: uid }, { recipientId: uid }] } },
+      { $sort: { timestamp: -1 } },
+      {
+        $group: {
+          id: {
+            $cond: [{ $eq: ["$senderId", uid] }, "$recipientId", "$senderId"],
+          },
+          lastMessage: { $first: "$$ROOT" },
+        },
+      },
+      { $sort: { "lastMessage.timestamp": -1 } },
+      { $skip: skip },
+      { $limit: limit },
+      {
+        $lookup: {
+          from: "users",
+          localField: "id",
+          foreignField: "uid",
+          as: "otherUser",
+        },
+      },
+      { $unwind: "$otherUser" },
+      {
+        $project: {
+          id: 0,
+          otherUser: {
+            uid: 1,
+            firstname: 1,
+            username: 1,
+            lastname: 1,
+            profilePic: 1,
+            tier: 1,
+            organizationName: 1,
+          },
+          lastMessage: 1,
+        },
+      },
+    ]);
+
+    res.json({
+      success: true,
+      data: conversations,
+      hasMore: conversations.length === limit,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const fetchPal2PalConversation = async (req, res) => {
+  const { recipientId } = req.params;
+  const userId = req.user.id;
+  const { page = 1, limit = 20 } = req.query;
+
+  try {
+    const skip = (page - 1) * limit;
+    const messages = await Message.find({
+      $or: [
+        { senderId: userId, recipientId: recipientId },
+        { senderId: recipientId, recipientId: userId },
+      ],
+    })
+      .sort({ timestamp: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+    const totalMessages = await Message.countDocuments({
+      $or: [
+        { senderId: userId, recipientId: recipientId },
+        { senderId: recipientId, recipientId: userId },
+      ],
+    });
+    res.json({
+      success: true,
+      data: messages.reverse(),
+      hasMore: skip + messages.length < totalMessages,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const fetchUserNotifications = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { limit = "50", offset = "0", unread, category } = req.query;
+
+    if (!userId) {
+      return res.status(400).json({ message: "Missing userId" });
+    }
+
+    const filter = {
+      $or: [{ recipientId: userId }, { isPublic: true }],
+    };
+    if (unread === "true") {
+      filter.isRead = false;
+    }
+    if (category) {
+      filter.category = category;
+    }
+    const notifications = await Notification.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(Math.max(parseInt(offset), 0))
+      .limit(Math.max(parseInt(limit), 1));
+
+    res.status(200).json({ notifications });
+  } catch (error) {
+    console.error("Error fetching notifications:", error);
+    res.status(500).json({ message: "Server error" });
+  }
+};
+export const fetchSingleNotification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.uid;
+    const notification = await Notification.findOne({
+      notificationId: id,
+      recipientId: userId,
+    });
+    if (!notification) {
+      return res.status(404).json({
+        message: "Notification not found",
+        notification: null,
+      });
+    }
+    if (!notification.isRead) {
+      notification.isRead = true;
+      await notification.save();
+    }
+
+    res.status(200).json({
+      success: true,
+      notification,
+    });
+  } catch (error) {
+    console.error("Error fetching single notification:", error);
+    res.status(500).json({
+      success: false,
+      message: "Server error fetching notification details",
+    });
+  }
+};
+export const fetchProfileInformation = async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    const viewerUid = req.user.uid;
+    const { viewerTier, viewerRole, viewerFirstname } = req.query;
+    const targetUser = await User.findOne({
+      $or: [
+        { uid: identifier },
+        { username: identifier },
+        { firstname: identifier },
+        { lastname: identifier },
+      ],
+    })
+      .select("-password -refreshTokens -iCashPin")
+      .lean();
+    if (!targetUser) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+    const viewer = await User.findOne({ uid: viewerUid })
+      .select("blockedUsers")
+      .lean();
+
+    const isBlockedByViewer = (viewer?.blockedUsers || []).includes(
+      targetUser.uid,
+    );
+    const isViewerBlockedByTarget = (targetUser.blockedUsers || []).includes(
+      viewerUid,
+    );
+    if (isBlockedByViewer || isViewerBlockedByTarget) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "User not found or you have restricted access to this profile.",
+        isBlocked: true,
+        targetUid: targetUser.uid,
+      });
+    }
+    const [
+      followersList,
+      followingList,
+      isFollowing,
+      courses,
+      userPosts,
+      iTagData,
+      bookmarkedPosts,
+    ] = await Promise.all([
+      Follow.find({ followingId: targetUser.uid }).select("followerId").lean(),
+      Follow.find({ followerId: targetUser.uid }).select("followingId").lean(),
+      Follow.findOne({ followerId: viewerUid, followingId: targetUser.uid }),
+      targetUser.usertype === "lecturer" || targetUser.usertype === "otherUser"
+        ? Course.find({ lecturerIds: targetUser.uid })
+            .select(
+              "courseTitle courseCode thumbnailUrl session semester isActive description rating studentsEnrolled price",
+            )
+            .lean()
+        : null,
+
+      Posts.find({
+        $or: [{ "userId.uid": uid }, { originalAuthor: uid }],
+      })
+        .sort({ createdAt: -1 })
+        .lean(),
+      ITag.findOne({ userId: targetUser.uid }).lean(),
+      Posts.find({ postId: { $in: targetUser.bookmarks || [] } })
+        .sort({ createdAt: -1 })
+        .lean(),
+    ]);
+    const formattedCourses = courses
+      ? courses.map((course) => ({
+          ...course,
+          enrolledCount: course.studentsEnrolled
+            ? course.studentsEnrolled.length
+            : 0,
+          studentsEnrolled: undefined, // Hide raw ID array
+        }))
+      : [];
+    const followerIds = followersList.map((f) => f.followerId);
+    const followingIds = followingList.map((f) => f.followingId);
+    const [followerDetails, followingDetails] = await Promise.all([
+      User.find({ uid: { $in: followerIds } })
+        .select(
+          "firstname lastname username profilePic tier isVerified usertype organizationName",
+        )
+        .lean(),
+      User.find({ uid: { $in: followingIds } })
+        .select(
+          "firstname lastname username profilePic tier isVerified usertype organizationName",
+        )
+        .lean(),
+    ]);
+    const isOwner = viewerUid === targetUser.uid;
+    const isPremiumViewer = viewerTier === "premium";
+
+    if (!isOwner && !isPremiumViewer) {
+      createNotification({
+        notificationId: generateNotificationId("profile"),
+        recipientId: targetUser.uid,
+        category: "social",
+        actionType: "PROFILE_VIEW",
+        title: "Profile View",
+        message: `${viewerFirstname || "Someone"} viewed your profile`,
+        payload: { viewerUid, userName: viewerFirstname },
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      }).catch((err) => console.error("Notification Error:", err));
+    }
+
+    const canSeeScore =
+      isOwner || viewerRole === "enterprise" || viewerTier !== "free";
+    const profileData = {
+      ...targetUser,
+      currentIScore: canSeeScore ? targetUser.currentIScore : "Locked",
+      followersList: followerDetails,
+      followersCount: followerDetails.length,
+      followingList: followingDetails,
+      followingCount: followingDetails.length,
+      isFollowing: !!isFollowing,
+      courses: formattedCourses,
+      posts: userPosts,
+      iTagData: iTagData || null,
+      bookmarkedPosts: bookmarkedPosts,
+      bookmarksCount: targetUser.bookmarks?.length || 0,
+      likesCount: targetUser.likes?.length || 0,
+    };
+    res.status(200).json({
+      success: true,
+      data: profileData,
+    });
+  } catch (error) {
+    console.error("Comprehensive Profile Fetch Error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const fetchBlockedUsers = async (req, res) => {
+  try {
+    const user = await User.findOne({ uid: req.user.uid });
+    const blockedList = await User.find({
+      uid: { $in: user.blockedUsers || [] },
+    }).select(
+      "uid firstname lastname username profilePic tier organizationName",
+    );
+    res.status(200).json(blockedList);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+export const fetchLectureExceptions = async (req, res) => {
+  try {
+    const { courseId } = req.query;
+    const userId = req.user.uid;
+    const userRole = req.user.usertype;
+
+    if (!courseId) {
+      return res.status(400).json({ message: "courseId is required" });
+    }
+    let query = { courseId };
+    if (userRole === "student") {
+      query.studentId = userId;
+    } else if (userRole === "lecturer") {
+      const course = await Course.findOne({
+        courseId: courseId,
+        lecturerIds: userId,
+      });
+
+      if (!course) {
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You do not teach this course.",
+        });
+      }
+    } else {
+      return res.status(403).json({ message: "Unauthorized user type" });
+    }
+    const exceptions = await Exceptions.find(query)
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      count: exceptions.length,
+      exceptions,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const fetchCourseAssignments = async (req, res) => {
+  try {
+    const course = await Course.findOne(
+      { courseId: req.params.courseId },
+      "assignments",
+    );
+    if (!course) return res.status(404).json({ message: "Course not found" });
+
+    res.status(200).json(course.assignments);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const fetchCourseLectures = async (req, res) => {
+  try {
+    const { lectureId } = req.params;
+    const lecture = await Lectures.findOne({ id: lectureId });
+    if (!lecture) {
+      return res.status(404).json({ error: "Lectures session not found" });
+    }
+    const now = new Date();
+    const startTime = new Date(lecture.startTime);
+
+    if (lecture.status === "scheduled" && now >= startTime) {
+      lecture.status = "ongoing";
+      await lecture.save();
+    }
+    res.json(lecture);
+  } catch (err) {
+    console.error("Fetch lecture error:", err);
+    res
+      .status(500)
+      .json({ error: "Server error while fetching lecture details" });
+  }
+};
+export const fetchLectureExceptionsLecturerView = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const userId = req.user.id;
+    const course = await Course.findOne({ courseId: courseId });
+    if (!course) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+    const isLecturer = course.lecturerIds?.some(
+      (id) => id.toString() === userId.toString(),
+    );
+    if (!isLecturer) {
+      return res.status(403).json({
+        message:
+          "Access Denied: You are not authorized to view this course's exceptions",
+      });
+    }
+    const exceptions = await Exceptions.find({ courseId }).sort({ date: -1 });
+
+    res.status(200).json(exceptions);
+  } catch (error) {
+    console.error("Error fetching lecture exceptions:", error);
+    res.status(500).json({ message: "Failed to fetch course exceptions" });
+  }
+};
+export const fetchLeaderBoards = async (req, res) => {
+  try {
+    const topStudents = await User.find({ usertype: "student" })
+      .sort({ currentIScore: -1 })
+      .limit(10)
+      .select(
+        "uid firstname lastname currentIScore email previousIScore profilePic department schoolName",
+      );
+
+    const topInstructors = await User.find({
+      usertype: { $in: ["lecturer", "otherUser"] },
+    })
+      .sort({ currentIScore: -1, "monthlyStats.avgReview": -1 })
+      .limit(10)
+      .select(
+        "uid firstname lastname currentIScore email profilePic jobTitle previousIScore",
+      );
+    const topInstitutions = await OperationalInstitutions.find()
+      .sort({ currentiScoreAvg: -1 })
+      .limit(10);
+
+    res.status(200).json({
+      success: true,
+      data: {
+        students: topStudents,
+        instructors: topInstructors,
+        institutions: topInstitutions,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const fetchBanksUsingCountryCode = async (req, res) => {
+  const { countryCode } = req.params;
+
+  try {
+    const flwResponse = await fetch(
+      `https://api.flutterwave.com/v3/banks/${countryCode}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.FLUTTERWAVE_CLIENT_SECRET}`,
+        },
+      },
+    );
+    const data = await flwResponse.json();
+    res.status(flwResponse.status).json(data);
+  } catch (error) {
+    res.status(500).json({ status: "error", message: "Failed to fetch banks" });
+  }
+};
+export const fetchOngoingLectures = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const enrolledOrTaughtCourseIds = await Course.find({
+      $or: [{ studentsEnrolled: userId }, { lecturerIds: userId }],
+    }).distinct("courseId");
+    const ongoingLecture = await Lectures.findOne({
+      status: "ongoing",
+      courseId: { $in: enrolledOrTaughtCourseIds },
+    }).populate("courseId");
+    if (ongoingLecture) {
+      return res.status(200).json({
+        ongoing: true,
+        lecture: ongoingLecture,
+      });
+    }
+    res.status(200).json({ ongoing: false });
+  } catch (err) {
+    console.error("Error fetching ongoing lecture:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+export const fetchFeaturedBooksFromLibrary = async (req, res) => {
+  try {
+    const rawDept = req.query.department;
+    const department =
+      rawDept && rawDept.trim().length > 0 ? rawDept.trim() : null;
+    const BASE_URL = "https://1lib.sk";
+    let targetUrl = department
+      ? `${BASE_URL}/s/${encodeURIComponent(department)}`
+      : `${BASE_URL}/popular.php`;
+
+    const { data } = await axios.get(targetUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+      },
+      timeout: 5000,
+    });
+
+    const $ = cheerio.load(data);
+    const featuredBooks = [];
+
+    $(".bookDetailsBox, .resItemBox").each((index, element) => {
+      if (index >= 12) return;
+
+      const row = $(element);
+      const title = row.find('h3[itemprop="name"] a, .title a').text().trim();
+      const author =
+        row.find(".authors a, .author").first().text().trim() ||
+        "Various Authors";
+
+      const thumbnail =
+        row.find("img.cover").attr("data-src") ||
+        row.find("img.cover").attr("src") ||
+        row.find(".bookCover img").attr("src");
+
+      const detailsUrl = row.find('a[href^="/book/"]').attr("href");
+      const extension =
+        row.find(".property_value").first().text().trim() || "PDF";
+      const size = row.find(".property_size").text().trim() || "N/A";
+      const year = row.find(".property_year").text().trim() || "N/A";
+
+      if (title && detailsUrl) {
+        featuredBooks.push({
+          id: detailsUrl.split("/").pop(),
+          title,
+          author,
+          thumbnail: thumbnail?.startsWith("http")
+            ? thumbnail
+            : `${BASE_URL}${thumbnail}`,
+          extension: extension.toUpperCase(),
+          size,
+          year,
+          downloadUrl: `${BASE_URL}${detailsUrl}`,
+        });
+      }
+    });
+
+    if (featuredBooks.length === 0) {
+      return res.json(getFallbackBooks());
+    }
+
+    res.json(featuredBooks);
+  } catch (error) {
+    console.error("Featured Scrape Error:", error.message);
+    res.json(getFallbackBooks());
   }
 };

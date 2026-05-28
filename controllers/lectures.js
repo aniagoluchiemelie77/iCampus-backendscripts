@@ -52,7 +52,6 @@ export const getAttendeesForRoom = (lectureId) => {
   const room = lectureRooms.get(lectureId);
   return room ? Array.from(room.values()) : [];
 };
-// Example Aggregation to get the grouped list
 export const getGroupedAttendance = async (lectureId) => {
   return await Attendance.aggregate([
     { $match: { lectureId: lectureId } },

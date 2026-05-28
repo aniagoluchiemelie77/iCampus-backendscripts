@@ -1031,6 +1031,15 @@ export const certificateSchema = new mongoose.Schema({
   pdfUrl: String,
   issuedAt: { type: Date, default: Date.now },
 });
+export const statementSchema = new mongoose.Schema({
+  userId: { type: String, required: true, index: true },
+  startDate: { type: Date, required: true },
+  endDate: { type: Date, required: true },
+  pdfUrl: { type: String, required: true },
+  income: Number,
+  expense: Number,
+  generatedAt: { type: Date, default: Date.now },
+});
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
 userDownloadsSchema.index({ userId: 1 });

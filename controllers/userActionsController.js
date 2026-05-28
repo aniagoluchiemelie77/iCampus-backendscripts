@@ -10,6 +10,9 @@ import {
   Product,
   Course,
   PhoneNumberVerification,
+  Message,
+  Notification,
+  UserDownloads,
 } from "../tableDeclarations";
 import { icashPinResetTemplate } from "../services/emailTemplates.js";
 import { sendEmail } from "../services/emailService.js";
@@ -20,6 +23,10 @@ import bcrypt from "bcrypt";
 import { createNotification } from "../services/notificationService.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import mongoose from "mongoose";
+import axiosRetry from "axios-retry";
+import axios from "axios";
+import * as cheerio from "cheerio";
+axiosRetry(axios, { retries: 3 });
 
 export const createReviewController = async (req, res) => {
   try {
@@ -347,7 +354,8 @@ export const toggleBlockedUsers = async (req, res) => {
 };
 export const customizeItag = async (req, res) => {
   try {
-    const { userId, updates } = req.body;
+    const userId = req.user.id;
+    const { updates } = req.body;
 
     if (!userId) {
       return res.status(400).json({
@@ -388,8 +396,9 @@ export const customizeItag = async (req, res) => {
 };
 export const verifyPasswordInapp = async (req, res) => {
   const { password } = req.body;
+  const userId = req.user.id;
   try {
-    const user = await User.findOne({ uid: req.user.id }).select("+password");
+    const user = await User.findOne({ uid: userId }).select("+password");
     if (!user) {
       return res
         .status(404)
@@ -429,7 +438,7 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
   }
 };
 export const patchUserPreferences = async (req, res) => {
-  const { userId } = req.params;
+  const userId = req.user.id;
   const updateData = req.body;
 
   try {
@@ -479,7 +488,8 @@ export const sendPhoneNumberOTP = async (req, res) => {
 };
 export const verifyIcashPin = async (req, res) => {
   const { pin } = req.body;
-  const user = await User.findOne({ uid: req.user.uid }).select("+iCashPin");
+  const userId = req.user.id;
+  const user = await User.findOne({ uid: userId }).select("+iCashPin");
   if (!user) {
     return res.status(404).json({ message: "User not found" });
   }
@@ -521,7 +531,8 @@ export const verifyIcashPin = async (req, res) => {
 };
 export const icashPinSetup = async (req, res) => {
   const { pin } = req.body;
-  const user = await User.findOne({ uid: req.user.uid }).select("+iCashPin");
+  const userId = req.user.id;
+  const user = await User.findOne({ uid: userId }).select("+iCashPin");
   if (user.iCashPin) {
     return res.status(400).json({
       message: "PIN already exists. Use the 'Reset PIN' flow to change it.",
@@ -534,7 +545,8 @@ export const icashPinSetup = async (req, res) => {
   res.status(200).json({ success: true, message: "iCash PIN secured." });
 };
 export const requestIcashPinReset = async (req, res) => {
-  const user = await User.findOne({ uid: req.user.uid });
+  const userId = req.user.id;
+  const user = await User.findOne({ uid: userId });
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
   user.resetPinOTP = otp;
   user.resetPinOTPExpires = Date.now() + 10 * 60 * 1000;
@@ -557,8 +569,9 @@ export const requestIcashPinReset = async (req, res) => {
 };
 export const resetIcashPin = async (req, res) => {
   const { otp, newPin } = req.body;
+  const userId = req.user.id;
   const user = await User.findOne({
-    uid: req.user.uid,
+    uid: userId,
     resetPinOTP: otp,
     resetPinOTPExpires: { $gt: Date.now() },
   }).select("+iCashPin");
@@ -591,4 +604,335 @@ export const resetIcashPin = async (req, res) => {
     saveToDb: true,
   });
   res.status(200).json({ success: true, message: "PIN updated successfully." });
-};  
+};
+export const markAllMessagesAsRead = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    await Message.updateMany(
+      { recipientId: userId, status: { $ne: "seen" } },
+      { $set: { status: "seen" } },
+    );
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message, success: false });
+  }
+};
+export const markNotificationAsRead = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.uid;
+    const notification = await Notification.findOneAndUpdate(
+      {
+        notificationId: id,
+        recipientId: userId,
+      },
+      { isRead: true },
+      { new: true },
+    );
+
+    if (!notification) {
+      return res.status(404).json({ message: "Notification not found" });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Notification marked as read",
+      notification,
+    });
+  } catch (error) {
+    console.error("Error marking notification as read:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const markAllNotificationsAsRead = async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const result = await Notification.updateMany(
+      {
+        recipientId: userId,
+        isRead: false,
+      },
+      {
+        $set: { isRead: true },
+      },
+    );
+
+    res.status(200).json({
+      success: true,
+      message: "All notifications marked as read",
+      modifiedCount: result.modifiedCount,
+    });
+  } catch (error) {
+    console.error("Error marking all notifications as read:", error);
+    res
+      .status(500)
+      .json({ success: false, message: "Server error updating notifications" });
+  }
+};
+export const toggleFollowingUsers = async (req, res) => {
+  try {
+    const followerId = req.user.uid;
+    const { followingId } = req.body;
+
+    if (!followingId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing target followingId" });
+    }
+    if (followerId === followingId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "You cannot follow yourself" });
+    }
+    const existingFollow = await Follow.findOne({ followerId, followingId });
+
+    if (existingFollow) {
+      await Follow.deleteOne({ _id: existingFollow._id }); // Fix: mongoose use _id
+      const targetUser = await User.findOne({ uid: followingId })
+        .select("firstname")
+        .lean();
+
+      return res.status(200).json({
+        success: true,
+        action: "unfollowed",
+        message: `Unfollowed ${targetUser?.firstname || "User"} successfully`,
+      });
+    } else {
+      await Follow.create({ followerId, followingId });
+      const followerUser = await User.findOne({ uid: followerId })
+        .select("firstname")
+        .lean();
+      const followerName = followerUser ? followerUser.firstname : "Someone";
+
+      createNotification({
+        notificationId: generateNotificationId("social"),
+        recipientId: followingId,
+        category: "social",
+        actionType: "NEW_FOLLOWER",
+        title: "New Follower",
+        message: `${followerName} started following you`,
+        payload: { followerId },
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      }).catch((err) => console.error("Follow Notification Error:", err));
+
+      return res.status(200).json({
+        success: true,
+        action: "followed",
+        message: `Followed ${targetUser?.firstname || "User"} successfully`,
+      });
+    }
+  } catch (error) {
+    console.error("Follow Toggle Error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const updateUserProfile = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const updates = req.body;
+    const allowedUpdates = [
+      "bio",
+      "skills",
+      "username",
+      "headline",
+      "jobTitle",
+      "website",
+      "alternateEmails",
+      "firstname",
+      "lastname",
+      "email",
+      "profilePic",
+      "organizationName",
+      "department",
+    ];
+    const filteredUpdates = Object.keys(updates)
+      .filter((key) => allowedUpdates.includes(key))
+      .reduce((obj, key) => {
+        obj[key] = updates[key];
+        return obj;
+      });
+
+    const updatedUser = await User.findOneAndUpdate(
+      { uid: userId },
+      { $set: filteredUpdates },
+      { new: true },
+    ).select("-resetPinOTP -iCashPin -password -refreshTokens");
+
+    res.status(200).json({
+      success: true,
+      data: updatedUser,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+export const updateDownloadedCourseViewProgress = async (req, res) => {
+  const { productId, progress, completedLessons, lastWatched } = req.body;
+  const userId = req.user.id;
+  try {
+    const updatedUserDownloads = await UserDownloads.findOneAndUpdate(
+      {
+        userId: userId,
+        "ownedProducts.productId": productId,
+      },
+      {
+        $set: {
+          "ownedProducts.$.progress": progress,
+          "ownedProducts.$.completedLessons": completedLessons,
+          "ownedProducts.$.lastWatched": lastWatched,
+          lastAccessed: new Date(),
+        },
+      },
+      { new: true },
+    );
+
+    if (!updatedUserDownloads) {
+      return res
+        .status(404)
+        .json({ message: "Product not found in user's library" });
+    }
+    res.status(200).json({ success: true, data: updatedUserDownloads });
+  } catch (error) {
+    res.status(500).json({ message: "Server Error", error });
+  }
+};
+export const verifyiTagUsernameAvailability = async (req, res) => {
+  try {
+    const { val } = req.params;
+    const iTagData = await ITag.findOne({ username: val });
+
+    if (!iTagData) {
+      return res.status(404).json({
+        available: true,
+        message: "iTag username available",
+      });
+    }
+    return res.status(200).json({
+      available: false,
+      message: "iTag username already exists",
+    });
+  } catch (error) {
+    console.error("Error fetching iTag:", error);
+    return res.status(500).json({
+      message: "Server error",
+    });
+  }
+};
+export const searchBookInLibrary = async (req, res) => {
+  const { q } = req.query;
+  const userId = req.user.id;
+  const searchUrl = `https://1lib.sk/s/${encodeURIComponent(q)}`;
+  try {
+    if (userId) {
+      const today = new Date();
+      const user = await User.findOne({ uid: userId });
+      const lastAccess = user.monthlyStats.lastLibraryAccess;
+      const isNewSession =
+        !lastAccess || today - new Date(lastAccess) > 1000 * 60 * 60;
+      await User.findOneAndUpdate(
+        { uid: userId },
+        {
+          $inc: {
+            "monthlyStats.libraryUsageSessions": isNewSession ? 1 : 0,
+            "monthlyStats.booksFound": 1,
+          },
+          $set: { "monthlyStats.lastLibraryAccess": today },
+        },
+      );
+    }
+    const { data } = await axios.get(searchUrl, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+      },
+    });
+
+    const $ = cheerio.load(data);
+    const books = [];
+
+    // 1lib.sk specific selectors
+    $(".resItemBox").each((index, element) => {
+      const row = $(element);
+
+      // Extracting metadata
+      const title = row.find('h3[itemprop="name"] a').text().trim();
+      const author = row.find(".authors a").text().trim() || "Unknown Author";
+      const thumbnail =
+        row.find(".cover").attr("data-src") || row.find(".cover").attr("src");
+      const detailsUrl = row.find('h3[itemprop="name"] a').attr("href");
+
+      // Filesize and Extension are usually inside .property_value or property_size
+      const extension = row.find(".property_value").first().text().trim();
+      const size = row.find(".property_size").text().trim();
+      const year = row.find(".property_year").text().trim();
+
+      if (title) {
+        books.push({
+          id: detailsUrl?.split("/").pop() || Math.random().toString(),
+          title,
+          author,
+          thumbnail: thumbnail?.startsWith("http")
+            ? thumbnail
+            : `https://1lib.sk${thumbnail}`,
+          extension: extension || "PDF",
+          size: size || "N/A",
+          year: year || "N/A",
+          downloadUrl: `https://1lib.sk${detailsUrl}`,
+        });
+      }
+    });
+
+    res.json(books);
+  } catch (error) {
+    console.error("Scraping Error:", error.message);
+    res.status(500).json({ error: "Failed to connect to the library" });
+  }
+};
+export const searchUserUsingUidOrNameQuery = async (req, res) => {
+  const { q, uid, viewerRole, viewerTier } = req.query;
+  try {
+    let users;
+
+    if (uid) {
+      const user = await User.findOne({ uid });
+      users = user ? [user] : [];
+    } else if (q) {
+      users = await User.find({
+        $or: [
+          { firstname: { $regex: q, $options: "i" } },
+          { lastname: { $regex: q, $options: "i" } },
+          { username: { $regex: q, $options: "i" } },
+        ],
+      }).limit(20);
+    } else {
+      return res
+        .status(400)
+        .json({ success: false, message: "Query or UID required" });
+    }
+
+    const safeResults = users.map((u) => {
+      const isPro = viewerTier === "pro" || viewerTier === "premium";
+      const isEnterprise = viewerRole === "enterprise";
+
+      return {
+        uid: u.uid,
+        firstname: u.firstname,
+        username: u.username,
+        lastname: u.lastname,
+        profilePic: u.profilePic,
+        usertype: u.usertype,
+        tier: u.tier,
+        isVerified: u.isVerified,
+        organizationName: u.organizationName || "",
+        displayScore:
+          isEnterprise || isPro ? Math.round(u.currentIScore) : "Locked",
+      };
+    });
+
+    res.json({ success: true, data: uid ? safeResults[0] : safeResults });
+  } catch (error) {
+    res.status(500).json({ message: error.message, success: false });
+  }
+};
