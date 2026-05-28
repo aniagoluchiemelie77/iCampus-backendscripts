@@ -1,4 +1,3 @@
-import express from "express";
 import { createNotification } from "../services/notificationService.js";
 import { Follow, User, Posts } from "../tableDeclarations.js";
 import {
@@ -260,14 +259,12 @@ export const deletePost = async (req, res) => {
     await createNotification({
       notificationId: generateNotificationId("social"),
       recipientId: userUid,
-      recipientEmail: authorEmail,
       category: "social",
       actionType: "POST_DELETION",
       title: "Posts Removed",
       message: `Your post has been successfully deleted from your feed.`,
       entityId: postId,
       entityType: "post",
-      sendEmail: false,
       payload: {
         username: authorName,
         postId: postId,
@@ -294,7 +291,7 @@ export const toggleLike = async (req, res) => {
 
   try {
     const post = await Posts.findOne({ postId });
-    if (!post) return res.status(404).send("Post not found");
+    if (!post) return res.status(404).send("Posts not found");
     const isLiked = post.likes.includes(userId);
     const postUpdate = isLiked
       ? { $pull: { likes: userId } }
@@ -348,7 +345,7 @@ export const toggleBookmark = async (req, res) => {
   const userId = req.user.id;
   try {
     const post = await Posts.findOne({ postId });
-    if (!post) return res.status(404).json({ message: "Post not found" });
+    if (!post) return res.status(404).json({ message: "Posts not found" });
     const isBookmarked = (post.bookmarks ?? []).includes(userId);
     const postUpdate = isBookmarked
       ? { $pull: { bookmarks: userId } }
@@ -412,7 +409,7 @@ export const addComment = async (req, res) => {
       { new: true },
     ).populate("comments.userId", "firstname lastname profilePic username");
 
-    if (!updatedPost) return res.status(404).json({ error: "Post not found" });
+    if (!updatedPost) return res.status(404).json({ error: "Posts not found" });
 
     const populatedComment = updatedPost.comments.find(
       (c) => c.commentId === tempCommentId,
@@ -481,7 +478,7 @@ export const fetchPostUsingPostId = async (req, res) => {
     ]);
 
     if (!post || post.length === 0) {
-      return res.status(404).json({ error: "Post not found" });
+      return res.status(404).json({ error: "Posts not found" });
     }
 
     res.json(post[0]);
@@ -544,7 +541,7 @@ export const incrementImpressions = async (req, res) => {
     );
 
     if (!updatedPost) {
-      return res.status(404).send("Post not found");
+      return res.status(404).send("Posts not found");
     }
     const author = await User.findOne({ uid: updatedPost.userId.uid });
     if (author && author.usertype !== "enterprise") {
@@ -573,4 +570,150 @@ export const incrementImpressions = async (req, res) => {
     console.error("Impression error:", err);
     res.status(500).send(err.message);
   }
-};    
+};
+export const repost = async (req, res) => {
+  const { originalPostId, isRepost } = req.body;
+  const userId = req.user.id;
+  try {
+    const existingRepost = await Posts.findOne({
+      "userId.uid": userId,
+      originalPostId,
+      isRepost,
+    });
+    const io = req.app.get("socketio");
+
+    if (existingRepost) {
+      await Posts.deleteOne({ postId: existingRepost.postId });
+      const updatedOriginal = await Posts.findOneAndUpdate(
+        { postId: originalPostId },
+        { $inc: { repostsCount: -1 } },
+        { new: true },
+      );
+      if (io && updatedOriginal) {
+        io.emit("post_stats_updated", {
+          postId: originalPostId,
+          stats: { repostsCount: updatedOriginal.repostsCount },
+        });
+      }
+      return res.status(200).json({
+        message: "You undid a repost action",
+        repostsCount: updatedOriginal.repostsCount,
+      });
+    } else {
+      const repostAuthor = await User.findOne({ uid: userId })
+        .select(
+          "firstname lastname profilePic tier organizationName username usertype",
+        )
+        .lean();
+      const originalPost = await Posts.findOne({
+        postId: originalPostId,
+      }).select("-postId -isRepost");
+      if (!repostAuthor || !originalPost)
+        return res
+          .status(404)
+          .json({ message: "Original post details not found." });
+
+      const repost = new Posts({
+        postId: generatePostId(),
+        userId: {
+          uid: userId,
+          firstname: repostAuthor.firstname,
+          lastname: repostAuthor.lastname,
+          profilePic: repostAuthor.profilePic,
+          tier: repostAuthor.tier,
+          organizationName: repostAuthor.organizationName,
+          username: repostAuthor.username,
+        },
+        originalPostId,
+        isRepost,
+        ...originalPost.toObject(),
+      });
+
+      await repost.save();
+
+      const updatedOriginal = await Posts.findOneAndUpdate(
+        { postId: originalPostId },
+        { $inc: { repostsCount: 1 } },
+        { new: true },
+      );
+
+      if (io) {
+        io.emit("new_post", repost);
+        io.emit("post_stats_updated", {
+          postId: originalPostId,
+          stats: { repostsCount: updatedOriginal.repostsCount },
+        });
+      }
+      // --- NOTIFICATION LOGIC ---
+      let notifiedUids = new Set();
+      const reposterName =
+        repostAuthor && repostAuthor.usertype === "enterprise"
+          ? repostAuthor.organizationName
+          : repostAuthor.firstname;
+      if (updatedOriginal && updatedOriginal.userId.uid !== userId) {
+        notifiedUids.add(updatedOriginal.userId.uid);
+        createNotification({
+          notificationId: generateNotificationId("social"),
+          recipientId: updatedOriginal.originalAuthor,
+          category: "social",
+          actionType: "POST_REPOSTED",
+          title: "Posts Reposted",
+          message: `${reposterName} reshared your post.`,
+          payload: { postId: repost.postId, originalPostId },
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        });
+      }
+
+      // 5. Notify Followers
+      const followers = await Follow.find({ followingId: userId }).select(
+        "followerId",
+      );
+
+      followers.forEach((follow) => {
+        if (
+          !notifiedUids.has(follow.followerId) &&
+          follow.followerId !== userId
+        ) {
+          createNotification({
+            notificationId: generateNotificationId("social"),
+            recipientId: follow.followerId,
+            category: "social",
+            actionType: "NEW_POST",
+            title: `New Repost from ${reposterName}`,
+            message: `${reposterName} reshared a post.`,
+            payload: { postId: repost.postId, authorId: userId },
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        }
+      });
+
+      return res.status(201).json({
+        message: "Posts repost action completed successfully.",
+        repostsCount: updatedOriginal.repostsCount,
+      });
+    }
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+};
+export const toggleCommentLike = async (req, res) => {
+  const { postId, commentId } = req.params;
+  const userId = req.user.id;
+  try {
+    const post = await Posts.findOne({ postId });
+    const comment = post.comments.find((c) => c.commentId === commentId);
+    const isLiked = comment.likes.includes(userId);
+    const operator = isLiked ? "$pull" : "$push";
+    await Posts.updateOne(
+      { postId, "comments.commentId": commentId },
+      { [operator]: { "comments.$.likes": userId } },
+    );
+    res.sendStatus(200);
+  } catch (err) {
+    res.status(500).send(err.message);
+  }
+};

@@ -80,7 +80,7 @@ mongoose
       await import("./routes/class/lecturers.js")
     ).default(User);
     const storeRoutes = (await import("./routes/store.js")).default(Product);
-    const postRoutes = (await import("./routes/posts.js")).default(Posts, User);
+    const postRoutes = await import("./routes/posts.js");
     const eventsRoute = (await import("./routes/userEvents.js")).default(Event);
     const studentVerifyRoutes = (
       await import("./routes/verify/students.js")

@@ -256,6 +256,15 @@ export const createNotification = async ({
           entityType = "post";
           subject = "Your post has been updated";
           break;
+        case "POST_DELETION":
+          const { username: postAuthor, postId: deletedPostId } = payload;
+
+          subject = "Post Deleted Successfully";
+          title = title || "Post Deleted";
+          message =
+            message ||
+            "Your post has been successfully deleted from your feed.";
+          break;
         case "MATERIAL_UPLOADED":
           subject = "New Course Material Available";
           break;

@@ -689,9 +689,8 @@ export const postSchema = new mongoose.Schema(
       totalVotes: { type: Number, default: 0 },
       expiresAt: Date,
     },
-    // Matching the String type for consistency
-    likes: [{ type: String, ref: "User" }],
-    bookmarks: [{ type: String, ref: "User" }],
+    likes: [{ type: String }],
+    bookmarks: [{ type: String }],
     comments: [
       {
         commentId: { type: String, required: true },

@@ -1,4 +1,11 @@
-import { UserDownloads, Product, Follow, User } from "../tableDeclarations.js";
+import {
+  UserDownloads,
+  Product,
+  Follow,
+  User,
+  Posts,
+} from "../tableDeclarations.js";
+import { client } from "../workers/reditFile.js";
 
 export const getDownloads = async (req, res) => {
   try {
@@ -60,5 +67,94 @@ export const fetchConnections = async (req, res) => {
   } catch (error) {
     console.error("fetchConnections Error:", error);
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const fetchPosts = async (req, res) => {
+  const limit = parseInt(req.query.limit) || 15;
+  const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
+  const isInitialLoad = !cursorScore;
+
+  try {
+    if (isInitialLoad) {
+      const cached = await client.get("hot_posts");
+      if (cached) return res.json(JSON.parse(cached));
+    }
+    const pipeline = [
+      {
+        $lookup: {
+          from: "users",
+          localField: "originalAuthor",
+          foreignField: "uid",
+          as: "authorDetails",
+        },
+      },
+      {
+        $unwind: {
+          path: "$authorDetails",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $addFields: {
+          rankingScore: {
+            $add: [
+              {
+                $cond: [
+                  { $eq: ["$authorDetails.isSubscriber", true] },
+                  1000,
+                  0,
+                ],
+              },
+              {
+                $multiply: [
+                  "$impressions",
+                  0.1,
+                  {
+                    $switch: {
+                      branches: [
+                        {
+                          case: { $eq: ["$authorDetails.tier", "premium"] },
+                          then: 5,
+                        },
+                        {
+                          case: { $eq: ["$authorDetails.tier", "pro"] },
+                          then: 2,
+                        },
+                      ],
+                      default: 1,
+                    },
+                  },
+                ],
+              },
+              { $divide: [{ $toLong: "$createdAt" }, 1000000000] },
+            ],
+          },
+        },
+      },
+    ];
+    if (cursorScore) {
+      pipeline.push({ $match: { rankingScore: { $lt: cursorScore } } });
+    }
+    pipeline.push(
+      { $sort: { rankingScore: -1 } },
+      { $limit: limit },
+      {
+        $project: {
+          "authorDetails.password": 0,
+          "authorDetails.iCashPin": 0,
+        },
+      },
+    );
+    const posts = await Posts.aggregate(pipeline);
+    const nextCursor =
+      posts.length === limit ? posts[posts.length - 1].rankingScore : null;
+    const responseData = { posts, nextCursor };
+    if (isInitialLoad) {
+      await client.setEx("hot_posts", 300, JSON.stringify(responseData));
+    }
+    res.json(responseData);
+  } catch (err) {
+    console.error("Feed error:", err);
+    res.status(500).json({ error: err.message });
   }
 };
