@@ -250,8 +250,14 @@ export const createNotification = async ({
             );
           }
           break;
+        case "POST_UPDATED":
+          category = "social";
+          entityId = payload.postId;
+          entityType = "post";
+          subject = "Your post has been updated";
+          break;
         case "MATERIAL_UPLOADED":
-          subject = "New Course Material Available"; // Fallback if ever needed
+          subject = "New Course Material Available";
           break;
         case "ASSIGNMENT_CREATED":
           subject = "New Assignment Posted";
