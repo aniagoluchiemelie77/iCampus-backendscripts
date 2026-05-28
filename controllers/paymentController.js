@@ -7,6 +7,13 @@ import {
 } from "../utils/idGenerator.js";
 import { createNotification } from "../services/notification.js";
 import { fetchLiveRateBackend } from "../utils/foreignAPIGetters.js";
+import mongoose from "mongoose";
+
+const USD_SUBSCRIPTION_PRICES = {
+  Pro: 1.11,
+  Premium: 3.69,
+  Free: 0,
+};
 
 export const handleFlutterwaveWebhook = async (req, res) => {
   const secretHash = process.env.FLW_WEBHOOK_HASH;
@@ -92,7 +99,6 @@ export const handleFlutterwaveWebhook = async (req, res) => {
   }
   res.status(200).end();
 };
-
 export const getSavedMethods = async (req, res) => {
   try {
     const methods = await PaymentMethods.findAll({
@@ -104,7 +110,6 @@ export const getSavedMethods = async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 };
-
 export const createPaymentMethod = async (userId, cardDetails) => {
   try {
     const response = await flutterwavedoc.payment_methods_post({
@@ -132,7 +137,6 @@ export const createPaymentMethod = async (userId, cardDetails) => {
     console.error("Hydraulic failure in payment processing:", err);
   }
 };
-
 export const initializeBuy = async (req, res) => {
   const {
     amount,
@@ -320,3 +324,187 @@ export const initializeWithdraw = async (req, res) => {
     });
   }
 };
+export const handleP2pTransfers = async (req, res) => {
+    const session = await mongoose.startSession();
+    session.startTransaction();
+
+    try {
+      const { recipientId, amount, description, recipientiTagName } = req.body;
+      const senderId = req.user.id;
+      if (amount <= 0)
+        return res.status(400).json({ message: "Invalid amount" });
+      if (senderId === recipientId)
+        return res.status(400).json({ message: "Cannot send to yourself" });
+
+      const sender = await User.findOne({ uid: senderUid }).session(session);
+      const recipient = await User.findOne({
+        uid: recipientId,
+        itagusername: recipientiTagName,
+      }).session(session);
+
+      if (!recipient) throw new Error("Recipient not found");
+      if (sender.pointsBalance < amount)
+        return res.status(400).json({ message: "Insufficient iCash balance" });
+
+      const transactionRef = `P2P-${uuidv4().substring(0, 8).toUpperCase()}`;
+
+      sender.pointsBalance -= amount;
+      recipient.pointsBalance += amount;
+      await sender.save({ session });
+      await recipient.save({ session });
+
+      // 5. Create Transactions Records (Dual-entry)
+      const senderTransactionId = generateTransactionId("p2p_sent");
+      const senderTx = new Transactions({
+        transactionId: senderTransactionId,
+        userId: senderId,
+        type: "p2p_sent",
+        amountICash: amount,
+        status: "success",
+        payType: "out",
+        title: "iCash Sent",
+        reference: transactionRef,
+        metadata: { recipientId, note: description },
+      });
+      const receipientTransactionId = generateTransactionId("p2p_received");
+      const recipientTx = new Transactions({
+        transactionId: receipientTransactionId,
+        userId: recipientId,
+        type: "p2p_received",
+        amountICash: amount,
+        status: "success",
+        payType: "in",
+        title: "iCash Received",
+        reference: `${transactionRef}-REC`, 
+        metadata: { senderId: senderId, note: description },
+      });
+      await senderTx.save({ session });
+      await recipientTx.save({ session });
+      await session.commitTransaction();
+      session.endSession();
+      const senderNotificationId = generateNotificationId("finance");
+      const receipientNotificationId = generateNotificationId("finance");
+      createNotification({
+        notificationId: senderNotificationId,
+        recipientId: senderUid,
+        category: "financial",
+        actionType: "ICASH_WITHDRAWAL",
+        title: "iCash Sent Successfully",
+        message: `You sent ${amount.toLocaleString()} iCash to ${recipient.username}.`,
+        payload: {
+          userName: sender.username,
+          amountICash: amount,
+          amountLocal: 0,
+          currency: "iCash",
+          transactionId: transactionRef,
+        },
+        sendSocket: true,
+        sendPush: true,
+      });
+      createNotification({
+        notificationId: receipientNotificationId,
+        recipientId: recipientId,
+        category: "financial",
+        actionType: "ICASH_PURCHASE",
+        title: "iCash Received!",
+        message: `You received ${amount.toLocaleString()} iCash from ${sender.username}.`,
+        payload: {
+          userName: recipient.username,
+          amountICash: amount,
+          transactionId: transactionRef,
+        },
+        sendSocket: true,
+        sendPush: true,
+      });
+      res.status(200).json({ message: "Transfer successful", transactionRef });
+    } catch (error) {
+      await session.abortTransaction();
+      session.endSession();
+      res
+        .status(500)
+        .json({ message: error.message || "Internal Server Error" });
+    }
+};
+export const verifySubscriptionFlwPayment = async (req, res) => {
+    const { transactionId, tier, currentExchangeRate } = req.body;
+    const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
+    if (!transactionId) {
+      return res
+        .status(400)
+        .json({ status: "error", message: "Transactions ID is required" });
+    }
+    try {
+      const response = await axios.get(
+        `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`,
+        {
+          headers: {
+            Authorization: `Bearer ${SECRET_KEY}`,
+            "Content-Type": "application/json",
+          },
+        },
+      );
+      const { status, currency, id, amount, customer } = response.data.data;
+      if (status !== "successful") {
+        return res
+          .status(400)
+          .json({ status: "error", message: "Transactions not successful" });
+      }
+      const baseUsdPrice = USD_SUBSCRIPTION_PRICES[tier];
+      if (baseUsdPrice === undefined) {
+        return res.status(400).json({ message: "Invalid tier selected" });
+      }
+      const expectedLocalPrice = baseUsdPrice * currentExchangeRate;
+      const margin = 1;
+      if (amount < expectedLocalPrice - margin) {
+        return res.status(400).json({
+          message: `Insufficient payment. Expected approx ${expectedLocalPrice} ${currency}`,
+        });
+      }
+      const updatedUser = await User.findOneAndUpdate(
+        { uid: req.user.uid },
+        {
+          $set: {
+            tier: tier,
+            isSubscribed: true,
+            subscriptionDate: new Date(),
+            lastTransactionId: id,
+          },
+        },
+        { new: true },
+      );
+      const userName = updatedUser && updatedUser.usertype === 'enterprise' ? updatedUser.organizationName : updatedUser.firstname;
+      await createNotification({
+        notificationId: generateNotificationId('subscription'),
+        recipientId: updatedUser.uid,
+        category: "finance",
+        actionType: "SUBSCRIPTION_UPGRADED",
+        title: "Subscription Successful",
+        message: `Your account has been upgraded to the ${tier} plan.`,
+        recipientEmail: updatedUser.email,
+        sendEmail: true,
+        payload: {
+          userName,
+          tier: tier,
+          amount: amount,
+          currency: currency,
+          transactionId: id,
+        },
+      });
+
+      return res.status(200).json({
+        status: "success",
+        message: "Subscription verified and activated",
+        data: { transactionId: id },
+        tier: updatedUser.tier,
+      });
+    } catch (error) {
+      console.error(
+        "FLW Verification Error:",
+        error.response?.data || error.message,
+      );
+      return res.status(500).json({
+        status: "error",
+        message: "Internal server error during verification",
+      });
+    }
+  }

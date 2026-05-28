@@ -4,6 +4,8 @@ import {
   Follow,
   User,
   Posts,
+  Transactions,
+  ITag,
 } from "../tableDeclarations.js";
 import { client } from "../workers/reditFile.js";
 
@@ -156,5 +158,150 @@ export const fetchPosts = async (req, res) => {
   } catch (err) {
     console.error("Feed error:", err);
     res.status(500).json({ error: err.message });
+  }
+};
+export const fetchUserTransactionHistory = async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    const [transactions, total] = await Promise.all([
+      Transactions.find({ userId })
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit),
+      Transactions.countDocuments({ userId }),
+    ]);
+
+    // 4. Calculate total pages
+    const totalPages = Math.ceil(total / limit);
+
+    res.status(200).json({
+      success: true,
+      data: transactions,
+      pagination: {
+        totalItems: total,
+        totalPages: totalPages,
+        currentPage: page,
+        hasNextPage: page < totalPages,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const fetchUserTransactionStats = async (req, res) => {
+  try {
+    const userId = req.user.uid;
+    const { month, year } = req.query;
+
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        message: "Month and year parameters are required.",
+      });
+    }
+    const start = new Date(year, month - 1, 1);
+    const end = new Date(year, month, 0, 23, 59, 59, 999);
+
+    const stats = await Transactions.aggregate([
+      { $match: { userId, createdAt: { $gte: start, $lte: end } } },
+      {
+        $facet: {
+          flow: [
+            { $group: { _id: "$payType", total: { $sum: "$amountICash" } } },
+          ],
+          topRecipients: [
+            { $match: { payType: "out", type: "p2p_sent" } },
+            {
+              $group: {
+                _id: "$metadata.recipientId",
+                count: { $sum: 1 },
+                total: { $sum: "$amountICash" },
+              },
+            },
+            {
+              $lookup: {
+                from: "users",
+                localField: "_id",
+                foreignField: "uid",
+                as: "userDetails",
+              },
+            },
+            // FIXED: Safeguard against deleted or missing profiles breaking totals
+            {
+              $unwind: {
+                path: "$userDetails",
+                preserveNullAndEmptyArrays: true,
+              },
+            },
+            {
+              $project: {
+                _id: 1,
+                count: 1,
+                total: 1,
+                name: {
+                  $trim: {
+                    // Clean up trailing spaces if lastname is null/blank
+                    input: {
+                      $concat: [
+                        { $ifNull: ["$userDetails.firstname", "Unknown"] },
+                        " ",
+                        { $ifNull: ["$userDetails.lastname", "User"] },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+            { $sort: { count: -1 } },
+            { $limit: 3 },
+          ],
+          monthly: [
+            {
+              $group: {
+                _id: { $month: "$createdAt" },
+                total: { $sum: "$amountICash" },
+              },
+            },
+          ],
+        },
+      },
+    ]);
+    const result = stats[0] || { flow: [], topRecipients: [], monthly: [] };
+    res.json(result);
+  } catch (e) {
+    console.error("Aggregation crash in fetchUserTransactionStats:", e);
+    res.status(500).json({ error: e.message });
+  }
+};
+export const fetchItagByUsername = async (req, res) => {
+  try {
+    const { username } = req.params;
+    let isPremium;
+    let isUser;
+    const iTagData = await ITag.findOne({
+      username: { $regex: new RegExp(`^${username}$`, "i") },
+    });
+    if (!iTagData) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    const maskedNumber = iTagData.cardNumber.replace(/\d(?=\d{4})/g, "*");
+    isPremium = iTagData.tier === "premium";
+    isUser = iTagData.userId === req.user.id;
+
+    res.status(200).json({
+      userId: iTagData.userId,
+      username: iTagData.username,
+      cardHolderName: iTagData.cardHolderName,
+      cardNumber: maskedNumber,
+      tier: iTagData.tier,
+      designOptions: iTagData.designOptions,
+      isPremium,
+      isUser,
+    });
+  } catch (error) {
+    res.status(500).json({ message: "Internal Server Error" });
   }
 };

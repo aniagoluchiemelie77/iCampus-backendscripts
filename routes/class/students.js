@@ -288,12 +288,12 @@ export default function (User) {
         createdAt: { $gte: startOfMonth },
       });
 
-      const limits = { free: 2, pro: 4, premium: 6 };
-      const userLimit = limits[user.plan] || 3;
+      const limits = { free: 1, pro: 2, premium: 3 };
+      const userLimit = limits[user.tier];
 
       if (monthlyCount >= userLimit) {
         return res.status(403).json({
-          message: `Monthly limit reached (${userLimit}) for your ${user.plan || "free"} plan.`,
+          message: `Monthly limit reached (${userLimit}) for your ${user.tier || "free"} plan.`,
         });
       }
 

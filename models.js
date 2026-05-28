@@ -523,6 +523,7 @@ export const notificationSchema = new mongoose.Schema(
         "security",
         "reminder",
         "signup",
+        "subscription",
       ],
       required: true,
     },

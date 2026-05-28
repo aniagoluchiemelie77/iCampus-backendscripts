@@ -12,8 +12,6 @@ import {
   Product,
   Student,
   Lecturer,
-  Event,
-  Posts,
   Message,
 } from "./tableDeclarations.js";
 import { connectQueue } from "./rabbitmq.js";
@@ -79,9 +77,8 @@ mongoose
     const lecturerClassDetails = (
       await import("./routes/class/lecturers.js")
     ).default(User);
-    const storeRoutes = (await import("./routes/store.js")).default(Product);
+    const storeRoutes = await import("./routes/store.js");
     const postRoutes = await import("./routes/posts.js");
-    const eventsRoute = (await import("./routes/userEvents.js")).default(Event);
     const studentVerifyRoutes = (
       await import("./routes/verify/students.js")
     ).default(Student);
@@ -99,7 +96,6 @@ mongoose
     app.use("/user", userAccountDetailsRoute);
     app.use("/users/student/class", studentClassDetails);
     app.use("/users/lecturers/class", lecturerClassDetails);
-    app.use("/user/events", eventsRoute);
     app.use("/posts", postRoutes);
     app.use("/store", storeRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);

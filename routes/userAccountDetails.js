@@ -1,11 +1,7 @@
 import express from "express";
 import { protect } from "../middleware/auth.js";
-import { Transactions, ITag } from "../tableDeclarations.js";
-import bcrypt from "bcryptjs";
-import crypto from "crypto";
-import { icashPinResetTemplate } from "../services/emailTemplates.js";
+import { Transactions } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
-import { sendEmail } from "../services/emailService.js";
 import PDFDocument from "pdfkit";
 import {
   generateNotificationId,
@@ -15,167 +11,28 @@ import {
   getSavedMethods,
   initializeBuy,
   initializeWithdraw,
+  handleP2pTransfers,
+  verifySubscriptionFlwPayment,
 } from "../controllers/paymentController.js";
-import axios from "axios";
-import { v4 as uuidv4 } from "uuid";
-import mongoose from "mongoose";
-
-const USD_SUBSCRIPTION_PRICES = {
-  Pro: 1.11,
-  Premium: 3.69,
-  Free: 0,
-};
+import {
+  fetchUserTransactionHistory,
+  fetchUserTransactionStats,
+  fetchItagByUsername,
+} from "../controllers/fetchActions.js";
+import {
+  verifyIcashPin,
+  icashPinSetup,
+  requestIcashPinReset,
+  resetIcashPin,
+} from "../controllers/userActionsController.js";
 
 export default function (User) {
   const router = express.Router();
-  router.get("/my-transactions/:userId", protect, async (req, res) => {
-    try {
-      const { userId } = req.params;
-      const page = parseInt(req.query.page) || 1;
-      const limit = parseInt(req.query.limit) || 20;
-      const skip = (page - 1) * limit;
-      const [transactions, total] = await Promise.all([
-        Transactions.find({ userId })
-          .sort({ createdAt: -1 })
-          .skip(skip)
-          .limit(limit),
-        Transactions.countDocuments({ userId }),
-      ]);
-
-      // 4. Calculate total pages
-      const totalPages = Math.ceil(total / limit);
-
-      res.status(200).json({
-        success: true,
-        data: transactions,
-        pagination: {
-          totalItems: total,
-          totalPages: totalPages,
-          currentPage: page,
-          hasNextPage: page < totalPages,
-        },
-      });
-    } catch (error) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  router.post("/verify-icash-pin", protect, async (req, res) => {
-    const { pin } = req.body;
-    const user = await User.findOne({ uid: req.user.uid }).select("+iCashPin");
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
-    if (user.iCashLockoutUntil && user.iCashLockoutUntil > Date.now()) {
-      return res.status(403).json({
-        message: `Locked. Try again after ${moment(user.iCashLockoutUntil).format("LT")}`,
-      });
-    }
-    if (user.isSuspended) {
-      return res.status(403).json({
-        isSuspended: true,
-        message: "This account is already suspended.",
-      });
-    }
-    const isMatch = await bcrypt.compare(pin, user.iCashPin);
-    if (!isMatch) {
-      user.iCashAttempts += 1;
-      if (user.iCashAttempts >= 5) {
-        user.isSuspended = true;
-        user.iCashAttempts = 0;
-        await user.save();
-        return res.status(403).json({
-          isSuspended: true,
-          message: "Maximum attempts reached. Account suspended for security.",
-        });
-      }
-
-      await user.save();
-      return res.status(401).json({
-        message: "Invalid PIN",
-        attemptsRemaining: 5 - user.iCashAttempts,
-      });
-    }
-    user.iCashAttempts = 0;
-    user.iCashLockoutUntil = null;
-    await user.save();
-
-    res.status(200).json({ success: true });
-  });
-  router.post("/setup-icash-pin", protect, async (req, res) => {
-    const { pin } = req.body;
-    const user = await User.findOne({ uid: req.user.uid }).select("+iCashPin");
-    if (user.iCashPin) {
-      return res.status(400).json({
-        message: "PIN already exists. Use the 'Reset PIN' flow to change it.",
-      });
-    }
-    const salt = await bcrypt.genSalt(10);
-    user.iCashPin = await bcrypt.hash(pin, salt);
-    user.twoFactorEnabled = true;
-    await user.save();
-    res.status(200).json({ success: true, message: "iCash PIN secured." });
-  });
-  router.post("/request-pin-reset", protect, async (req, res) => {
-    const user = await User.findOne({ uid: req.user.uid });
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    user.resetPinOTP = otp;
-    user.resetPinOTPExpires = Date.now() + 10 * 60 * 1000;
-    await user.save();
-    try {
-      const htmlContent = icashPinResetTemplate(user.firstname, otp);
-      await sendEmail({
-        email: user.email,
-        subject: "IMPORTANT: iCash PIN Reset Code",
-        message: `Your reset code is ${otp}`,
-        html: htmlContent,
-      });
-      res.status(200).json({ message: "OTP sent to your registered email." });
-    } catch (err) {
-      user.resetPinOTP = undefined;
-      user.resetPinOTPExpires = undefined;
-      await user.save();
-      res.status(500).json({ message: "Email could not be sent." });
-    }
-  });
-  router.post("/reset-icash-pin", protect, async (req, res) => {
-    const { otp, newPin } = req.body;
-    const user = await User.findOne({
-      uid: req.user.uid,
-      resetPinOTP: otp,
-      resetPinOTPExpires: { $gt: Date.now() },
-    }).select("+iCashPin");
-
-    if (!user) {
-      return res.status(400).json({ message: "Invalid or expired OTP." });
-    }
-    const salt = await bcrypt.genSalt(10);
-    user.iCashPin = await bcrypt.hash(newPin, salt);
-    user.resetPinOTP = undefined;
-    user.resetPinOTPExpires = undefined;
-    user.iCashAttempts = 0;
-    await user.save();
-    createNotification({
-      notificationId: generateNotificationId("security"),
-      recipientEmail: user.email,
-      recoveryEmails: user.recoveryEmails,
-      recipientId: user.uid,
-      category: "security",
-      actionType: "ICASH_PIN_RESET",
-      title: "iCash PIN Reset",
-      message: `Your iCash PIN has been successfully reset.`,
-      payload: {
-        userName: user.username || user.firstname,
-        date: Date.now(),
-      },
-      sendEmail: true,
-      sendPush: true,
-      sendSocket: true,
-      saveToDb: true,
-    });
-    res
-      .status(200)
-      .json({ success: true, message: "PIN updated successfully." });
-  });
+  router.get("/my-transactions/:userId", protect, fetchUserTransactionHistory);
+  router.post("/verify-icash-pin", protect, verifyIcashPin);
+  router.post("/setup-icash-pin", protect, icashPinSetup);
+  router.post("/request-pin-reset", protect, requestIcashPinReset);
+  router.post("/reset-icash-pin", protect, resetIcashPin);
   router.get("/payment-methods", protect, getSavedMethods);
   router.get("/transactions/initialize-buy", protect, initializeBuy);
   router.get("/transactions/initialize-withdraw", protect, initializeWithdraw);
@@ -221,205 +78,9 @@ export default function (User) {
       });
     }
   });
-  router.get("/iTag/search/:username", protect, async (req, res) => {
-    try {
-      const { username } = req.params;
-      let isPremium;
-      let isUser;
-      const iTagData = await ITag.findOne({
-        username: { $regex: new RegExp(`^${username}$`, "i") },
-      });
-
-      if (!iTagData) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      const maskedNumber = iTagData.cardNumber.replace(/\d(?=\d{4})/g, "*");
-      isPremium = iTagData.tier === "premium";
-      isUser = iTagData.userId === req.user.id;
-
-      res.status(200).json({
-        userId: iTagData.userId,
-        username: iTagData.username,
-        cardHolderName: iTagData.cardHolderName,
-        cardNumber: maskedNumber,
-        tier: iTagData.tier,
-        designOptions: iTagData.designOptions,
-        isPremium,
-        isUser,
-      });
-    } catch (error) {
-      res.status(500).json({ message: "Internal Server Error" });
-    }
-  });
-  router.post("/transactions/p2p-transfer", protect, async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-
-    try {
-      const { recipientId, amount, description, recipientiTagName } = req.body;
-      const senderId = req.user.id;
-      if (amount <= 0)
-        return res.status(400).json({ message: "Invalid amount" });
-      if (senderId === recipientId)
-        return res.status(400).json({ message: "Cannot send to yourself" });
-
-      const sender = await User.findOne({ uid: senderUid }).session(session);
-      const recipient = await User.findOne({
-        uid: recipientId,
-        itagusername: recipientiTagName,
-      }).session(session);
-
-      if (!recipient) throw new Error("Recipient not found");
-      if (sender.pointsBalance < amount)
-        return res.status(400).json({ message: "Insufficient iCash balance" });
-
-      const transactionRef = `P2P-${uuidv4().substring(0, 8).toUpperCase()}`;
-
-      sender.pointsBalance -= amount;
-      recipient.pointsBalance += amount;
-      await sender.save({ session });
-      await recipient.save({ session });
-
-      // 5. Create Transactions Records (Dual-entry)
-      const senderTransactionId = generateTransactionId("p2p_sent");
-      const senderTx = new Transactions({
-        transactionId: senderTransactionId,
-        userId: senderId,
-        type: "p2p_sent",
-        amountICash: amount,
-        status: "success",
-        payType: "out",
-        title: "iCash Sent",
-        reference: transactionRef,
-        metadata: { recipientId, note: description },
-      });
-      const receipientTransactionId = generateTransactionId("p2p_received");
-      const recipientTx = new Transactions({
-        transactionId: receipientTransactionId,
-        userId: recipientId,
-        type: "p2p_received",
-        amountICash: amount,
-        status: "success",
-        payType: "in",
-        title: "iCash Received",
-        reference: `${transactionRef}-REC`, // Unique ref for recipient
-        metadata: { senderId: senderId, note: description },
-      });
-      await senderTx.save({ session });
-      await recipientTx.save({ session });
-      // 6. Commit everything
-      await session.commitTransaction();
-      session.endSession();
-
-      // --- 7. Notifications (Triggered after successful commit) ---
-      // A. Notification for the SENDER (Debit Alert)
-      const senderNotificationId = generateNotificationId("finance");
-      const receipientNotificationId = generateNotificationId("finance");
-      createNotification({
-        notificationId: senderNotificationId,
-        recipientId: senderUid,
-        category: "financial",
-        actionType: "ICASH_WITHDRAWAL",
-        title: "iCash Sent Successfully",
-        message: `You sent ${amount.toLocaleString()} iCash to ${recipient.username}.`,
-        payload: {
-          userName: sender.username,
-          amountICash: amount,
-          amountLocal: 0,
-          currency: "iCash",
-          transactionId: transactionRef,
-        },
-        sendSocket: true,
-        sendPush: true,
-      });
-      createNotification({
-        notificationId: receipientNotificationId,
-        recipientId: recipientId,
-        category: "financial",
-        actionType: "ICASH_PURCHASE",
-        title: "iCash Received!",
-        message: `You received ${amount.toLocaleString()} iCash from ${sender.username}.`,
-        payload: {
-          userName: recipient.username,
-          amountICash: amount,
-          transactionId: transactionRef,
-        },
-        sendSocket: true,
-        sendPush: true,
-      });
-      res.status(200).json({ message: "Transfer successful", transactionRef });
-    } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
-      res
-        .status(500)
-        .json({ message: error.message || "Internal Server Error" });
-    }
-  });
-  router.get("/transactions/stats/:userId", protect, async (req, res) => {
-    try {
-      const { userId } = req.params;
-      const { month, year } = req.query;
-      const start = new Date(year, month - 1, 1);
-      const end = new Date(year, month, 0);
-      const stats = await Transactions.aggregate([
-        { $match: { userId, createdAt: { $gte: start, $lte: end } } },
-        {
-          $facet: {
-            flow: [
-              { $group: { _id: "$payType", total: { $sum: "$amountICash" } } },
-            ],
-            topRecipients: [
-              { $match: { payType: "out", type: "p2p_sent" } },
-              {
-                $group: {
-                  _id: "$metadata.recipientId",
-                  count: { $sum: 1 },
-                  total: { $sum: "$amountICash" },
-                },
-              },
-              {
-                $lookup: {
-                  from: "users",
-                  localField: "_id",
-                  foreignField: "uid", // or "uid" depending on your schema
-                  as: "userDetails",
-                },
-              },
-              { $unwind: "$userDetails" },
-              {
-                $project: {
-                  _id: 1,
-                  count: 1,
-                  total: 1,
-                  name: {
-                    $concat: [
-                      { $ifNull: ["$userDetails.firstname", "User"] },
-                      " ",
-                      { $ifNull: ["$userDetails.lastname", ""] },
-                    ],
-                  },
-                },
-              },
-              { $sort: { count: -1 } },
-              { $limit: 3 },
-            ],
-            monthly: [
-              {
-                $group: {
-                  _id: { $month: "$createdAt" },
-                  total: { $sum: "$amountICash" },
-                },
-              },
-            ],
-          },
-        },
-      ]);
-      res.json(stats[0]);
-    } catch (e) {
-      res.status(500).send(e.message);
-    }
-  });
+  router.get("/iTag/search/:username", protect, fetchItagByUsername);
+  router.post("/transactions/p2p-transfer", protect, handleP2pTransfers);
+  router.get("/transactions/stats/:userId", protect, fetchUserTransactionStats);
   router.post("/transactions/export", protect, async (req, res) => {
     try {
       const { userId, startDate, endDate } = req.body;
@@ -602,89 +263,10 @@ export default function (User) {
       res.status(500).json({ error: error.message });
     }
   });
-  router.post("/subscriptionPayments/verify", protect, async (req, res) => {
-    const { transactionId, tier, currentExchangeRate } = req.body;
-    const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
-    if (!transactionId) {
-      return res
-        .status(400)
-        .json({ status: "error", message: "Transactions ID is required" });
-    }
-    try {
-      const response = await axios.get(
-        `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`,
-        {
-          headers: {
-            Authorization: `Bearer ${SECRET_KEY}`,
-            "Content-Type": "application/json",
-          },
-        },
-      );
-
-      const { status, currency, id, amount, customer } = response.data.data;
-      if (status !== "successful") {
-        return res
-          .status(400)
-          .json({ status: "error", message: "Transactions not successful" });
-      }
-      const baseUsdPrice = USD_SUBSCRIPTION_PRICES[tier];
-      if (baseUsdPrice === undefined) {
-        return res.status(400).json({ message: "Invalid tier selected" });
-      }
-      const expectedLocalPrice = baseUsdPrice * currentExchangeRate;
-      const margin = 1;
-      if (amount < expectedLocalPrice - margin) {
-        return res.status(400).json({
-          message: `Insufficient payment. Expected approx ${expectedLocalPrice} ${currency}`,
-        });
-      }
-      const updatedUser = await User.findOneAndUpdate(
-        { uid: req.user.uid },
-        {
-          $set: {
-            tier: tier,
-            isSubscribed: true,
-            subscriptionDate: new Date(),
-            lastTransactionId: id,
-          },
-        },
-        { new: true },
-      );
-      const userName = `${updatedUser.firstname} ${updatedUser.lastname}`;
-      await createNotification({
-        notificationId: `sub_${Date.now()}`,
-        recipientId: updatedUser.uid,
-        category: "finance",
-        actionType: "SUBSCRIPTION_UPGRADED",
-        title: "Subscription Successful",
-        message: `Your account has been upgraded to the ${tier} plan.`,
-        recipientEmail: updatedUser.email,
-        sendEmail: true,
-        payload: {
-          userName,
-          tier: tier,
-          amount: amount,
-          currency: currency,
-          transactionId: id,
-        },
-      });
-
-      return res.status(200).json({
-        status: "success",
-        message: "Subscription verified and activated",
-        data: { transactionId: id },
-        tier: updatedUser.tier,
-      });
-    } catch (error) {
-      console.error(
-        "FLW Verification Error:",
-        error.response?.data || error.message,
-      );
-      return res.status(500).json({
-        status: "error",
-        message: "Internal server error during verification",
-      });
-    }
-  });
+  router.post(
+    "/subscriptionPayments/verify",
+    protect,
+    verifySubscriptionFlwPayment,
+  );
   return router;
 }

@@ -1,7 +1,5 @@
 import express from "express";
-import mongoose from "mongoose";
 import { protect } from "../middleware/auth.js";
-import { User } from "../tableDeclarations.js";
 import {
   fetchAllProducts,
   getPayoutHistory,
@@ -24,7 +22,7 @@ import {
 } from "../controllers/storeControllers.js";
 import { upload } from "../middleware/auth.js";
 
-export default function (Product) {
+export default function () {
   const router = express.Router();
 
   router.get("/get-store-products", fetchStoreProducts);
@@ -62,5 +60,3 @@ export default function (Product) {
   );
   return router;
 }
-
-
