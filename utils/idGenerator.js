@@ -40,6 +40,30 @@ export function generateTransactionId(type = "payment") {
    */
   return `TX-${typePrefix}-${dateStr}-${timeStr}-${randomStr}`;
 }
+export function generateExceptionId(courseId, lectureId) {
+  const cleanCourse = (courseId || "GEN").trim().toUpperCase();
+  const cleanLecture = (lectureId || "LEC").trim().toUpperCase();
+  const courseFragment =
+    cleanCourse.length > 4
+      ? cleanCourse.slice(-4)
+      : cleanCourse.padStart(4, "X");
+
+  const lectureFragment =
+    cleanLecture.length > 4
+      ? cleanLecture.slice(-4)
+      : cleanLecture.padStart(4, "X");
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+
+  /**
+   * Format: EXC-[COURSE_HASH][LECTURE_HASH]-[YYMMDD]
+   * Example Assuming:
+   * courseId:  "60d5ecf8b5c9a2341c8a1111" -> "1111"
+   * lectureId: "60d5ecf8b5c9a2341c8b2222" -> "2222"
+   * Output: EXC-11112222-260529-A7B
+   */
+  return `EXC-${courseFragment}${lectureFragment}-${dateStr}`;
+}
 export function generatePayoutId(userId) {
   const now = new Date();
   const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");

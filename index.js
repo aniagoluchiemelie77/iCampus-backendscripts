@@ -53,7 +53,7 @@ mongoose
     console.log("✅ MongoDB connected");
     const userRoutes = await import("./routes/user.js");
     const reviewsRoutes = await import("./routes/reviews.js");
-    const webhooksRoutes = (await import("./routes/webhooks.js")).default(User);
+    const webhooksRoutes = await import("./routes/webhooks.js");
     const messageRoutes = await import("./routes/messages.js");
     const userAccountDetailsRoute =
       await import("./routes/userAccountDetails.js");
@@ -66,9 +66,7 @@ mongoose
     const storeRoutes = await import("./routes/store.js");
     const postRoutes = await import("./routes/posts.js");
     const studentVerifyRoutes = await import("./routes/verify/students.js");
-    const userVerifyRoutes = (await import("./routes/verify/users.js")).default(
-      User,
-    );
+    const userVerifyRoutes = await import("./routes/verify/users.js");
     const lecturerVerifyRoutes = await import("./routes/verify/lecturers.js");
 
     app.use("/users", userRoutes);

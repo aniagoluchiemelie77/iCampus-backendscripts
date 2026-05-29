@@ -780,8 +780,6 @@ export const exceptionSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
-
-    // Status tracking
     status: {
       type: String,
       enum: ["pending", "approved", "rejected"],

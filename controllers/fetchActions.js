@@ -879,32 +879,58 @@ export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
   }
 };
 export const fetchCourseDetails = async (req, res) => {
-      try {
-        const { courseId } = req.params;
-        const userId = req.user.uid;
+  try {
+    const { courseId } = req.params;
+    const userId = req.user.uid;
 
-        const course = await Course.findOne({
-          courseId: courseId,
-          $or: [{ studentsEnrolled: userId }, { lecturerIds: userId }],
-        });
-        if (!course) {
-          return res.status(404).json({
-            success: false,
-            message:
-              "Course not found or you do not have permission to view it.",
-          });
-        }
+    const course = await Course.findOne({
+      courseId: courseId,
+      $or: [{ studentsEnrolled: userId }, { lecturerIds: userId }],
+    });
+    if (!course) {
+      return res.status(404).json({
+        success: false,
+        message: "Course not found or you do not have permission to view it.",
+      });
+    }
 
-        return res.status(200).json({
-          success: true,
-          data: course,
-        });
-      } catch (error) {
-        console.error(`Error fetching course ${req.params.courseId}:`, error);
-        return res.status(500).json({
-          success: false,
-          message: "Server error while fetching course details.",
-          error: error.message,
-        });
-      }
-    },
+    return res.status(200).json({
+      success: true,
+      data: course,
+    });
+  } catch (error) {
+    console.error(`Error fetching course ${req.params.courseId}:`, error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching course details.",
+      error: error.message,
+    });
+  }
+};
+export const fetchStudentsLecturesTimeline = async (req, res) => {
+  try {
+    const studentId = req.user.uid;
+    const enrolledCourses = await Course.find({
+      studentsEnrolled: studentId,
+    }).select("courseId courseCode courseTitle");
+    const courseIds = enrolledCourses.map((c) => c.courseId);
+    const lectures = await Lectures.find({
+      courseId: { $in: courseIds },
+      status: { $ne: "cancelled" },
+    }).sort({ date: 1, startTime: 1 });
+    const decoratedLectures = lectures.map((lecture) => {
+      const courseInfo = enrolledCourses.find(
+        (c) => c.courseId === lecture.courseId,
+      );
+      return {
+        ...lecture._doc,
+        courseCode: courseInfo?.courseCode,
+        courseTitle: courseInfo?.courseTitle,
+      };
+    });
+
+    res.status(200).json({ success: true, data: decoratedLectures });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};    

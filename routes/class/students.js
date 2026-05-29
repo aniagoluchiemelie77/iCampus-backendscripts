@@ -12,6 +12,11 @@ import {
 } from "../../tableDeclarations.js";
 import { upload } from "../../workers/multerWorker.js";
 import { createNotification } from "../../services/notificationService.js";
+import {
+  submitLectureException,
+  checkTestStatus,
+} from "../../controllers/classActions.js";
+import { fetchStudentsLecturesTimeline } from "../../controllers/fetchActions.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 import {
   generateNotificationId,
@@ -256,106 +261,7 @@ export default function (User) {
       }
     },
   );
-  router.post("/exceptions/submit", protect, async (req, res) => {
-    try {
-      const {
-        studentId,
-        courseId,
-        lectureId,
-        reason,
-        reasonCategory,
-        studentInfo,
-        courseInfo,
-      } = req.body;
-
-      const user = await User.findOne({ uid: studentId });
-      if (!user) return res.status(404).json({ message: "User not found" });
-
-      // 1. Pricing & Limits Logic
-      const EXCEPTION_COST = 0.5;
-      if ((user.pointsBalance || 0) < EXCEPTION_COST) {
-        return res.status(402).json({
-          message: `Insufficient iCash balance. Required: ${EXCEPTION_COST} iCash`,
-        });
-      }
-
-      const startOfMonth = new Date();
-      startOfMonth.setDate(1);
-      startOfMonth.setHours(0, 0, 0, 0);
-
-      const monthlyCount = await CourseException.countDocuments({
-        studentId,
-        createdAt: { $gte: startOfMonth },
-      });
-
-      const limits = { free: 1, pro: 2, premium: 3 };
-      const userLimit = limits[user.tier];
-
-      if (monthlyCount >= userLimit) {
-        return res.status(403).json({
-          message: `Monthly limit reached (${userLimit}) for your ${user.tier || "free"} plan.`,
-        });
-      }
-
-      // 2. Process Transaction & Create Record
-      user.pointsBalance -= EXCEPTION_COST;
-      const senderTransactionId = generateTransactionId("payment");
-      await Transactions.create({
-        transactionId: senderTransactionId,
-        userId: user.uid,
-        type: "payment",
-        amountICash: EXCEPTION_COST,
-        status: "success",
-        payType: "out",
-        title: "Lectures Exception Purchase",
-        reference: `EXC-REF-${senderTransactionId}`,
-      });
-
-      const exception = new CourseException({
-        id: new mongoose.Types.ObjectId().toString(),
-        studentId,
-        studentInfo,
-        courseInfo,
-        courseId,
-        lectureId,
-        reason,
-        reasonCategory,
-        status: "pending",
-        date: new Date().toISOString(),
-      });
-
-      await user.save();
-      await exception.save();
-
-      // 3. NOTIFY STUDENT (Socket + Push + DB Only)
-      createNotification({
-        notificationId: generateNotificationId("classroom"),
-        recipientId: user.uid,
-        category: "finance", // Using finance because iCash was spent
-        actionType: "EXCEPTION_SUBMITTED",
-        title: "Exception Submitted",
-        message: `Your exception for ${courseInfo.courseCode} was received. 0.5 iCash has been deducted.`,
-        payload: {
-          exceptionId: exception.id,
-          newBalance: user.pointsBalance,
-          courseCode: courseInfo.courseCode,
-        },
-        sendEmail: false, // Per your requirement
-        sendPush: true, // Confirming the "payment" and submission
-        sendSocket: true, // Force UI balance update
-        saveToDb: true,
-      });
-
-      res.status(201).json({
-        success: true,
-        message: "Exception submitted successfully",
-        exception,
-        newBalance: user.pointsBalance,
-      });
-    } catch (error) {
-      res.status(500).json({ message: error.message });
-    }
-  });
+  router.post("/exceptions/submit", protect, submitLectureException);
   router.post("/test/submit", protect, async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
@@ -448,72 +354,12 @@ export default function (User) {
       session.endSession();
     }
   });
-  // GET: Check test status and fetch details for a student
   router.get(
     "/courses/:courseId/assessments/:assessmentId/check-status",
-    async (req, res) => {
-      try {
-        const { assessmentId } = req.params;
-        const studentId = req.user.uid;
-
-        // 1. Fetch the test details
-        const test = await Assessment.findOne({
-          $or: [{ id: assessmentId }],
-        });
-
-        if (!test) {
-          return res.status(404).json({ message: "Assessment not found" });
-        }
-
-        // 2. Check if the student has already submitted this specific test
-        const submission = await TestSubmission.findOne({
-          testId: assessmentId,
-          studentId: studentId,
-        });
-
-        // 3. Return the merged state
-        res.status(200).json({
-          hasSubmitted: !!submission,
-          submissionDetails: submission || null,
-          test: test,
-        });
-      } catch (error) {
-        console.error("Error checking test status:", error);
-        res
-          .status(500)
-          .json({ message: "Server error checking assessment status" });
-      }
-    },
+    protect,
+    checkTestStatus,
   );
-  // GET: Fetch all lectures for a student's enrolled courses
-  router.get("/lectures/timeline", async (req, res) => {
-    try {
-      const studentId = req.user.uid;
-      const enrolledCourses = await Course.find({
-        studentsEnrolled: studentId,
-      }).select("courseId courseCode courseTitle");
-      const courseIds = enrolledCourses.map((c) => c.courseId);
-      const lectures = await Lectures.find({
-        courseId: { $in: courseIds },
-        status: { $ne: "cancelled" },
-      }).sort({ date: 1, startTime: 1 });
-      const decoratedLectures = lectures.map((lecture) => {
-        const courseInfo = enrolledCourses.find(
-          (c) => c.courseId === lecture.courseId,
-        );
-        return {
-          ...lecture._doc,
-          courseCode: courseInfo?.courseCode,
-          courseTitle: courseInfo?.courseTitle,
-        };
-      });
-
-      res.status(200).json({ success: true, data: decoratedLectures });
-    } catch (error) {
-      res.status(500).json({ message: error.message });
-    }
-  });
-  //Attendance submission
+  router.get("/lectures/timeline", protect, fetchStudentsLecturesTimeline);
   router.post("/submit", protect, async (req, res) => {
     try {
       const { studentId, lectureId, courseId, status, checkData } = req.body;

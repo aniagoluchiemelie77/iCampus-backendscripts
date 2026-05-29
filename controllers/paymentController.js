@@ -1,6 +1,5 @@
-import { PaymentMethods } from "../tableDeclarations.js";
 import axios from "axios";
-import { User, Transactions, AccountStatement } from "../tableDeclarations.js";
+import { User, Transactions, AccountStatement, PaymentMethods } from "../tableDeclarations.js";
 import {
   generateTransactionId,
   generateNotificationId,
@@ -8,97 +7,13 @@ import {
 import { createNotification } from "../services/notification.js";
 import { fetchLiveRateBackend } from "../utils/foreignAPIGetters.js";
 import mongoose from "mongoose";
-import { theme } from "../services/emailTheme";
+import { theme } from "../services/emailTheme.js";
 import { storage } from "../config/firebaseAdmin.js";
 import {generateStatementPDF} from '../templates/transactionHistoryTemplate.js';
 import { sendEmail } from "../services/emailService.js";
 import {encryptCardDetails} from '../utils/encryptionHelper.js';
 import {USD_SUBSCRIPTION_PRICES} from '../constants/inAppConstants.js';
 
-export const handleFlutterwaveWebhook = async (req, res) => {
-  const secretHash = process.env.FLW_WEBHOOK_HASH;
-  const signature = req.headers["verif-hash"];
-  if (!signature || signature !== secretHash) return res.status(401).end();
-  const { event, data } = req.body;
-
-  if (event === "charge.completed" && data.status === "successful") {
-    const { userId, type, methodType, iCashAmount } = data.meta;
-    const amountPaid = data.amount;
-    const currency = data.currency;
-    if (type === "icash_purchase") {
-      const transactionId = generateTransactionId('buy');
-      const iCashToCredit = Math.floor(iCashAmount);
-      const title = `${iCashToCredit} iCash purchased for ${data.currency} ${amountPaid}`;
-      const updatedUser = await User.findOneAndUpdate(
-        { uid: userId },
-        { $inc: { pointsBalance: iCashToCredit } },
-        { new: true },
-      );
-      const userName =
-        updatedUser.username || updatedUser.firstname || "iCampus User";
-      await Transactions.create({
-        transactionId,
-        userId,
-        type: "buy",
-        currency,
-        amountLocal: amountPaid,
-        amountICash: iCashToCredit,
-        status: "success",
-        payType: "in",
-        title,
-        reference: data.tx_ref,
-        createdAt: Date.now(),
-      });
-      createNotification({
-        notificationId: generateNotificationId('finance'),
-        recipientId: userId,
-        recipientEmail: updatedUser.email,
-        category: "finance",
-        actionType: "ICASH_PURCHASE",
-        title,
-        message: ` ${methodType} payment made for ${iCashToCredit} iCash purchase is successful.`,
-        payload: {
-          userName,
-          amountLocal: amountPaid,
-          amountICash: iCashToCredit,
-          currency,
-          transactionId,
-        },
-        sendEmail: true,
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
-      });
-    }
-    const paymentToken = data.card?.token || data.account?.token;
-    if (paymentToken) {
-      const existingMethod = await PaymentMethods.findOne({ paymentToken });
-      if (!existingMethod) {
-        const paymentData = {
-          userId: data.meta.userId,
-          method: data.payment_type === "card" ? "card" : "bank",
-          paymentToken: data.card?.token || data.account?.token, // Map to paymentToken
-          lastFourDigits:
-            data.card?.last4digits || data.account?.account_number?.slice(-4),
-          cardBrand: data.card?.issuer,
-          bankName: data.account?.bank_name,
-          bankAccNumber: data.account?.account_number,
-          expiryMonth: data.card?.expiry_month,
-          expiryYear: data.card?.expiry_year,
-          billingAddressDetails: data.meta.address
-            ? {
-                street: data.meta.address,
-                city: data.meta.city,
-                zip: data.meta.zip,
-              }
-            : undefined,
-        };
-        await PaymentMethods.create(paymentData);
-      }
-    }
-  }
-  res.status(200).end();
-};
 export const getSavedMethods = async (req, res) => {
   try {
     const methods = await PaymentMethods.findAll({
