@@ -9,7 +9,6 @@ import {
   userBankOrCardDetails,
   courseSchema,
   userDownloadsSchema,
-  verifyStudentSchema,
   verifyLecturerSchema,
   eventSchema,
   productSchema,
@@ -35,13 +34,9 @@ import {
   productSalesSchema,
   payoutSchema,
   statementSchema,
+  schoolConfigurationSchema,
 } from "./models.js";
 
-export const Student = mongoose.model(
-  "Student",
-  verifyStudentSchema,
-  "students",
-);
 export const Posts = mongoose.model("Posts", postSchema, "posts");
 export const Lecturer = mongoose.model(
   "Lecturer",
@@ -162,4 +157,9 @@ export const AccountStatement = mongoose.model(
   "AccountStatement",
   statementSchema,
   "accountStatement",
+);
+export const SchoolConfiguration = mongoose.model(
+  "SchoolConfiguration",
+  schoolConfigurationSchema,
+  "schoolConfiguration",
 );

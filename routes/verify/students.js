@@ -1,45 +1,14 @@
 import express from "express";
+import { verifyStudent } from "../../controllers/signinActions.js";
 
-export default function (Student) {
+export default function () {
   const router = express.Router();
-
-  router.post("/verify", async (req, res) => {
-    const { school_name, matriculation_number } = req.body;
-    if (!school_name || !matriculation_number) {
-      return res.status(400).json({ message: "Missing required fields" });
-    }
-    const normalize = (str) => str.trim();
-    const incomingSchool = normalize(school_name);
-    try {
-      console.log(
-        "Searching for student with matric number:",
-        matriculation_number,
-      );
-      const student = await Student.findOne({
-        matriculation_number: matriculation_number,
-      }).lean();
-      if (!student && incomingSchool) {
-        return res
-          .status(404)
-          .json({ message: "Student not found", verified: false });
-      }
-
-      const { firstname, lastname, department, current_level, phone_number } =
-        student;
-
-      return res.json({
-        firstname,
-        lastname,
-        department,
-        current_level,
-        phone_number,
-        verified: true,
-      });
-    } catch (err) {
-      console.error("Verification error:", err);
-      return res.status(500).json({ message: "Server error", verified: false });
-    }
-  });
+  /*
+    If the school won't give you SSO access, you ask their IT department to build a single, lightweight endpoint for you, or adapt to their existing Enterprise Resource Planning (ERP) software (like Banner, EduTech, or custom setups).
+    You provide them with a strict API contract.
+    No matter what language they write in, they must expose an endpoint like this: POST https://api.university.edu/v1/verify-student
+  */
+  router.post("/verify", verifyStudent);
 
   return router;
 }

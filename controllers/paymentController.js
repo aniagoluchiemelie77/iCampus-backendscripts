@@ -13,12 +13,7 @@ import { storage } from "../config/firebaseAdmin.js";
 import {generateStatementPDF} from '../templates/transactionHistoryTemplate.js';
 import { sendEmail } from "../services/emailService.js";
 import {encryptCardDetails} from '../utils/encryptionHelper.js';
-
-const USD_SUBSCRIPTION_PRICES = {
-  Pro: 1.11,
-  Premium: 3.69,
-  Free: 0,
-};
+import {USD_SUBSCRIPTION_PRICES} from '../constants/inAppConstants.js';
 
 export const handleFlutterwaveWebhook = async (req, res) => {
   const secretHash = process.env.FLW_WEBHOOK_HASH;

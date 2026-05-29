@@ -285,6 +285,7 @@ export const userSchema = new mongoose.Schema({
   createdAt: Date,
   country: String,
   current_level: String,
+  schoolAvatarUrl: String,
   phone_number: String,
   matricNumber: String,
   staffId: String,
@@ -335,22 +336,13 @@ export const userSchema = new mongoose.Schema({
   sessions: [sessionSchema],
 });
 userSchema.index(
-  { matriculation_number: 1, department: 1 },
+  { matricNumber: 1, department: 1 },
   { unique: true, partialFilterExpression: { usertype: "student" } },
 );
 userSchema.index(
   { staff_id: 1, department: 1 },
   { unique: true, partialFilterExpression: { usertype: "lecturer" } },
 );
-export const verifyStudentSchema = new mongoose.Schema({
-  firstname: String,
-  lastname: String,
-  department: String,
-  current_level: String,
-  phone_number: String,
-  matriculation_number: String,
-  school_name: String,
-});
 export const dropOffStation = new mongoose.Schema({
   id: { type: String, required: true, index: true },
   name: { type: String, required: true },
@@ -1040,6 +1032,56 @@ export const statementSchema = new mongoose.Schema({
   expense: Number,
   generatedAt: { type: Date, default: Date.now },
 });
+export const schoolConfigurationSchema = new mongoose.Schema(
+  {
+    schoolId: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      index: true, // Indexed for fast lookups during signup step 2 & 3
+    },
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
+    countryCode: {
+      type: String,
+      required: true,
+      uppercase: true,
+      maxLength: 2,
+    },
+    domainWhitelist: {
+      type: [String],
+      default: [], // e.g., ["unilag.edu.ng", "student.unilag.edu.ng"]
+    },
+    isOperational: {
+      type: Boolean,
+      default: false,
+    },
+    verificationMethod: {
+      type: String,
+      required: true,
+      enum: ["SSO", "EXTERNAL_API", "SEEDED_DATABASE", "EMAIL_ONLY"],
+      default: "EMAIL_ONLY",
+    },
+    externalApiConfig: {
+      endpoint: { type: String, trim: true },
+      sharedSecret: { type: String },
+      timeoutMs: { type: Number, default: 5000 }, // 5-second default safety window
+    },
+    ssoConfig: {
+      provider: { type: String, enum: ["OIDC", "SAML"] },
+      issuerUrl: { type: String, trim: true },
+      clientId: { type: String },
+      clientSecret: { type: String },
+    },
+  },
+  {
+    timestamps: true, // Automatically manages createdAt and updatedAt fields
+  },
+);
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
 userDownloadsSchema.index({ userId: 1 });

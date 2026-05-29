@@ -1,5 +1,4 @@
 import express from "express";
-import axios from "axios";
 import { handleGenerateCertificate } from "../controllers/classActions.js";
 import { initiateFlwCharge } from "../controllers/paymentController.js";
 import { authLimiter, protect } from "../middleware/auth.js";
@@ -18,6 +17,9 @@ import {
   fetchBanksUsingCountryCode,
   fetchOngoingLectures,
   fetchFeaturedBooksFromLibrary,
+  fetchCourseDetailsForOngoingLecture,
+  fetchAllExceptionsForOngoingLecture,
+  fetchCourseDetails,
 } from "../controllers/fetchActions.js";
 import {
   createReviewController,
@@ -42,53 +44,38 @@ import {
   verifyiTagUsernameAvailability,
   searchBookInLibrary,
   searchUserUsingUidOrNameQuery,
+  checkAccountState,
 } from "../controllers/userActionsController.js";
 import {
-  SignUp,
+  signUp,
   Login,
-  RefreshToken,
+  refreshToken,
   fetchInstitutionByCountry,
-  ValidateInstitution,
-  ValidateEmail,
-  VerifyEmailUsingCode,
-  ForgotPassword,
-  ChangePassword,
+  validateInstitution,
+  validateEmail,
+  verifyEmailUsingCode,
+  forgotPassword,
+  changePassword,
 } from "../controllers/signinActions.js";
-import { Course, Exceptions, Lectures } from "../tableDeclarations.js";
+import { Course, Lectures } from "../tableDeclarations.js";
 
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const verificationCodes = {};
 
-export default function (User) {
+export default function () {
   const router = express.Router();
 
-  router.post("/register", SignUp);
+  router.post("/register", signUp);
   router.post("/login", authLimiter, Login);
   router.post("/revoke-session", protect, revokeLoggedInDeviceSession);
-  router.post("/refresh-token", RefreshToken);
-  router.patch("/:uid", async (req, res) => {
-    try {
-      const updatedUser = await User.findOneAndUpdate(
-        { uid: req.params.uid },
-        { $set: req.body },
-        { new: true },
-      );
-      if (!updatedUser) {
-        return res.status(404).json({ error: "User not found" });
-      }
-      res.json({ message: "User updated", user: updatedUser });
-    } catch (error) {
-      console.error("❌ Update failed:", error);
-      res.status(500).json({ error: error.message });
-    }
-  });
-  router.post("/institutions/validate", ValidateInstitution);
-  router.post("/verifyEmail", ValidateEmail);
+  router.post("/refresh-token", refreshToken);
+  router.post("/institutions/validate", validateInstitution);
+  router.post("/verifyEmail", validateEmail);
   router.get("/institutions", fetchInstitutionByCountry);
-  router.post("/verifyEmailCode", authLimiter, VerifyEmailUsingCode);
-  router.post("/forgotPassword", ForgotPassword);
-  router.post("/changePassword", ChangePassword);
+  router.post("/verifyEmailCode", authLimiter, verifyEmailUsingCode);
+  router.post("/forgotPassword", forgotPassword);
+  router.post("/changePassword", changePassword);
   router.get("/get-notifications", protect, fetchUserNotifications);
   router.get("/notifications/:id", protect, fetchSingleNotification);
   router.patch(
@@ -102,17 +89,11 @@ export default function (User) {
     protect,
     fetchLectureExceptionsLecturerView,
   );
-  router.get("/exceptions/lectures/:lectureId", protect, async (req, res) => {
-    try {
-      const { lectureId } = req.params;
-      const exceptions = await Exceptions.find({ lectureId }).sort({
-        date: -1,
-      });
-      res.status(200).json(exceptions);
-    } catch (error) {
-      res.status(500).json({ message: "Failed to fetch course exceptions" });
-    }
-  });
+  router.get(
+    "/exceptions/lectures/:lectureId",
+    protect,
+    fetchAllExceptionsForOngoingLecture,
+  );
   router.get("/categories", async (req, res) => {
     try {
       const uniqueCategories = await Course.distinct("niche", {
@@ -128,53 +109,16 @@ export default function (User) {
       res.status(500).json({ message: "Server error fetching niches" });
     }
   });
-  router.get("/courses/:courseId", protect, async (req, res) => {
-    try {
-      const { courseId } = req.params;
-      const course = await Course.findOne({ courseId: courseId })
-        .populate(
-          "lecturerIds studentsEnrolled",
-          "firstname lastname profilePic",
-        )
-        .exec();
-
-      if (!course) {
-        return res.status(404).json({ message: "Course not found" });
-      }
-
-      res.status(200).json(course);
-    } catch (error) {
-      console.error("Fetch Course Error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
-  router.get("/courses/:courseId", protect, async (req, res) => {
-    try {
-      const { courseId } = req.params;
-      const userId = req.user.uid;
-      const course = await Course.findOne({
-        courseId: courseId,
-        studentsEnrolled: userId,
-      });
-      if (!course) {
-        return res.status(404).json({
-          success: false,
-          message: "Course not found or you are not enrolled in this course.",
-        });
-      }
-      return res.status(200).json({
-        success: true,
-        data: course,
-      });
-    } catch (error) {
-      console.error(`Error fetching course ${req.params.courseId}:`, error);
-      return res.status(500).json({
-        success: false,
-        message: "Server error while fetching course details.",
-        error: error.message,
-      });
-    }
-  });
+  router.get(
+    "/course/ongoing-lecture/:courseId",
+    protect,
+    fetchCourseDetailsForOngoingLecture,
+  );
+  router.get(
+    "/courses/fetch-course-details/:courseId",
+    protect,
+    fetchCourseDetails,
+  );
   router.get("/courses/:courseId/assignments", protect, fetchCourseAssignments);
   router.get("/exceptions", protect, fetchLectureExceptions);
   router.get("/courses/lectures/:lectureId", fetchCourseLectures);
@@ -271,23 +215,7 @@ export default function (User) {
       res.status(500).json({ error: "Failed to fetch AI response" });
     }
   });
-  router.get("/me", protect, async (req, res) => {
-    try {
-      const user = await User.findOne({ uid: req.user.uid });
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      res.status(200).json({
-        success: true,
-        user: {
-          uid: user.uid,
-          isSuspended: user.isSuspended,
-        },
-      });
-    } catch (error) {
-      res.status(500).json({ message: "Server error" });
-    }
-  });
+  router.get("/check-account-state", protect, checkAccountState);
   router.get("/library/search", protect, searchBookInLibrary);
   router.get("/library/featured", protect, fetchFeaturedBooksFromLibrary);
   router.get("/fetchLeaderBoards", protect, fetchLeaderBoards);

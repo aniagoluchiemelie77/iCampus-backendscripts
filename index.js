@@ -6,14 +6,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import { init } from "./controllers/socket.js";
-import {
-  User,
-  ProductCategory,
-  Product,
-  Student,
-  Lecturer,
-  Message,
-} from "./tableDeclarations.js";
+import { User, Product } from "./tableDeclarations.js";
 import { connectQueue } from "./rabbitmq.js";
 import { client } from "./workers/reditFile.js";
 import { initEmailQueue } from "./controllers/emailProducers.js";
@@ -58,7 +51,7 @@ mongoose
   .connect(MONGO_URI)
   .then(async () => {
     console.log("✅ MongoDB connected");
-    const userRoutes = (await import("./routes/user.js")).default(User);
+    const userRoutes = await import("./routes/user.js");
     const reviewsRoutes = await import("./routes/reviews.js");
     const webhooksRoutes = (await import("./routes/webhooks.js")).default(User);
     const messageRoutes = await import("./routes/messages.js");
@@ -72,15 +65,11 @@ mongoose
     ).default(User);
     const storeRoutes = await import("./routes/store.js");
     const postRoutes = await import("./routes/posts.js");
-    const studentVerifyRoutes = (
-      await import("./routes/verify/students.js")
-    ).default(Student);
+    const studentVerifyRoutes = await import("./routes/verify/students.js");
     const userVerifyRoutes = (await import("./routes/verify/users.js")).default(
       User,
     );
-    const lecturerVerifyRoutes = (
-      await import("./routes/verify/lecturers.js")
-    ).default(Lecturer);
+    const lecturerVerifyRoutes = await import("./routes/verify/lecturers.js");
 
     app.use("/users", userRoutes);
     app.use("/reviews", reviewsRoutes);
@@ -119,4 +108,3 @@ export const transporter = nodemailer.createTransport({
     pass: process.env.TRANSPORTER_AUTH_PASS,
   },
 });
-//MongoDB connection: mongod --dbpath "D:\MongoDB\data"

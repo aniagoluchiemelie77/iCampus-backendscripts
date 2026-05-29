@@ -854,3 +854,57 @@ export const fetchFeaturedBooksFromLibrary = async (req, res) => {
     res.json(getFallbackBooks());
   }
 };
+export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const course = await Course.findOne({ courseId: courseId }).lean();
+    if (!course) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+    res.status(200).json(course);
+  } catch (error) {
+    console.error("Fetch Course Error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
+  try {
+    const { lectureId } = req.params;
+    const exceptions = await Exceptions.find({ lectureId }).sort({
+      date: -1,
+    });
+    res.status(200).json(exceptions);
+  } catch (error) {
+    res.status(500).json({ message: "Failed to fetch course exceptions" });
+  }
+};
+export const fetchCourseDetails = async (req, res) => {
+      try {
+        const { courseId } = req.params;
+        const userId = req.user.uid;
+
+        const course = await Course.findOne({
+          courseId: courseId,
+          $or: [{ studentsEnrolled: userId }, { lecturerIds: userId }],
+        });
+        if (!course) {
+          return res.status(404).json({
+            success: false,
+            message:
+              "Course not found or you do not have permission to view it.",
+          });
+        }
+
+        return res.status(200).json({
+          success: true,
+          data: course,
+        });
+      } catch (error) {
+        console.error(`Error fetching course ${req.params.courseId}:`, error);
+        return res.status(500).json({
+          success: false,
+          message: "Server error while fetching course details.",
+          error: error.message,
+        });
+      }
+    },
