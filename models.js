@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+
 export const attendanceSchema = new mongoose.Schema({
   studentId: { type: String, required: true },
   lectureId: { type: String, required: true },
@@ -20,7 +21,7 @@ export const commentSchema = new mongoose.Schema({
   replies: [this],
 });
 export const lectureSchema = new mongoose.Schema({
-  id: { type: String, unique: true },
+  id: { type: String, unique: true, required: true },
   topicName: { type: String, required: true },
   lectureType: {
     type: String,
@@ -53,6 +54,8 @@ export const lectureSchema = new mongoose.Schema({
   attendance: [attendanceSchema],
   comments: [commentSchema],
   getAttendanceMode: { type: String, enum: ["Uploaded", "Online"] },
+  department: String,
+  level: String,
 });
 const assignmentSchema = new mongoose.Schema({
   title: { type: String, required: true },

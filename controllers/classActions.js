@@ -6,17 +6,23 @@ import {
   Exceptions,
   Transactions,
   Assessment,
-  TestSubmission
+  TestSubmission,
+  Lectures,
+  Course,
 } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
 import { generateCertificatePDF } from "../templates/downloadsCertificateTemplate.js";
 import {
   generateNotificationId,
   generateExceptionId,
+  generateTransactionId,
+  generateLectureId,
+  generateAssessmentId,
 } from "../utils/idGenerator.js";
 import {
   EXCEPTION_COST_IN_ICASH,
   EXCEPTION_ACCOUNT_LIMITS,
+  EXCEPTION_LECTURER_DIVIDEND_IN_ICASH,
 } from "../constants/inAppConstants.js";
 
 export const handleGenerateCertificate = async (req, res) => {
@@ -177,27 +183,395 @@ export const submitLectureException = async (req, res) => {
   }
 };
 export const checkTestStatus = async (req, res) => {
-      try {
-        const { assessmentId } = req.params;
-        const studentId = req.user.uid;
-        const test = await Assessment.findOne({
-          $or: [{ id: assessmentId }],
+  try {
+    const { assessmentId } = req.params;
+    const studentId = req.user.uid;
+    const test = await Assessment.findOne({
+      $or: [{ id: assessmentId }],
+    });
+    if (!test) {
+      return res.status(404).json({ message: "Assessment not found" });
+    }
+    const submission = await TestSubmission.findOne({
+      testId: assessmentId,
+      studentId: studentId,
+    });
+    res.status(200).json({
+      hasSubmitted: !!submission,
+      test: test,
+    });
+  } catch (error) {
+    console.error("Error checking test status:", error);
+    res
+      .status(500)
+      .json({ message: "Server error checking assessment status" });
+  }
+};
+export const manageExceptions = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, lecturerComment } = req.body;
+    const exception = await Exceptions.findOne({ id: id });
+    if (!exception) {
+      return res.status(404).json({ message: "Exception not found" });
+    }
+    if (exception.status !== "pending") {
+      return res
+        .status(400)
+        .json({ message: "This exception has already been processed" });
+    }
+    let lecturer = null;
+
+    if (status === "approved") {
+      lecturer = await User.findOne({ uid: req.user.uid });
+      if (lecturer) {
+        lecturer.pointsBalance =
+          (lecturer.pointsBalance || 0) + EXCEPTION_LECTURER_DIVIDEND_IN_ICASH;
+        await lecturer.save();
+
+        const transactionId = generateTransactionId("exceptionsDividend");
+        await Transactions.create({
+          transactionId,
+          userId: lecturer.uid,
+          type: "exceptionsDividend",
+          amountICash: EXCEPTION_LECTURER_DIVIDEND_IN_ICASH,
+          status: "success",
+          payType: "in",
+          title: `Lectures Exception Dividend for ${exception.courseInfo?.courseTitle || "Course"}`,
+          reference: `EXC-REF-${id}`,
+          metadata: {
+            recipientId: lecturer.uid,
+          },
         });
-        if (!test) {
-          return res.status(404).json({ message: "Assessment not found" });
-        }
-        const submission = await TestSubmission.findOne({
-          testId: assessmentId,
-          studentId: studentId,
-        });
-        res.status(200).json({
-          hasSubmitted: !!submission,
-          test: test,
-        });
-      } catch (error) {
-        console.error("Error checking test status:", error);
-        res
-          .status(500)
-          .json({ message: "Server error checking assessment status" });
       }
-    },
+    }
+
+    exception.status = status;
+    exception.lecturerComment = lecturerComment || "";
+    await exception.save();
+
+    const student = await User.findOne({ uid: exception.studentId });
+    if (student) {
+      createNotification({
+        notificationId: generateNotificationId("classroom"),
+        recipientId: student.uid,
+        category: "classroom",
+        actionType: "EXCEPTION_UPDATED",
+        title: `Exception ${status === "approved" ? "Approved" : "Rejected"}`,
+        message: `Your request for ${exception.courseInfo?.courseCode || "your course"} has been ${status}.`,
+        payload: {
+          exceptionId: id,
+          status,
+          courseCode: exception.courseInfo?.courseCode,
+        },
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      });
+    }
+    res.status(200).json({
+      success: true,
+      message: `Exception ${status} successfully.`,
+      newIcashBalance: lecturer ? lecturer.pointsBalance : undefined,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+export const createLectureSchedule = async (req, res) => {
+  try {
+    const {
+      date,
+      repeatWeeks,
+      startTime,
+      endTime,
+      location,
+      courseId,
+      topicName,
+      lectureType,
+    } = req.body;
+
+    const finalPayload = req.body;
+    const lecturesToCreate = [];
+    const datesToCheck = [];
+
+    const courseDetails = await Course.findOne({ courseId });
+    if (!courseDetails) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+    for (let i = 0; i < (repeatWeeks || 1); i++) {
+      const nextDate = new Date(date);
+      nextDate.setDate(nextDate.getDate() + i * 7);
+      datesToCheck.push(nextDate.toISOString().split("T")[0]);
+    }
+
+    const conflict = await Lectures.findOne({
+      date: { $in: datesToCheck },
+      startTime: { $lt: endTime },
+      endTime: { $gt: startTime },
+      $or: [
+        {
+          lectureType: "Physical",
+          location: location,
+        },
+        {
+          courseId: courseId,
+        },
+        {
+          department: courseDetails.department,
+          level: courseDetails.level,
+        },
+      ],
+    });
+
+    if (conflict) {
+      return res.status(409).json({
+        message: `Conflict detected on ${conflict.date}! A lecture (${conflict.topicName || "Class"}) conflicts with this time slot (${conflict.startTime} - ${conflict.endTime}).`,
+      });
+    }
+    datesToCheck.forEach((d) => {
+      lecturesToCreate.push({
+        ...finalPayload,
+        id: generateLectureId(courseId, lectureType),
+        date: d,
+        department: courseDetails.department,
+        level: courseDetails.level,
+        status: "scheduled",
+        isTaught: false,
+        attendance: [],
+      });
+    });
+    const result = await Lectures.insertMany(lecturesToCreate);
+
+    const students = await User.find({
+      usertype: "student",
+      department: courseDetails.department,
+      level: courseDetails.level,
+    }).select("uid firstname");
+
+    const notificationPromises = students.map((student) =>
+      createNotification({
+        notificationId: generateNotificationId("classroom"),
+        recipientId: student.uid,
+        category: "academic",
+        actionType: "LECTURE_SCHEDULED",
+        title: "New Lecture Scheduled",
+        message: `A new ${lectureType} session for ${topicName} has been set.`,
+        payload: {
+          userName: student.firstname,
+          topicName: topicName,
+          courseId: courseId,
+          lectureId: result[0].id, // Uses the generated custom id string
+          lectureType: lectureType,
+          location: location,
+          time: startTime,
+          date:
+            datesToCheck.length > 1
+              ? `${datesToCheck[0]} (Repeats for ${repeatWeeks} weeks)`
+              : datesToCheck[0],
+        },
+        entityId: result[0].id,
+        entityType: "lecture",
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      }),
+    );
+
+    // Fire and forget notifications
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Notification Error:", err),
+    );
+    await User.updateOne(
+      { uid: req.user.uid },
+      {
+        $inc: {
+          "monthlyStats.minutesActive": 15,
+          "monthlyStats.aiQueries": 2,
+        },
+      },
+    );
+
+    res.status(201).json({
+      message: "Lectures scheduled successfully",
+      count: result.length,
+      lecture: result[0],
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+export const createAssessment = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const {
+      id,
+      title,
+      questions,
+      duration,
+      isPublished,
+      totalMarks,
+      status,
+      scheduledStart,
+      dueDate,
+      assessmentType = "Test",
+    } = req.body;
+
+    let assessment;
+    let shouldNotify = false;
+
+    const course = await Course.findOne({ courseId });
+    if (!course) {
+      return res.status(404).json({ message: "Course not found" });
+    }
+
+    const existingAssessment = id ? await Assessment.findOne({ id }) : null;
+
+    if (existingAssessment) {
+      if (!existingAssessment.isPublished && isPublished) {
+        shouldNotify = true;
+      }
+
+      assessment = await Assessment.findOneAndUpdate(
+        { id },
+        {
+          title,
+          questions,
+          duration,
+          totalMarks,
+          isPublished,
+          status,
+          scheduledStart: scheduledStart ? new Date(scheduledStart) : undefined,
+          dueDate,
+          updatedAt: new Date(),
+        },
+        { new: true },
+      );
+    } else {
+      const personalizedId = generateAssessmentId(
+        course.courseId,
+        assessmentType,
+      );
+
+      assessment = new Assessment({
+        id: personalizedId,
+        courseId,
+        title,
+        questions,
+        duration,
+        totalMarks,
+        isPublished,
+        status,
+        scheduledStart: scheduledStart ? new Date(scheduledStart) : undefined,
+        dueDate,
+        createdAt: new Date(),
+      });
+
+      await assessment.save();
+      await Course.findOneAndUpdate(
+        { courseId },
+        { $addToSet: { tests: personalizedId } },
+      );
+
+      if (isPublished) shouldNotify = true;
+    }
+    if (
+      shouldNotify &&
+      course.enrolledStudents &&
+      course.enrolledStudents.length > 0
+    ) {
+      const enrolledStudentsList = await User.find({
+        uid: { $in: course.enrolledStudents },
+        usertype: "student",
+      }).select("uid");
+
+      enrolledStudentsList.forEach((student) => {
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "TEST_CREATED",
+          title: "New Assessment Posted",
+          message: `A new test "${title}" has been posted for ${course.courseCode}.`,
+          payload: {
+            courseId: courseId,
+            assessmentId: assessment.id,
+          },
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        });
+      });
+    }
+
+    res.status(existingAssessment ? 200 : 201).json({
+      message: isPublished ? "Assessment Published" : "Draft Synced",
+      data: assessment,
+    });
+  } catch (error) {
+    console.error("Assessment Error:", error);
+    res.status(500).json({ message: error.message });
+  }
+};
+export const deleteLecture = async (req, res) => {
+  try {
+    const { lectureId } = req.params;
+    const lecture = await Lectures.findOne({ id: lectureId });
+    if (!lecture) {
+      return res.status(404).json({ message: "Lecture not found" });
+    }
+
+    const { courseId, topicName, date, id } = lecture;
+    const course = await Course.findOne({ courseId });
+    if (!course) {
+      return res.status(404).json({ message: "Associated course not found" });
+    }
+    const isAuthorizedLecturer =
+      course.lecturerIds && course.lecturerIds.includes(req.user.uid);
+    if (!isAuthorizedLecturer) {
+      return res.status(403).json({
+        success: false,
+        message: "Access denied. You are not assigned to teach this course.",
+      });
+    }
+    await Lectures.findOneAndDelete({ id: lectureId });
+    if (course.enrolledStudents && course.enrolledStudents.length > 0) {
+      const students = await User.find({
+        uid: { $in: course.enrolledStudents },
+        usertype: "student",
+      }).select("uid");
+
+      const notificationPromises = students.map((student) =>
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "LECTURE_CANCELLED",
+          title: "Lecture Cancelled",
+          message: `The lecture "${topicName}" scheduled for ${date} has been cancelled.`,
+          payload: {
+            courseId: courseId,
+            lectureId: id,
+          },
+          entityId: id,
+          entityType: "lecture",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        }),
+      );
+      Promise.all(notificationPromises).catch((err) =>
+        console.error("Delete Notification Error:", err),
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Lecture successfully cancelled and enrolled students notified.",
+    });
+  } catch (error) {
+    console.error("Delete Lecture Error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};

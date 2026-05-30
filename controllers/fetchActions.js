@@ -12,6 +12,7 @@ import {
   Exceptions,
   Lectures,
   OperationalInstitutions,
+  Assessment,
 } from "../tableDeclarations.js";
 import { client } from "../workers/reditFile.js";
 import { createNotification } from "../services/notificationService.js";
@@ -623,6 +624,7 @@ export const fetchLectureExceptions = async (req, res) => {
     if (!courseId) {
       return res.status(400).json({ message: "courseId is required" });
     }
+
     let query = { courseId };
     if (userRole === "student") {
       query.studentId = userId;
@@ -631,7 +633,6 @@ export const fetchLectureExceptions = async (req, res) => {
         courseId: courseId,
         lecturerIds: userId,
       });
-
       if (!course) {
         return res.status(403).json({
           success: false,
@@ -641,6 +642,7 @@ export const fetchLectureExceptions = async (req, res) => {
     } else {
       return res.status(403).json({ message: "Unauthorized user type" });
     }
+
     const exceptions = await Exceptions.find(query)
       .sort({ createdAt: -1 })
       .lean();
@@ -933,4 +935,20 @@ export const fetchStudentsLecturesTimeline = async (req, res) => {
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
-};    
+};
+export const fetchAllCourseAssessments = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const assessments = await Assessment.find({ courseId })
+      .sort({ updatedAt: -1 })
+      .select("-__v");
+
+    res.status(200).json({
+      success: true,
+      count: assessments.length,
+      data: assessments,
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

@@ -64,6 +64,43 @@ export function generateExceptionId(courseId, lectureId) {
    */
   return `EXC-${courseFragment}${lectureFragment}-${dateStr}`;
 }
+export function generateLectureId(courseId, lectureType) {
+  const cleanCourse = (courseId || "GEN").trim().toUpperCase();
+  const cleanType = (lectureType || "PHY").trim().toUpperCase();
+  const courseFragment =
+    cleanCourse.length > 4
+      ? cleanCourse.slice(-4)
+      : cleanCourse.padStart(4, "X");
+
+  const typeFragment =
+    cleanType.length > 4 ? cleanType.slice(0, 4) : cleanType.padEnd(4, "X");
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+
+  /**
+   * Format: LEC-[COURSE_HASH][TYPE_HASH]-[YYMMDD]
+   */
+  return `LEC-${courseFragment}${typeFragment}-${dateStr}`;
+}
+export function generateAssessmentId(courseId, assessmentType = "TEST") {
+  const cleanCourse = (courseId || "GEN").trim().toUpperCase();
+  const cleanType = (assessmentType || "TEST").trim().toUpperCase();
+  const courseFragment =
+    cleanCourse.length > 4
+      ? cleanCourse.slice(-4)
+      : cleanCourse.padStart(4, "X");
+
+  const typeFragment =
+    cleanType.length > 4 ? cleanType.slice(0, 4) : cleanType.padEnd(4, "X");
+
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+
+  /**
+   * Format: ASM-[COURSE_HASH][TYPE_HASH]-[YYMMDD]-[RANDOM]
+   */
+  return `ASM-${courseFragment}${typeFragment}-${dateStr}`;
+}
 export function generatePayoutId(userId) {
   const now = new Date();
   const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
