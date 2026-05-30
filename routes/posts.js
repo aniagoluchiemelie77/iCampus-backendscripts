@@ -14,6 +14,7 @@ import {
   toggleCommentLike,
 } from "../controllers/postActions.js";
 import { fetchPosts } from "../controllers/fetchActions.js";
+import { searchPosts } from "../controllers/userActionsController.js";
 
 export default function () {
   const router = express.Router();
@@ -29,5 +30,6 @@ export default function () {
   router.patch("/vote", protect, pollVote);
   router.get("/:postId", protect, fetchPostUsingPostId);
   router.delete("/:postId/delete", protect, deletePost);
+  router.get("/search", protect, searchPosts);
   return router;
 }

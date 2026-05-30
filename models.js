@@ -1097,3 +1097,21 @@ EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 // Add this to the end of your postSchema file
 postSchema.index({ userId: 1, createdAt: -1 });
 attendanceSchema.index({ studentId: 1, lectureId: 1 }, { unique: true });
+postSchema.index(
+  {
+    content: "text",
+    "comments.comment": "text",
+    "jobMetadata.title": "text",
+    "jobMetadata.company": "text",
+    "eventMetadata.title": "text",
+  },
+  {
+    weights: {
+      "jobMetadata.title": 5,
+      "eventMetadata.title": 5,
+      content: 3,
+      "comments.comment": 1,
+    },
+    name: "icampus_post_text_search_index",
+  },
+);

@@ -995,3 +995,149 @@ export const createPersonaVerifyInquiry = async (req, res) => {
     });
   }
 };
+export const searchPosts = async (req, res) => {
+  try {
+    const searchQuery = req.query.q;
+
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      return res.status(200).json({ success: true, posts: [] });
+    }
+    const sanitizedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const searchRegex = new RegExp(sanitizedQuery, "i");
+    const posts = await Posts.find({
+      $or: [
+        { content: { $regex: searchRegex } },
+        { "comments.comment": { $regex: searchRegex } },
+        { "jobMetadata.title": { $regex: searchRegex } },
+        { "jobMetadata.company": { $regex: searchRegex } },
+        { "eventMetadata.title": { $regex: searchRegex } },
+      ],
+    })
+      .sort({ createdAt: -1 })
+      .limit(40);
+
+    return res.status(200).json({
+      success: true,
+      count: posts.length,
+      posts,
+    });
+  } catch (error) {
+    console.error("Database match compilation exception:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve posts matching search parameter.",
+    });
+  }
+};
+export const handleUnifiedCourseSearch = async (req, res) => {
+  try {
+    const searchQuery = req.query.q;
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      return res.status(200).json({ success: true, courses: [] });
+    }
+    const searchRegex = new RegExp(
+      searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      "i",
+    );
+    const institutionalCourses = await Course.find({
+      $or: [
+        { courseTitle: { $regex: searchRegex } },
+        { courseCode: { $regex: searchRegex } },
+        { department: { $regex: searchRegex } },
+      ],
+    })
+      .limit(25)
+      .lean();
+    const allLecturerUids = [
+      ...new Set(
+        institutionalCourses.flatMap((course) => course.lecturerIds || []),
+      ),
+    ];
+    let lecturerMap = {};
+    if (allLecturerUids.length > 0) {
+      const lecturers = await User.find(
+        { uid: { $in: allLecturerUids } },
+        "uid firstname lastname",
+      ).lean();
+      lecturerMap = lecturers.reduce((acc, user) => {
+        acc[user.uid] = `${user.firstname} ${user.lastname}`;
+        return acc;
+      }, {});
+    }
+    const normalizedInstitutional = institutionalCourses.map((course) => {
+      const mappedInstructors = course.lecturerIds
+        ?.map((uid) => lecturerMap[uid])
+        .filter(Boolean)
+        .join(", ");
+
+      return {
+        id: course.courseId,
+        title: course.courseTitle,
+        code: course.courseCode,
+        isPremiumPaid: false,
+        price: 0,
+        thumbnail: course.thumbnailUrl || null,
+        studentsCount: course.studentsEnrolled?.length || 0,
+        isActive: course.isActive ?? true,
+        instructors:
+          mappedInstructors || course.instructorName || "Course Instructor",
+      };
+    });
+    const marketplaceCourses = await Product.find({
+      type: "course",
+      $or: [
+        { title: { $regex: searchRegex } },
+        { description: { $regex: searchRegex } },
+        { category: { $regex: searchRegex } },
+      ],
+    })
+      .limit(25)
+      .lean();
+    const normalizedPremium = await Promise.all(
+      marketplaceCourses.map(async (product) => {
+        let instructorNames = "Instructor";
+        const lecturerUids = product.courseDetails?.lecturerIds || [];
+
+        if (lecturerUids.length > 0) {
+          const discoveredUsers = await User.find(
+            { uid: { $in: lecturerUids } },
+            "firstname lastname",
+          );
+          if (discoveredUsers.length > 0) {
+            instructorNames = discoveredUsers
+              .map((u) => `${u.firstname} ${u.lastname}`)
+              .join(", ");
+          }
+        }
+
+        return {
+          id: product.productId,
+          title: product.title,
+          code: product.category || "Premium",
+          isPremiumPaid: true,
+          price: product.priceInPoints || 0,
+          thumbnail: product.mediaUrls?.[0] || null,
+          studentsCount: product.courseDetails?.studentsEnrolled?.length || 0,
+          isActive: product.isAvailable ?? true,
+          instructors: instructorNames,
+        };
+      }),
+    );
+
+    const dynamicUnifiedResults = [
+      ...normalizedInstitutional,
+      ...normalizedPremium,
+    ].sort((a, b) => a.title.localeCompare(b.title));
+
+    return res.status(200).json({
+      success: true,
+      courses: dynamicUnifiedResults,
+    });
+  } catch (error) {
+    console.error("Unified course search failure:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server lookup engine exception error.",
+    });
+  }
+};

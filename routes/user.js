@@ -45,6 +45,7 @@ import {
   searchBookInLibrary,
   searchUserUsingUidOrNameQuery,
   checkAccountState,
+  handleUnifiedCourseSearch,
 } from "../controllers/userActionsController.js";
 import {
   signUp,
@@ -244,6 +245,7 @@ export default function () {
   router.post("/verify-phone-otp", protect, verifyPhoneNumberOTP);
   router.post("/send-phone-otp", protect, sendPhoneNumberOTP);
   router.get("/downloads/fetch-all", protect, getDownloads);
+  router.get("/courses/search", protect, handleUnifiedCourseSearch);
   router.patch(
     "/downloads/update-progress",
     protect,

@@ -266,7 +266,6 @@ export default function (User) {
   router.post("/test/submit", protect, async (req, res) => {
     const session = await mongoose.startSession();
     session.startTransaction();
-
     try {
       const { testId, answers, proctoringData } = req.body;
       if (!testId || !answers) {
@@ -274,12 +273,10 @@ export default function (User) {
           .status(400)
           .json({ message: "Missing required submission data." });
       }
-
       const existingSubmission = await TestSubmission.findOne({
         testId,
         studentId: req.user.uid,
       });
-
       if (existingSubmission) {
         return res
           .status(403)
