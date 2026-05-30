@@ -15,6 +15,7 @@ import { createNotification } from "../../services/notificationService.js";
 import {
   submitLectureException,
   checkTestStatus,
+  compareStudentFacesWithGemini,
 } from "../../controllers/classActions.js";
 import { fetchStudentsLecturesTimeline } from "../../controllers/fetchActions.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -481,5 +482,10 @@ export default function (User) {
       res.status(500).json({ error: error.message });
     }
   });
+  router.post(
+    "/attendance/verify-student",
+    protect,
+    compareStudentFacesWithGemini,
+  );
   return router;
 }

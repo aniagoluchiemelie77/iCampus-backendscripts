@@ -295,8 +295,12 @@ export const init = (httpServer) => {
     // Physical Lectures logic
     socket.on("start_attendance_session", ({ lectureId, lecturerId }) => {
       socket.join(`lecturer_${lectureId}`);
-      activeSessions.set(lectureId, { startTime: Date.now(), lecturerId });
-      console.log(`Attendance session started for ${lectureId}`);
+      activeSessions.set(lectureId, {
+        startTime: Date.now(),
+        lecturerId,
+        status: "fetching",
+      });
+      console.log(`[BLE Verification Link Activated]: ${lectureId}`);
     });
 
     socket.on(

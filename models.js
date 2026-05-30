@@ -81,7 +81,7 @@ const assignmentSchema = new mongoose.Schema({
 });
 export const courseSchema = new mongoose.Schema(
   {
-    courseId: { type: String, required: true, unique: true }, // Custom ID (e.g. "CSC201-2026")
+    courseId: { type: String, required: true, unique: true },
     courseCode: { type: String, required: true },
     courseTitle: { type: String, required: true },
     department: { type: String, required: true },

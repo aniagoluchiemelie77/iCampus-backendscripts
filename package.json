@@ -12,6 +12,7 @@
   "description": "",
   "dependencies": {
     "@deepgram/sdk": "^5.0.0",
+    "@google/genai": "^2.7.0",
     "@google/generative-ai": "^0.24.1",
     "amqplib": "^0.10.9",
     "axios": "^1.16.1",

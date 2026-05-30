@@ -22,6 +22,7 @@ import {
   createLectureSchedule,
   createAssessment,
   deleteLecture,
+  fetchLectureAttendanceReport,
 } from "../../controllers/classActions.js";
 import { fetchAllCourseAssessments } from "../../controllers/fetchActions.js";
 
@@ -648,5 +649,10 @@ export default function (User) {
     }
   });
   router.post("/upload-video", protect, uploadAndVerifyLessonVideo);
+  router.post(
+    "/lectures/:lectureId/report",
+    protect,
+    fetchLectureAttendanceReport,
+  );
   return router;
 }

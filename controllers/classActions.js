@@ -9,6 +9,7 @@ import {
   TestSubmission,
   Lectures,
   Course,
+  Attendance,
 } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
 import { generateCertificatePDF } from "../templates/downloadsCertificateTemplate.js";
@@ -24,6 +25,10 @@ import {
   EXCEPTION_ACCOUNT_LIMITS,
   EXCEPTION_LECTURER_DIVIDEND_IN_ICASH,
 } from "../constants/inAppConstants.js";
+import { generateAttendancePDF } from "../templates/courseAttendanceTemplate.js";
+import { GoogleGenAI } from "@google/genai";
+import axios from "axios";
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export const handleGenerateCertificate = async (req, res) => {
   const { productId } = req.body;
@@ -478,11 +483,11 @@ export const createAssessment = async (req, res) => {
     }
     if (
       shouldNotify &&
-      course.enrolledStudents &&
-      course.enrolledStudents.length > 0
+      course.studentsEnrolled &&
+      course.studentsEnrolled.length > 0
     ) {
       const enrolledStudentsList = await User.find({
-        uid: { $in: course.enrolledStudents },
+        uid: { $in: course.studentsEnrolled },
         usertype: "student",
       }).select("uid");
 
@@ -536,9 +541,9 @@ export const deleteLecture = async (req, res) => {
       });
     }
     await Lectures.findOneAndDelete({ id: lectureId });
-    if (course.enrolledStudents && course.enrolledStudents.length > 0) {
+    if (course.studentsEnrolled && course.studentsEnrolled.length > 0) {
       const students = await User.find({
-        uid: { $in: course.enrolledStudents },
+        uid: { $in: course.studentsEnrolled },
         usertype: "student",
       }).select("uid");
 
@@ -573,5 +578,241 @@ export const deleteLecture = async (req, res) => {
   } catch (error) {
     console.error("Delete Lecture Error:", error);
     res.status(500).json({ message: "Internal server error" });
+  }
+};
+export const fetchLectureAttendanceReport = async (req, res) => {
+  try {
+    const { lectureId } = req.params;
+    const { exceptions = [] } = req.body;
+
+    const lecture = await Lectures.findOne({ id: lectureId });
+    if (!lecture) {
+      return res.status(404).json({ message: "Lecture record not found." });
+    }
+
+    const course = await Course.findOne({ courseId: lecture.courseId });
+    const bucket = storage.bucket();
+    const filePath = `attendance/${lecture.courseId}/Report-${lectureId}.pdf`;
+    const file = bucket.file(filePath);
+    const [exists] = await file.exists();
+    let firebaseUrl = "";
+
+    if (exists) {
+      firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+    } else {
+      const attendanceRecords = await Attendance.find({ lectureId });
+      const studentUids = attendanceRecords.map((r) => r.studentId);
+      const presentStudents = await User.find({
+        uid: { $in: studentUids },
+      }).select("firstname lastname matricNumber department uid");
+      const pdfBuffer = await generateAttendancePDF({
+        course,
+        lecture,
+        presentStudents,
+        exceptions,
+      });
+      await file.save(pdfBuffer, {
+        metadata: { contentType: "application/pdf" },
+        public: true,
+      });
+
+      firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+      await Lectures.findOneAndUpdate(
+        { id: lectureId },
+        { pdfUrl: firebaseUrl },
+      );
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Attendance sheet compiled successfully!",
+      pdfUrl: firebaseUrl,
+    });
+  } catch (error) {
+    console.error("Backend PDF Engine Error:", error);
+    res.status(500).json({ message: "Internal server compilation error." });
+  }
+};
+//
+export const getCourseFinalAttendanceSummary = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const course = await Course.findOne({ courseId });
+    if (!course) {
+      return res.status(404).json({ message: "Course context not found." });
+    }
+    const totalLecturesCount = await Lectures.countDocuments({
+      courseId,
+      status: "completed",
+      lectureType: { $ne: "Recorded" },
+    });
+    if (totalLecturesCount === 0) {
+      return res
+        .status(200)
+        .json({ message: "No live lectures recorded yet.", summary: [] });
+    }
+    const attendanceSummary = await User.aggregate([
+      {
+        $match: { uid: { $in: course.studentsEnrolled } },
+      },
+      {
+        $lookup: {
+          from: "attendances",
+          let: { studentUid: "$uid" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $and: [
+                    { $eq: ["$studentId", "$$studentUid"] },
+                    { $eq: ["$courseId", courseId] },
+                    { $eq: ["$status", "Present"] },
+                  ],
+                },
+              },
+            },
+          ],
+          as: "presenceRecords",
+        },
+      },
+      {
+        // Project cleanly structured grading fields back to the client interface
+        $project: {
+          _id: 0,
+          uid: 1,
+          firstname: 1,
+          lastname: 1,
+          matricNumber: 1,
+          department: 1,
+          lecturesAttended: { $size: "$presenceRecords" },
+          totalLectures: { $literal: totalLecturesCount },
+          attendancePercentage: {
+            $round: [
+              {
+                $multiply: [
+                  {
+                    $divide: [
+                      { $size: "$presenceRecords" },
+                      totalLecturesCount,
+                    ],
+                  },
+                  100,
+                ],
+              },
+              1,
+            ],
+          },
+        },
+      },
+      { $sort: { matricNumber: 1 } },
+    ]);
+
+    return res.status(200).json({
+      success: true,
+      courseCode: course.courseCode,
+      courseTitle: course.courseTitle,
+      totalLecturesHeld: totalLecturesCount,
+      data: attendanceSummary,
+    });
+  } catch (error) {
+    console.error("End of Semester Analytics Aggregation Error:", error);
+    res
+      .status(500)
+      .json({ message: "Failed to generate course grading summary sheet." });
+  }
+};
+export const getCourseLecturePdfDirectory = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const lectureHistory = await Lectures.find({
+      courseId,
+      status: "completed",
+    })
+      .select("id topicName date startTime pdfUrl getAttendanceMode")
+      .sort({ date: -1 });
+    return res.status(200).json({
+      success: true,
+      history: lectureHistory,
+    });
+  } catch (error) {
+    console.error("Fetch Directory Error:", error);
+    res.status(500).json({ message: "Internal server registry lookup error." });
+  }
+};
+//
+export const compareStudentFacesWithGemini = async (req, res) => {
+  try {
+    const { selfieBase64, targetImageUrl } = req.body;
+    if (!selfieBase64 || !targetImageUrl) {
+      return res.status(400).json({
+        verified: false,
+        message: "Verification parameters are missing.",
+      });
+    }
+
+    const responseImage = await axios.get(targetImageUrl, {
+      responseType: "arraybuffer",
+    });
+    const targetImageBase64 = Buffer.from(
+      responseImage.data,
+      "binary",
+    ).toString("base64");
+    const textInstructions =
+      "You are an automated biometric security system monitoring classroom attendance. " +
+      "Compare Image 1 (live front-camera phone snapshot) and Image 2 (official institutional database headshot). " +
+      "Determine if they show the exact same student. Ignore differences in backgrounds, lighting conditions, " +
+      "or casual vs structured expressions. Be strict against proxy attempts or pictures held up to the camera.\n\n" +
+      "Return your verdict STRICTLY as a JSON object matching this schema:\n" +
+      '{"verified": boolean, "reason": "brief plain text explanation for audit logs"}';
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.2,
+      },
+      contents: [
+        textInstructions,
+        {
+          inlineData: {
+            data: selfieBase64,
+            mimeType: "image/jpeg",
+          },
+        },
+        {
+          inlineData: {
+            data: targetImageBase64,
+            mimeType: "image/jpeg",
+          },
+        },
+      ],
+    });
+
+    const aiOutputText = response.text;
+    if (!aiOutputText) {
+      return res.status(500).json({
+        verified: false,
+        message: "AI Engine returned empty validation text.",
+      });
+    }
+    const validationResult = JSON.parse(aiOutputText);
+
+    if (validationResult.verified === true) {
+      return res.status(200).json({
+        verified: true,
+        message: "Identity confirmed successfully.",
+      });
+    } else {
+      return res.status(401).json({
+        verified: false,
+        message: validationResult.reason || "Facial signature mismatch.",
+      });
+    }
+  } catch (error) {
+    console.error("Gemini Multi-Modal verification exception:", error);
+    return res.status(500).json({
+      verified: false,
+      message: "Internal server processing failure.",
+    });
   }
 };
