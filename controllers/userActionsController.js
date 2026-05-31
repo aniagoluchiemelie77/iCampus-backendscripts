@@ -1141,3 +1141,94 @@ export const handleUnifiedCourseSearch = async (req, res) => {
     });
   }
 };
+export const handleUnifiedResourceSearch = async (req, res) => {
+  try {
+    const searchQuery = req.query.q;
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      return res.status(200).json({ success: true, resources: [] });
+    }
+    const searchRegex = new RegExp(
+      searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      "i",
+    );
+    const institutionalMatches = await Course.find({
+      $or: [
+        { courseTitle: { $regex: searchRegex } },
+        { courseCode: { $regex: searchRegex } },
+        { resources: { $regex: searchRegex } },
+      ],
+    })
+      .select("courseId courseTitle courseCode resources")
+      .limit(30)
+      .lean();
+
+    const normalizedInstitutional = [];
+
+    institutionalMatches.forEach((course) => {
+      if (!course.resources || course.resources.length === 0) return;
+
+      course.resources.forEach((url) => {
+        const rawFileName = url.split("/").pop() || "Untitled Material";
+        const cleanedFileName = decodeURIComponent(rawFileName).split("?")[0];
+        const matchesQuery =
+          course.courseTitle.match(searchRegex) ||
+          course.courseCode.match(searchRegex) ||
+          cleanedFileName.match(searchRegex);
+        if (matchesQuery) {
+          normalizedInstitutional.push({
+            id: `${course.courseId}-${Buffer.from(url).toString("base64").substring(0, 8)}`,
+            title: cleanedFileName.split("-").pop() || cleanedFileName,
+            url: url,
+            format: url.split(".").pop()?.split("?")[0]?.toLowerCase() || "pdf",
+            isPremiumPaid: false,
+            price: 0,
+            metaSource: `${course.courseCode} • Institutional`,
+            courseId: course.courseId,
+          });
+        }
+      });
+    });
+    const marketplaceFiles = await Product.find({
+      type: "file",
+      isAvailable: true,
+      $or: [
+        { title: { $regex: searchRegex } },
+        { description: { $regex: searchRegex } },
+        { category: { $regex: searchRegex } },
+        { "fileDetails.fileName": { $regex: searchRegex } },
+      ],
+    })
+      .limit(25)
+      .lean();
+
+    const normalizedPremium = marketplaceFiles.map((product) => {
+      return {
+        id: product.productId,
+        title: product.title,
+        url: product.fileDetails?.fileUrl || product.mediaUrls?.[0] || null,
+        format: product.fileDetails?.fileFormat || "pdf",
+        isPremiumPaid: true,
+        price: product.priceInPoints || 0,
+        metaSource: `${product.category || "Document"} • Marketplace`,
+        fileSize: product.fileDetails?.fileSizeInMB
+          ? `${product.fileDetails.fileSizeInMB} MB`
+          : null,
+      };
+    });
+    const unifiedResources = [
+      ...normalizedInstitutional,
+      ...normalizedPremium,
+    ].sort((a, b) => a.title.localeCompare(b.title));
+
+    return res.status(200).json({
+      success: true,
+      resources: unifiedResources,
+    });
+  } catch (error) {
+    console.error("Unified resource library lookup down: ", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal engine error resolving resource records.",
+    });
+  }
+};

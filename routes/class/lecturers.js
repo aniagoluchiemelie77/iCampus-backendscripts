@@ -23,6 +23,8 @@ import {
   createAssessment,
   deleteLecture,
   fetchLectureAttendanceReport,
+  uploadCourseMaterial,
+  deleteCourseMaterial,
 } from "../../controllers/classActions.js";
 import { fetchAllCourseAssessments } from "../../controllers/fetchActions.js";
 
@@ -156,62 +158,15 @@ export default function (User) {
         .json({ message: "Server error updating course contents" });
     }
   });
-  // --- 1. UPLOAD MATERIAL ---
   router.post(
     "/courses/uploadMaterial/:courseId",
     protect,
-    async (req, res) => {
-      try {
-        const { courseId } = req.params;
-        const fileUrl = req.file.path;
-        const fileName = req.file.originalname || "New Resource";
-
-        const updatedCourse = await Course.findByIdAndUpdate(
-          courseId,
-          { $push: { resources: fileUrl } },
-          { new: true },
-        );
-
-        // NOTIFY STUDENTS
-        const students = await User.find({
-          usertype: "student",
-          department: updatedCourse.department,
-          level: updatedCourse.level,
-        }).select("uid");
-
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "MATERIAL_UPLOADED",
-            title: "New Study Material",
-            message: `A new resource file has been uploaded for ${updatedCourse.courseTitle}.`,
-            payload: { courseId, fileName },
-            sendEmail: false, // Per your requirement
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-        await User.updateOne(
-          { uid: req.user.uid },
-          {
-            $inc: {
-              "monthlyStats.libraryUsageSessions": 1,
-              "monthlyStats.minutesActive": 10,
-            },
-          },
-        );
-
-        res.status(200).json({
-          message: "File uploaded",
-          resources: updatedCourse.resources,
-        });
-      } catch (error) {
-        res.status(500).json({ message: "Upload failed" });
-      }
-    },
+    uploadCourseMaterial,
+  );
+  router.delete(
+    "/courses/deleteMaterial/:courseId",
+    protect,
+    deleteCourseMaterial,
   );
   // --- 2. CREATE ASSIGNMENT ---
   router.post(

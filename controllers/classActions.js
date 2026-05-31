@@ -816,3 +816,162 @@ export const compareStudentFacesWithGemini = async (req, res) => {
     });
   }
 };
+export const uploadCourseMaterial = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { materialUrl, title } = req.body;
+
+    if (!materialUrl) {
+      return res
+        .status(400)
+        .json({ message: "Missing material URL parameter." });
+    }
+    const course = await Course.findOne({ courseId });
+    if (!course) {
+      return res.status(404).json({ message: "Course context not found." });
+    }
+    const isAuthorized =
+      course.lecturerIds && course.lecturerIds.includes(req.user.uid);
+    if (!isAuthorized) {
+      return res.status(403).json({
+        message: "Unauthorized. You are not a lecturer for this course.",
+      });
+    }
+    course.resources = course.resources || [];
+    course.resources.push(materialUrl);
+    await course.save();
+
+    const fileName = title || materialUrl.split("/").pop() || "New Resource";
+
+    User.find({
+      usertype: "student",
+      department: course.department,
+      level: course.level,
+    })
+      .select("uid")
+      .then((students) => {
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "MATERIAL_UPLOADED",
+            title: "New Study Material",
+            message: `A new resource file has been uploaded for ${course.courseTitle}.`,
+            payload: { courseId, fileName },
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+      })
+      .catch((err) =>
+        console.error("Notification dispatch routine failed: ", err),
+      );
+    await User.updateOne(
+      { uid: req.user.uid },
+      {
+        $inc: {
+          "monthlyStats.libraryUsageSessions": 1,
+          "monthlyStats.minutesActive": 10,
+        },
+      },
+    );
+    return res.status(200).json({
+      message: "Material added successfully",
+    });
+  } catch (error) {
+    console.error("Backend Upload Sync Error:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error during upload synchronization." });
+  }
+};
+export const deleteCourseMaterial = async (req, res) => {
+      try {
+        const { courseId } = req.params;
+        const { materialUrl } = req.body;
+
+        if (!materialUrl) {
+          return res
+            .status(400)
+            .json({ message: "Missing reference target URL." });
+        }
+        const course = await Course.findOne({ courseId });
+        if (!course) {
+          return res
+            .status(404)
+            .json({ message: "Course context target not found." });
+        }
+        const isAuthorized =
+          course.lecturerIds && course.lecturerIds.includes(req.user.uid);
+        if (!isAuthorized) {
+          return res
+            .status(403)
+            .json({ message: "Action Denied. Access authorization mismatch." });
+        }
+        try {
+          const encodedFilePath = materialUrl.split("/o/")[1]?.split("?")[0];
+          if (encodedFilePath) {
+            const filePath = decodeURIComponent(encodedFilePath);
+            const bucket = storage.bucket(); 
+
+            await bucket.file(filePath).delete();
+            console.log(
+              `Successfully purged asset from storage bucket: ${filePath}`,
+            );
+          }
+        } catch (storageError) {
+          console.error(
+            "Firebase Storage Cleanup Failed (Link may be orphaned):",
+            storageError,
+          );
+        }
+        const updatedCourse = await Course.findOneAndUpdate(
+          { courseId },
+          { $pull: { resources: materialUrl } },
+          { new: true },
+        );
+        const fileName = materialUrl.split("/").pop() || "Resource Document";
+
+        User.find({
+          usertype: "student",
+          department: updatedCourse.department,
+          level: updatedCourse.level,
+        })
+          .select("uid")
+          .then((students) => {
+            students.forEach((student) => {
+              createNotification({
+                notificationId: generateNotificationId("classroom"),
+                recipientId: student.uid,
+                category: "classroom",
+                actionType: "MATERIAL_DELETED",
+                title: "Study Material Removed",
+                message: `A resource file has been removed from ${updatedCourse.courseTitle}.`,
+                payload: { courseId, fileName },
+                sendPush: true,
+                sendSocket: true,
+                saveToDb: true,
+              });
+            });
+          })
+          .catch((err) =>
+            console.error(
+              "Notification push routine failed during deletion: ",
+              err,
+            ),
+          );
+        return res.status(200).json({
+          message: "Material permanently deleted",
+          resources: updatedCourse.resources,
+        });
+      } catch (error) {
+        console.error("Backend Deletion Pipeline Error: ", error);
+        return res
+          .status(500)
+          .json({
+            message: "Internal server error occurred while deleting resource.",
+          });
+      }
+    },
