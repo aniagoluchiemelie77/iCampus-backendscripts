@@ -101,6 +101,23 @@ export function generateAssessmentId(courseId, assessmentType = "TEST") {
    */
   return `ASM-${courseFragment}${typeFragment}-${dateStr}`;
 }
+export function generateAssignmentId(courseId) {
+  const cleanCourse = (courseId || "GEN").trim().toUpperCase();
+
+  const courseFragment =
+    cleanCourse.length > 4
+      ? cleanCourse.slice(-4)
+      : cleanCourse.padStart(4, "X");
+
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+  const randomFragment = crypto.randomBytes(2).toString("hex").toUpperCase();
+
+  /**
+   * Format: ASG-[COURSE_FRAGMENT]-[YYMMDD]-[RANDOM]
+   */
+  return `ASG-${courseFragment}-${dateStr}-${randomFragment}`;
+}
 export function generatePayoutId(userId) {
   const now = new Date();
   const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");

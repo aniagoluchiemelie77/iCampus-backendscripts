@@ -8,14 +8,8 @@ import {
   TestSubmission,
 } from "../../tableDeclarations.js";
 import { createNotification } from "../../services/notificationService.js";
-import { customAlphabet } from "nanoid";
 import PDFDocument from "pdfkit-table";
-const alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-const nano = customAlphabet(alphabet, 6);
-import {
-  generateNotificationId,
-  generateTransactionId,
-} from "../../utils/idGenerator.js";
+import { generateNotificationId } from "../../utils/idGenerator.js";
 import { uploadAndVerifyLessonVideo } from "../../controllers/lectures.js";
 import {
   manageExceptions,
@@ -28,6 +22,8 @@ import {
   createCourseContent,
   editCourseContent,
   deleteCourseContent,
+  createCourseAssignment,
+  deleteCourseAssignment,
 } from "../../controllers/classActions.js";
 import { fetchAllCourseAssessments } from "../../controllers/fetchActions.js";
 
@@ -132,71 +128,15 @@ export default function (User) {
     protect,
     deleteCourseMaterial,
   );
-  // --- 2. CREATE ASSIGNMENT ---
   router.post(
     "/courses/:courseId/assignments",
     protect,
-    upload.single("file"),
-    async (req, res) => {
-      try {
-        const { courseId } = req.params;
-        const { title, description, dueDate, submissionMethod, lectureId } =
-          req.body;
-
-        const newAssignment = {
-          title,
-          description,
-          dueDate: new Date(dueDate),
-          submissionMethod,
-          lectureId,
-          courseId,
-          fileUrl: req.file ? req.file.path : null,
-          submissions: [],
-        };
-
-        const course = await Course.findOneAndUpdate(
-          { courseId: courseId },
-          { $push: { assignments: newAssignment } },
-          { new: true },
-        );
-
-        if (!course)
-          return res.status(404).json({ message: "Course not found" });
-
-        // NOTIFY STUDENTS
-        const students = await User.find({
-          usertype: "student",
-          department: course.department,
-          level: course.level,
-        }).select("uid");
-
-        const formattedDate = new Date(dueDate).toLocaleDateString();
-
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "ASSIGNMENT_CREATED",
-            title: "New Assignment",
-            message: `New assignment uploaded for ${course.courseTitle}: "${title}". Due: ${formattedDate}`,
-            payload: {
-              courseId,
-              assignmentTitle: title,
-              dueDate: formattedDate,
-            },
-            sendEmail: false, // Per your requirement
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-
-        res.status(201).json(course.assignments);
-      } catch (error) {
-        res.status(500).json({ message: error.message });
-      }
-    },
+    createCourseAssignment,
+  );
+  router.delete(
+    "/courses/:courseId/assignments/:assignmentId",
+    protect,
+    deleteCourseAssignment,
   );
   router.patch("/exceptions/:id/status", protect, manageExceptions);
   router.post(

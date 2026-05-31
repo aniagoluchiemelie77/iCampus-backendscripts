@@ -58,12 +58,14 @@ export const lectureSchema = new mongoose.Schema({
   level: String,
 });
 const assignmentSchema = new mongoose.Schema({
+  id: { type: String, unique: true, required: true },
   title: { type: String, required: true },
   description: { type: String },
-  fileUrl: { type: String }, // URL to the assignment brief
+  fileUrl: { type: String },
   dueDate: { type: Date, required: true },
   courseId: { type: String, ref: "Course", required: true },
   lectureId: { type: String },
+  submissionInfo: { type: String, default: "Submit to your course rep" },
   submissionMethod: {
     type: String,
     enum: ["Online", "Physical", "Both"],

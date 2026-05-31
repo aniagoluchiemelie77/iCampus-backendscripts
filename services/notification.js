@@ -271,7 +271,17 @@ export const createNotification = async ({
         break;
 
       case "ASSIGNMENT_CREATED":
-        subject = "New Assignment Posted";
+        category = "classroom";
+        subject = `New Assignment: ${payload.assignmentTitle || "Task Assigned"}`;
+        title = title || "New Assignment Posted";
+        message = message || `A new assignment has been uploaded for your course. Due: ${payload.dueDate || "See app for details"}`;
+        break;
+
+      case "ASSIGNMENT_REMOVED":
+        category = "classroom";
+        subject = `Course Update: Assignment Removed`;
+        title = title || "Assignment Removed";
+        message = message || "An assignment was removed by your instructor.";
         break;
 
       case "COURSE_COMPLETED":

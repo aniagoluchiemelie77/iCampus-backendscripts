@@ -19,6 +19,7 @@ import {
   generateTransactionId,
   generateLectureId,
   generateAssessmentId,
+  generateAssignmentId,
 } from "../utils/idGenerator.js";
 import {
   EXCEPTION_COST_IN_ICASH,
@@ -1156,4 +1157,134 @@ export const deleteCourseContent = async (req, res) => {
       .status(500)
       .json({ message: "Server error processing array removal operation" });
   }
-};     
+};
+export const createCourseAssignment = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { title, description, dueDate, submissionMethod, lectureId } =
+      req.body;
+    const lecturerUid = req.user.uid;
+
+    const course = await Course.findOne({ courseId });
+    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!course.lecturerIds.includes(lecturerUid)) {
+      return res
+        .status(403)
+        .json({ message: "Unauthorized: You do not instruct this course" });
+    }
+    const assignmentId = generateAssignmentId(courseId);
+    const newAssignment = {
+      assignmentId,
+      title,
+      description,
+      dueDate: new Date(dueDate),
+      submissionMethod,
+      lectureId,
+      courseId,
+      fileUrl: req.file ? req.file.path : null,
+      submissions: [],
+    };
+    course.assignments.push(newAssignment);
+    await course.save();
+    const formattedDate = new Date(dueDate).toLocaleDateString();
+    User.find({
+      usertype: "student",
+      department: course.department,
+      level: course.level,
+    })
+      .select("uid")
+      .then((students) => {
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "ASSIGNMENT_CREATED",
+            title: "New Assignment",
+            message: `New assignment uploaded for ${course.courseTitle}: "${title}". Due: ${formattedDate}`,
+            payload: {
+              courseId,
+              assignmentId,
+              assignmentTitle: title,
+              dueDate: formattedDate,
+            },
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+      })
+      .catch((err) =>
+        console.error("Assignment Notification Dispatch Failure:", err),
+      );
+    return res.status(201).json(course.assignments);
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+export const deleteCourseAssignment =  async (req, res) => {
+      try {
+        const { courseId, assignmentId } = req.params;
+        const lecturerUid = req.user.uid;
+
+        const course = await Course.findOne({ courseId });
+        if (!course)
+          return res.status(404).json({ message: "Course not found" });
+
+        if (!course.lecturerIds.includes(lecturerUid)) {
+          return res
+            .status(403)
+            .json({ message: "Unauthorized: Access denied" });
+        }
+
+        const targetAssignment = course.assignments.find(
+          (asg) => asg.assignmentId === assignmentId,
+        );
+        if (!targetAssignment) {
+          return res.status(404).json({
+            message: "Target assignment not found within this course profile",
+          });
+        }
+        const updatedCourse = await Course.findOneAndUpdate(
+          { courseId },
+          { $pull: { assignments: { assignmentId: assignmentId } } },
+          { new: true },
+        );
+        User.find({
+          usertype: "student",
+          department: updatedCourse.department,
+          level: updatedCourse.level,
+        })
+          .select("uid")
+          .then((students) => {
+            students.forEach((student) => {
+              createNotification({
+                notificationId: generateNotificationId("classroom"),
+                recipientId: student.uid,
+                category: "classroom",
+                actionType: "ASSIGNMENT_REMOVED", 
+                title: "Assignment Cancelled",
+                message: `The assignment "${targetAssignment.title}" has been removed by the instructor.`,
+                payload: {
+                  courseId,
+                  assignmentId,
+                },
+                sendEmail: false,
+                sendPush: true,
+                sendSocket: true,
+                saveToDb: true,
+              });
+            });
+          })
+          .catch((err) =>
+            console.error("Wipe notification thread failed:", err),
+          );
+
+        return res.status(200).json({
+          message: "Assignment deleted successfully",
+          assignments: updatedCourse.assignments,
+        });
+      } catch (error) {
+        return res.status(500).json({ message: error.message });
+      }
+    },
