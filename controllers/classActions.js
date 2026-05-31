@@ -633,7 +633,6 @@ export const fetchLectureAttendanceReport = async (req, res) => {
     res.status(500).json({ message: "Internal server compilation error." });
   }
 };
-//
 export const getCourseFinalAttendanceSummary = async (req, res) => {
   try {
     const { courseId } = req.params;
@@ -739,7 +738,6 @@ export const getCourseLecturePdfDirectory = async (req, res) => {
     res.status(500).json({ message: "Internal server registry lookup error." });
   }
 };
-//
 export const compareStudentFacesWithGemini = async (req, res) => {
   try {
     const { selfieBase64, targetImageUrl } = req.body;
@@ -888,90 +886,274 @@ export const uploadCourseMaterial = async (req, res) => {
   }
 };
 export const deleteCourseMaterial = async (req, res) => {
-      try {
-        const { courseId } = req.params;
-        const { materialUrl } = req.body;
+  try {
+    const { courseId } = req.params;
+    const { materialUrl } = req.body;
 
-        if (!materialUrl) {
-          return res
-            .status(400)
-            .json({ message: "Missing reference target URL." });
-        }
-        const course = await Course.findOne({ courseId });
-        if (!course) {
-          return res
-            .status(404)
-            .json({ message: "Course context target not found." });
-        }
-        const isAuthorized =
-          course.lecturerIds && course.lecturerIds.includes(req.user.uid);
-        if (!isAuthorized) {
-          return res
-            .status(403)
-            .json({ message: "Action Denied. Access authorization mismatch." });
-        }
-        try {
-          const encodedFilePath = materialUrl.split("/o/")[1]?.split("?")[0];
-          if (encodedFilePath) {
-            const filePath = decodeURIComponent(encodedFilePath);
-            const bucket = storage.bucket(); 
+    if (!materialUrl) {
+      return res.status(400).json({ message: "Missing reference target URL." });
+    }
+    const course = await Course.findOne({ courseId });
+    if (!course) {
+      return res
+        .status(404)
+        .json({ message: "Course context target not found." });
+    }
+    const isAuthorized =
+      course.lecturerIds && course.lecturerIds.includes(req.user.uid);
+    if (!isAuthorized) {
+      return res
+        .status(403)
+        .json({ message: "Action Denied. Access authorization mismatch." });
+    }
+    try {
+      const encodedFilePath = materialUrl.split("/o/")[1]?.split("?")[0];
+      if (encodedFilePath) {
+        const filePath = decodeURIComponent(encodedFilePath);
+        const bucket = storage.bucket();
 
-            await bucket.file(filePath).delete();
-            console.log(
-              `Successfully purged asset from storage bucket: ${filePath}`,
-            );
-          }
-        } catch (storageError) {
-          console.error(
-            "Firebase Storage Cleanup Failed (Link may be orphaned):",
-            storageError,
-          );
-        }
-        const updatedCourse = await Course.findOneAndUpdate(
-          { courseId },
-          { $pull: { resources: materialUrl } },
-          { new: true },
+        await bucket.file(filePath).delete();
+        console.log(
+          `Successfully purged asset from storage bucket: ${filePath}`,
         );
-        const fileName = materialUrl.split("/").pop() || "Resource Document";
-
-        User.find({
-          usertype: "student",
-          department: updatedCourse.department,
-          level: updatedCourse.level,
-        })
-          .select("uid")
-          .then((students) => {
-            students.forEach((student) => {
-              createNotification({
-                notificationId: generateNotificationId("classroom"),
-                recipientId: student.uid,
-                category: "classroom",
-                actionType: "MATERIAL_DELETED",
-                title: "Study Material Removed",
-                message: `A resource file has been removed from ${updatedCourse.courseTitle}.`,
-                payload: { courseId, fileName },
-                sendPush: true,
-                sendSocket: true,
-                saveToDb: true,
-              });
-            });
-          })
-          .catch((err) =>
-            console.error(
-              "Notification push routine failed during deletion: ",
-              err,
-            ),
-          );
-        return res.status(200).json({
-          message: "Material permanently deleted",
-          resources: updatedCourse.resources,
-        });
-      } catch (error) {
-        console.error("Backend Deletion Pipeline Error: ", error);
-        return res
-          .status(500)
-          .json({
-            message: "Internal server error occurred while deleting resource.",
-          });
       }
-    },
+    } catch (storageError) {
+      console.error(
+        "Firebase Storage Cleanup Failed (Link may be orphaned):",
+        storageError,
+      );
+    }
+    const updatedCourse = await Course.findOneAndUpdate(
+      { courseId },
+      { $pull: { resources: materialUrl } },
+      { new: true },
+    );
+    const fileName = materialUrl.split("/").pop() || "Resource Document";
+
+    User.find({
+      usertype: "student",
+      department: updatedCourse.department,
+      level: updatedCourse.level,
+    })
+      .select("uid")
+      .then((students) => {
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "MATERIAL_DELETED",
+            title: "Study Material Removed",
+            message: `A resource file has been removed from ${updatedCourse.courseTitle}.`,
+            payload: { courseId, fileName },
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+      })
+      .catch((err) =>
+        console.error(
+          "Notification push routine failed during deletion: ",
+          err,
+        ),
+      );
+    return res.status(200).json({
+      message: "Material permanently deleted",
+      resources: updatedCourse.resources,
+    });
+  } catch (error) {
+    console.error("Backend Deletion Pipeline Error: ", error);
+    return res.status(500).json({
+      message: "Internal server error occurred while deleting resource.",
+    });
+  }
+};
+export const createCourseContent = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { topic } = req.body;
+    const lecturerUid = req.user.uid;
+
+    if (!topic || typeof topic !== "string") {
+      return res
+        .status(400)
+        .json({ message: "Invalid or missing topic content" });
+    }
+
+    const course = await Course.findOne({ courseId });
+    if (!course) return res.status(404).json({ message: "Course not found" });
+
+    if (!course.lecturerIds.includes(lecturerUid)) {
+      return res
+        .status(403)
+        .json({ message: "Unauthorized: You do not instruct this course" });
+    }
+    course.courseContents.push(topic);
+    await course.save();
+    User.find({
+      usertype: "student",
+      department: course.department,
+      level: course.level,
+    })
+      .select("uid")
+      .then((students) => {
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "CONTENT_ADDED",
+            title: "New Topic Added",
+            message: `A new topic "${topic}" was added to ${course.courseCode}.`,
+            payload: { courseId: course.courseId, topic },
+            sendPush: false,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+      })
+      .catch((err) => console.error("Notification Fetch Error:", err));
+
+    return res.status(200).json({
+      message: "Topic added successfully",
+      updatedContents: course.courseContents,
+    });
+  } catch (error) {
+    console.error("Add Content Error:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error processing your request" });
+  }
+};
+export const editCourseContent = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { index, updatedTopic } = req.body;
+    const lecturerUid = req.user.uid;
+
+    if (typeof index !== "number" || !updatedTopic) {
+      return res
+        .status(400)
+        .json({ message: "Missing required update body fields" });
+    }
+    const course = await Course.findOne({ courseId });
+    if (!course) return res.status(404).json({ message: "Course not found" });
+
+    if (!course.lecturerIds.includes(lecturerUid)) {
+      return res
+        .status(403)
+        .json({ message: "Unauthorized: You do not instruct this course" });
+    }
+
+    if (index < 0 || index >= course.courseContents.length) {
+      return res
+        .status(400)
+        .json({ message: "Target topic position index out of bounds" });
+    }
+    const updateQuery = {};
+    updateQuery[`courseContents.${index}`] = updatedTopic;
+
+    const updatedCourse = await Course.findOneAndUpdate(
+      { courseId },
+      { $set: updateQuery },
+      { new: true },
+    );
+
+    User.find({
+      usertype: "student",
+      department: updatedCourse.department,
+      level: updatedCourse.level,
+    })
+      .select("uid")
+      .then((students) => {
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "CONTENT_MUTATED",
+            title: "Course Syllabus Updated",
+            message: `A topic in ${updatedCourse.courseCode} has been edited to "${updatedTopic}".`,
+            payload: { courseId: updatedCourse.courseId, updatedTopic },
+            sendEmail: false,
+            sendPush: false,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+      })
+      .catch((err) => console.error("Notification Error:", err));
+
+    return res.status(200).json({
+      message: "Topic updated successfully",
+      updatedContents: updatedCourse.courseContents,
+    });
+  } catch (error) {
+    console.error("Edit Content Error:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error updating curriculum topic" });
+  }
+};
+export const deleteCourseContent = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const { index } = req.body;
+    const lecturerUid = req.user.uid;
+
+    if (typeof index !== "number") {
+      return res
+        .status(400)
+        .json({ message: "Target element index parameter required" });
+    }
+    const course = await Course.findOne({ courseId });
+    if (!course) return res.status(404).json({ message: "Course not found" });
+
+    if (!course.lecturerIds.includes(lecturerUid)) {
+      return res.status(403).json({ message: "Unauthorized: Access denied" });
+    }
+
+    if (index < 0 || index >= course.courseContents.length) {
+      return res
+        .status(400)
+        .json({ message: "Target position index out of array bounds" });
+    }
+    const removedTopic = course.courseContents.splice(index, 1)[0];
+    await course.save();
+    User.find({
+      usertype: "student",
+      department: course.department,
+      level: course.level,
+    })
+      .select("uid")
+      .then((students) => {
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "CONTENT_DELETION",
+            title: "Syllabus Content Removed",
+            message: `"${removedTopic}" was removed from the course plan of ${course.courseCode}.`,
+            payload: { courseId: course.courseId, removedTopic },
+            sendEmail: false,
+            sendPush: false,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+      })
+      .catch((err) => console.error("Notification Error:", err));
+
+    return res.status(200).json({
+      message: "Topic removed successfully",
+      updatedContents: course.courseContents,
+    });
+  } catch (error) {
+    console.error("Delete Content Error:", error);
+    return res
+      .status(500)
+      .json({ message: "Server error processing array removal operation" });
+  }
+};     

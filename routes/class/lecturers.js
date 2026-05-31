@@ -25,6 +25,9 @@ import {
   fetchLectureAttendanceReport,
   uploadCourseMaterial,
   deleteCourseMaterial,
+  createCourseContent,
+  editCourseContent,
+  deleteCourseContent,
 } from "../../controllers/classActions.js";
 import { fetchAllCourseAssessments } from "../../controllers/fetchActions.js";
 
@@ -103,61 +106,22 @@ export default function (User) {
       res.status(500).json({ message: "Error fetching lecturer courses" });
     }
   });
-  //Update Course content
-  router.post("/courses/updateContent/:courseId", protect, async (req, res) => {
-    try {
-      const { courseId } = req.params;
-      const { updatedContents } = req.body;
-
-      if (!Array.isArray(updatedContents)) {
-        return res.status(400).json({ message: "Invalid content format" });
-      }
-
-      const updatedCourse = await Course.findByIdAndUpdate(
-        courseId,
-        { $set: { courseContents: updatedContents } },
-        { new: true },
-      );
-
-      if (!updatedCourse) {
-        return res.status(404).json({ message: "Course not found" });
-      }
-
-      // --- NOTIFY STUDENTS (In-App Only) ---
-      const students = await User.find({
-        usertype: "student",
-        department: updatedCourse.department,
-        level: updatedCourse.level,
-      }).select("uid");
-
-      // Fire and forget: update the notification bell for all students
-      students.forEach((student) => {
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "CONTENT_UPDATED",
-          title: "Course Syllabus Updated",
-          message: `the course contents for ${updatedCourse.courseCode} have been updated by the lecturer/instructor.`,
-          payload: { courseId: updatedCourse._id },
-          sendEmail: false,
-          sendPush: false,
-          sendSocket: true,
-          saveToDb: true,
-        });
-      });
-
-      res.status(200).json({
-        message: "Course content updated successfully",
-        courseContents: updatedCourse.courseContents,
-      });
-    } catch (error) {
-      console.error("Update Course Error:", error);
-      res
-        .status(500)
-        .json({ message: "Server error updating course contents" });
-    }
-  });
+  //
+  router.post(
+    "/courses/addCourseContent/:courseId",
+    protect,
+    createCourseContent,
+  );
+  router.put(
+    "/courses/editCourseContent/:courseId",
+    protect,
+    editCourseContent,
+  );
+  router.delete(
+    "/courses/deleteCourseContent/:courseId",
+    protect,
+    deleteCourseContent,
+  );
   router.post(
     "/courses/uploadMaterial/:courseId",
     protect,
@@ -559,7 +523,6 @@ export default function (User) {
     },
   );
   router.delete("/lectures/:lectureId", protect, deleteLecture);
-  // routes/lecture.js (The Start Lecture Route)
   router.post("/lectures/start", async (req, res) => {
     try {
       const { lectureId, courseId } = req.body;

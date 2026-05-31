@@ -434,6 +434,26 @@ export const createNotification = async ({
         entityId = payload.lectureId;
         entityType = "lecture";
         break;
+      case "CONTENT_ADDED":
+        category = "classroom";
+        subject = `New Syllabus Topic: ${payload.courseCode || "Course Plan Updated"}`;
+        title = title || "New Topic Added";
+        message = message || "A new topic has been added to your curriculum.";
+        break;
+      case "CONTENT_DELETION":
+        category = "classroom";
+        subject = `Syllabus Revision: ${payload.courseCode || "Course Plan Updated"}`;
+        title = title || "Syllabus Content Removed";
+        message =
+          message || "A syllabus topic was removed from the course plan.";
+        break;
+      case "CONTENT_MUTATED":
+        category = "classroom";
+        subject = `Syllabus Update: ${payload.courseCode || "Course Plan Updated"}`;
+        title = title || "Course Syllabus Updated";
+        message =
+          message || "A syllabus topic has been updated by your instructor.";
+        break;
 
       case "PROFILE_VIEW":
         subject = "Someone viewed your profile";
