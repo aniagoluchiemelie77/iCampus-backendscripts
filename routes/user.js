@@ -47,6 +47,7 @@ import {
   searchUserUsingUidOrNameQuery,
   checkAccountState,
   handleUnifiedCourseSearch,
+  toggleTheme,
 } from "../controllers/userActionsController.js";
 import {
   signUp,
@@ -263,6 +264,7 @@ export default function () {
     protect,
     fetchAllLecturesByCourseId,
   );
+  router.put("/preferences/toggleTheme", protect, toggleTheme);
 
   return router;
 }

@@ -4,6 +4,7 @@ import {
   iTag,
   EmailVerification,
   SchoolConfiguration,
+  userPrefs,
 } from "../tableDeclarations.js";
 import { getChannel } from "../rabbitmq.js";
 import crypto from "crypto";
@@ -90,6 +91,27 @@ export const signUp = async (req, res) => {
       });
       await newITag.save();
     }
+    const defaultPreferences = new userPrefs({
+      userId: uid,
+      theme: "light",
+      notifications: {
+        auth: true,
+        social: true,
+        classroom: true,
+        store: true,
+        finance: true,
+        profile: true,
+        security: true,
+      },
+      channels: {
+        push: true,
+        email: true,
+        socket: true,
+      },
+      language: "en",
+      quietHours: { enabled: false },
+    });
+    await defaultPreferences.save();
     const { accessToken, refreshToken } = await generateTokens(newUser);
     const initialSession = {
       deviceId,
@@ -102,6 +124,7 @@ export const signUp = async (req, res) => {
     newUser.sessions.push(initialSession);
     await newUser.save();
     const { password: _, iCashPin: _, ...safeUser } = newUser.toObject();
+    safeUser.theme = defaultPreferences.theme;
     await createNotification({
       notificationId: generateNotificationId("signup"),
       recipientId: newUser.uid,
@@ -211,12 +234,18 @@ export const Login = async (req, res) => {
       });
     }
     await user.save();
+    const preferences = await userPrefs
+      .findOne({
+        userId: user.uid,
+      })
+      .lean();
     const {
       password: _,
       iCashPin: _,
       userAccountDetails: _,
       ...safeUser
     } = user.toObject();
+    safeUser.theme = preferences ? preferences.theme : "light";
     res.status(200).json({
       message: "Login successful",
       user: safeUser,

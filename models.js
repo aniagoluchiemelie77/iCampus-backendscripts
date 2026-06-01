@@ -181,7 +181,7 @@ export const userPreferencesSchema = new mongoose.Schema(
     theme: {
       type: String,
       enum: ["light", "dark", "system"],
-      default: "system",
+      default: "light",
     },
     language: { type: String, default: "en" },
     quietHours: {

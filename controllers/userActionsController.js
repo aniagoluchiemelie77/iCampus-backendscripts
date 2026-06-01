@@ -1232,3 +1232,29 @@ export const handleUnifiedResourceSearch = async (req, res) => {
     });
   }
 };
+export const toggleTheme = async (req, res) => {
+  try {
+    const { theme } = req.body;
+
+    if (!["light", "dark", "system"].includes(theme)) {
+      return res.status(400).json({
+        message: "Invalid choice schema profile allocation assignment.",
+      });
+    }
+    await userPrefs.findOneAndUpdate(
+      { userId: req.user.uid },
+      { $set: { theme } },
+      { new: true, upsert: true },
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Theme synchronization configurations stored successfully.",
+    });
+  } catch (error) {
+    console.error("Preferences Update Engine System Fault:", error);
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", error: error.message });
+  }
+};
