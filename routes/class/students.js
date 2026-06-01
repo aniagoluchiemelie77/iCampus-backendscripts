@@ -3,9 +3,6 @@ import mongoose from "mongoose";
 import { protect } from "../../middleware/auth.js";
 import {
   Course,
-  TestSubmission,
-  Assessment,
-  Transactions,
   Lectures,
   Attendance,
   Review,
@@ -16,13 +13,11 @@ import {
   submitLectureException,
   checkTestStatus,
   compareStudentFacesWithGemini,
+  submitAssessment,
 } from "../../controllers/classActions.js";
 import { fetchStudentsLecturesTimeline } from "../../controllers/fetchActions.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
-import {
-  generateNotificationId,
-  generateTransactionId,
-} from "../../utils/idGenerator.js";
+import { generateNotificationId } from "../../utils/idGenerator.js";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const generateCourseId = (length = 10) => {
@@ -263,95 +258,7 @@ export default function (User) {
     },
   );
   router.post("/exceptions/submit", protect, submitLectureException);
-  router.post("/test/submit", protect, async (req, res) => {
-    const session = await mongoose.startSession();
-    session.startTransaction();
-    try {
-      const { testId, answers, proctoringData } = req.body;
-      if (!testId || !answers) {
-        return res
-          .status(400)
-          .json({ message: "Missing required submission data." });
-      }
-      const existingSubmission = await TestSubmission.findOne({
-        testId,
-        studentId: req.user.uid,
-      });
-      if (existingSubmission) {
-        return res
-          .status(403)
-          .json({ message: "You have already submitted this test." });
-      }
-
-      // 2. Proctoring Logic
-      const isFlagged = (proctoringData?.tabSwitchCount || 0) >= 3;
-      const verificationStatus = proctoringData?.entrySelfieUrl
-        ? "Verified"
-        : "Unverified_Camera_Failure";
-
-      // 3. Create Record
-      const newSubmission = new TestSubmission({
-        verificationStatus,
-        ...req.body,
-        studentId: req.user.uid,
-        isFlagged: isFlagged,
-        proctoringData: {
-          deviceId: proctoringData?.deviceId || "Unknown",
-          entrySelfieUrl: proctoringData?.entrySelfieUrl || "",
-          tabSwitchCount: proctoringData?.tabSwitchCount || 0,
-        },
-      });
-
-      await newSubmission.save({ session });
-
-      // 4. Update User Profile
-      const updatedUser = await User.findOneAndUpdate(
-        { uid: req.user.uid },
-        {
-          $addToSet: { completedTests: testId },
-          $inc: { overallProgress: 5 },
-        },
-        { session, new: true },
-      );
-
-      await session.commitTransaction();
-
-      // 5. NOTIFY STUDENT (Socket + Push + DB)
-      const test = await Assessment.findOne({ id: testId });
-
-      createNotification({
-        notificationId: generateNotificationId("classroom"),
-        recipientId: updatedUser.uid,
-        category: "academic",
-        actionType: "TEST_SUBMITTED",
-        title: "Assessment Submitted!",
-        message: `Your submission for "${test?.title || "the assessment"}" has been received successfully.`,
-        payload: {
-          testId,
-          submissionId: newSubmission._id,
-          isFlagged,
-        },
-        sendEmail: false, // Per requirement
-        sendPush: true, // Immediate confirmation on device
-        sendSocket: true, // Update UI state
-        saveToDb: true,
-      });
-
-      res.status(201).json({
-        success: true,
-        message: "Test submitted and graded successfully.",
-        submissionId: newSubmission._id,
-      });
-    } catch (error) {
-      await session.abortTransaction();
-      console.error("Submission Error:", error);
-      res
-        .status(500)
-        .json({ message: "Internal Server Error", error: error.message });
-    } finally {
-      session.endSession();
-    }
-  });
+  router.post("/test/submit", protect, submitAssessment);
   router.get(
     "/courses/:courseId/assessments/:assessmentId/check-status",
     protect,

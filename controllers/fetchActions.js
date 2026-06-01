@@ -952,3 +952,21 @@ export const fetchAllCourseAssessments = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+export const fetchAllLecturesByCourseId = async (req, res) => {
+  try {
+    const { courseId } = req.params;
+    const lectures = await Lectures.find({ courseId: courseId }).lean();
+
+    if (!lectures || lectures.length === 0) {
+      return res
+        .status(404)
+        .json({ error: "No lectures found for this course" });
+    }
+    res.json(lectures);
+  } catch (err) {
+    console.error("Fetch course lectures error:", err);
+    res
+      .status(500)
+      .json({ error: "Server error while fetching lectures for this course" });
+  }
+};

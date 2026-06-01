@@ -20,6 +20,7 @@ import {
   fetchCourseDetailsForOngoingLecture,
   fetchAllExceptionsForOngoingLecture,
   fetchCourseDetails,
+  fetchAllLecturesByCourseId,
 } from "../controllers/fetchActions.js";
 import {
   createReviewController,
@@ -257,6 +258,11 @@ export default function () {
     handleGenerateCertificate,
   );
   router.post("/reviews/create", createReviewController);
+  router.get(
+    "/courses/:courseId/fetch-all-lectures",
+    protect,
+    fetchAllLecturesByCourseId,
+  );
 
   return router;
 }

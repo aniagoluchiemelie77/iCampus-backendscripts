@@ -13,6 +13,7 @@ import {
 } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
 import { generateCertificatePDF } from "../templates/downloadsCertificateTemplate.js";
+import { generateTestAnalysisPDF } from "../templates/courseAssessmentTemplate.js";
 import {
   generateNotificationId,
   generateExceptionId,
@@ -20,6 +21,7 @@ import {
   generateLectureId,
   generateAssessmentId,
   generateAssignmentId,
+  generateSubmissionId,
 } from "../utils/idGenerator.js";
 import {
   EXCEPTION_COST_IN_ICASH,
@@ -29,6 +31,7 @@ import {
 import { generateAttendancePDF } from "../templates/courseAttendanceTemplate.js";
 import { GoogleGenAI } from "@google/genai";
 import axios from "axios";
+import mongoose from "mongoose";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 export const handleGenerateCertificate = async (req, res) => {
@@ -102,14 +105,8 @@ export const handleGenerateCertificate = async (req, res) => {
 };
 export const submitLectureException = async (req, res) => {
   try {
-    const {
-      courseId,
-      lectureId,
-      reason,
-      reasonCategory,
-      studentInfo,
-      courseInfo,
-    } = req.body;
+    const { courseId, lectureId, reason, reasonCategory, courseInfo } =
+      req.body;
     const studentId = req.user.id;
     const user = await User.findOne({ uid: studentId });
     if (!user) return res.status(404).json({ message: "User not found" });
@@ -145,11 +142,15 @@ export const submitLectureException = async (req, res) => {
       title: "Lectures Exception Purchase",
       reference: `EXC-REF-${senderTransactionId}`,
     });
-
+    const studentName = `${user.firstname} ${user.lastname}`;
+    const studentMatric = user.matricNumber || "N/A";
     const exception = new Exceptions({
       id: generateExceptionId(courseId, lectureId),
       studentId,
-      studentInfo,
+      studentInfo: {
+        fullname: studentName,
+        matricNumber: studentMatric,
+      },
       courseInfo,
       courseId,
       lectureId,
@@ -216,7 +217,7 @@ export const checkTestStatus = async (req, res) => {
 export const manageExceptions = async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, lecturerComment } = req.body;
+    const { status } = req.body;
     const exception = await Exceptions.findOne({ id: id });
     if (!exception) {
       return res.status(404).json({ message: "Exception not found" });
@@ -253,7 +254,6 @@ export const manageExceptions = async (req, res) => {
     }
 
     exception.status = status;
-    exception.lecturerComment = lecturerComment || "";
     await exception.save();
 
     const student = await User.findOne({ uid: exception.studentId });
@@ -510,7 +510,6 @@ export const createAssessment = async (req, res) => {
         });
       });
     }
-
     res.status(existingAssessment ? 200 : 201).json({
       message: isPublished ? "Assessment Published" : "Draft Synced",
       data: assessment,
@@ -1222,69 +1221,247 @@ export const createCourseAssignment = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
-export const deleteCourseAssignment =  async (req, res) => {
-      try {
-        const { courseId, assignmentId } = req.params;
-        const lecturerUid = req.user.uid;
+export const deleteCourseAssignment = async (req, res) => {
+  try {
+    const { courseId, assignmentId } = req.params;
+    const lecturerUid = req.user.uid;
 
-        const course = await Course.findOne({ courseId });
-        if (!course)
-          return res.status(404).json({ message: "Course not found" });
+    const course = await Course.findOne({ courseId });
+    if (!course) return res.status(404).json({ message: "Course not found" });
 
-        if (!course.lecturerIds.includes(lecturerUid)) {
-          return res
-            .status(403)
-            .json({ message: "Unauthorized: Access denied" });
-        }
+    if (!course.lecturerIds.includes(lecturerUid)) {
+      return res.status(403).json({ message: "Unauthorized: Access denied" });
+    }
 
-        const targetAssignment = course.assignments.find(
-          (asg) => asg.assignmentId === assignmentId,
-        );
-        if (!targetAssignment) {
-          return res.status(404).json({
-            message: "Target assignment not found within this course profile",
+    const targetAssignment = course.assignments.find(
+      (asg) => asg.assignmentId === assignmentId,
+    );
+    if (!targetAssignment) {
+      return res.status(404).json({
+        message: "Target assignment not found within this course profile",
+      });
+    }
+    const updatedCourse = await Course.findOneAndUpdate(
+      { courseId },
+      { $pull: { assignments: { assignmentId: assignmentId } } },
+      { new: true },
+    );
+    User.find({
+      usertype: "student",
+      department: updatedCourse.department,
+      level: updatedCourse.level,
+    })
+      .select("uid")
+      .then((students) => {
+        students.forEach((student) => {
+          createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "ASSIGNMENT_REMOVED",
+            title: "Assignment Cancelled",
+            message: `The assignment "${targetAssignment.title}" has been removed by the instructor.`,
+            payload: {
+              courseId,
+              assignmentId,
+            },
+            sendEmail: false,
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
           });
-        }
-        const updatedCourse = await Course.findOneAndUpdate(
-          { courseId },
-          { $pull: { assignments: { assignmentId: assignmentId } } },
-          { new: true },
-        );
-        User.find({
-          usertype: "student",
-          department: updatedCourse.department,
-          level: updatedCourse.level,
-        })
-          .select("uid")
-          .then((students) => {
-            students.forEach((student) => {
-              createNotification({
-                notificationId: generateNotificationId("classroom"),
-                recipientId: student.uid,
-                category: "classroom",
-                actionType: "ASSIGNMENT_REMOVED", 
-                title: "Assignment Cancelled",
-                message: `The assignment "${targetAssignment.title}" has been removed by the instructor.`,
-                payload: {
-                  courseId,
-                  assignmentId,
-                },
-                sendEmail: false,
-                sendPush: true,
-                sendSocket: true,
-                saveToDb: true,
-              });
-            });
-          })
-          .catch((err) =>
-            console.error("Wipe notification thread failed:", err),
-          );
-
-        return res.status(200).json({
-          message: "Assignment deleted successfully",
-          assignments: updatedCourse.assignments,
         });
-      } catch (error) {
-        return res.status(500).json({ message: error.message });
-      }
-    },
+      })
+      .catch((err) => console.error("Wipe notification thread failed:", err));
+
+    return res.status(200).json({
+      message: "Assignment deleted successfully",
+      assignments: updatedCourse.assignments,
+    });
+  } catch (error) {
+    return res.status(500).json({ message: error.message });
+  }
+};
+export const getAssessmentReport = async (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(" ")[1] || req.query.token;
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+
+    const { testId } = req.params;
+    const test = await Assessment.findOne({ id: testId });
+    if (!test) return res.status(404).json({ error: "Assessment not found" });
+
+    const isPastDue = new Date() > new Date(test.dueDate);
+    if (!isPastDue) {
+      return res
+        .status(403)
+        .json({ error: "Analysis is only available after the due date." });
+    }
+    const bucket = storage.bucket();
+    const filePath = `assessments/${test.courseId}/Analysis-${testId}.pdf`;
+    const file = bucket.file(filePath);
+    const [exists] = await file.exists();
+
+    if (exists) {
+      const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+      return res.status(200).json({ success: true, downloadUrl: firebaseUrl });
+    }
+    const course = await Course.findOne({ courseId: test.courseId });
+    const submissions = await TestSubmission.find({ testId });
+    const enrolledStudents = await User.find({
+      enrolledCourses: test.courseId,
+    });
+
+    const submittedIds = submissions.map((s) => s.studentId);
+    const absentees = enrolledStudents.filter(
+      (s) => !submittedIds.includes(s.uid),
+    );
+
+    const passMark = test.totalMarks / 2;
+    const sortedSubmissions = [...submissions].sort(
+      (a, b) => b.score - a.score,
+    );
+    const topPerformers = sortedSubmissions.slice(0, 3);
+    const passedCount = submissions.filter((s) => s.score >= passMark).length;
+    const failedCount = submissions.length - passedCount;
+    const passRate =
+      submissions.length > 0
+        ? ((passedCount / submissions.length) * 100).toFixed(1)
+        : 0;
+
+    const reportData = {
+      course,
+      test,
+      submissions,
+      absentees,
+      analytics: {
+        topPerformers,
+        passedCount,
+        failedCount,
+        passRate,
+      },
+    };
+    const pdfBuffer = await generateTestAnalysisPDF(reportData);
+    await file.save(pdfBuffer, {
+      metadata: {
+        contentType: "application/pdf",
+      },
+      public: true,
+    });
+
+    const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+    return res.status(200).json({ downloadUrl: firebaseUrl });
+  } catch (error) {
+    console.error("PDF Handler Exception Error: ", error);
+    return res.status(500).json({
+      error: "Error generating or processing assessment analysis report",
+    });
+  }
+};
+export const submitAssessment = async (req, res) => {
+  const session = await mongoose.startSession();
+  session.startTransaction();
+
+  try {
+    const { testId, answers, proctoringData, score } = req.body;
+    if (!testId || !answers) {
+      return res
+        .status(400)
+        .json({ message: "Missing required submission data." });
+    }
+    const existingSubmission = await TestSubmission.findOne({
+      testId,
+      studentId: req.user.uid,
+    }).session(session);
+    if (existingSubmission) {
+      return res
+        .status(403)
+        .json({ message: "You have already submitted this test." });
+    }
+    const rawSelfieStatus = proctoringData?.entrySelfieUrl || "";
+    const isImpersonator = rawSelfieStatus.startsWith("FRAUD_BLOCKED");
+    const isTabFlagged = (proctoringData?.tabSwitchCount || 0) >= 3;
+    const isFlagged = isImpersonator || isTabFlagged;
+    let verificationStatus = "Verified";
+
+    if (isImpersonator) {
+      verificationStatus = "Impersonation_Detected";
+    } else if (rawSelfieStatus.includes("Skipped")) {
+      verificationStatus = "Skipped_No_Avatar";
+    } else if (!rawSelfieStatus || rawSelfieStatus.includes("Failed")) {
+      verificationStatus = "Unverified_Camera_Failure";
+    }
+
+    const studentUser = await User.findOne({ uid: req.user.uid }).session(
+      session,
+    );
+    const matricNumber = studentUser?.matricNumber || "N/A";
+    const customSubmissionId = generateSubmissionId(testId, matricNumber);
+
+    const newSubmission = new TestSubmission({
+      id: customSubmissionId,
+      verificationStatus,
+      ...req.body,
+      studentId: req.user.uid,
+      isFlagged: isFlagged,
+      score: isImpersonator ? 0 : score || 0,
+      proctoringData: {
+        deviceId: proctoringData?.deviceId || "Unknown",
+        entrySelfieUrl: rawSelfieStatus,
+        tabSwitchCount: proctoringData?.tabSwitchCount || 0,
+      },
+    });
+    await newSubmission.save({ session });
+
+    let updatedUser = studentUser;
+    if (!isImpersonator) {
+      updatedUser = await User.findOneAndUpdate(
+        { uid: req.user.uid },
+        {
+          $addToSet: { completedTests: testId },
+          $inc: { overallProgress: 5 },
+        },
+        { session, new: true },
+      );
+    }
+
+    const test = await Assessment.findOne({ id: testId }).session(session);
+    await session.commitTransaction();
+    createNotification({
+      notificationId: generateNotificationId("classroom"),
+      recipientId: req.user.uid,
+      category: "academic",
+      actionType: isImpersonator ? "TEST_FRAUD_BLOCKED" : "TEST_SUBMITTED",
+      title: isImpersonator ? "Submission Flagged!" : "Assessment Submitted!",
+      message: isImpersonator
+        ? `Your submission for "${test?.title || "the assessment"}" failed biometric verification. System security response logs have been populated.`
+        : `Your submission for "${test?.title || "the assessment"}" has been received successfully.`,
+      payload: {
+        testId,
+        submissionId: customSubmissionId,
+        isFlagged,
+        actionEnforced: isImpersonator ? "SCORE_NULLIFIED" : "RECORDED",
+      },
+      sendPush: true,
+      sendSocket: true,
+      saveToDb: true,
+    });
+
+    return res.status(201).json({
+      success: !isImpersonator,
+      message: isImpersonator
+        ? "Submission rejected due to high-risk validation failure."
+        : "Test submitted and graded successfully.",
+      submissionId: customSubmissionId,
+      flagged: isFlagged,
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    console.error("Submission Error Engine Exception:", error);
+    return res
+      .status(500)
+      .json({ message: "Internal Server Error", error: error.message });
+  } finally {
+    session.endSession();
+  }
+};    

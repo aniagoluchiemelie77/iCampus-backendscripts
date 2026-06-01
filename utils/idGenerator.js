@@ -251,3 +251,25 @@ export const generateUniqueReferralCode = async (user) => {
 
   return code;
 };
+export function generateSubmissionId(assessmentId, studentId = "STUD") {
+  const cleanAsm = (assessmentId || "ASM-XXXX").trim().toUpperCase();
+  const cleanStudent = (studentId || "STUD").trim().toUpperCase();
+  let asmFragment = cleanAsm;
+  if (cleanAsm.startsWith("ASM-")) {
+    const parts = cleanAsm.split("-");
+    asmFragment = parts[1] || "XXXX";
+  }
+
+  const studentFragment =
+    cleanStudent.length > 4
+      ? cleanStudent.slice(-4)
+      : cleanStudent.padStart(4, "X");
+
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+
+  /**
+   * Format: SUB-[ASM_FRAGMENT][STUDENT_FRAGMENT]-[YYMMDD]
+   */
+  return `SUB-${asmFragment}${studentFragment}-${dateStr}`;
+}

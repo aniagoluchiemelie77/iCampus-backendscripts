@@ -853,7 +853,8 @@ export const assessmentSchema = new mongoose.Schema(
   },
 );
 export const testSubmissionSchema = new mongoose.Schema({
-  testId: { type: mongoose.Schema.Types.ObjectId, ref: "Test", required: true },
+  id: { type: String, unique: true },
+  testId: { type: String, required: true },
   studentId: { type: String, required: true },
   studentName: String,
   matricNumber: String,
@@ -863,7 +864,7 @@ export const testSubmissionSchema = new mongoose.Schema({
       studentAnswer: String,
       isCorrect: Boolean,
       pointsEarned: Number,
-      aiScore: Number, // For the semantic check we implemented
+      aiScore: Number,
     },
   ],
   score: Number,
@@ -874,7 +875,6 @@ export const testSubmissionSchema = new mongoose.Schema({
     deviceId: String,
     entrySelfieUrl: String,
     tabSwitchCount: Number,
-    ipAddress: String,
   },
   startTime: Date,
 });
