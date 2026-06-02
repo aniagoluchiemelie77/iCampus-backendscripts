@@ -297,7 +297,7 @@ export default function (User) {
   router.post(
     "/lectures/:lectureId/report",
     protect,
-    fetchLectureAttendanceReport,
+    fetchLectureAttendanceReport
   );
   return router;
 }

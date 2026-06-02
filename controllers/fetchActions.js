@@ -187,8 +187,6 @@ export const fetchUserTransactionHistory = async (req, res) => {
         .limit(limit),
       Transactions.countDocuments({ userId }),
     ]);
-
-    // 4. Calculate total pages
     const totalPages = Math.ceil(total / limit);
 
     res.status(200).json({
