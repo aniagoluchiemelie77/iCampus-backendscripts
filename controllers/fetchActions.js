@@ -968,3 +968,30 @@ export const fetchAllLecturesByCourseId = async (req, res) => {
       .json({ error: "Server error while fetching lectures for this course" });
   }
 };
+export const fetchLecturersLecturesTimeline = async (req, res) => {
+  try {
+    const lecturerId = req.user.uid;
+    const taughtCourses = await Course.find({
+      lecturerIds: lecturerId,
+    }).select("courseId courseCode courseTitle");
+    const courseIds = taughtCourses.map((c) => c.courseId);
+    const lectures = await Lectures.find({
+      courseId: { $in: courseIds },
+      status: { $ne: "cancelled" },
+    }).sort({ date: 1, startTime: 1 });
+    const decoratedLectures = lectures.map((lecture) => {
+      const courseInfo = taughtCourses.find(
+        (c) => c.courseId === lecture.courseId,
+      );
+      return {
+        ...lecture._doc,
+        courseCode: courseInfo?.courseCode,
+        courseTitle: courseInfo?.courseTitle,
+      };
+    });
+
+    res.status(200).json({ success: true, data: decoratedLectures });
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};

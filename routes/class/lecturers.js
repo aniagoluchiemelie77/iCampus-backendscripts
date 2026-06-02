@@ -26,7 +26,10 @@ import {
   deleteCourseAssignment,
   getAssessmentReport,
 } from "../../controllers/classActions.js";
-import { fetchAllCourseAssessments } from "../../controllers/fetchActions.js";
+import {
+  fetchAllCourseAssessments,
+  fetchLecturersLecturesTimeline,
+} from "../../controllers/fetchActions.js";
 
 export default function (User) {
   const router = express.Router();
@@ -103,7 +106,7 @@ export default function (User) {
       res.status(500).json({ message: "Error fetching lecturer courses" });
     }
   });
-  //
+  router.get("/lectures/timeline", protect, fetchLecturersLecturesTimeline);
   router.post(
     "/courses/addCourseContent/:courseId",
     protect,
@@ -187,8 +190,6 @@ export default function (User) {
       try {
         const { lectureId, courseId } = req.params;
         const { newDate, newStartTime, topicName } = req.body;
-
-        // 1. Update the specific lecture
         const updatedLecture = await Lectures.findByIdAndUpdate(
           lectureId,
           {
@@ -198,24 +199,20 @@ export default function (User) {
           },
           { new: true },
         );
-
         if (!updatedLecture)
           return res.status(404).json({ message: "Lecture not found" });
 
-        // 2. Fetch students to notify (similar to your create logic)
         const course = await Course.findOne({ courseId });
         const students = await User.find({
           usertype: "student",
           department: course.department,
           level: course.level,
-        }).select("uid email firstName");
+        }).select("uid firstName");
 
-        // 3. Send Notifications
         const notificationPromises = students.map((student) =>
           createNotification({
             notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
-            recipientEmail: student.email,
             category: "classroom",
             actionType: "LECTURE_POSTPONED",
             title: "Lecture Rescheduled",
@@ -229,7 +226,6 @@ export default function (User) {
               lectureId: updatedLecture.lectureId,
             },
             entityId: updatedLecture.lectureId,
-            sendEmail: false,
             sendPush: true,
             sendSocket: true,
             saveToDb: true,
@@ -297,7 +293,7 @@ export default function (User) {
   router.post(
     "/lectures/:lectureId/report",
     protect,
-    fetchLectureAttendanceReport
+    fetchLectureAttendanceReport,
   );
   return router;
 }
