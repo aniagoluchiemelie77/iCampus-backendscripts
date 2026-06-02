@@ -1,7 +1,7 @@
 export const USD_SUBSCRIPTION_PRICES = Object.freeze({
-  Pro: 1.11,
-  Premium: 3.69,
-  Free: 0,
+  free: 0,
+  pro: 1.11,
+  premium: 3.69,
 });
 export const EXCEPTION_COST_IN_ICASH = 0.5;
 export const EXCEPTION_LECTURER_DIVIDEND_IN_ICASH = 0.4;
