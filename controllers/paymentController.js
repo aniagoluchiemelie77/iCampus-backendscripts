@@ -267,8 +267,6 @@ export const handleP2pTransfers = async (req, res) => {
       recipient.pointsBalance += amount;
       await sender.save({ session });
       await recipient.save({ session });
-
-      // 5. Create Transactions Records (Dual-entry)
       const senderTransactionId = generateTransactionId("p2p_sent");
       const senderTx = new Transactions({
         transactionId: senderTransactionId,
@@ -279,7 +277,11 @@ export const handleP2pTransfers = async (req, res) => {
         payType: "out",
         title: "iCash Sent",
         reference: transactionRef,
-        metadata: { recipientId, note: description },
+        metadata: { 
+          recipientId, 
+          note: description,
+          recipientItag: recipient.itagusername
+        },
       });
       const receipientTransactionId = generateTransactionId("p2p_received");
       const recipientTx = new Transactions({
@@ -291,7 +293,11 @@ export const handleP2pTransfers = async (req, res) => {
         payType: "in",
         title: "iCash Received",
         reference: `${transactionRef}-REC`, 
-        metadata: { senderId: senderId, note: description },
+        metadata: { 
+          senderId: senderId, 
+          note: description,
+          senderItag: sender.itagusername
+        },
       });
       await senderTx.save({ session });
       await recipientTx.save({ session });

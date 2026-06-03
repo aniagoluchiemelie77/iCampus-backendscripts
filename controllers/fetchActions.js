@@ -995,3 +995,45 @@ export const fetchLecturersLecturesTimeline = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
+export const getTransactionById = async (req, res) => {
+  try {
+    const { transactionId } = req.params;
+    const currentUserId = req.user.id;
+
+    if (!transactionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Transaction ID parameter is required",
+      });
+    }
+    const transaction = await Transactions.findOne({ transactionId }).lean();
+    if (!transaction) {
+      return res.status(404).json({
+        success: false,
+        message: "Transaction detail not found",
+      });
+    }
+
+    const isOwner = transaction.userId === currentUserId;
+    const isSender = transaction.metadata?.senderId === currentUserId;
+    const isRecipient = transaction.metadata?.recipientId === currentUserId;
+
+    if (!isOwner && !isSender && !isRecipient) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access to this transaction record",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      data: transaction,
+      message: "Success",
+    });
+  } catch (error) {
+    console.error("Backend getTransactionById Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal Server Error",
+    });
+  }
+};

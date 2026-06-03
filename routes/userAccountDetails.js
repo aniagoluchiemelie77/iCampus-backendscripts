@@ -12,6 +12,7 @@ import {
   fetchUserTransactionHistory,
   fetchUserTransactionStats,
   fetchItagByUsername,
+  getTransactionById,
 } from "../controllers/fetchActions.js";
 import {
   verifyIcashPin,
@@ -38,6 +39,11 @@ export default function () {
     "/subscriptionPayments/verify",
     protect,
     verifySubscriptionFlwPayment,
+  );
+  router.get(
+    "/transactions/fetch-transaction/:transactionId",
+    protect,
+    getTransactionById,
   );
   return router;
 }

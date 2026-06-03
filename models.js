@@ -900,8 +900,11 @@ export const transactionSchema = new mongoose.Schema({
   title: { type: String },
   reference: { type: String, unique: true },
   metadata: {
-    recipientId: { type: String },
-    bankName: String,
+    recipientId: { type: String, default: null },
+    note: { type: String, default: null },
+    senderItag: { type: String, default: null },
+    recipientItag: { type: String, default: null },
+    senderId: { type: String, default: null },
   },
   createdAt: { type: Date, default: Date.now },
 });
