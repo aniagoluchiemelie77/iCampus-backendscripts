@@ -25,6 +25,7 @@ import {
   createCourseAssignment,
   deleteCourseAssignment,
   getAssessmentReport,
+  editLectures,
 } from "../../controllers/classActions.js";
 import {
   fetchAllCourseAssessments,
@@ -182,68 +183,10 @@ export default function (User) {
       res.status(500).send("Error");
     }
   });
-  // PUT route to postpone a specific lecture
   router.put(
-    "/courses/:courseId/lectures/:lectureId/postpone",
+    "/courses/:courseId/lectures/:lectureId/edit",
     protect,
-    async (req, res) => {
-      try {
-        const { lectureId, courseId } = req.params;
-        const { newDate, newStartTime, topicName } = req.body;
-        const updatedLecture = await Lectures.findByIdAndUpdate(
-          lectureId,
-          {
-            date: newDate,
-            startTime: newStartTime,
-            status: "postponed",
-          },
-          { new: true },
-        );
-        if (!updatedLecture)
-          return res.status(404).json({ message: "Lecture not found" });
-
-        const course = await Course.findOne({ courseId });
-        const students = await User.find({
-          usertype: "student",
-          department: course.department,
-          level: course.level,
-        }).select("uid firstName");
-
-        const notificationPromises = students.map((student) =>
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "LECTURE_POSTPONED",
-            title: "Lecture Rescheduled",
-            message: `The lecture "${topicName}" has been postponed to ${newDate} at ${newStartTime}.`,
-            payload: {
-              userName: student.firstName,
-              topicName: topicName,
-              newDate: newDate,
-              newTime: newStartTime,
-              courseId: updatedLecture.courseId,
-              lectureId: updatedLecture.lectureId,
-            },
-            entityId: updatedLecture.lectureId,
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          }),
-        );
-
-        Promise.all(notificationPromises).catch((err) =>
-          console.error("Notify Error:", err),
-        );
-
-        res.status(200).json({
-          message: "Lecture postponed and students notified",
-          updatedLecture,
-        });
-      } catch (error) {
-        res.status(500).json({ message: "Internal Server Error" });
-      }
-    },
+    editLectures,
   );
   router.delete("/lectures/:lectureId", protect, deleteLecture);
   router.post("/lectures/start", async (req, res) => {

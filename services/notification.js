@@ -274,7 +274,9 @@ export const createNotification = async ({
         category = "classroom";
         subject = `New Assignment: ${payload.assignmentTitle || "Task Assigned"}`;
         title = title || "New Assignment Posted";
-        message = message || `A new assignment has been uploaded for your course. Due: ${payload.dueDate || "See app for details"}`;
+        message =
+          message ||
+          `A new assignment has been uploaded for your course. Due: ${payload.dueDate || "See app for details"}`;
         break;
 
       case "ASSIGNMENT_REMOVED":
@@ -440,9 +442,31 @@ export const createNotification = async ({
       case "LECTURE_CANCELLED":
       case "LECTURE_POSTPONED":
       case "LECTURE_SCHEDULED":
-        category = "academic";
+      case "LECTURE_VENUE_CHANGE":
+      case "LECTURE_TYPE_CHANGE":
+        category = "classroom";
         entityId = payload.lectureId;
         entityType = "lecture";
+
+        if (actionType === "LECTURE_VENUE_CHANGE") {
+          subject = subject || `Venue Update: ${payload.topicName}`;
+          title = title || "Lecture Venue Changed";
+          message =
+            message ||
+            `The venue for "${payload.topicName}" has been updated to ${payload.location}.`;
+        } else if (actionType === "LECTURE_TYPE_CHANGE") {
+          subject = subject || `Format Update: ${payload.topicName}`;
+          title = title || "Lecture Delivery Format Changed";
+          message =
+            message ||
+            `The class format for "${payload.topicName}" has been changed to ${payload.lectureType}.`;
+        } else if (actionType === "LECTURE_POSTPONED") {
+          subject = subject || `Rescheduled: ${payload.topicName}`;
+          title = title || "Lecture Rescheduled";
+          message =
+            message ||
+            `The lecture "${payload.topicName}" has been postponed to ${payload.newDate} at ${payload.newTime}.`;
+        }
         break;
       case "CONTENT_ADDED":
         category = "classroom";

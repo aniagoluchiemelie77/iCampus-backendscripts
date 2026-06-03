@@ -1465,3 +1465,124 @@ export const submitAssessment = async (req, res) => {
     session.endSession();
   }
 };    
+export const editLectures = async (req, res) => {
+  try {
+    const { lectureId, courseId } = req.params;
+    const { newDate, newStartTime, topicName, lectureType, location } =
+      req.body;
+    const originalLecture = await Lectures.findOne({ id: lectureId });
+    if (!originalLecture) {
+      return res.status(404).json({ message: "Lecture not found" });
+    }
+    const changes = [];
+    let updatedStatus = originalLecture.status;
+    let primaryActionType = "LECTURE_UPDATED";
+    const isDateChanged = newDate && newDate !== originalLecture.date;
+    const isTimeChanged =
+      newStartTime && newStartTime !== originalLecture.startTime;
+    if (isDateChanged || isTimeChanged) {
+      changes.push("schedule");
+      updatedStatus = "postponed";
+      primaryActionType = "LECTURE_POSTPONED";
+    }
+    const isLocationChanged =
+      location !== undefined && location !== originalLecture.location;
+    if (isLocationChanged) {
+      changes.push("venue");
+      if (primaryActionType === "LECTURE_UPDATED") {
+        primaryActionType = "LECTURE_VENUE_CHANGE";
+      }
+    }
+    const isTypeChanged =
+      lectureType && lectureType !== originalLecture.lectureType;
+    if (isTypeChanged) {
+      changes.push("delivery format");
+      if (primaryActionType === "LECTURE_UPDATED") {
+        primaryActionType = "LECTURE_TYPE_CHANGE";
+      }
+    }
+    const isTopicChanged = topicName && topicName !== originalLecture.topicName;
+    if (isTopicChanged) {
+      changes.push("topic");
+    }
+    if (changes.length === 0) {
+      return res.status(200).json({
+        message: "No updates detected",
+        updatedLecture: originalLecture,
+      });
+    }
+    const updatePayload = {
+      topicName: topicName || originalLecture.topicName,
+      lectureType: lectureType || originalLecture.lectureType,
+      location: lectureType === "Physical" ? location : undefined, // Clean location if shifted away from Physical
+      date: newDate || originalLecture.date,
+      startTime: newStartTime || originalLecture.startTime,
+      status: updatedStatus,
+    };
+
+    const updatedLecture = await Lectures.findOneAndUpdate(
+      { id: lectureId },
+      updatePayload,
+      { new: true },
+    );
+    const course = await Course.findOne({ courseId });
+    if (!course) {
+      return res.status(404).json({ message: "Associated course not found" });
+    }
+
+    const students = await User.find({
+      usertype: "student",
+      department: course.department,
+      level: course.level,
+    }).select("uid firstName");
+    const changeListString = changes.join(", ");
+    const notificationPromises = students.map((student) => {
+      let updateDetailsMessage = `The details for your lecture "${updatePayload.topicName}" have been updated (${changeListString}).`;
+      if (isDateChanged || isTimeChanged) {
+        updateDetailsMessage = `The lecture "${updatePayload.topicName}" has been rescheduled to ${updatePayload.date} at ${updatePayload.startTime}.`;
+      } else if (
+        isLocationChanged &&
+        updatePayload.lectureType === "Physical"
+      ) {
+        updateDetailsMessage = `The venue for "${updatePayload.topicName}" has been updated to ${updatePayload.location}.`;
+      } else if (isTypeChanged) {
+        updateDetailsMessage = `The delivery format for "${updatePayload.topicName}" has changed to ${updatePayload.lectureType}.`;
+      }
+
+      return createNotification({
+        notificationId: generateNotificationId("classroom"),
+        recipientId: student.uid,
+        category: "classroom",
+        actionType: primaryActionType, // Automatically assigned: LECTURE_POSTPONED, LECTURE_VENUE_CHANGE, etc.
+        title: `Lecture Update: ${course.courseId}`,
+        message: updateDetailsMessage,
+        payload: {
+          userName: student.firstName,
+          topicName: updatePayload.topicName,
+          newDate: updatePayload.date,
+          newTime: updatePayload.startTime,
+          lectureType: updatePayload.lectureType,
+          location: updatePayload.location,
+          courseId: courseId,
+          lectureId: lectureId,
+          changedAttributes: changes,
+        },
+        entityId: lectureId,
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      });
+    });
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Notify Error:", err),
+    );
+
+    res.status(200).json({
+      message: `Lecture modified successfully. Notification sent with type: ${primaryActionType}`,
+      updatedLecture,
+    });
+  } catch (error) {
+    console.error("Update Handler Error:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+};
