@@ -142,7 +142,7 @@ export const initializeWithdraw = async (req, res) => {
   const userId = req.user.uid;
   const idempotencyKey = `wd-${userId}-${Date.now().toString().substring(0, 10)}`;
   const transactionId = generateTransactionId('withdraw');
-  const title = "iCash Withdrawal",
+  const title = `${iCashAmount} iCash Withdrawal`,
   const user = await User.findOne({ uid: userId });
   if (user.iCashBalance < iCashAmount) {
     return res.status(400).json({ message: "Insufficient iCash balance." });

@@ -84,16 +84,24 @@ export const generateTestAnalysisPDF = async (reportData) => {
       .fontSize(12)
       .text("Top Performers", { font: "Helvetica-Bold" });
     doc.moveDown(0.5);
+    if (doc.y > 700) doc.addPage();
 
     analytics.topPerformers.forEach((student, index) => {
-      const medal = index === 0 ? "🥇 " : index === 1 ? "🥈 " : "🥉 ";
+      const rankTag =
+        index === 0 ? "1st - " : index === 1 ? "2nd - " : "3rd - ";
+
       doc
         .fillColor(colors.text)
         .fontSize(10)
-        .text(
-          `${medal}${student.studentName} (${student.score}/${test.totalMarks})`,
-        );
-      doc.moveDown(0.3);
+        .text(`${rankTag}${student.studentName || "Unknown"}`, 50, doc.y, {
+          width: 300,
+        });
+      doc.text(`Score: ${student.score}/${test.totalMarks}`, 400, doc.y - 12, {
+        width: 145,
+        align: "right",
+      });
+
+      doc.moveDown(0.6);
     });
 
     doc.moveDown(1.5);
@@ -166,7 +174,7 @@ export const generateTestAnalysisPDF = async (reportData) => {
         const rowY = doc.y;
         doc.fillColor(colors.text).fontSize(9);
         doc.text(student.matricNumber || "N/A", 50, rowY);
-        doc.text(`${student.firstname} ${student.lastname}`, 200, rowY);
+        doc.text(student.studentName, 200, rowY);
         doc.moveDown();
         if (doc.y > 750) doc.addPage();
       });

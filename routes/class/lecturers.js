@@ -155,34 +155,7 @@ export default function (User) {
     protect,
     fetchAllCourseAssessments,
   );
-  router.get("/tests/:testId/download-analysis", protect, getAssessmentReport);
-  router.get("/tests/:testId/analysis-data", protect, async (req, res) => {
-    try {
-      const { testId } = req.params;
-      const test = await Assessment.findOne({ id: testId });
-      if (!test) return res.status(404).json({ message: "Not found" });
-
-      const submissions = await TestSubmission.find({ testId });
-      const passMark = test.totalMarks / 2;
-      const passedCount = submissions.filter((s) => s.score >= passMark).length;
-      const failedCount = submissions.length - passedCount;
-
-      const topPerformers = [...submissions]
-        .sort((a, b) => b.score - a.score)
-        .slice(0, 3);
-
-      res.json({
-        test,
-        submissions,
-        passedCount,
-        failedCount,
-        passRate: ((passedCount / (submissions.length || 1)) * 100).toFixed(1),
-        topPerformers,
-      });
-    } catch (error) {
-      res.status(500).send("Error");
-    }
-  });
+  router.get("/tests/:testId/analysis-data", protect, getAssessmentReport);
   router.put(
     "/courses/:courseId/lectures/:lectureId/edit",
     protect,

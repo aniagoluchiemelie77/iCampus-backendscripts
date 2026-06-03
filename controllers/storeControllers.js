@@ -305,7 +305,7 @@ export const initializeCheckout = async (req, res) => {
       status: "success",
       payType: "out",
       title: `Purchase of ${items.length} item(s)`,
-      reference: `REF-${uuidv4()}`,
+      reference: `REF-${buyerTxId}`,
       createdAt: new Date(),
     });
     await buyerTransaction.save({ session });
@@ -568,7 +568,7 @@ export const cancelOrder = async (req, res) => {
       amountICash: order.amountPaid,
       status: "success",
       payType: "in",
-      title: `Refund: ${product.title}`,
+      title: `Refund of payment for ${product.title}`,
       reference: `REF-${orderId}`,
       createdAt: new Date(),
     }).save({ session });

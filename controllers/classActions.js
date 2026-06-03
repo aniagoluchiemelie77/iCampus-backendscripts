@@ -1313,9 +1313,17 @@ export const getAssessmentReport = async (req, res) => {
     });
 
     const submittedIds = submissions.map((s) => s.studentId);
-    const absentees = enrolledStudents.filter(
-      (s) => !submittedIds.includes(s.uid),
-    );
+    const absentees = enrolledStudents
+      .filter((student) => !submittedIds.includes(student.uid))
+      .map((student) => ({
+        matricNumber: student.matricNumber || "N/A",
+        studentName:
+          (student.firstname && student.lastname
+            ? `${student.firstname} ${student.lastname}`
+            : null) ||
+          student.name ||
+          "Unknown Student",
+      }));
 
     const passMark = test.totalMarks / 2;
     const sortedSubmissions = [...submissions].sort(
@@ -1350,7 +1358,10 @@ export const getAssessmentReport = async (req, res) => {
     });
 
     const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
-    return res.status(200).json({ downloadUrl: firebaseUrl });
+    return res.status(200).json({
+      downloadUrl: firebaseUrl,
+      assessmentAnalytics: reportData,
+    });
   } catch (error) {
     console.error("PDF Handler Exception Error: ", error);
     return res.status(500).json({
