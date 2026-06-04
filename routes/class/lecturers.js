@@ -1,15 +1,6 @@
 import express from "express";
 import { protect } from "../../middleware/auth.js";
-import {
-  Course,
-  Lectures,
-  Assessment,
-  Transactions,
-  TestSubmission,
-} from "../../tableDeclarations.js";
-import { createNotification } from "../../services/notificationService.js";
-import PDFDocument from "pdfkit-table";
-import { generateNotificationId } from "../../utils/idGenerator.js";
+import { Course, Lectures } from "../../tableDeclarations.js";
 import { uploadAndVerifyLessonVideo } from "../../controllers/lectures.js";
 import {
   manageExceptions,

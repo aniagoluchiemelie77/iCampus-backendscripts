@@ -140,8 +140,6 @@ export const emailVerificationTemplate = (code) => {
   `;
   return emailWrapper(body);
 };
-
-//Still check urls for these templates
 export const lectureScheduledTemplate = (
   userName,
   topic,
@@ -172,43 +170,6 @@ export const lectureScheduledTemplate = (
   `;
   return emailWrapper(body);
 };
-export const testAnalysisTemplate = (
-  userName,
-  testTitle,
-  submissions,
-  absentees,
-  testId,
-) => {
-  const body = `
-    <h2 style="color: ${theme.colors.primary}; margin-top: 0;">Assessment Overview</h2>
-    <p>Hi ${userName},</p>
-    <p>The automated performance report for <strong>${testTitle}</strong> is now available.</p>
-    
-    <table style="width: 100%; margin: 20px 0; border-collapse: collapse; background: ${theme.colors.background}; border-radius: 8px; overflow: hidden;">
-      <tr>
-        <td style="padding: 15px; border-bottom: 1px solid #eee;"><strong>Total Submissions:</strong></td>
-        <td style="padding: 15px; border-bottom: 1px solid #eee;">${submissions}</td>
-      </tr>
-      <tr>
-        <td style="padding: 15px;"><strong>Total Absentees:</strong></td>
-        <td style="padding: 15px;">${absentees}</td>
-      </tr>
-    </table>
-
-    <p style="font-size: 14px; color: #666;">
-      You can download the full PDF report (including top performers and pass/fail rates) from your lecturer dashboard.
-    </p>
-
-    <div style="text-align: center; margin-top: 30px;">
-      <a href="${theme.branding.websiteUrl}/lecturer/reports/${testId}" 
-         style="background-color: ${theme.colors.primary}; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">
-        View Detailed Analysis
-      </a>
-    </div>
-  `;
-  return emailWrapper(body);
-};
-
 export const passwordResetTemplate = (userName, code, expiryTime) => {
   const body = `
     <div style="text-align: center;">

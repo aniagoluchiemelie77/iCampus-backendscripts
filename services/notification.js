@@ -10,7 +10,6 @@ import {
   purchaseTemplate,
   newOrderTemplate,
   passwordResetTemplate,
-  testAnalysisTemplate,
   lectureScheduledTemplate,
   loginAlertTemplate,
   passwordResetSuccessTemplate,
@@ -317,16 +316,6 @@ export const createNotification = async ({
         subject = `Syllabus Update: ${payload.courseCode}`;
         break;
 
-      case "TEST_ANALYSIS_READY":
-        subject = `Academic Report: ${payload.testTitle}`;
-        htmlContent = testAnalysisTemplate(
-          payload.userName,
-          payload.testTitle,
-          payload.submissionCount,
-          payload.absenteeCount,
-          payload.testId,
-        );
-        break;
 
       case "TEST_SUBMITTED":
         subject = "Submission Confirmed";
