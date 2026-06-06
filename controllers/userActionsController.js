@@ -21,7 +21,10 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import { createNotification } from "../services/notificationService.js";
-import { generateNotificationId } from "../utils/idGenerator.js";
+import {
+  generateNotificationId,
+  generateTokens,
+} from "../utils/idGenerator.js";
 import mongoose from "mongoose";
 import axiosRetry from "axios-retry";
 import axios from "axios";
@@ -1256,5 +1259,40 @@ export const toggleTheme = async (req, res) => {
     return res
       .status(500)
       .json({ message: "Internal Server Error", error: error.message });
+  }
+};
+export const refreshUserDetails = async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    if (!uid) {
+      return res
+        .status(401)
+        .json({ message: "Unauthorized: Missing user identifier" });
+    }
+    const [user, preferences] = await Promise.all([
+      User.findOne({ uid }),
+      userPrefs.findOne({ uid }),
+    ]);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const {
+      password: _,
+      iCashPin: _,
+      userAccountDetails: _,
+      ...safeUser
+    } = user.toObject();
+    safeUser.theme = preferences ? preferences.theme : "light";
+    const { accessToken, refreshToken } = await generateTokens(user);
+    return res.status(200).json({
+      message: "Refresh successful",
+      user: safeUser,
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.error("Error in user refresh handler:", error);
+    return res.status(500).json({ message: "Internal server error" });
   }
 };

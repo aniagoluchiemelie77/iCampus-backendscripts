@@ -206,16 +206,28 @@ export const fetchUserTransactionHistory = async (req, res) => {
 export const fetchUserTransactionStats = async (req, res) => {
   try {
     const userId = req.user.uid;
-    const { month, year } = req.query;
+    let { month, year } = req.query;
 
-    if (!month || !year) {
+    const currentDate = new Date();
+    const targetMonth = month
+      ? parseInt(month, 10)
+      : currentDate.getMonth() + 1;
+    const targetYear = year ? parseInt(year, 10) : currentDate.getFullYear();
+
+    if (
+      isNaN(targetMonth) ||
+      isNaN(targetYear) ||
+      targetMonth < 1 ||
+      targetMonth > 12
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Month and year parameters are required.",
+        message: "Invalid month or year parameter values provided.",
       });
     }
-    const start = new Date(year, month - 1, 1);
-    const end = new Date(year, month, 0, 23, 59, 59, 999);
+
+    const start = new Date(targetYear, targetMonth - 1, 1);
+    const end = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
 
     const stats = await Transactions.aggregate([
       { $match: { userId, createdAt: { $gte: start, $lte: end } } },
@@ -241,7 +253,6 @@ export const fetchUserTransactionStats = async (req, res) => {
                 as: "userDetails",
               },
             },
-            // FIXED: Safeguard against deleted or missing profiles breaking totals
             {
               $unwind: {
                 path: "$userDetails",
@@ -255,7 +266,6 @@ export const fetchUserTransactionStats = async (req, res) => {
                 total: 1,
                 name: {
                   $trim: {
-                    // Clean up trailing spaces if lastname is null/blank
                     input: {
                       $concat: [
                         { $ifNull: ["$userDetails.firstname", "Unknown"] },
@@ -282,10 +292,14 @@ export const fetchUserTransactionStats = async (req, res) => {
       },
     ]);
     const result = stats[0] || { flow: [], topRecipients: [], monthly: [] };
-    res.json(result);
+    res.status(200).json({
+      success: true,
+      period: { month: targetMonth, year: targetYear },
+      data: result,
+    });
   } catch (e) {
     console.error("Aggregation crash in fetchUserTransactionStats:", e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ success: false, error: e.message });
   }
 };
 export const fetchItagByUsername = async (req, res) => {

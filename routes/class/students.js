@@ -14,6 +14,7 @@ import {
   checkTestStatus,
   compareStudentFacesWithGemini,
   submitAssessment,
+  submitOnlineClassAttendance,
 } from "../../controllers/classActions.js";
 import { fetchStudentsLecturesTimeline } from "../../controllers/fetchActions.js";
 const { GoogleGenerativeAI } = require("@google/generative-ai");
@@ -265,94 +266,7 @@ export default function (User) {
     checkTestStatus,
   );
   router.get("/lectures/timeline", protect, fetchStudentsLecturesTimeline);
-  router.post("/submit", protect, async (req, res) => {
-    try {
-      const { studentId, lectureId, courseId, status, checkData } = req.body;
-
-      // 1. Auth Guard: Ensure the logged-in user matches the studentId being submitted
-      if (req.user.uid !== studentId) {
-        return res.status(403).json({
-          error: "Unauthorized: You can only submit attendance for yourself.",
-        });
-      }
-
-      // 2. Structural Validation
-      if (!studentId || !lectureId || !courseId || !Array.isArray(checkData)) {
-        return res
-          .status(400)
-          .json({ error: "Missing or malformed session data." });
-      }
-
-      // 3. Fetch Lecture to verify timing and status
-      const lecture = await Lectures.findOne({ id: lectureId });
-      if (!lecture) {
-        return res.status(404).json({ error: "Lecture not found." });
-      }
-
-      // 4. Late Submission Check: Prevent submitting 30 mins after lecture ends
-      const gracePeriod = 30 * 60 * 1000; // 30 minutes in ms
-      const currentTime = new Date();
-      const expiryTime = new Date(lecture.endTime).getTime() + gracePeriod;
-
-      if (currentTime.getTime() > expiryTime) {
-        return res.status(403).json({
-          error:
-            "Submission window closed. Attendance must be synced within 30 mins of class end.",
-        });
-      }
-
-      // 5. Logic Integrity Check: Verify checkData matches the claimed status
-      const totalPassed = checkData.filter((c) => c === true).length;
-      const endCheck = checkData[6]; // The 7th point (index 6) is our "Stayed till end" marker
-
-      // If they claim "Present" but failed the 5/7 rule or the end check
-      if (status === "Present" && (totalPassed < 5 || !endCheck)) {
-        // We log this as suspicious but save as 'Absent' to maintain the record
-        console.warn(
-          `Suspicious activity: Student ${studentId} attempted to spoof attendance.`,
-        );
-        return res.status(422).json({
-          error:
-            "Logic mismatch: Verification data does not support 'Present' status.",
-        });
-      }
-
-      // 6. Database Update (Upsert)
-      const record = await Attendance.findOneAndUpdate(
-        { studentId, lectureId },
-        {
-          courseId,
-          status,
-          checkData,
-          timestamp: currentTime,
-        },
-        { upsert: true, new: true },
-      );
-
-      // 7. Increment Course Stats (only if this is the first successful 'Present' mark)
-      // We use 'lastErrorObject' from findAndModify or check if the record was updated vs created
-      if (status === "Present") {
-        await Course.updateOne(
-          { courseId, "students.id": studentId },
-          { $inc: { "students.$.classesAttended": 1 } },
-        );
-        await User.updateOne(
-          { uid: studentId },
-          { $inc: { "monthlyStats.libraryUsageSessions": 1 } },
-        );
-      }
-
-      res.status(200).json({
-        message: "Attendance recorded and verified successfully",
-        recordId: record._id,
-      });
-    } catch (err) {
-      console.error("iCampus Backend Error:", err);
-      res
-        .status(500)
-        .json({ error: "Internal server error during attendance sync." });
-    }
-  });
+  router.post("/submit-attendance", protect, submitOnlineClassAttendance);
   router.post("/submit-review", async (req, res) => {
     try {
       const { lectureId, studentId, lecturerId, rating, comment } = req.body;

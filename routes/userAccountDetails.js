@@ -7,6 +7,7 @@ import {
   handleP2pTransfers,
   verifySubscriptionFlwPayment,
   generateTransactionHistory,
+  validatePaymentOTP,
 } from "../controllers/paymentController.js";
 import {
   fetchUserTransactionHistory,
@@ -35,6 +36,7 @@ export default function () {
   router.post("/transactions/p2p-transfer", protect, handleP2pTransfers);
   router.get("/transactions/stats", protect, fetchUserTransactionStats);
   router.post("/transactions/export", protect, generateTransactionHistory);
+  router.post("/payments/verify-otp", protect, validatePaymentOTP);
   router.post(
     "/subscriptionPayments/verify",
     protect,

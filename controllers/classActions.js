@@ -1597,3 +1597,78 @@ export const editLectures = async (req, res) => {
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
+export const submitOnlineClassAttendance = async (req, res) => {
+  try {
+    const { lectureId, courseId, status, checkData } = req.body;
+    const studentId = req.user.uid;
+    if (!lectureId || !courseId || !Array.isArray(checkData)) {
+      return res
+        .status(400)
+        .json({ error: "Missing or malformed session data." });
+    }
+    const lecture = await Lectures.findOne({ id: lectureId });
+    if (!lecture) {
+      return res.status(404).json({ error: "Lecture not found." });
+    }
+
+    const gracePeriod = 60 * 60 * 1000;
+    const currentTime = new Date();
+    const expiryTime = new Date(lecture.endTime).getTime() + gracePeriod;
+
+    if (currentTime.getTime() > expiryTime) {
+      return res.status(403).json({
+        error:
+          "Submission window closed. Attendance must be synced within 60 mins of class end.",
+      });
+    }
+
+    const totalPassed = checkData.filter((c) => c === true).length;
+    const endCheck = checkData[6];
+
+    if (status === "Present" && (totalPassed < 5 || !endCheck)) {
+      console.warn(
+        `Suspicious activity: Student ${studentId} attempted to spoof attendance.`,
+      );
+      return res.status(422).json({
+        error:
+          "Verification data does not support 'Present' status. Ensure all checks are completed.",
+      });
+    }
+    const existingRecord = await Attendance.findOne({ studentId, lectureId });
+    const record = await Attendance.findOneAndUpdate(
+      { studentId, lectureId },
+      {
+        courseId,
+        status,
+        checkData,
+        timestamp: currentTime,
+      },
+      { upsert: true, new: true },
+    );
+    if (
+      status === "Present" &&
+      (!existingRecord || existingRecord.status !== "Present")
+    ) {
+      await Promise.all([
+        Course.updateOne(
+          { courseId, "students.id": studentId },
+          { $inc: { "students.$.classesAttended": 1 } },
+        ),
+        User.updateOne(
+          { uid: studentId },
+          { $inc: { "monthlyStats.libraryUsageSessions": 1 } },
+        ),
+      ]);
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: "Attendance recorded and verified successfully",
+    });
+  } catch (err) {
+    console.error("iCampus Backend Error:", err);
+    res
+      .status(500)
+      .json({ error: "Internal server error during attendance sync." });
+  }
+};
