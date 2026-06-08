@@ -461,23 +461,50 @@ export const generateTransactionHistory = async (req, res) => {
         pdfBuffer = downloadBuffer;
       } else {
         const reportData = await Transactions.aggregate([
-          {
-            $match: {
-              userId,
-              createdAt: { $gte: start, $lte: end },
-            },
+  {
+    $match: {
+      userId,
+      createdAt: { $gte: start, $lte: end },
+    },
+  },
+  {
+    $facet: {
+      stats: [
+        {
+          $group: { _id: "$payType", total: { $sum: "$amountICash" } },
+        },
+      ],
+      history: [
+        { $sort: { createdAt: -1 } },
+        {
+          $lookup: {
+            from: "users", 
+            localField: "receiverId", 
+            foreignField: "uid",      
+            as: "receiverDetails",
           },
-          {
-            $facet: {
-              stats: [
-                {
-                  $group: { _id: "$payType", total: { $sum: "$amountICash" } },
-                },
-              ],
-              history: [{ $sort: { createdAt: -1 } }],
-            },
-          },
-        ]);
+        },
+        {
+          $unwind: {
+            path: "$receiverDetails",
+            preserveNullAndEmptyArrays: true, 
+          }
+        },
+        {
+          $addFields: {
+            receiverName: {
+              $cond: {
+                if: { $setEquals: [{ $ifNull: ["$receiverDetails", []] }, []] },
+                then: "$description", 
+                else: { $concat: ["$receiverDetails.firstname", " ", "$receiverDetails.lastname"] }
+              }
+            }
+          }
+        }
+      ],
+    },
+  },
+]);
 
         const stats = reportData[0]?.stats || [];
         const history = reportData[0]?.history || [];
