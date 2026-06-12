@@ -19,6 +19,7 @@ import {
   togglefavoriteActionController,
   toggleCartActionController,
   fetchStoreProducts,
+  markOrderAsDroppedOff,
 } from "../controllers/storeControllers.js";
 import { upload } from "../middleware/auth.js";
 
@@ -58,5 +59,6 @@ export default function () {
     upload.single("digitalAsset"),
     saveProductController,
   );
+  router.patch("/orders/mark-as-dropped-off", protect, markOrderAsDroppedOff);
   return router;
 }
