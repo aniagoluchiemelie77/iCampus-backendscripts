@@ -783,3 +783,51 @@ export const productDeletionTemplate = (username, productName, productId) => {
 
   return emailWrapper(body);
 };
+export const orderDroppedOffEmailTemplate = (
+  userName,
+  productName,
+  orderId,
+  stationName,
+  stationAddress,
+) => {
+  const body = `
+    <h2 style="color: ${colors.primary}; margin-top: 0;">Your Package is Ready for Pickup</h2>
+    <p style="color: ${colors.text}">Hi <strong>${userName}</strong>,</p>
+    <p style="color: ${colors.text}">The seller has dropped off your purchase of <strong>${productName}</strong> at your selected station hub.</p>
+    
+    <div style="background: ${colors.background}; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid ${colors.primary};">
+      <p style="margin: 0 0 5px 0; color: ${colors.text}"><strong>Collection Station:</strong> ${stationName}</p>
+      <p style="margin: 0; font-size: 13px; color: ${colors.text};">${stationAddress}</p>
+    </div>
+
+    <div style="padding: 15px; border-radius: 5px; margin: 20px 0;">
+      <p style="margin: 0; font-weight: bold; color: ${colors.text}">Next Step:</p>
+      <p style="font-size: 13px; margin: 5px 0; color: ${colors.text}">
+        Go to the station and present your order's <strong>QR Code</strong> to the agent. Once scanned, your item will be released and finalized.
+      </p>
+    </div>
+    <p style="font-size: 11px; color:${colors.secondary};">Order Reference: #${orderId}</p>
+  `;
+  return emailWrapper(body);
+};
+
+export const agentAwaitingPickupEmailTemplate = (
+  agentName,
+  productName,
+  orderId,
+  stationName,
+) => {
+  const body = `
+    <h2 style="color: ${colors.primary}; margin-top: 0;">New Package Deposited</h2>
+    <p style="color: ${colors.text}">Hi <strong>${agentName}</strong>,</p>
+    <p style="color: ${colors.text}">A seller has just dropped off <strong>${productName}</strong> at your hub location (<strong>${stationName}</strong>).</p>
+    
+    <div style=" padding: 15px; border-radius: 8px; margin: 20px 0;">
+      <p style="margin: 0; color: ${colors.text}"><strong>Order ID:</strong> #${orderId}</p>
+      <p style="margin: 0; color: ${colors.text}"><strong>Current Status:</strong> Awaiting Buyer Collection</p>
+    </div>
+
+    <p style="color: ${colors.secondary}"><strong>Action Required:</strong> Safe-keep this package. When the buyer arrives to pick it up, scan their mobile app tracking QR code to confirm checkout and release your delivery split commission.</p>
+  `;
+  return emailWrapper(body);
+};

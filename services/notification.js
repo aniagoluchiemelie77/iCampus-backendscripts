@@ -26,6 +26,8 @@ import {
   salesPayoutTemplate,
   productCreationTemplate,
   productDeletionTemplate,
+  orderDroppedOffEmailTemplate,
+  agentAwaitingPickupEmailTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -53,7 +55,7 @@ export const createNotification = async ({
       "ICASH_WITHDRAWAL",
       "PASSWORD_CHANGED",
     ].includes(actionType);
-    
+
     const verifiedRecoveries = recoveryEmails
       .filter((item) => item.isVerified)
       .map((item) => item.email);
@@ -188,6 +190,40 @@ export const createNotification = async ({
           );
         }
         break;
+      case "ORDER_DROPPED_OFF":
+        subject = `Ready for Pickup: ${payload.productName}`;
+        title = title || "Package Dropped Off!";
+        message =
+          message ||
+          `The seller dropped off "${payload.productName}" at ${payload.stationName || "the station"}. It is ready for collection!`;
+
+        if (canSendEmail) {
+          htmlContent = orderDroppedOffEmailTemplate(
+            payload.userName,
+            payload.productName,
+            payload.orderId,
+            payload.stationName,
+            payload.stationAddress,
+          );
+        }
+        break;
+
+      case "AGENT_AWAITING_PICKUP":
+        subject = `New Package Dropped Off - Order #${payload.orderId}`;
+        title = title || "New Package Inbound";
+        message =
+          message ||
+          `Order #${payload.orderId} (${payload.productName}) has been logged at your station hub.`;
+
+        if (canSendEmail) {
+          htmlContent = agentAwaitingPickupEmailTemplate(
+            payload.agentName,
+            payload.productName,
+            payload.orderId,
+            payload.stationName,
+          );
+        }
+        break;
 
       case "NEW_LOGIN":
         subject = "Security Alert: New Login Detected";
@@ -315,7 +351,6 @@ export const createNotification = async ({
       case "CONTENT_UPDATED":
         subject = `Syllabus Update: ${payload.courseCode}`;
         break;
-
 
       case "TEST_SUBMITTED":
         subject = "Submission Confirmed";

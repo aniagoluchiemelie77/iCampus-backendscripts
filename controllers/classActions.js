@@ -108,13 +108,9 @@ export const submitLectureException = async (req, res) => {
     const { courseId, lectureId, reason, reasonCategory, courseInfo } =
       req.body;
     const studentId = req.user.id;
+
     const user = await User.findOne({ uid: studentId });
     if (!user) return res.status(404).json({ message: "User not found" });
-    if ((user.pointsBalance || 0) < EXCEPTION_COST_IN_ICASH) {
-      return res.status(402).json({
-        message: `Insufficient iCash balance. Required: ${EXCEPTION_COST_IN_ICASH} iCash`,
-      });
-    }
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
@@ -123,27 +119,33 @@ export const submitLectureException = async (req, res) => {
       studentId,
       createdAt: { $gte: startOfMonth },
     });
-    const userLimit = EXCEPTION_ACCOUNT_LIMITS[user.tier];
+    const userLimit = EXCEPTION_ACCOUNT_LIMITS[user.tier] || 1;
+    const isPaidRequest = monthlyCount >= userLimit;
+    let chargedAmount = 0;
+    if (isPaidRequest) {
+      if ((user.pointsBalance || 0) < EXCEPTION_COST_IN_ICASH) {
+        return res.status(402).json({
+          message: `Monthly free limit (${userLimit}) reached. This exception costs ${EXCEPTION_COST_IN_ICASH} iCash, and your balance is insufficient.`,
+        });
+      }
+      user.pointsBalance -= EXCEPTION_COST_IN_ICASH;
+      chargedAmount = EXCEPTION_COST_IN_ICASH;
 
-    if (monthlyCount >= userLimit) {
-      return res.status(403).json({
-        message: `Monthly limit reached (${userLimit}) for your ${user.tier || "free"} plan.`,
+      const senderTransactionId = generateTransactionId("payment");
+      await Transactions.create({
+        transactionId: senderTransactionId,
+        userId: user.uid,
+        type: "payment",
+        amountICash: EXCEPTION_COST_IN_ICASH,
+        status: "success",
+        payType: "out",
+        title: "Lectures Exception Purchase (Over Tier Limit)",
+        reference: `EXC-REF-${senderTransactionId}`,
       });
     }
-    user.pointsBalance -= EXCEPTION_COST_IN_ICASH;
-    const senderTransactionId = generateTransactionId("payment");
-    await Transactions.create({
-      transactionId: senderTransactionId,
-      userId: user.uid,
-      type: "payment",
-      amountICash: EXCEPTION_COST_IN_ICASH,
-      status: "success",
-      payType: "out",
-      title: "Lectures Exception Purchase",
-      reference: `EXC-REF-${senderTransactionId}`,
-    });
     const studentName = `${user.firstname} ${user.lastname}`;
     const studentMatric = user.matricNumber || "N/A";
+
     const exception = new Exceptions({
       id: generateExceptionId(courseId, lectureId),
       studentId,
@@ -163,13 +165,17 @@ export const submitLectureException = async (req, res) => {
     await user.save();
     await exception.save();
 
+    const notificationMessage = isPaidRequest
+      ? `Your exception for ${courseInfo.courseCode} was received. ${EXCEPTION_COST_IN_ICASH} iCash has been deducted.`
+      : `Your free exception for ${courseInfo.courseCode} was successfully submitted.`;
+
     createNotification({
       notificationId: generateNotificationId("classroom"),
       recipientId: user.uid,
       category: "finance",
       actionType: "EXCEPTION_SUBMITTED",
       title: "Exception Submitted",
-      message: `Your exception for ${courseInfo.courseCode} was received. 0.5 iCash has been deducted.`,
+      message: notificationMessage,
       payload: {
         exceptionId: exception.id,
         newBalance: user.pointsBalance,
@@ -180,10 +186,12 @@ export const submitLectureException = async (req, res) => {
       sendSocket: true,
       saveToDb: true,
     });
+
     res.status(201).json({
       success: true,
       message: "Exception submitted successfully",
       newBalance: user.pointsBalance,
+      charged: chargedAmount > 0,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -218,38 +226,49 @@ export const manageExceptions = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
+
     const exception = await Exceptions.findOne({ id: id });
     if (!exception) {
       return res.status(404).json({ message: "Exception not found" });
     }
+
     if (exception.status !== "pending") {
       return res
         .status(400)
         .json({ message: "This exception has already been processed" });
     }
+
     let lecturer = null;
 
     if (status === "approved") {
-      lecturer = await User.findOne({ uid: req.user.uid });
-      if (lecturer) {
-        lecturer.pointsBalance =
-          (lecturer.pointsBalance || 0) + EXCEPTION_LECTURER_DIVIDEND_IN_ICASH;
-        await lecturer.save();
+      const paymentTransaction = await Transactions.findOne({
+        reference: `EXC-REF-${id}`,
+        status: "success",
+        type: "payment",
+      });
+      if (paymentTransaction) {
+        lecturer = await User.findOne({ uid: req.user.uid });
+        if (lecturer) {
+          lecturer.pointsBalance =
+            (lecturer.pointsBalance || 0) +
+            EXCEPTION_LECTURER_DIVIDEND_IN_ICASH;
+          await lecturer.save();
 
-        const transactionId = generateTransactionId("exceptionsDividend");
-        await Transactions.create({
-          transactionId,
-          userId: lecturer.uid,
-          type: "exceptionsDividend",
-          amountICash: EXCEPTION_LECTURER_DIVIDEND_IN_ICASH,
-          status: "success",
-          payType: "in",
-          title: `Lectures Exception Dividend for ${exception.courseInfo?.courseTitle || "Course"}`,
-          reference: `EXC-REF-${id}`,
-          metadata: {
-            recipientId: lecturer.uid,
-          },
-        });
+          const transactionId = generateTransactionId("exceptionsDividend");
+          await Transactions.create({
+            transactionId,
+            userId: lecturer.uid,
+            type: "exceptionsDividend",
+            amountICash: EXCEPTION_LECTURER_DIVIDEND_IN_ICASH,
+            status: "success",
+            payType: "in",
+            title: `Lectures Exception Dividend for ${exception.courseInfo?.courseTitle || "Course"}`,
+            reference: `EXC-REF-${id}`,
+            metadata: {
+              recipientId: lecturer.uid,
+            },
+          });
+        }
       }
     }
 
@@ -275,6 +294,7 @@ export const manageExceptions = async (req, res) => {
         saveToDb: true,
       });
     }
+
     res.status(200).json({
       success: true,
       message: `Exception ${status} successfully.`,

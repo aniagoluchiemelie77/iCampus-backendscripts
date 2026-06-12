@@ -25,7 +25,7 @@ export const lectureSchema = new mongoose.Schema({
   topicName: { type: String, required: true },
   lectureType: {
     type: String,
-    enum: ["Physical", "Online", "Recorded"],
+    enum: ["Physical", "Online"],
     default: "Physical",
   },
   views: {
@@ -451,7 +451,7 @@ export const orderSchema = new mongoose.Schema({
   agentId: { type: String, default: null },
   status: {
     type: String,
-    enum: ["pending_delivery", "completed", "cancelled"],
+    enum: ["pending_delivery", "completed", "cancelled", "dropped_off"],
     default: "pending_delivery",
   },
   cancellationReason: { type: String, default: null },

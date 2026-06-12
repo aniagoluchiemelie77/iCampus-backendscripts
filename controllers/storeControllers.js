@@ -418,8 +418,9 @@ export const completeOrderDelivery = async (req, res) => {
     const order = await ProductOrder.findOne({ orderId }).session(session);
     const salesIncrement = order.quantity || 1;
     if (!order) throw new Error("Product order not found.");
-    if (order.status !== "pending_delivery")
+    if (order.status !== "pending_delivery" && order.status !== "dropped_off") {
       throw new Error("Product order is already processed or cancelled.");
+    }
     const isSeller = order.sellerId === scannerUid;
     const isAgent = order.agentId === scannerUid;
     if (!isSeller && !isAgent) {
@@ -1205,5 +1206,68 @@ export const toggleCartActionController = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const markOrderAsDroppedOff = async (req, res) => {
+  const { orderId } = req.body;
+  const sellerId = req.user.id;
+  const session = await mongoose.startSession();
+
+  try {
+    session.startTransaction();
+
+    const order = await ProductOrder.findOne({ orderId }).session(session);
+    if (!order) throw new Error("Order not found.");
+    if (order.sellerId !== sellerId) throw new Error("Unauthorized action.");
+    if (order.deliveryMethod !== "drop_off") {
+      throw new Error("This action is only valid for station drop-offs.");
+    }
+
+    order.status = "dropped_off";
+    order.droppedOffAt = new Date().toISOString();
+    await order.save({ session });
+    const buyer = await User.findOne({ uid: order.buyerId }).session(session);
+    await createNotification({
+      notificationId: generateNotificationId("store"),
+      recipientId: order.buyerId,
+      recipientEmail: buyer.email,
+      category: "store",
+      actionType: "ORDER_DROPPED_OFF",
+      sendEmail: true,
+      payload: {
+        userName: `${buyer.firstname} ${buyer.lastname}`,
+        productName: order.productName,
+        orderId: order.orderId,
+        stationName: order.selectedStation.name,
+        stationAddress: order.selectedStation.address,
+      },
+    });
+    if (order.agentId) {
+      await createNotification({
+        notificationId: generateNotificationId("store"),
+        recipientId: order.agentId,
+        recipientEmail: agent.email,
+        category: "store",
+        actionType: "AGENT_AWAITING_PICKUP",
+        sendEmail: true,
+        payload: {
+          agentName: agent.firstname,
+          productName: order.productName,
+          orderId: order.orderId,
+          stationName: order.selectedStation.name,
+        },
+      });
+    }
+    await session.commitTransaction();
+    session.endSession();
+    res.status(200).json({
+      success: true,
+      message: "Order updated to dropped off. Buyer notified.",
+      status: "dropped_off",
+    });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    res.status(400).json({ success: false, message: error.message });
   }
 };
