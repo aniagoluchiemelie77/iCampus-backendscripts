@@ -57,9 +57,7 @@ mongoose
     const messageRoutes = await import("./routes/messages.js");
     const userAccountDetailsRoute =
       await import("./routes/userAccountDetails.js");
-    const studentClassDetails = (
-      await import("./routes/class/students.js")
-    ).default(User);
+    const studentClassDetails = await import("./routes/class/students.js");
     const lecturerClassDetails = (
       await import("./routes/class/lecturers.js")
     ).default(User);

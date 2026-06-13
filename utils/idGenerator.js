@@ -82,6 +82,24 @@ export function generateLectureId(courseId, lectureType) {
    */
   return `LEC-${courseFragment}${typeFragment}-${dateStr}`;
 }
+export function generateCourseId(title, code) {
+  const cleanTitle = (title || "GEN").trim().toUpperCase();
+  const cleanLevel = String(code || "000")
+    .trim()
+    .replace(/[^0-9]/g, "");
+  const titleFragment =
+    cleanTitle.length > 4 ? cleanTitle.slice(0, 4) : cleanTitle.padEnd(4, "X");
+
+  const levelFragment = cleanLevel.padStart(4, "0");
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+
+  /**
+   * Format: CRS-[DEPT_FRAGMENT][LEVEL_FRAGMENT]-[YYMMDD]
+   * Example: CRS-COMP0300-260613
+   */
+  return `CRSE-${titleFragment}${levelFragment}-${dateStr}`;
+}
 export function generateAssessmentId(courseId, assessmentType = "TEST") {
   const cleanCourse = (courseId || "GEN").trim().toUpperCase();
   const cleanType = (assessmentType || "TEST").trim().toUpperCase();

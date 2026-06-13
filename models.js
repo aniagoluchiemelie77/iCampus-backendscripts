@@ -84,14 +84,14 @@ const assignmentSchema = new mongoose.Schema({
 export const courseSchema = new mongoose.Schema(
   {
     courseId: { type: String, required: true, unique: true },
-    courseCode: { type: String, required: true },
+    courseCode: { type: String },
     courseTitle: { type: String, required: true },
-    department: { type: String, required: true },
-    level: { type: String, required: true },
+    department: { type: String },
+    level: { type: String },
     schoolName: { type: String, required: true },
-    semester: { type: String, required: true },
-    session: { type: String, required: true },
-    credits: { type: Number, required: true },
+    semester: { type: String },
+    session: { type: String },
+    credits: { type: Number },
 
     // Arrays
     lecturerIds: [{ type: String, ref: "User" }],

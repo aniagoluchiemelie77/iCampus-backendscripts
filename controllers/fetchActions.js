@@ -1051,3 +1051,51 @@ export const getTransactionById = async (req, res) => {
     });
   }
 };
+export const fetchStudentsEnrolledCourses = async (req, res) => {
+  try {
+    const { semester, session } = req.query;
+    const userId = req.user.uid;
+
+    const query = {
+      studentsEnrolled: userId,
+      isActive: true,
+    };
+
+    if (semester && semester !== "All") query.semester = semester;
+    if (session && session !== "All") query.session = session;
+
+    const courses = await Course.find(query)
+      .select("-Lectures")
+      .sort({ createdAt: -1 })
+      .limit(25)
+      .lean();
+
+    res.status(200).json(courses);
+  } catch (error) {
+    res.status(500).json({ message: "Error fetching your courses" });
+  }
+};
+export const fetchLecturerEnrolledCourses = async (req, res) => {
+  try {
+    const { semester, session } = req.query;
+    const lecturerId = req.user.uid;
+
+    const query = { lecturerIds: lecturerId };
+    if (semester && semester !== "All") query.semester = semester;
+    if (session && session !== "All") query.session = session;
+
+    const courses = await Course.find(query)
+      .select("-Lectures")
+      .sort({ createdAt: -1 })
+      .limit(25)
+      .lean();
+    const results = courses.map((course) => ({
+      ...course,
+    }));
+
+    res.status(200).json(results);
+  } catch (error) {
+    console.error("Lecturer Fetch Courses Error:", error);
+    res.status(500).json({ message: "Error fetching lecturer courses" });
+  }
+};

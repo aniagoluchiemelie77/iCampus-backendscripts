@@ -22,6 +22,7 @@ import {
   generateAssessmentId,
   generateAssignmentId,
   generateSubmissionId,
+  generateCourseId,
 } from "../utils/idGenerator.js";
 import {
   EXCEPTION_COST_IN_ICASH,
@@ -30,9 +31,11 @@ import {
 } from "../constants/inAppConstants.js";
 import { generateAttendancePDF } from "../templates/courseAttendanceTemplate.js";
 import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
 import axios from "axios";
 import mongoose from "mongoose";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 export const handleGenerateCertificate = async (req, res) => {
   const { productId } = req.body;
@@ -1495,7 +1498,7 @@ export const submitAssessment = async (req, res) => {
   } finally {
     session.endSession();
   }
-};    
+};
 export const editLectures = async (req, res) => {
   try {
     const { lectureId, courseId } = req.params;
@@ -1690,5 +1693,213 @@ export const submitOnlineClassAttendance = async (req, res) => {
     res
       .status(500)
       .json({ error: "Internal server error during attendance sync." });
+  }
+};
+export const uploadCourseDetails = async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ message: "No files uploaded" });
+    }
+
+    const model = genAI.getGenerativeModel({
+      model: "gemini-1.5-flash",
+      generationConfig: { responseMimeType: "application/json" },
+    });
+
+    const prompt = `
+        Extract all details from this course registration document. 
+        It may consist of multiple pages or images. Combine the data into one response.
+        
+        Return ONLY a valid JSON object matching this schema:
+        {
+          "studentInfo": {
+              "schoolName": "University name from header/logo",
+              "studentName": "Full name",
+              "college": "Faculty name",
+              "department": "Department",
+              "level": "Level digits only",
+              "matricNo": "Registration number",
+              "date": "Document date"
+          },
+          "courses": [
+            {
+              "courseCode": "e.g., GET 311",
+              "courseTitle": "Full title",
+              "semester": "First" or "Second",
+              "session": "e.g., 2024/2025",
+              "credits": 3
+            }
+          ]
+        }
+        Note: If a course appears across page breaks, do not duplicate it.
+      `;
+
+    const fileParts = req.files.map((file) => ({
+      inlineData: {
+        data: file.buffer.toString("base64"),
+        mimeType: file.mimetype,
+      },
+    }));
+
+    const result = await model.generateContent([prompt, ...fileParts]);
+
+    let extraction;
+    try {
+      extraction = JSON.parse(result.response.text());
+    } catch (e) {
+      return res
+        .status(422)
+        .json({ message: "AI returned invalid JSON structure." });
+    }
+
+    const { studentInfo, courses } = extraction;
+
+    if (!studentInfo || !courses || courses.length === 0) {
+      return res
+        .status(422)
+        .json({ message: "Failed to extract structured course records." });
+    }
+    const submittedMatric = studentInfo.matricNo
+      ?.replace(/[^a-zA-Z0-9]/g, "")
+      .toLowerCase();
+    const userMatric = req.user.matricNumber
+      ?.replace(/[^a-zA-Z0-9]/g, "")
+      .toLowerCase();
+
+    if (!submittedMatric || submittedMatric !== userMatric) {
+      return res.status(403).json({
+        message: `Document verification failed. Matric mismatch. Expected your registered matric but found: ${studentInfo.matricNo || "None"}`,
+      });
+    }
+
+    const processedCourseIds = await Promise.all(
+      courses.map(async (courseData) => {
+        const cleanTitle = courseData.courseTitle
+          .trim()
+          .replace(/\s+/g, "\\s*");
+        let course = await Course.findOne({
+          courseTitle: { $regex: new RegExp(`^${cleanTitle}$`, "i") },
+          schoolName: req.user.schoolName,
+        });
+
+        if (course) {
+          await Course.updateOne({
+            $addToSet: { studentsEnrolled: req.user.uid },
+          });
+          return course.courseId;
+        } else {
+          const uniqueCourseId = generateCourseId(
+            courseData.courseTitle,
+            courseData.courseCode,
+          );
+          const newCourse = new Course({
+            ...courseData,
+            courseId: uniqueCourseId,
+            schoolName: req.user.schoolName,
+            department: studentInfo.department || req.user.department,
+            level: studentInfo.level,
+            studentsEnrolled: [req.user.uid],
+            isActive: true,
+          });
+          await newCourse.save();
+          return uniqueCourseId;
+        }
+      }),
+    );
+    await User.findOneAndUpdate(
+      { uid: req.user.uid },
+      { $addToSet: { coursesEnrolled: { $each: processedCourseIds } } },
+    );
+    createNotification({
+      notificationId: generateNotificationId("classroom"),
+      recipientId: req.user.uid,
+      category: "academic",
+      actionType: "COURSES_EXTRACTED",
+      title: "Course Registration Synced",
+      message: `Successfully extracted ${courses.length} courses for the ${studentInfo.level}L curriculum.`,
+      payload: {
+        courseCount: courses.length,
+        level: studentInfo.level,
+        matricNo: studentInfo.matricNo,
+      },
+      sendPush: true,
+      sendSocket: true,
+      saveToDb: true,
+    }).catch((err) => console.error("Notification Dispatch Error:", err));
+
+    res.status(200).json({
+      message: `Processed ${courses.length} courses successfully.`,
+      studentName: studentInfo.studentName,
+      coursesCount: courses.length,
+    });
+  } catch (error) {
+    console.error("Extraction Route Error:", error);
+    res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+export const uploadCourseDetailsManually = async (req, res) => {
+  try {
+    const { courseTitle, courseCode, credits } = req.body;
+    const { uid, usertype, schoolName, department } = req.user;
+    if (!courseTitle || !courseCode) {
+      return res
+        .status(400)
+        .json({ message: "Course Title and Code are required." });
+    }
+    const cleanCode = courseCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const cleanTitle = courseTitle.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    const looseCodeRegex = new RegExp(cleanCode.split("").join("\\s*"), "i");
+    const looseTitleRegex = new RegExp(cleanTitle.split("").join("\\s*"), "i");
+    let course = await Course.findOne({
+      schoolName: schoolName,
+      $or: [
+        { courseCode: { $regex: looseCodeRegex } },
+        { courseTitle: { $regex: looseTitleRegex } },
+      ],
+    });
+
+    let assignedCourseId;
+
+    if (course) {
+      assignedCourseId = course.courseId;
+      if (usertype === "lecturer") {
+        await Course.updateOne({ $addToSet: { lecturerIds: uid } });
+      } else {
+        await Course.updateOne({ $addToSet: { studentsEnrolled: uid } });
+      }
+    } else {
+      assignedCourseId = generateCourseId(courseTitle, courseCode);
+
+      const newCourseData = {
+        courseId: assignedCourseId,
+        courseCode: courseCode.trim(),
+        courseTitle: courseTitle.trim(),
+        credits: parseInt(credits, 10) || 0,
+        schoolName: schoolName,
+        department: department || "General",
+        isActive: true,
+        lecturerIds: usertype === "lecturer" ? [uid] : [],
+        studentsEnrolled: usertype !== "lecturer" ? [uid] : [],
+      };
+
+      const newCourse = new Course(newCourseData);
+      await newCourse.save();
+    }
+    const userFieldToUpdate =
+      usertype === "lecturer" ? "coursesTaught" : "coursesEnrolled";
+
+    await User.findOneAndUpdate(
+      { uid: uid },
+      { $addToSet: { [userFieldToUpdate]: assignedCourseId } },
+    );
+    return res.status(200).json({
+      message: course
+        ? "You have been added to this existing course curriculum successfully."
+        : "New course catalog entry generated and linked to your profile successfully.",
+      courseId: assignedCourseId,
+    });
+  } catch (error) {
+    console.error("Manual Course Creation Error:", error);
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };

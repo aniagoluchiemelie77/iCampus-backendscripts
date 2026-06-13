@@ -22,6 +22,7 @@ import {
   fetchCourseDetails,
   fetchAllLecturesByCourseId,
 } from "../controllers/fetchActions.js";
+import { uploadCourseDetailsManually } from "../controllers/classActions.js";
 import {
   createReviewController,
   markNotificationAsRead,
@@ -62,7 +63,7 @@ import {
   forgotPassword,
   changePassword,
 } from "../controllers/signinActions.js";
-import { Course, Lectures } from "../tableDeclarations.js";
+import { Lectures } from "../tableDeclarations.js";
 
 export default function () {
   const router = express.Router();
@@ -95,21 +96,6 @@ export default function () {
     protect,
     fetchAllExceptionsForOngoingLecture,
   );
-  router.get("/categories", async (req, res) => {
-    try {
-      const uniqueCategories = await Course.distinct("niche", {
-        isPublished: true,
-      });
-      const filteredCategories = uniqueCategories
-        .filter((cat) => !!cat)
-        .sort((a, b) => a.localeCompare(b));
-
-      res.status(200).json(filteredCategories);
-    } catch (error) {
-      console.error("Error fetching categories:", error);
-      res.status(500).json({ message: "Server error fetching niches" });
-    }
-  });
   router.get(
     "/course/ongoing-lecture/:courseId",
     protect,
@@ -205,6 +191,7 @@ export default function () {
   );
   router.put("/preferences/toggleTheme", protect, toggleTheme);
   router.get("/refresh-user-details", protect, refreshUserDetails);
+  router.post("/courses/manual-create", protect, uploadCourseDetailsManually);
 
   return router;
 }
