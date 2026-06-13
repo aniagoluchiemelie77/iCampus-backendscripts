@@ -29,6 +29,9 @@ import mongoose from "mongoose";
 import axiosRetry from "axios-retry";
 import axios from "axios";
 import * as cheerio from "cheerio";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 axiosRetry(axios, { retries: 3 });
 
 export const createReviewController = async (req, res) => {
@@ -1294,5 +1297,62 @@ export const refreshUserDetails = async (req, res) => {
   } catch (error) {
     console.error("Error in user refresh handler:", error);
     return res.status(500).json({ message: "Internal server error" });
+  }
+};
+export const aiChat = async (req, res) => {
+  const { message, context, history, userId } = req.body;
+
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+    let contextString = `You are iAssistant, the official Academic AI Tutor for iCampus. 
+      Your sole purpose is to help students and lecturers understand educational material, 
+      explain complex topics, answer academic questions, and maybe random questions. 
+      Do NOT answer any technical support or app-related platform questions.\n`;
+
+    if (context.type === "course") {
+      contextString += `Current Academic Context:\nCourse: ${context.data.courseTitle} (${context.data.courseCode}).\nDepartment: ${context.data.department}.`;
+    } else if (context.type === "lecture") {
+      contextString += `Current Academic Context:\nLecture Topic: ${context.data.topicName}.\nType: ${context.data.lectureType}.`;
+    } else {
+      contextString += `Current Academic Context: General Academic Assistance.`;
+    }
+
+    const chat = model.startChat({
+      history: [
+        {
+          role: "user",
+          parts: [
+            {
+              text:
+                contextString + "\nConfirm you understand your academic scope.",
+            },
+          ],
+        },
+        {
+          role: "model",
+          parts: [
+            {
+              text: "Understood. I am ready to act purely as an Academic AI Tutor and assist with this educational context.",
+            },
+          ],
+        },
+        ...history,
+      ],
+    });
+
+    const result = await chat.sendMessage(message);
+    const response = result.response;
+    if (userId) {
+      await User.findOneAndUpdate(
+        { uid: userId, usertype: { $in: ["student", "lecturer"] } },
+        { $inc: { "monthlyStats.aiQueries": 1 } },
+      );
+    }
+
+    res.json({ reply: response.text() });
+  } catch (error) {
+    console.error("Academic AI Chat Error:", error);
+    res.status(500).json({ error: "Failed to fetch AI response" });
   }
 };

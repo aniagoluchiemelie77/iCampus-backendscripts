@@ -49,6 +49,7 @@ import {
   handleUnifiedCourseSearch,
   toggleTheme,
   refreshUserDetails,
+  aiChat,
 } from "../controllers/userActionsController.js";
 import {
   signUp,
@@ -62,10 +63,6 @@ import {
   changePassword,
 } from "../controllers/signinActions.js";
 import { Course, Lectures } from "../tableDeclarations.js";
-
-const { GoogleGenerativeAI } = require("@google/generative-ai");
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const verificationCodes = {};
 
 export default function () {
   const router = express.Router();
@@ -159,66 +156,7 @@ export default function () {
       res.status(500).json({ message: "Internal server error" });
     }
   });
-  router.post("/ai/chat", async (req, res) => {
-    const { message, context, history, userId } = req.body;
-    const { appMetadata } = context;
-    try {
-      const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
-      const appRules = `
-        Here is your App Knowledge Base:
-        - iScore: Academic ranking (Higher = better performance).
-        - iCash: Campus P2P wallet. Transfers use @iTags.
-        - Enrollment: Users must register courses in the 'Academic' tab.
-        - Support: If a bug is reported, tell them to upload a screenshot.
-      `;
-      let contextString = `You are iAssistant, the official support agent and also academic AI for iCampus.
-        If a user asks an app-related question, use ${appRules} knowledge to answer.
-        User Status: ${appMetadata.tier} user, ${appMetadata.isVerified ? "Verified" : "Unverified"}.
-        Current Context: ${context.type}.
-        Role: ${appMetadata.usertype}.\n`;
-
-      if (context.type === "course") {
-        contextString += `Course: ${context.data.courseTitle} (${context.data.courseCode}). 
-        Dept: ${context.data.department}.`;
-      } else if (context.type === "lecture") {
-        contextString += `Lecture: ${context.data.topicName}. Type: ${context.data.lectureType}. 
-        Location: ${context.data.location}.`;
-      }
-      if (
-        message.toLowerCase().includes("issue") ||
-        message.toLowerCase().includes("can't")
-      ) {
-        contextString += `The user is reporting an issue. Use the User Status to explain why they might be seeing errors (e.g., if they are 'free' tier, they might not have access to certain features).`;
-      }
-      const chat = model.startChat({
-        history: [
-          { role: "user", parts: [{ text: contextString + " Understood?" }] },
-          {
-            role: "model",
-            parts: [
-              {
-                text: "Understood. I am ready to assist with this specific context.",
-              },
-            ],
-          },
-          ...history,
-        ],
-      });
-      const result = await chat.sendMessage(message);
-      const response = result.response;
-      if (userId) {
-        await User.findOneAndUpdate(
-          { uid: userId, usertype: { $in: ["student", "lecturer"] } },
-          { $inc: { "monthlyStats.aiQueries": 1 } },
-        );
-      }
-
-      res.json({ reply: response.text() });
-    } catch (error) {
-      console.error(error);
-      res.status(500).json({ error: "Failed to fetch AI response" });
-    }
-  });
+  router.post("/ai/chat", protect, aiChat);
   router.get("/check-account-state", protect, checkAccountState);
   router.get("/library/search", protect, searchBookInLibrary);
   router.get("/library/featured", protect, fetchFeaturedBooksFromLibrary);

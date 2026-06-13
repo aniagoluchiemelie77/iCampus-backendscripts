@@ -606,7 +606,7 @@ export const getPendingOrders = async (req, res) => {
     const userId = req.user.id;
     const orders = await ProductOrder.find({
       buyerId: userId,
-      status: "pending_delivery",
+      status: { $in: ["pending_delivery", "dropped_off"] },
     }).sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: orders });
   } catch (error) {

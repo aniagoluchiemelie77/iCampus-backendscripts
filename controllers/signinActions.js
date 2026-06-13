@@ -26,6 +26,7 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import jwt from "jsonwebtoken";
 import { createNotification } from "../services/notificationService.js";
 import { client } from "../workers/reditFile.js";
+const verificationCodes = {};
 
 export const signUp = async (req, res) => {
   const {

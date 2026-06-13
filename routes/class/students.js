@@ -34,7 +34,7 @@ session.startTransaction();
 
 export default function (User) {
   const router = express.Router();
-  // GET /api/courses?studentId=...&semester=...&session=...
+
   router.get("/courses", protect, async (req, res) => {
     try {
       const { semester, session } = req.query;
@@ -58,7 +58,6 @@ export default function (User) {
       res.status(500).json({ message: "Error fetching your courses" });
     }
   });
-  // POST /api/courses/batch
   router.post("/courses/batch", protect, async (req, res) => {
     try {
       const { ids } = req.body;
@@ -79,39 +78,6 @@ export default function (User) {
       res.status(500).json({ message: "Server error fetching batch courses" });
     }
   });
-  //Discover
-  router.get("/courses/discover", async (req, res) => {
-    try {
-      // 1. Use aggregate to get random courses
-      const courses = await Course.aggregate([
-        // Filter for active, published courses
-        { $match: { isPublished: true, isActive: true } },
-
-        // Randomly pick 10 courses for variety
-        { $sample: { size: 10 } },
-
-        // Project (Select) only the fields the mobile app needs
-        {
-          $project: {
-            courseTitle: 1,
-            courseCode: 1,
-            instructorName: 1,
-            price: 1,
-            rating: 1,
-            thumbnailUrl: 1,
-            courseDuration: 1,
-            department: 1, // Add this so your ForYouCard shows the category
-          },
-        },
-      ]);
-
-      res.status(200).json(courses);
-    } catch (error) {
-      console.error("Marketplace Fetch Error:", error);
-      res.status(500).json({ message: "Error fetching marketplace" });
-    }
-  });
-  //AI course detail extraction from coursee file upload
   router.post(
     "/ai/extract-course",
     protect,
