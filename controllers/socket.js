@@ -18,13 +18,14 @@ import {
   registerLectureLifecycleHandlers,
   registerPermissionRequestsHandlers,
   registerMuteAllHandler,
+  registerLecturerMediaControlHandlers,
 } from "./liveClassControllers.js";
 
 let io;
 const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
 const activeStreams = new Map();
 const activeLectures = {};
-const activeSessions = new Map(); // FIXED: Was missing declaration
+const activeSessions = new Map();
 
 const closeStream = (streamKey) => {
   if (activeStreams.has(streamKey)) {
@@ -50,7 +51,6 @@ export const init = (httpServer) => {
       socket.join(userId);
       console.log(`User ${userId} joined their private room.`);
     });
-
     socket.on("join_course_rooms", (courseIds) => {
       if (Array.isArray(courseIds)) {
         courseIds.forEach((id) => {
@@ -65,19 +65,15 @@ export const init = (httpServer) => {
     registerNetworkFallbackHandlers(io, socket);
     registerSpeakerTrackingHandlers(io, socket);
     registerAttendanceTrackingHandlers(io, socket);
-
     socket.on("share_transcription_chunk", (payload) => {
       const { lectureId, speakerLabel, text } = payload;
       socket
         .to(`lecture_${lectureId}`)
         .emit("transcription_update", { speakerLabel, text });
     });
-
     registerPermissionRequestsHandlers(io, socket);
     registerMuteAllHandler(io, socket);
-
     registerLectureLifecycleHandlers(io, socket);
-
     socket.on("leave_lecture", ({ lectureId, uid }) => {
       const roomName = `lecture_${lectureId}`;
       socket.leave(roomName);
@@ -85,15 +81,8 @@ export const init = (httpServer) => {
       const currentAttendees = getAttendeesForRoom(lectureId);
       io.to(roomName).emit("update_attendee_list", currentAttendees);
     });
-
     registerAudioControlHandlers(io, socket);
-
-    socket.on("toggle_lecturer_camera", ({ lectureId, isCameraOn }) => {
-      io.to(`lecture_${lectureId}`).emit("lecturer_camera_toggled", {
-        isCameraOn,
-      });
-    });
-
+    registerLecturerMediaControlHandlers(io, socket);
     registerScreenShareHandlers(io, socket);
     registerScreenShareStopHandlers(io, socket);
     registerLectureStreamHandlers(io, socket);
@@ -109,7 +98,6 @@ export const init = (httpServer) => {
       });
       console.log(`[BLE Verification Link Activated]: ${lectureId}`);
     });
-
     socket.on(
       "student_mark_attendance",
       async ({ lectureId, studentId, timestamp }) => {
@@ -158,7 +146,6 @@ export const init = (httpServer) => {
         }
       },
     );
-
     socket.on("end_attendance_session", async ({ lectureId }) => {
       try {
         activeSessions.delete(lectureId);
@@ -173,13 +160,6 @@ export const init = (httpServer) => {
       } catch (error) {
         console.error(error);
       }
-    });
-
-    socket.on("disconnect", () => {
-      for (const [key, value] of activeStreams.entries()) {
-        if (key.includes(socket.id)) closeStream(key);
-      }
-      console.log("User disconnected");
     });
     //P2P chat
     socket.on("join_chat", ({ roomId }) => {
@@ -228,6 +208,12 @@ export const init = (httpServer) => {
         { $set: { status: "seen" } },
       );
       socket.to(senderId).emit("messages_seen", { readerId });
+    });
+    socket.on("disconnect", () => {
+      for (const [key, value] of activeStreams.entries()) {
+        if (key.includes(socket.id)) closeStream(key);
+      }
+      console.log("User disconnected");
     });
   });
 

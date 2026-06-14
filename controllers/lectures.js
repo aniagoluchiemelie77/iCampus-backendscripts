@@ -1,9 +1,4 @@
-import {
-  Lectures,
-  Exceptions,
-  Attendance,
-  User,
-} from "../tableDeclarations.js";
+import { Attendance, User } from "../tableDeclarations.js";
 import {
   pushToCloudStorage,
   checkDeepfakeDetectionAPI,
@@ -11,47 +6,7 @@ import {
 import ffmpeg from "fluent-ffmpeg";
 import path from "path";
 import fs from "fs";
-const lectureRooms = new Map();
 
-export const endLecture = async (lectureId) => {
-  await Lectures.update({ id: lectureId }, { status: "completed" });
-  const approvedExceptions = await Exceptions.find({
-    lectureId,
-    status: "approved",
-  });
-  const attendancePromises = approvedExceptions.map((ex) => {
-    return Attendance.upsert({
-      studentId: ex.studentId,
-      lectureId: lectureId,
-      status: "Present",
-      remarks: "Verified via Approved Exceptions",
-    });
-  });
-  await Promise.all(attendancePromises);
-};
-export const updateAttendeeList = (lectureId, user, action) => {
-  if (!lectureRooms.has(lectureId)) {
-    lectureRooms.set(lectureId, new Map());
-  }
-
-  const roomParticipants = lectureRooms.get(lectureId);
-
-  if (action === "join") {
-    roomParticipants.set(user.uid, {
-      uid: user.uid,
-      firstname: user.firstname,
-      profilePic: user.profilePic,
-      joinedAt: new Date(),
-    });
-  } else if (action === "leave") {
-    roomParticipants.delete(user.uid);
-  }
-};
-
-export const getAttendeesForRoom = (lectureId) => {
-  const room = lectureRooms.get(lectureId);
-  return room ? Array.from(room.values()) : [];
-};
 export const getGroupedAttendance = async (lectureId) => {
   return await Attendance.aggregate([
     { $match: { lectureId: lectureId } },
@@ -178,4 +133,3 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
       .json({ success: false, message: "Internal validation router fault." });
   }
 };
-

@@ -10,6 +10,7 @@ import {
   Lectures,
   Course,
   Attendance,
+  UserDownloads,
 } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
 import { generateCertificatePDF } from "../templates/downloadsCertificateTemplate.js";
@@ -1961,5 +1962,168 @@ export const uploadCourseDetailsManually = async (req, res) => {
   } catch (error) {
     console.error("Manual Course Creation Error:", error);
     return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+export const handleUpcomingLectureRemindersCron = async () => {
+  try {
+    const leadTimeMinutes = 45;
+    const targetTime = new Date(Date.now() + leadTimeMinutes * 60 * 1000);
+
+    const targetDateStr = targetTime.toISOString().split("T")[0];
+    const targetHourMin = targetTime.toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    console.log(
+      `[CRON_ENGINE] Scanning for live sessions matching: [Date: ${targetDateStr}] [Time: ${targetHourMin}]`,
+    );
+    const upcomingLectures = await Lectures.aggregate([
+      {
+        $match: {
+          date: targetDateStr,
+          startTime: targetHourMin,
+          status: "scheduled",
+        },
+      },
+      {
+        $lookup: {
+          from: "courses",
+          localField: "courseId",
+          foreignField: "courseId",
+          as: "courseContext",
+        },
+      },
+      {
+        $unwind: "$courseContext",
+      },
+      {
+        $project: {
+          id: 1,
+          topicName: 1,
+          startTime: 1,
+          lectureType: 1,
+          location: 1,
+          courseId: 1,
+          "courseContext.courseCode": 1,
+          "courseContext.studentsEnrolled": 1,
+        },
+      },
+    ]);
+
+    if (!upcomingLectures || upcomingLectures.length === 0) {
+      console.log(
+        `[CRON_ENGINE] Verification cycle completed. 0 matching upcoming lectures identified.`,
+      );
+      return;
+    }
+    for (const lecture of upcomingLectures) {
+      const studentUids = lecture.courseContext.studentsEnrolled;
+
+      if (!studentUids || studentUids.length === 0) {
+        console.log(
+          `[CRON_ENGINE] Skipping session ${lecture.id}: No student enrollments detected.`,
+        );
+        continue;
+      }
+      const enrolledStudents = await User.find({
+        uid: { $in: studentUids },
+      })
+        .select("uid firstname")
+        .lean();
+
+      const notificationPromises = enrolledStudents.map(async (student) => {
+        try {
+          return await createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "LECTURE_REMINDER",
+            title: `Class Starting Soon: ${lecture.courseContext.courseCode}`,
+            message: `Your ${lecture.lectureType || "live"} lecture on "${lecture.topicName}" starts in 45 minutes at ${lecture.location || "Online"}.`,
+            payload: {
+              courseId: lecture.courseId,
+              lectureId: lecture.id,
+              topicName: lecture.topicName,
+              startTime: lecture.startTime,
+              location: lecture.location,
+              userName: student.firstname || "Student",
+            },
+            sendPush: true,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        } catch (err) {
+          console.error(
+            `[CRON_NOTIFICATION_ERR] Failed for recipient ${student.uid}:`,
+            err.message,
+          );
+          // Return null or undefined so Promise.all resolved array doesn't break
+          return null;
+        }
+      });
+
+      await Promise.all(notificationPromises);
+
+      console.log(
+        `[CRON_SUCCESS] Dispatched reminders for ${lecture.courseContext.courseCode} - "${lecture.topicName}" to ${enrolledStudents.length} students.`,
+      );
+    }
+  } catch (error) {
+    console.error(
+      "[CRON_CRITICAL_EXCEPTION] Failed executing automated reminder cycles:",
+      error.message,
+    );
+  }
+};
+export const sendInactiveUserReminders = async () => {
+  try {
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    const inactiveUsers = await UserDownloads.find({
+      lastAccessed: { $lt: threeDaysAgo },
+    }).lean();
+
+    if (!inactiveUsers.length) {
+      return;
+    }
+    const notificationPromises = inactiveUsers.map(async (record) => {
+      const activeCourse = [...record.ownedProducts]
+        .sort((a, b) => b.lastWatched - a.lastWatched)
+        .find((p) => p.progress < 100);
+
+      if (!activeCourse) return null;
+
+      try {
+        return await createNotification({
+          notificationId: generateNotificationId("reminder"),
+          recipientId: record.userId,
+          category: "academic",
+          actionType: "LEARNING_REMINDER",
+          title: "Don't break your streak",
+          message: `It's been a few days since you accessed your course. Your progress is waiting for you!`,
+          sendEmail: false,
+          sendPush: true,
+          payload: {
+            productId: activeCourse.productId,
+            currentProgress: activeCourse.progress,
+          },
+        });
+      } catch (err) {
+        console.error(
+          `[REMINDER_ERR] Failed to send notification to user ${record.userId}:`,
+          err.message,
+        );
+        return null;
+      }
+    });
+    const results = await Promise.all(notificationPromises);
+    const sentCount = results.filter((result) => result !== null).length;
+
+    console.log(
+      `[REMINDER_CRON] Reminder notifications sent to ${sentCount} users.`,
+    );
+  } catch (error) {
+    console.error("[REMINDER_CONTROLLER_ERR]:", error.message);
   }
 };
