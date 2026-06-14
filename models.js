@@ -12,8 +12,7 @@ export const attendanceSchema = new mongoose.Schema({
 export const commentSchema = new mongoose.Schema({
   id: { type: String, required: true },
   userId: { type: String, required: true },
-  firstName: { type: String, required: true },
-  userName: { type: String, required: true },
+  username: { type: String, required: true },
   profilePic: { type: String },
   text: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
@@ -43,6 +42,7 @@ export const lectureSchema = new mongoose.Schema({
   startTime: String,
   endTime: String,
   date: String,
+  hostId: String,
   status: {
     type: String,
     enum: ["scheduled", "ongoing", "completed", "cancelled", "postponed"],
@@ -56,6 +56,9 @@ export const lectureSchema = new mongoose.Schema({
   getAttendanceMode: { type: String, enum: ["Uploaded", "Online"] },
   department: String,
   level: String,
+  isLive: { type: Boolean, default: false },
+  liveStreamUrl: { type: String, default: null },
+  startedAt: { type: Date, default: null },
 });
 const assignmentSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },

@@ -37,6 +37,21 @@ import mongoose from "mongoose";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+const checkContentAuthorization = async (userId, course, lectureId = null) => {
+  if (course.lecturerIds && course.lecturerIds.includes(userId)) {
+    return true;
+  }
+  if (lectureId) {
+    const lecture = await Lectures.findOne({
+      id: lectureId,
+      courseId: course.courseId,
+    });
+    if (lecture && lecture.hostId === userId) {
+      return true;
+    }
+  }
+  return false;
+};
 export const handleGenerateCertificate = async (req, res) => {
   const { productId } = req.body;
   const { uid, email } = req.user;
@@ -328,6 +343,7 @@ export const createLectureSchedule = async (req, res) => {
     if (!courseDetails) {
       return res.status(404).json({ message: "Course not found" });
     }
+
     for (let i = 0; i < (repeatWeeks || 1); i++) {
       const nextDate = new Date(date);
       nextDate.setDate(nextDate.getDate() + i * 7);
@@ -365,13 +381,13 @@ export const createLectureSchedule = async (req, res) => {
         date: d,
         department: courseDetails.department,
         level: courseDetails.level,
+        hostId: req.user.uid,
         status: "scheduled",
         isTaught: false,
         attendance: [],
       });
     });
     const result = await Lectures.insertMany(lecturesToCreate);
-
     const students = await User.find({
       usertype: "student",
       department: courseDetails.department,
@@ -390,7 +406,7 @@ export const createLectureSchedule = async (req, res) => {
           userName: student.firstname,
           topicName: topicName,
           courseId: courseId,
-          lectureId: result[0].id, // Uses the generated custom id string
+          lectureId: result[0].id,
           lectureType: lectureType,
           location: location,
           time: startTime,
@@ -406,11 +422,10 @@ export const createLectureSchedule = async (req, res) => {
         saveToDb: true,
       }),
     );
-
-    // Fire and forget notifications
     Promise.all(notificationPromises).catch((err) =>
       console.error("Notification Error:", err),
     );
+
     await User.updateOne(
       { uid: req.user.uid },
       {
@@ -420,7 +435,6 @@ export const createLectureSchedule = async (req, res) => {
         },
       },
     );
-
     res.status(201).json({
       message: "Lectures scheduled successfully",
       count: result.length,
@@ -550,17 +564,20 @@ export const deleteLecture = async (req, res) => {
       return res.status(404).json({ message: "Lecture not found" });
     }
 
-    const { courseId, topicName, date, id } = lecture;
+    const { courseId, topicName, date, id, hostId } = lecture;
     const course = await Course.findOne({ courseId });
     if (!course) {
       return res.status(404).json({ message: "Associated course not found" });
     }
-    const isAuthorizedLecturer =
+    const isCourseLecturer =
       course.lecturerIds && course.lecturerIds.includes(req.user.uid);
-    if (!isAuthorizedLecturer) {
+    const isLectureHost = hostId === req.user.uid;
+
+    if (!isCourseLecturer && !isLectureHost) {
       return res.status(403).json({
         success: false,
-        message: "Access denied. You are not assigned to teach this course.",
+        message:
+          "Access denied. You do not have permissions to cancel this specific lecture slot.",
       });
     }
     await Lectures.findOneAndDelete({ id: lectureId });
@@ -589,6 +606,7 @@ export const deleteLecture = async (req, res) => {
           saveToDb: true,
         }),
       );
+
       Promise.all(notificationPromises).catch((err) =>
         console.error("Delete Notification Error:", err),
       );
@@ -995,8 +1013,8 @@ export const deleteCourseMaterial = async (req, res) => {
 export const createCourseContent = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const { topic } = req.body;
-    const lecturerUid = req.user.uid;
+    const { topic, lectureId } = req.body;
+    const requesterUid = req.user.uid;
 
     if (!topic || typeof topic !== "string") {
       return res
@@ -1006,12 +1024,18 @@ export const createCourseContent = async (req, res) => {
 
     const course = await Course.findOne({ courseId });
     if (!course) return res.status(404).json({ message: "Course not found" });
-
-    if (!course.lecturerIds.includes(lecturerUid)) {
-      return res
-        .status(403)
-        .json({ message: "Unauthorized: You do not instruct this course" });
+    const isAuthorized = await checkContentAuthorization(
+      requesterUid,
+      course,
+      lectureId,
+    );
+    if (!isAuthorized) {
+      return res.status(403).json({
+        message:
+          "Unauthorized: You do not have hosting rights for this curriculum",
+      });
     }
+
     course.courseContents.push(topic);
     await course.save();
     User.find({
@@ -1052,8 +1076,8 @@ export const createCourseContent = async (req, res) => {
 export const editCourseContent = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const { index, updatedTopic } = req.body;
-    const lecturerUid = req.user.uid;
+    const { index, updatedTopic, lectureId } = req.body;
+    const requesterUid = req.user.uid;
 
     if (typeof index !== "number" || !updatedTopic) {
       return res
@@ -1063,10 +1087,16 @@ export const editCourseContent = async (req, res) => {
     const course = await Course.findOne({ courseId });
     if (!course) return res.status(404).json({ message: "Course not found" });
 
-    if (!course.lecturerIds.includes(lecturerUid)) {
-      return res
-        .status(403)
-        .json({ message: "Unauthorized: You do not instruct this course" });
+    const isAuthorized = await checkContentAuthorization(
+      requesterUid,
+      course,
+      lectureId,
+    );
+    if (!isAuthorized) {
+      return res.status(403).json({
+        message:
+          "Unauthorized: You do not have access to edit this course content",
+      });
     }
 
     if (index < 0 || index >= course.courseContents.length) {
@@ -1122,8 +1152,8 @@ export const editCourseContent = async (req, res) => {
 export const deleteCourseContent = async (req, res) => {
   try {
     const { courseId } = req.params;
-    const { index } = req.body;
-    const lecturerUid = req.user.uid;
+    const { index, lectureId } = req.body;
+    const requesterUid = req.user.uid;
 
     if (typeof index !== "number") {
       return res
@@ -1133,7 +1163,12 @@ export const deleteCourseContent = async (req, res) => {
     const course = await Course.findOne({ courseId });
     if (!course) return res.status(404).json({ message: "Course not found" });
 
-    if (!course.lecturerIds.includes(lecturerUid)) {
+    const isAuthorized = await checkContentAuthorization(
+      requesterUid,
+      course,
+      lectureId,
+    );
+    if (!isAuthorized) {
       return res.status(403).json({ message: "Unauthorized: Access denied" });
     }
 
@@ -1144,6 +1179,7 @@ export const deleteCourseContent = async (req, res) => {
     }
     const removedTopic = course.courseContents.splice(index, 1)[0];
     await course.save();
+
     User.find({
       usertype: "student",
       department: course.department,
@@ -1185,15 +1221,22 @@ export const createCourseAssignment = async (req, res) => {
     const { courseId } = req.params;
     const { title, description, dueDate, submissionMethod, lectureId } =
       req.body;
-    const lecturerUid = req.user.uid;
+    const requesterUid = req.user.uid;
 
     const course = await Course.findOne({ courseId });
     if (!course) return res.status(404).json({ message: "Course not found" });
-    if (!course.lecturerIds.includes(lecturerUid)) {
-      return res
-        .status(403)
-        .json({ message: "Unauthorized: You do not instruct this course" });
+    const isAuthorized = await checkContentAuthorization(
+      requesterUid,
+      course,
+      lectureId,
+    );
+    if (!isAuthorized) {
+      return res.status(403).json({
+        message:
+          "Unauthorized: You do not have permissions to post assignments here",
+      });
     }
+
     const assignmentId = generateAssignmentId(courseId);
     const newAssignment = {
       assignmentId,
@@ -1206,8 +1249,10 @@ export const createCourseAssignment = async (req, res) => {
       fileUrl: req.file ? req.file.path : null,
       submissions: [],
     };
+
     course.assignments.push(newAssignment);
     await course.save();
+
     const formattedDate = new Date(dueDate).toLocaleDateString();
     User.find({
       usertype: "student",
@@ -1239,6 +1284,7 @@ export const createCourseAssignment = async (req, res) => {
       .catch((err) =>
         console.error("Assignment Notification Dispatch Failure:", err),
       );
+
     return res.status(201).json(course.assignments);
   } catch (error) {
     return res.status(500).json({ message: error.message });
@@ -1247,14 +1293,10 @@ export const createCourseAssignment = async (req, res) => {
 export const deleteCourseAssignment = async (req, res) => {
   try {
     const { courseId, assignmentId } = req.params;
-    const lecturerUid = req.user.uid;
+    const requesterUid = req.user.uid;
 
     const course = await Course.findOne({ courseId });
     if (!course) return res.status(404).json({ message: "Course not found" });
-
-    if (!course.lecturerIds.includes(lecturerUid)) {
-      return res.status(403).json({ message: "Unauthorized: Access denied" });
-    }
 
     const targetAssignment = course.assignments.find(
       (asg) => asg.assignmentId === assignmentId,
@@ -1264,11 +1306,21 @@ export const deleteCourseAssignment = async (req, res) => {
         message: "Target assignment not found within this course profile",
       });
     }
+    const isAuthorized = await checkContentAuthorization(
+      requesterUid,
+      course,
+      targetAssignment.lectureId,
+    );
+    if (!isAuthorized) {
+      return res.status(403).json({ message: "Unauthorized: Access denied" });
+    }
+
     const updatedCourse = await Course.findOneAndUpdate(
       { courseId },
       { $pull: { assignments: { assignmentId: assignmentId } } },
       { new: true },
     );
+
     User.find({
       usertype: "student",
       department: updatedCourse.department,
@@ -1284,10 +1336,7 @@ export const deleteCourseAssignment = async (req, res) => {
             actionType: "ASSIGNMENT_REMOVED",
             title: "Assignment Cancelled",
             message: `The assignment "${targetAssignment.title}" has been removed by the instructor.`,
-            payload: {
-              courseId,
-              assignmentId,
-            },
+            payload: { courseId, assignmentId },
             sendEmail: false,
             sendPush: true,
             sendSocket: true,
@@ -1504,21 +1553,41 @@ export const editLectures = async (req, res) => {
     const { lectureId, courseId } = req.params;
     const { newDate, newStartTime, topicName, lectureType, location } =
       req.body;
+
     const originalLecture = await Lectures.findOne({ id: lectureId });
     if (!originalLecture) {
       return res.status(404).json({ message: "Lecture not found" });
     }
+    const course = await Course.findOne({ courseId });
+    if (!course) {
+      return res.status(404).json({ message: "Associated course not found" });
+    }
+    const isCourseLecturer =
+      course.lecturerIds && course.lecturerIds.includes(req.user.uid);
+    const isLectureHost = originalLecture.hostId === req.user.uid;
+
+    if (!isCourseLecturer && !isLectureHost) {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Access denied. You do not have permissions to modify this live lecture slot.",
+      });
+    }
+
     const changes = [];
     let updatedStatus = originalLecture.status;
     let primaryActionType = "LECTURE_UPDATED";
+
     const isDateChanged = newDate && newDate !== originalLecture.date;
     const isTimeChanged =
       newStartTime && newStartTime !== originalLecture.startTime;
+
     if (isDateChanged || isTimeChanged) {
       changes.push("schedule");
       updatedStatus = "postponed";
       primaryActionType = "LECTURE_POSTPONED";
     }
+
     const isLocationChanged =
       location !== undefined && location !== originalLecture.location;
     if (isLocationChanged) {
@@ -1527,6 +1596,7 @@ export const editLectures = async (req, res) => {
         primaryActionType = "LECTURE_VENUE_CHANGE";
       }
     }
+
     const isTypeChanged =
       lectureType && lectureType !== originalLecture.lectureType;
     if (isTypeChanged) {
@@ -1535,20 +1605,23 @@ export const editLectures = async (req, res) => {
         primaryActionType = "LECTURE_TYPE_CHANGE";
       }
     }
+
     const isTopicChanged = topicName && topicName !== originalLecture.topicName;
     if (isTopicChanged) {
       changes.push("topic");
     }
+
     if (changes.length === 0) {
       return res.status(200).json({
         message: "No updates detected",
         updatedLecture: originalLecture,
       });
     }
+
     const updatePayload = {
       topicName: topicName || originalLecture.topicName,
       lectureType: lectureType || originalLecture.lectureType,
-      location: lectureType === "Physical" ? location : undefined, // Clean location if shifted away from Physical
+      location: lectureType === "Physical" ? location : undefined, // Wipe venue data if shifted online
       date: newDate || originalLecture.date,
       startTime: newStartTime || originalLecture.startTime,
       status: updatedStatus,
@@ -1559,16 +1632,13 @@ export const editLectures = async (req, res) => {
       updatePayload,
       { new: true },
     );
-    const course = await Course.findOne({ courseId });
-    if (!course) {
-      return res.status(404).json({ message: "Associated course not found" });
-    }
 
     const students = await User.find({
       usertype: "student",
       department: course.department,
       level: course.level,
     }).select("uid firstName");
+
     const changeListString = changes.join(", ");
     const notificationPromises = students.map((student) => {
       let updateDetailsMessage = `The details for your lecture "${updatePayload.topicName}" have been updated (${changeListString}).`;
@@ -1587,7 +1657,7 @@ export const editLectures = async (req, res) => {
         notificationId: generateNotificationId("classroom"),
         recipientId: student.uid,
         category: "classroom",
-        actionType: primaryActionType, // Automatically assigned: LECTURE_POSTPONED, LECTURE_VENUE_CHANGE, etc.
+        actionType: primaryActionType,
         title: `Lecture Update: ${course.courseId}`,
         message: updateDetailsMessage,
         payload: {
@@ -1607,6 +1677,7 @@ export const editLectures = async (req, res) => {
         saveToDb: true,
       });
     });
+
     Promise.all(notificationPromises).catch((err) =>
       console.error("Notify Error:", err),
     );
@@ -1622,13 +1693,14 @@ export const editLectures = async (req, res) => {
 };
 export const submitOnlineClassAttendance = async (req, res) => {
   try {
-    const { lectureId, courseId, status, checkData } = req.body;
+    const { lectureId, courseId, status } = req.body;
     const studentId = req.user.uid;
-    if (!lectureId || !courseId || !Array.isArray(checkData)) {
+    if (!lectureId || !courseId || !status) {
       return res
         .status(400)
-        .json({ error: "Missing or malformed session data." });
+        .json({ error: "Missing required online attendance parameters." });
     }
+
     const lecture = await Lectures.findOne({ id: lectureId });
     if (!lecture) {
       return res.status(404).json({ error: "Lecture not found." });
@@ -1644,26 +1716,14 @@ export const submitOnlineClassAttendance = async (req, res) => {
           "Submission window closed. Attendance must be synced within 60 mins of class end.",
       });
     }
-
-    const totalPassed = checkData.filter((c) => c === true).length;
-    const endCheck = checkData[6];
-
-    if (status === "Present" && (totalPassed < 5 || !endCheck)) {
-      console.warn(
-        `Suspicious activity: Student ${studentId} attempted to spoof attendance.`,
-      );
-      return res.status(422).json({
-        error:
-          "Verification data does not support 'Present' status. Ensure all checks are completed.",
-      });
-    }
     const existingRecord = await Attendance.findOne({ studentId, lectureId });
+
     const record = await Attendance.findOneAndUpdate(
       { studentId, lectureId },
       {
         courseId,
         status,
-        checkData,
+        checkData: [],
         timestamp: currentTime,
       },
       { upsert: true, new: true },
@@ -1686,7 +1746,7 @@ export const submitOnlineClassAttendance = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Attendance recorded and verified successfully",
+      message: "Attendance recorded successfully at end of class session.",
     });
   } catch (err) {
     console.error("iCampus Backend Error:", err);

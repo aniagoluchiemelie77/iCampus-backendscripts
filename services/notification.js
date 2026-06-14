@@ -343,6 +343,14 @@ export const createNotification = async ({
         message =
           message || `Pick up where you left off in ${payload.productName}.`;
         break;
+      case "LECTURER_REVIEW_REQUEST":
+        category = "classroom";
+        subject = `How was your lecture on "${payload.topicName}"?`;
+        title = title || "Rate Your Live Class Experience";
+        message =
+          message ||
+          `Hi ${payload.userName || "Student"}, how was today's session on "${payload.topicName}"? Rate your experience to help the iCampus community.`;
+        break;
 
       case "EXCEPTION_UPDATED":
         subject = `Update on your Exception: ${payload.courseCode}`;

@@ -1,17 +1,24 @@
 // socket.js
 import { Server } from "socket.io";
-import {
-  processLecturerAudio,
-  startLiveTranscription,
-} from "./audio-service.js";
-import {
-  endLecture,
-  updateAttendeeList,
-  getAttendeesForRoom,
-} from "./lectures.js";
+import {} from "./audio-service.js";
 import { Deepgram } from "@deepgram/sdk";
 import { Lectures, User, Attendance, Message } from "../tableDeclarations.js";
 import { calculateStudentIScore } from "../controllers/iScoreController.js";
+import {
+  registerLectureStreamHandlers,
+  registerWebRTCSignalingHandlers,
+  registerAudioControlHandlers,
+  registerScreenShareHandlers,
+  registerScreenShareStopHandlers,
+  registerChatHandlers,
+  registerNetworkFallbackHandlers,
+  registerStudentInteractionHandlers,
+  registerSpeakerTrackingHandlers,
+  registerAttendanceTrackingHandlers,
+  registerLectureLifecycleHandlers,
+  registerPermissionRequestsHandlers,
+  registerMuteAllHandler,
+} from "./liveClassControllers.js";
 
 let io;
 const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
@@ -53,98 +60,23 @@ export const init = (httpServer) => {
         });
       }
     });
+    registerStudentInteractionHandlers(io, socket);
+    registerChatHandlers(io, socket);
+    registerNetworkFallbackHandlers(io, socket);
+    registerSpeakerTrackingHandlers(io, socket);
+    registerAttendanceTrackingHandlers(io, socket);
 
-    socket.on("send_wave", (data) => {
-      io.to(data.lectureId).emit("student_waved", {
-        firstName: data.firstName,
-      });
+    socket.on("share_transcription_chunk", (payload) => {
+      const { lectureId, speakerLabel, text } = payload;
+      socket
+        .to(`lecture_${lectureId}`)
+        .emit("transcription_update", { speakerLabel, text });
     });
 
-    socket.on("send_message", (messageData) => {
-      io.to(messageData.lectureId).emit("receive_message", messageData);
-    });
+    registerPermissionRequestsHandlers(io, socket);
+    registerMuteAllHandler(io, socket);
 
-    socket.on("ai_transcription_chunk", (data) => {
-      io.to(data.lectureId).emit("transcription_update", {
-        text: data.text,
-      });
-    });
-
-    socket.on("lecturer_audio_chunk", (data) => {
-      processLecturerAudio(data.audioBuffer, data.lectureId, io);
-    });
-    socket.on("start-lecture", () => {
-      // Initialize the transcription pipeline
-      dgLive = startLiveTranscription(socket, io);
-    });
-
-    socket.on("audio-data", (data) => {
-      // Send raw audio buffer from React Native to Deepgram
-      if (dgLive && dgLive.getReadyState() === 1) {
-        dgLive.send(data);
-      }
-    });
-
-    socket.on("grant_mic_permission", (data) => {
-      const room = `lecture_${data.lectureId}`;
-      io.to(room).emit("mic_permission_revoked");
-      io.to(room).emit("mic_permission_granted", {
-        targetUid: data.targetUid,
-      });
-    });
-
-    socket.on("revoke_all_mics", ({ lectureId }) => {
-      io.to(`lecture_${lectureId}`).emit("mic_permission_revoked");
-    });
-
-    socket.on("student_audio_chunk", (data) => {
-      const { lectureId, audio } = data;
-      const streamKey = `${lectureId}_${socket.id}`;
-
-      if (!activeStreams.has(streamKey)) {
-        const dgStream = deepgram.transcription.live({
-          punctuate: true,
-          interim_results: true,
-          encoding: "linear16",
-          sample_rate: 16000,
-        });
-
-        dgStream.addListener("transcriptReceived", (transcription) => {
-          const text = transcription.channel.alternatives[0].transcript;
-          if (text) {
-            io.to(lectureId).emit("transcription_update", {
-              text,
-              speakerName: socket.userFirstName,
-            });
-          }
-        });
-        activeStreams.set(streamKey, dgStream);
-      }
-
-      const audioBuffer = Buffer.from(audio, "base64");
-      activeStreams.get(streamKey).send(audioBuffer);
-    });
-
-    socket.on("end_lecture", async ({ lectureId }) => {
-      await endLecture(lectureId);
-      io.to(`lecture_${lectureId}`).emit("lecture_ended", { lectureId });
-      if (dgLive) dgLive.finish();
-    });
-
-    socket.on("join_lecture", ({ lectureId, user }) => {
-      const roomName = `lecture_${lectureId}`;
-      socket.join(roomName);
-      updateAttendeeList(lectureId, user, "join");
-      const currentAttendees = getAttendeesForRoom(lectureId);
-      io.to(roomName).emit("update_attendee_list", currentAttendees);
-
-      if (activeLectures[lectureId]?.streamUrl) {
-        socket.emit("stream_received", {
-          streamUrl: activeLectures[lectureId].streamUrl,
-        });
-      }
-      console.log(`User ${user.firstname} joined ${roomName}`);
-    });
+    registerLectureLifecycleHandlers(io, socket);
 
     socket.on("leave_lecture", ({ lectureId, uid }) => {
       const roomName = `lecture_${lectureId}`;
@@ -154,9 +86,7 @@ export const init = (httpServer) => {
       io.to(roomName).emit("update_attendee_list", currentAttendees);
     });
 
-    socket.on("toggle_lecturer_mic", ({ lectureId, isMuted }) => {
-      io.to(`lecture_${lectureId}`).emit("lecturer_mic_toggled", { isMuted });
-    });
+    registerAudioControlHandlers(io, socket);
 
     socket.on("toggle_lecturer_camera", ({ lectureId, isCameraOn }) => {
       io.to(`lecture_${lectureId}`).emit("lecturer_camera_toggled", {
@@ -164,30 +94,10 @@ export const init = (httpServer) => {
       });
     });
 
-    socket.on("lecturer_started_sharing", ({ lectureId, streamId }) => {
-      io.to(`lecture_${lectureId}`).emit("lecturer_started_sharing", {
-        streamId,
-      });
-    });
-
-    socket.on("lecturer_stopped_sharing", ({ lectureId }) => {
-      io.to(`lecture_${lectureId}`).emit("lecturer_stopped_sharing");
-    });
-
-    socket.on("stream_ready", ({ lectureId, streamUrl }) => {
-      const roomName = `lecture_${lectureId}`;
-      activeLectures[lectureId] = { ...activeLectures[lectureId], streamUrl };
-      io.to(roomName).emit("stream_received", { streamUrl });
-    });
-
-    socket.on("webrtc_signal", ({ lectureId, signal, targetUid }) => {
-      const roomName = `lecture_${lectureId}`;
-      if (targetUid) {
-        io.to(targetUid).emit("webrtc_signal", { signal, from: socket.id });
-      } else {
-        socket.to(roomName).emit("webrtc_signal", { signal, from: socket.id });
-      }
-    });
+    registerScreenShareHandlers(io, socket);
+    registerScreenShareStopHandlers(io, socket);
+    registerLectureStreamHandlers(io, socket);
+    registerWebRTCSignalingHandlers(io, socket);
 
     // Physical Lectures logic
     socket.on("start_attendance_session", ({ lectureId, lecturerId }) => {
