@@ -1,6 +1,5 @@
 import express from "express";
 import { protect } from "../../middleware/auth.js";
-import { Course, Lectures } from "../../tableDeclarations.js";
 import { uploadAndVerifyLessonVideo } from "../../controllers/lectures.js";
 import {
   manageExceptions,
@@ -24,46 +23,8 @@ import {
   fetchLecturerEnrolledCourses,
 } from "../../controllers/fetchActions.js";
 
-export default function (User) {
+export default function () {
   const router = express.Router();
-  router.post("/courses", protect, async (req, res) => {
-    try {
-      const { payload, user } = req.body;
-
-      if (!payload?.ids || !Array.isArray(payload.ids)) {
-        return res.status(400).json({ message: "Invalid payload format" });
-      }
-
-      // Fetch courses taught by this lecturer
-      const courses = await Course.find({
-        courseId: { $in: payload.ids },
-        lecturerIds: user,
-      });
-
-      if (!courses || courses.length === 0) {
-        return res
-          .status(404)
-          .json({ message: "No teaching courses found registered for you" });
-      }
-
-      // Format course details with student count
-      const filteredDetails = courses.map((course) => ({
-        courseId: course.courseId,
-        courseCode: course.courseCode,
-        title: course.courseTitle,
-        credits: course.credits,
-        semester: course.semester,
-        createdAt: course.createdAt,
-        numberOfStudents: course.studentsEnrolled?.length || 0,
-      }));
-
-      console.log("Filtered course details:", filteredDetails);
-      return res.status(200).json({ details: filteredDetails });
-    } catch (error) {
-      console.error("Error fetching course details:", error);
-      return res.status(500).json({ message: "Server error" });
-    }
-  });
   router.get(
     "/courses/fetch-my-courses",
     protect,
@@ -124,49 +85,6 @@ export default function (User) {
     editLectures,
   );
   router.delete("/lectures/:lectureId", protect, deleteLecture);
-  router.post("/lectures/start", async (req, res) => {
-    try {
-      const { lectureId, courseId } = req.body;
-
-      // 1. Validation: Ensure IDs are present
-      if (!lectureId || !courseId) {
-        return res
-          .status(400)
-          .json({ message: "Lecture ID and Course ID are required" });
-      }
-      const existingLecture = await Lectures.findById(lectureId);
-      if (!existingLecture) {
-        return res.status(404).json({ message: "Lecture not found" });
-      }
-
-      if (existingLecture.status === "ongoing") {
-        return res.status(200).json(existingLecture); // Already live, just return it
-      }
-
-      // 3. Update status to 'ongoing'
-      const lecture = await Lectures.findByIdAndUpdate(
-        lectureId,
-        { status: "ongoing", actualStartTime: new Date() }, // Track actual start time
-        { new: true },
-      );
-
-      // 4. Emit via Socket (with safety check)
-      if (req.io) {
-        // Use the course room so only enrolled students get the popup
-        req.io.to(`course_${courseId}`).emit("lecture_started", lecture);
-        console.log(`Live signal sent to course_${courseId}`);
-      } else {
-        console.error(
-          "Socket.io instance (req.io) not found on request object",
-        );
-      }
-
-      res.status(200).json(lecture);
-    } catch (error) {
-      console.error("Error starting lecture:", error);
-      res.status(500).json({ message: "Internal Server Error" });
-    }
-  });
   router.post("/upload-video", protect, uploadAndVerifyLessonVideo);
   router.post(
     "/lectures/:lectureId/report",

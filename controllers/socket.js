@@ -2,7 +2,7 @@
 import { Server } from "socket.io";
 import {} from "./audio-service.js";
 import { Deepgram } from "@deepgram/sdk";
-import { Lectures, User, Attendance, Message } from "../tableDeclarations.js";
+import { Lectures, User } from "../tableDeclarations.js";
 import { calculateStudentIScore } from "../controllers/iScoreController.js";
 import {
   registerLectureStreamHandlers,
@@ -20,6 +20,8 @@ import {
   registerMuteAllHandler,
   registerLecturerMediaControlHandlers,
 } from "./liveClassControllers.js";
+import { registerAttendanceHandlers } from "./PhysicalClassControllers.js";
+import { registerPrivateChatHandlers } from "./chatController.js";
 
 let io;
 const deepgram = new Deepgram(process.env.DEEPGRAM_API_KEY);
@@ -89,126 +91,9 @@ export const init = (httpServer) => {
     registerWebRTCSignalingHandlers(io, socket);
 
     // Physical Lectures logic
-    socket.on("start_attendance_session", ({ lectureId, lecturerId }) => {
-      socket.join(`lecturer_${lectureId}`);
-      activeSessions.set(lectureId, {
-        startTime: Date.now(),
-        lecturerId,
-        status: "fetching",
-      });
-      console.log(`[BLE Verification Link Activated]: ${lectureId}`);
-    });
-    socket.on(
-      "student_mark_attendance",
-      async ({ lectureId, studentId, timestamp }) => {
-        try {
-          if (!activeSessions.has(lectureId)) {
-            return socket.emit(
-              "error",
-              "Attendance session is no longer active.",
-            );
-          }
-
-          const lecture = await Lectures.findOne({ id: lectureId });
-
-          // 1. Prevent multiple attendance entries for same lecture/student
-          const existing = await Attendance.findOne({ studentId, lectureId });
-          if (existing) {
-            return socket.emit("attendance_success", {
-              message: "Already marked present!",
-            });
-          }
-
-          // 2. Create Attendance Record
-          await Attendance.create({
-            studentId,
-            lectureId,
-            courseId: lecture?.courseId,
-            status: "Present",
-            timestamp: new Date(),
-          });
-
-          // 3. Optional: Trigger Lecturer UI Update
-          const student = await User.findOne({ uid: studentId });
-          io.to(`lecturer_${lectureId}`).emit("student_checked_in", {
-            uid: student.uid,
-            firstname: student.firstname,
-            lastname: student.lastname,
-            matricNumber: student.matricNumber,
-            timestamp: timestamp,
-          });
-
-          socket.emit("attendance_success", {
-            message: "You have been marked present!",
-          });
-        } catch (err) {
-          console.error(err);
-        }
-      },
-    );
-    socket.on("end_attendance_session", async ({ lectureId }) => {
-      try {
-        activeSessions.delete(lectureId);
-        await Lectures.findOneAndUpdate(
-          { id: lectureId },
-          { status: "completed", isTaught: true, getAttendanceMode: "Online" },
-        );
-        io.to(`lecture_room_${lectureId}`).emit("attendance_closed", {
-          message: "Attendance session has ended.",
-        });
-        socket.leave(`lecturer_${lectureId}`);
-      } catch (error) {
-        console.error(error);
-      }
-    });
+    registerAttendanceHandlers(io, socket);
     //P2P chat
-    socket.on("join_chat", ({ roomId }) => {
-      socket.join(roomId);
-    });
-    socket.on("send_private_message", async (data) => {
-      try {
-        const newMessage = new Message({
-          id: data.id, // Your custom frontend ID
-          senderId: data.senderId,
-          recipientId: data.recipientId,
-          text: data.text,
-          attachments: data.attachments || [],
-          status: "sent",
-          timestamp: data.timestamp || new Date(),
-        });
-        const savedMessage = await newMessage.save();
-        const roomId = [data.senderId, data.recipientId].sort().join("_");
-        socket.to(roomId).emit("receive_message", savedMessage);
-      } catch (error) {
-        console.error("Socket Message Save Error:", error);
-        socket.emit("message_error", { error: "Message could not be saved" });
-      }
-    });
-    socket.on("msg_delivered", async ({ messageId, senderId }) => {
-      try {
-        const updatedMsg = await Message.findOneAndUpdate(
-          { id: messageId },
-          { status: "delivered" },
-          { new: true },
-        );
-
-        if (updatedMsg) {
-          socket.to(senderId).emit("status_update", {
-            messageId: messageId,
-            status: "delivered",
-          });
-        }
-      } catch (err) {
-        console.error("Error updating delivery status:", err);
-      }
-    });
-    socket.on("mark_as_seen", async ({ readerId, senderId }) => {
-      await Message.updateMany(
-        { senderId: senderId, recipientId: readerId, status: { $ne: "seen" } },
-        { $set: { status: "seen" } },
-      );
-      socket.to(senderId).emit("messages_seen", { readerId });
-    });
+    registerPrivateChatHandlers(io, socket);
     socket.on("disconnect", () => {
       for (const [key, value] of activeStreams.entries()) {
         if (key.includes(socket.id)) closeStream(key);

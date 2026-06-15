@@ -59,6 +59,7 @@ export const lectureSchema = new mongoose.Schema({
   isLive: { type: Boolean, default: false },
   liveStreamUrl: { type: String, default: null },
   startedAt: { type: Date, default: null },
+  attendanceOpen: { type: Boolean, default: false },
 });
 const assignmentSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },

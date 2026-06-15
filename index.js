@@ -6,7 +6,6 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import nodemailer from "nodemailer";
 import { init } from "./controllers/socket.js";
-import { User, Product } from "./tableDeclarations.js";
 import { connectQueue } from "./rabbitmq.js";
 import { client } from "./workers/reditFile.js";
 import { initEmailQueue } from "./controllers/emailProducers.js";
@@ -59,9 +58,7 @@ mongoose
     const userAccountDetailsRoute =
       await import("./routes/userAccountDetails.js");
     const studentClassDetails = await import("./routes/class/students.js");
-    const lecturerClassDetails = (
-      await import("./routes/class/lecturers.js")
-    ).default(User);
+    const lecturerClassDetails = await import("./routes/class/lecturers.js");
     const storeRoutes = await import("./routes/store.js");
     const postRoutes = await import("./routes/posts.js");
     const studentVerifyRoutes = await import("./routes/verify/students.js");
@@ -89,14 +86,6 @@ mongoose
   .catch((err) => {
     console.error("❌ MongoDB connection error:", err);
   });
-export const removeOutOfStockProducts = async () => {
-  try {
-    const result = await Product.deleteMany({ inStock: { $eq: 0 } });
-    console.log(`Deleted ${result.deletedCount} out-of-stock products.`);
-  } catch (error) {
-    console.error("Error deleting out-of-stock products:", error);
-  }
-};
 
 export const transporter = nodemailer.createTransport({
   host: "sandbox.smtp.mailtrap.io",

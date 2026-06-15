@@ -109,39 +109,7 @@ export default function () {
   router.get("/courses/:courseId/assignments", protect, fetchCourseAssignments);
   router.get("/exceptions", protect, fetchLectureExceptions);
   router.get("/courses/lectures/:lectureId", fetchCourseLectures);
-  router.get("/:uid", async (req, res) => {
-    try {
-      const { uid } = req.params;
-      const user = await User.findOne({ uid: uid })
-        .select("uid firstname lastname email profilePic")
-        .lean();
-
-      if (!user) {
-        return res.status(404).json({ message: "User not found" });
-      }
-      res.status(200).json(user);
-    } catch (error) {
-      console.error("iCampus DB Error:", error);
-      res.status(500).json({ error: "Internal Server Error" });
-    }
-  });
   router.get("/lectures/ongoing", protect, fetchOngoingLectures);
-  router.get("/lectures/details", async (req, res) => {
-    try {
-      const { url } = req.query;
-      if (!url) {
-        return res.status(400).json({ message: "URL parameter is required" });
-      }
-      const lecture = await Lectures.findOne({ videoUrl: url });
-      if (!lecture) {
-        return res.status(404).json({ message: "Lecture not found" });
-      }
-      res.status(200).json(lecture);
-    } catch (error) {
-      console.error("Backend Error:", error);
-      res.status(500).json({ message: "Internal server error" });
-    }
-  });
   router.post("/ai/chat", protect, aiChat);
   router.get("/check-account-state", protect, checkAccountState);
   router.get("/library/search", protect, searchBookInLibrary);
