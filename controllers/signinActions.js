@@ -26,6 +26,16 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import jwt from "jsonwebtoken";
 import { createNotification } from "../services/notificationService.js";
 import { client } from "../workers/reditFile.js";
+const now = new Date();
+const formattedDate = now.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+const formattedTime = now.toLocaleTimeString("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
 const verificationCodes = {};
 
 export const signUp = async (req, res) => {
@@ -228,6 +238,8 @@ export const Login = async (req, res) => {
           userName: user.firstname,
           ipAddress: ip,
           location: location,
+          date: formattedDate,
+          time: formattedTime,
         },
         message: `A login was detected from ${ip} in ${location}.`,
         sendEmail: true,
@@ -459,7 +471,7 @@ export const forgotPassword = async (req, res) => {
     }
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
-    const durationMs = 60 * 60 * 1000;
+    const durationMs = 15 * 60 * 1000;
     const expiresAt = new Date(Date.now() + durationMs);
     const readableExpires = expiresAt.toLocaleString("en-US", {
       month: "short",
@@ -524,9 +536,6 @@ export const changePassword = async (req, res) => {
     user.refreshTokens = [];
     await user.save();
 
-    const now = new Date();
-    const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
-
     await createNotification({
       notificationId: generateNotificationId("security"),
       recipientId: user.uid,
@@ -537,7 +546,8 @@ export const changePassword = async (req, res) => {
       title: "Password Changed",
       message: `Your password was successfully updated on ${formattedTime}.`,
       payload: {
-        userName: user.firstName || "User",
+        userName: user.firstname || "User",
+        date: formattedDate,
         time: formattedTime,
       },
       sendEmailFlag: true,

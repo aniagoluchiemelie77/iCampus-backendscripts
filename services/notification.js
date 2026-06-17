@@ -84,16 +84,7 @@ export const createNotification = async ({
     let priority = "normal";
 
     switch (actionType) {
-      case "PURCHASE_DEBIT":
-        subject = "Successful Purchase - iCampus";
-        htmlContent = purchaseTemplate(
-          payload.userName,
-          payload.productName,
-          payload.amount,
-          payload.downloadUrl,
-        );
-        break;
-
+      //navigate to Notification detail
       case "WELCOME_USER":
         subject = "Welcome to iCampus!";
         if (canSendEmail) {
@@ -104,65 +95,6 @@ export const createNotification = async ({
           message ||
           `Hi ${payload.userName}, welcome to the iCampus community!`;
         break;
-
-      case "PRODUCT_DELETION":
-        subject = `Marketplace Listing Removed: ${payload.productName}`;
-        htmlContent = productDeletionTemplate(
-          payload.username,
-          payload.productName,
-          payload.productId,
-        );
-        break;
-
-      case "PRODUCT_CREATION":
-        htmlContent = productCreationTemplate(
-          payload.username,
-          payload.productName,
-          payload.price,
-          payload.productId,
-        );
-        subject = `Product Listed Successfully: ${payload.productName}`;
-        break;
-
-      case "PRODUCT_UPDATE":
-        htmlContent = productUpdateTemplate(
-          payload.username,
-          payload.productName,
-          payload.price,
-          payload.productId,
-        );
-        subject = `Changes Saved: ${payload.productName}`;
-        break;
-
-      case "SALES_PAYOUT_SUCCESS":
-        subject = "Funds Received: Your Sales Payout is here!";
-        if (canSendEmail) {
-          htmlContent = salesPayoutTemplate(
-            payload.username,
-            payload.amount,
-            payload.transactionId,
-          );
-        }
-        title = title || "Sales Payout Successful";
-        message =
-          message ||
-          `${payload.amount.toLocaleString()} iCash has been moved to your wallet.`;
-        break;
-
-      case "MARKET_PURCHASE_DEBIT":
-        subject = `Receipt: ${payload.productName}`;
-        if (canSendEmail) {
-          htmlContent = marketplacePurchaseTemplate(
-            payload.userName,
-            payload.productName,
-            payload.amount,
-            payload.orderId,
-            payload.productType,
-            payload.fileUrl,
-          );
-        }
-        break;
-
       case "ORDER_CANCELLED":
         htmlContent = orderCancelledEmailTemplate(
           payload.recipientName,
@@ -170,10 +102,11 @@ export const createNotification = async ({
           payload.orderId,
           payload.reason,
           payload.buyerName,
+          payload.date,
+          payload.time,
         );
         subject = `Action Required: Order #${payload.orderId} Cancelled`;
         break;
-
       case "NEW_ORDER":
         subject = `New Sale: ${payload.productName}`;
         if (canSendEmail) {
@@ -187,6 +120,8 @@ export const createNotification = async ({
             payload.stationAddress,
             payload.buyerAddress,
             payload.buyerPhoneNumber,
+            payload.date,
+            payload.time,
           );
         }
         break;
@@ -207,52 +142,41 @@ export const createNotification = async ({
           );
         }
         break;
-
       case "AGENT_AWAITING_PICKUP":
         subject = `New Package Dropped Off - Order #${payload.orderId}`;
         title = title || "New Package Inbound";
         message =
           message ||
           `Order #${payload.orderId} (${payload.productName}) has been logged at your station hub.`;
-
         if (canSendEmail) {
           htmlContent = agentAwaitingPickupEmailTemplate(
             payload.agentName,
             payload.productName,
             payload.orderId,
             payload.stationName,
+            payload.date,
+            payload.time,
           );
         }
         break;
-
       case "NEW_LOGIN":
         subject = "Security Alert: New Login Detected";
         htmlContent = loginAlertTemplate(
           payload.userName,
           payload.ipAddress,
           payload.location,
-          new Date().toLocaleString(),
+          payload.date,
+          payload.time,
         );
         break;
-
       case "PASSWORD_CHANGED":
         subject = "Security Alert: Password Updated";
         htmlContent = passwordResetSuccessTemplate(
           payload.userName,
-          payload.time || new Date().toLocaleString(),
+          payload.date,
+          payload.time,
         );
         break;
-
-      case "TEST_CREATED":
-        subject = `New Assessment: ${payload.courseCode}`;
-        htmlContent = testCreatedTemplate(
-          payload.userName,
-          payload.courseCode,
-          payload.testTitle,
-          payload.dueDate || "Check app for details",
-        );
-        break;
-
       case "ORDER_COMPLETED":
         subject = `Payment Released: ${payload.productName}`;
         if (canSendEmail) {
@@ -265,62 +189,103 @@ export const createNotification = async ({
           );
         }
         break;
-
-      case "ORDER_REVIEW_REQUEST":
-        subject = `How was your purchase of ${payload.productName}?`;
-        if (canSendEmail) {
-          htmlContent = orderReviewTemplate(
-            payload.userName,
-            payload.productName,
-            payload.orderId,
-            payload.targetId,
-          );
-        }
-        break;
-
-      case "POST_UPDATED":
-        category = "social";
-        entityId = payload.postId;
-        entityType = "post";
-        subject = "Your post has been updated";
-        break;
-
       case "POST_DELETION":
         subject = "Post Deleted Successfully";
         title = title || "Post Deleted";
         message =
           message || "Your post has been successfully deleted from your feed.";
         break;
-
-      case "MATERIAL_UPLOADED":
-        category = "classroom";
-        title = title || "New Study Material";
-        message = message || `A new resource file has been uploaded.`;
-        break;
-
       case "MATERIAL_DELETED":
         category = "classroom";
         title = title || "Study Material Removed";
         message =
           message || `A course resource file was deleted by the instructor.`;
         break;
-
-      case "ASSIGNMENT_CREATED":
-        category = "classroom";
-        subject = `New Assignment: ${payload.assignmentTitle || "Task Assigned"}`;
-        title = title || "New Assignment Posted";
-        message =
-          message ||
-          `A new assignment has been uploaded for your course. Due: ${payload.dueDate || "See app for details"}`;
-        break;
-
       case "ASSIGNMENT_REMOVED":
         category = "classroom";
         subject = `Course Update: Assignment Removed`;
         title = title || "Assignment Removed";
         message = message || "An assignment was removed by your instructor.";
         break;
+      case "LEARNING_REMINDER":
+        subject = "Ready to continue your learning journey?";
+        title = title || "Don't break your streak!";
+        message =
+          message || `Pick up where you left off in ${payload.productName}.`;
+        break;
+      case "EXCEPTION_UPDATED":
+        subject = `Update on your Exception: ${payload.courseCode}`;
+        break;
+      case "TEST_SUBMITTED":
+        subject = "Submission Confirmed";
+        break;
+      case "EXCEPTION_SUBMITTED":
+        subject = "Exception Payment Confirmed";
+        break;
+      case "COURSES_EXTRACTED":
+        subject = "Registration Sync Complete";
+        break;
+      case "PASSWORD_RESET_CODE":
+        subject = "Your iCampus Verification Code";
+        htmlContent = passwordResetTemplate(
+          payload.userName,
+          payload.code,
+          payload.expiryTime,
+        );
+        break;
+      case "EMAIL_VERIFICATION":
+        subject = "Verify your iCampus Account";
+        htmlContent = emailVerificationTemplate(payload.code);
+        break;
+      case "LECTURE_REMINDER":
+        subject = `Reminder: ${payload.topicName} starts in 45 mins`;
+        priority = "normal";
+        break;
+      case "SUBSCRIPTION_UPGRADED":
+        category = "finance";
+        subject = "Premium Access Activated";
+        title = "Subscription Upgraded";
+        message = `Congratulations! You are now on the ${payload.tier} plan.`;
+        if (canSendEmail) {
+          htmlContent = subscriptionUpgradeTemplate(
+            payload.userName,
+            payload.tier,
+            payload.amount,
+            payload.currency,
+            payload.transactionId,
+          );
+        }
+        break;
+      case "ICASH_PIN_RESET":
+        subject = "Security Alert: iCash PIN Reset";
+        if (canSendEmail) {
+          htmlContent = iCashSuccessfulPinResetTemplate(
+            payload.userName,
+            new Date().toLocaleString(),
+          );
+        }
+        break;
 
+      //first navigate to notification detail, show a review button which then navigates to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId
+      case "LECTURER_REVIEW_REQUEST":
+        category = "classroom";
+        subject = `How was your lecture on "${payload.topicName}"?`;
+        title = title || "Rate Your Live Class Experience";
+        message =
+          message ||
+          `Hi ${payload.userName || "Student"}, how was today's session on "${payload.topicName}"? Rate your experience to help the iCampus community.`;
+        break;
+      //first navigate to notification detail, show a button which then navigates to CourseSubPage, param: title: 'View Lecture Schedule'
+      case "LECTURE_CANCELLED":
+      case "LECTURE_POSTPONED":
+      case "LECTURE_SCHEDULED":
+      case "LECTURE_VENUE_CHANGE":
+      case "LECTURE_TYPE_CHANGE":
+        category = "classroom";
+        entityId = payload.lectureId;
+        entityType = "lecture";
+
+      //first navigate to notification detail screen, then eith a download button for the payload.url to download the certificate
       case "COURSE_COMPLETED":
         subject = `Congratulations on finishing ${payload.productName}! 🎓`;
         if (canSendEmail) {
@@ -337,62 +302,101 @@ export const createNotification = async ({
           `You've officially finished ${payload.productName}. Well done!`;
         break;
 
-      case "LEARNING_REMINDER":
-        subject = "Ready to continue your learning journey?";
-        title = title || "Don't break your streak!";
-        message =
-          message || `Pick up where you left off in ${payload.productName}.`;
-        break;
-      case "LECTURER_REVIEW_REQUEST":
-        category = "classroom";
-        subject = `How was your lecture on "${payload.topicName}"?`;
-        title = title || "Rate Your Live Class Experience";
-        message =
-          message ||
-          `Hi ${payload.userName || "Student"}, how was today's session on "${payload.topicName}"? Rate your experience to help the iCampus community.`;
-        break;
-
-      case "EXCEPTION_UPDATED":
-        subject = `Update on your Exception: ${payload.courseCode}`;
-        break;
-
-      case "CONTENT_UPDATED":
-        subject = `Syllabus Update: ${payload.courseCode}`;
-        break;
-
-      case "TEST_SUBMITTED":
-        subject = "Submission Confirmed";
-        break;
-
-      case "EXCEPTION_SUBMITTED":
-        subject = "Exception Payment Confirmed";
-        break;
-
-      case "COURSES_EXTRACTED":
-        subject = "Registration Sync Complete";
-        break;
-
-      case "PASSWORD_RESET_CODE":
-        subject = "Your iCampus Verification Code";
-        htmlContent = passwordResetTemplate(
+      //initially navigate to notification detail, then navigate to CourseSubPage param: title = 'Assessments', userRole: user.usertype
+      case "TEST_CREATED":
+        subject = `New Assessment: ${payload.courseCode}`;
+        htmlContent = testCreatedTemplate(
           payload.userName,
-          payload.code,
-          payload.expiryTime,
+          payload.courseTitle,
+          payload.testTitle,
+          payload.dueDate,
+          payload.creationDate,
+          payload.creationTime,
         );
         break;
 
-      case "EMAIL_VERIFICATION":
-        subject = "Verify your iCampus Account";
-        htmlContent = emailVerificationTemplate(payload.code);
+      //Initially navigate to notification details, but should contain a button that redirects to the review screen
+      case "ORDER_REVIEW_REQUEST":
+        subject = `How was your purchase of ${payload.productName}?`;
+        if (canSendEmail) {
+          htmlContent = orderReviewTemplate(
+            payload.userName,
+            payload.productName,
+            payload.orderId,
+            payload.targetId,
+          );
+        }
         break;
 
-      case "LECTURE_REMINDER":
-        subject = `Reminder: ${payload.topicName} starts in 45 mins`;
-        priority = "normal";
+      // navigate to SalesHub on frontend
+      case "PRODUCT_DELETION":
+        subject = `Marketplace Listing Removed: ${payload.productName}`;
+        htmlContent = productDeletionTemplate(
+          payload.username,
+          payload.productName,
+          payload.productId,
+          payload.date,
+          payload.time,
+        );
+        break;
+      case "PRODUCT_CREATION":
+        htmlContent = productCreationTemplate(
+          payload.username,
+          payload.productName,
+          payload.price,
+          payload.productId,
+          payload.date,
+          payload.time,
+        );
+        subject = `Product Listed Successfully: ${payload.productName}`;
+        break;
+      case "PRODUCT_UPDATE":
+        htmlContent = productUpdateTemplate(
+          payload.username,
+          payload.productName,
+          payload.price,
+          payload.productId,
+          payload.date,
+          payload.time,
+        );
+        subject = `Changes Saved: ${payload.productName}`;
         break;
 
+      //navigate to TransactionDetail, param: transactionId
+      case "SALES_PAYOUT_SUCCESS":
+        subject = "Funds Received: Your Sales Payout is here!";
+        if (canSendEmail) {
+          htmlContent = salesPayoutTemplate(
+            payload.username,
+            payload.amount,
+            payload.transactionId,
+            payload.date,
+            payload.time,
+          );
+        }
+        title = title || "Sales Payout Successful";
+        message =
+          message ||
+          `${payload.amount.toLocaleString()} iCash has been moved to your wallet.`;
+        break;
+      case "MARKET_PURCHASE_DEBIT":
+        subject = `Receipt: ${payload.productName}`;
+        if (canSendEmail) {
+          htmlContent = marketplacePurchaseTemplate(
+            payload.userName,
+            payload.productName,
+            payload.amount,
+            payload.orderId,
+            payload.productType,
+            payload.fileUrl,
+            payload.transactionId,
+            payload.date,
+            payload.time,
+          );
+        }
+        break;
       case "ICASH_PURCHASE":
-        subject = `Credit Alert: ${payload.amountICash.toLocaleString()} iCash Added`;
+        subject = `Credit Alert: ${payload.amountICash.toLocaleString()} iCash purchased`;
         if (canSendEmail) {
           htmlContent = iCashPurchaseTemplate(
             payload.userName,
@@ -403,7 +407,6 @@ export const createNotification = async ({
           );
         }
         break;
-
       case "ICASH_WITHDRAWAL":
         subject = `Debit Alert: ${payload.amountICash.toLocaleString()} iCash Withdrawn`;
         if (canSendEmail) {
@@ -421,42 +424,18 @@ export const createNotification = async ({
           `You have successfully withdrawn ${payload.currency} ${payload.amountLocal.toLocaleString()}.`;
         break;
 
-      case "SUBSCRIPTION_UPGRADED":
-        category = "finance";
-        subject = "Premium Access Activated";
-        title = "Subscription Upgraded";
-        message = `Congratulations! You are now on the ${payload.tier} plan.`;
-        if (canSendEmail) {
-          htmlContent = subscriptionUpgradeTemplate(
-            payload.userName,
-            payload.tier,
-            payload.amount,
-            payload.currency,
-            payload.transactionId,
-          );
-        }
+      //navigate to PostDetailScreen, param: postId = payload.postId
+      case "POST_UPDATED":
+        category = "social";
+        entityId = payload.postId;
+        entityType = "post";
+        subject = "Your post has been updated";
         break;
-
-      case "ICASH_PIN_RESET":
-        subject = "Security Alert: iCash PIN Reset";
-        if (canSendEmail) {
-          htmlContent = iCashSuccessfulPinResetTemplate(
-            payload.userName,
-            new Date().toLocaleString(),
-          );
-        }
-        break;
-
       case "NEW_POST":
         subject = `New post from ${title}`;
+        entityId = payload.postId;
+        entityType = "post";
         break;
-
-      case "NEW_FOLLOWER":
-        subject = "You have a new follower!";
-        title = "New Follower";
-        message = `${payload.userName} started following you.`;
-        break;
-
       case "POST_MENTION":
       case "POST_LIKED":
       case "POST_COMMENTED":
@@ -465,20 +444,39 @@ export const createNotification = async ({
         entityId = payload.postId;
         entityType = "post";
         break;
-
       case "POLL_MILESTONE":
         subject = "Your poll is trending!";
         title = "Poll Milestone reached";
         break;
 
-      case "LECTURE_CANCELLED":
-      case "LECTURE_POSTPONED":
-      case "LECTURE_SCHEDULED":
-      case "LECTURE_VENUE_CHANGE":
-      case "LECTURE_TYPE_CHANGE":
+      //navigate to CourseSubPage param: title = 'Course Materials', userRole: user.usertype course: payload.course
+      case "MATERIAL_UPLOADED":
         category = "classroom";
-        entityId = payload.lectureId;
-        entityType = "lecture";
+        title = title || "New Study Material";
+        message = message || `A new resource file has been uploaded.`;
+        break;
+
+      //navigate to CourseSubPage param: title = 'Assignments', userRole: user.usertype course: payload.course
+      case "ASSIGNMENT_CREATED":
+        category = "classroom";
+        subject = `New Assignment: ${payload.assignmentTitle || "Task Assigned"}`;
+        title = title || "New Assignment Posted";
+        message =
+          message ||
+          `A new assignment has been uploaded for your course. Due: ${payload.dueDate || "See app for details"}`;
+        break;
+
+      //navigate to CourseSubPage param: title = 'Course Contents', userRole: user.usertype, course: payload.course
+      case "CONTENT_MUTATED":
+        subject = `Syllabus Update: ${payload.courseCode}`;
+        break;
+
+      //navigate to Profile, param: identifier: payload.userName
+      case "NEW_FOLLOWER":
+        subject = "You have a new follower!";
+        title = "New Follower";
+        message = `${payload.userName} started following you.`;
+        break;
 
         if (actionType === "LECTURE_VENUE_CHANGE") {
           subject = subject || `Venue Update: ${payload.topicName}`;

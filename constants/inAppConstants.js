@@ -11,3 +11,5 @@ export const EXCEPTION_ACCOUNT_LIMITS = Object.freeze({
   pro: 2,
   premium: 3,
 });
+export const TAX_RATE = 0.02;
+export const AGENT_RATE = 0.06;

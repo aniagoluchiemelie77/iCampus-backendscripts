@@ -150,7 +150,7 @@ export const initializeWithdraw = async (req, res) => {
   user.iCashBalance -= iCashAmount;
   try {
     const userName =
-      user.username || user.firstname || "iCampus User";
+      user.firstname || "iCampus User";
     const newWithdrawal = await Transactions.create({
       transactionId,
       userId,
@@ -313,11 +313,11 @@ export const handleP2pTransfers = async (req, res) => {
         title: "iCash Sent Successfully",
         message: `You sent ${amount.toLocaleString()} iCash to ${recipient.username}.`,
         payload: {
-          userName: sender.username,
+          userName: sender.firstname,
           amountICash: amount,
           amountLocal: 0,
           currency: "iCash",
-          transactionId: transactionRef,
+          transactionId: senderTransactionId,
         },
         sendSocket: true,
         sendPush: true,
@@ -330,9 +330,9 @@ export const handleP2pTransfers = async (req, res) => {
         title: "iCash Received!",
         message: `You received ${amount.toLocaleString()} iCash from ${sender.username}.`,
         payload: {
-          userName: recipient.username,
+          userName: recipient.firstname,
           amountICash: amount,
-          transactionId: transactionRef,
+          transactionId: receipientTransactionId,
         },
         sendSocket: true,
         sendPush: true,

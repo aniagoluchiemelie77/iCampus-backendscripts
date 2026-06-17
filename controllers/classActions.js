@@ -37,6 +37,16 @@ import axios from "axios";
 import mongoose from "mongoose";
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const now = new Date();
+const formattedDate = now.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+const formattedTime = now.toLocaleTimeString("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 const checkContentAuthorization = async (userId, course, lectureId = null) => {
   if (course.lecturerIds && course.lecturerIds.includes(userId)) {
@@ -539,8 +549,13 @@ export const createAssessment = async (req, res) => {
           title: "New Assessment Posted",
           message: `A new test "${title}" has been posted for ${course.courseCode}.`,
           payload: {
-            courseId: courseId,
-            assessmentId: assessment.id,
+            userName: student.firstname,
+            courseTitle: course.courseTitle,
+            testTitle: testTitle,
+            dueDate,
+            date: formattedDate,
+            time: formattedTime,
+            course,
           },
           sendPush: true,
           sendSocket: true,
@@ -898,7 +913,7 @@ export const uploadCourseMaterial = async (req, res) => {
             actionType: "MATERIAL_UPLOADED",
             title: "New Study Material",
             message: `A new resource file has been uploaded for ${course.courseTitle}.`,
-            payload: { courseId, fileName },
+            payload: { course, fileName },
             sendPush: true,
             sendSocket: true,
             saveToDb: true,
@@ -1129,7 +1144,7 @@ export const editCourseContent = async (req, res) => {
             actionType: "CONTENT_MUTATED",
             title: "Course Syllabus Updated",
             message: `A topic in ${updatedCourse.courseCode} has been edited to "${updatedTopic}".`,
-            payload: { courseId: updatedCourse.courseId, updatedTopic },
+            payload: { course: updatedCourse, updatedTopic },
             sendEmail: false,
             sendPush: false,
             sendSocket: true,
@@ -1271,7 +1286,7 @@ export const createCourseAssignment = async (req, res) => {
             title: "New Assignment",
             message: `New assignment uploaded for ${course.courseTitle}: "${title}". Due: ${formattedDate}`,
             payload: {
-              courseId,
+              course,
               assignmentId,
               assignmentTitle: title,
               dueDate: formattedDate,

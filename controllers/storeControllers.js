@@ -23,8 +23,19 @@ import {
 } from "../utils/idGenerator.js";
 import { calculateHaversineDistance } from "../utils/distanceCalHelper.js";
 import fs from "fs/promises";
+import { TAX_RATE, AGENT_RATE } from "../constants/inAppConstants.js";
+const now = new Date();
+const formattedDate = now.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+const formattedTime = now.toLocaleTimeString("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
-async function sendOrderNotifications(buyer, processedItems) {
+async function sendOrderNotifications(buyer, processedItems, transactionId) {
   for (const {
     order,
     sellerEmail,
@@ -55,6 +66,8 @@ async function sendOrderNotifications(buyer, processedItems) {
         stationAddress: order.selectedStation?.address,
         buyerAddress: buyerAddress,
         buyerPhoneNumber: buyerPhoneNumber,
+        date: formattedDate,
+        time: formattedTime,
       },
       sendPush: true,
       sendEmail: true,
@@ -81,6 +94,9 @@ async function sendOrderNotifications(buyer, processedItems) {
         amount: order.amountPaid,
         fileUrl: fileUrl,
         userName: buyer.firstname,
+        transactionId: transactionId,
+        date: formattedDate,
+        time: formattedTime,
       },
       sendPush: true,
       sendEmail: true,
@@ -118,6 +134,8 @@ async function processNotificationFanOut(
             productId: product.productId,
             productType: product.productType,
             productName: product.title,
+            date: formattedDate,
+            time: formattedTime,
           },
         }),
       );
@@ -284,7 +302,6 @@ export const clearFavorites = async (req, res) => {
 export const initializeCheckout = async (req, res) => {
   const { items, totals, buyerId, shippingContact } = req.body;
   const session = await mongoose.startSession();
-  const TAX_RATE = 0.02;
   const PAYOUT_FACTOR = 1 - TAX_RATE;
   try {
     session.startTransaction();
@@ -396,7 +413,7 @@ export const initializeCheckout = async (req, res) => {
       });
     }
     await session.commitTransaction();
-    await sendOrderNotifications(buyer, processedResults);
+    await sendOrderNotifications(buyer, processedResults, buyerTxId);
     session.endSession();
     res
       .status(200)
@@ -411,8 +428,6 @@ export const completeOrderDelivery = async (req, res) => {
   const { orderId } = req.body;
   const scannerUid = req.user.id;
   const session = await mongoose.startSession();
-  const TAX_RATE = 0.02;
-  const AGENT_RATE = 0.06;
   try {
     session.startTransaction();
     const order = await ProductOrder.findOne({ orderId }).session(session);
@@ -586,6 +601,8 @@ export const cancelOrder = async (req, res) => {
         productName: product.title,
         reason: reason,
         buyerName: buyer.firstname,
+        date: formattedDate,
+        time: formattedTime,
       },
       sendEmail: true,
     });
@@ -761,6 +778,8 @@ export const requestPayout = async (req, res) => {
         amount: amount,
         payoutId: payoutId,
         transactionId: transactionId,
+        date: formattedDate,
+        time: formattedTime,
       },
     });
     return {
@@ -977,6 +996,8 @@ export const saveProductController = async (req, res) => {
           productType: product.productType,
           productName: product.title,
           price: product.price,
+          date: formattedDate,
+          time: formattedTime,
         },
       }).catch((err) =>
         console.error(
@@ -1097,7 +1118,6 @@ export const deleteProductController = async (req, res) => {
     const seller = await User.findOne({ uid: userUid }).lean();
     const sellerEmail = seller ? seller.email : req.user.email;
     const sellerName = seller ? seller.firstname : req.user.firstname;
-
     await createNotification({
       notificationId: generateNotificationId("store"),
       recipientId: userUid,
@@ -1113,6 +1133,8 @@ export const deleteProductController = async (req, res) => {
         username: sellerName,
         productId: productId,
         productName: product.title,
+        date: formattedDate,
+        time: formattedTime,
       },
     }).catch((err) =>
       console.error("Non-blocking deletion log emission failure:", err),
@@ -1255,6 +1277,8 @@ export const markOrderAsDroppedOff = async (req, res) => {
           productName: order.productName,
           orderId: order.orderId,
           stationName: order.selectedStation.name,
+          date: formattedDate,
+          time: formattedTime,
         },
       });
     }

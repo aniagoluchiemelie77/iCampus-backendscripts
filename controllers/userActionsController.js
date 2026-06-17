@@ -30,6 +30,16 @@ import axiosRetry from "axios-retry";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+const now = new Date();
+const formattedDate = now.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+const formattedTime = now.toLocaleTimeString("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 axiosRetry(axios, { retries: 3 });
@@ -601,8 +611,9 @@ export const resetIcashPin = async (req, res) => {
     title: "iCash PIN Reset",
     message: `Your iCash PIN has been successfully reset.`,
     payload: {
-      userName: user.username || user.firstname,
-      date: Date.now(),
+      userName: user.firstname || "iCampus User",
+      date: formattedDate,
+      time: formattedTime,
     },
     sendEmail: true,
     sendPush: true,
