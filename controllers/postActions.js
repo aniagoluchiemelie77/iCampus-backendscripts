@@ -7,6 +7,15 @@ import {
 import { extractMentions } from "../utils/postMentionsRegex.js";
 import { storage } from "../config/firebaseAdmin.js";
 
+const getPostStats = (post) => ({
+  likes: post.likes || [],
+  bookmarks: post.bookmarks || [],
+  impressions: post.impressions || 0,
+  repostsCount: post.repostsCount || 0,
+  commentsCount: post.commentsCount || 0,
+  totalVotes: post.poll?.totalVotes || 0,
+});
+
 export const createPost = async (req, res) => {
   try {
     const { content, media, poll, isSubscriptionContent } = req.body;
@@ -322,17 +331,10 @@ export const toggleLike = async (req, res) => {
     }
 
     const io = req.app.get("socketio");
-    if (io) io.emit("post_updated", updatedPost);
     if (io) {
       io.emit("post_stats_updated", {
         postId: updatedPost.postId,
-        stats: {
-          likes: updatedPost.likes,
-          bookmarks: updatedPost.bookmarks,
-          impressions: updatedPost.impressions,
-          repostsCount: updatedPost.repostsCount,
-          commentsCount: updatedPost.commentsCount,
-        },
+        stats: getPostStats(updatedPost),
       });
     }
     res.json({ updatedPost, message });
@@ -363,13 +365,7 @@ export const toggleBookmark = async (req, res) => {
     if (io && updatedPost) {
       io.emit("post_stats_updated", {
         postId: updatedPost.postId,
-        stats: {
-          likes: updatedPost.likes,
-          bookmarks: updatedPost.bookmarks,
-          impressions: updatedPost.impressions,
-          repostsCount: updatedPost.repostsCount,
-          commentsCount: updatedPost.commentsCount,
-        },
+        stats: getPostStats(updatedPost),
       });
     }
 
@@ -426,8 +422,8 @@ export const addComment = async (req, res) => {
         comment: populatedComment,
       });
       io.emit("post_stats_updated", {
-        postId,
-        commentsCount: updatedPost.commentsCount,
+        postId: updatedPost.postId,
+        stats: getPostStats(updatedPost),
       });
     }
     if (postAuthorId !== userId) {
@@ -502,6 +498,7 @@ export const pollVote = async (req, res) => {
       opt.votes.includes(userId),
     );
     if (hasVoted) return res.status(400).json({ error: "Already voted" });
+
     const updatedPost = await Posts.findOneAndUpdate(
       { postId: postId, "poll.options.optionId": optionId },
       {
@@ -510,6 +507,17 @@ export const pollVote = async (req, res) => {
       },
       { new: true },
     );
+
+    // --- SOCKET EMISSION ---
+    const io = req.app.get("socketio");
+    if (io) {
+      io.emit("post_stats_updated", {
+        postId: updatedPost.postId,
+        stats: getPostStats(updatedPost), // Uses the standardized helper
+      });
+    }
+
+    // --- NOTIFICATION LOGIC ---
     if (
       updatedPost.poll.totalVotes % 10 === 0 &&
       updatedPost.userId.uid !== userId
@@ -526,6 +534,7 @@ export const pollVote = async (req, res) => {
         saveToDb: true,
       });
     }
+
     res.status(200).json(updatedPost);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -558,7 +567,7 @@ export const incrementImpressions = async (req, res) => {
     if (io) {
       io.emit("post_stats_updated", {
         postId: updatedPost.postId,
-        impressions: updatedPost.impressions,
+        stats: getPostStats(updatedPost),
       });
     }
 
@@ -592,7 +601,7 @@ export const repost = async (req, res) => {
       if (io && updatedOriginal) {
         io.emit("post_stats_updated", {
           postId: originalPostId,
-          stats: { repostsCount: updatedOriginal.repostsCount },
+          stats: getPostStats(updatedOriginal),
         });
       }
       return res.status(200).json({
@@ -641,7 +650,7 @@ export const repost = async (req, res) => {
         io.emit("new_post", repost);
         io.emit("post_stats_updated", {
           postId: originalPostId,
-          stats: { repostsCount: updatedOriginal.repostsCount },
+          stats: getPostStats(updatedOriginal),
         });
       }
       // --- NOTIFICATION LOGIC ---
