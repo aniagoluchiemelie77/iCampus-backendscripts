@@ -13,6 +13,7 @@ import {
   Message,
   Notification,
   UserDownloads,
+  SupportTicket,
 } from "../tableDeclarations.js";
 import { icashPinResetTemplate } from "../services/emailTemplates.js";
 import { sendEmail } from "../services/emailService.js";
@@ -1374,5 +1375,72 @@ export const aiChat = async (req, res) => {
   } catch (error) {
     console.error("Academic AI Chat Error:", error);
     res.status(500).json({ error: "Failed to fetch AI response" });
+  }
+};
+//not completed
+export const handleSupportFlow = async (req, res) => {
+  const { message, userId } = req.body;
+  const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
+  // 1. Structure the data for the support team
+  const prompt = `Analyze this user complaint: "${message}". 
+  Provide a JSON response with: 
+  { 
+    "category": "technical/billing/content/other", 
+    "summary": "a short summary", 
+    "severity": "low/medium/high" 
+  }`;
+
+  const result = await model.generateContent(prompt);
+  const aiAnalysis = JSON.parse(result.response.text());
+
+  // 2. Save as a Support Ticket
+  const newTicket = await SupportTicket.create({
+    userId,
+    originalMessage: message,
+    category: aiAnalysis.category,
+    summary: aiAnalysis.summary,
+    severity: aiAnalysis.severity,
+    status: "open",
+  });
+
+  // 3. Optional: Trigger notification to Admin/Support team
+  // await createNotification({ ... });
+
+  res.json({
+    reply:
+      "I've forwarded your issue to our support team. Reference Ticket ID: " +
+      newTicket._id,
+    ticketId: newTicket._id,
+  });
+};
+export const updateTicketStatus = async (req, res) => {
+  const { ticketId, status } = req.body;
+
+  const ticket = await SupportTicket.findByIdAndUpdate(
+    ticketId,
+    { status },
+    { new: true },
+  );
+
+  // Trigger the notification system
+  await notifyUserOfTicketUpdate(ticket);
+
+  res.json(ticket);
+};
+const notifyUserOfTicketUpdate = async (ticket) => {
+  const user = await User.findOne({ uid: ticket.userId });
+  await createNotification({
+    recipientId: user.uid,
+    title: "Ticket Update",
+    message: `Your support ticket #${ticket._id.toString().slice(-4)} is now ${ticket.status}.`,
+    sendPush: true,
+    saveToDb: true,
+  });
+  if (ticket.status === "resolved") {
+    await sendSMS(
+      user.phoneNumber,
+      `iCampus: Your support ticket is resolved. Thanks for your patience!`,
+    );
   }
 };

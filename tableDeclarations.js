@@ -35,6 +35,7 @@ import {
   payoutSchema,
   statementSchema,
   schoolConfigurationSchema,
+  supportTicketSchema,
 } from "./models.js";
 
 export const Posts = mongoose.model("Posts", postSchema, "posts");
@@ -162,4 +163,9 @@ export const SchoolConfiguration = mongoose.model(
   "SchoolConfiguration",
   schoolConfigurationSchema,
   "schoolConfiguration",
+);
+export const SupportTicket = mongoose.model(
+  "SupportTicket",
+  supportTicketSchema,
+  "supportTicket",
 );

@@ -1092,6 +1092,20 @@ export const schoolConfigurationSchema = new mongoose.Schema(
     timestamps: true, // Automatically manages createdAt and updatedAt fields
   },
 );
+export const supportTicketSchema = new mongoose.Schema(
+  {
+    userId: { type: String, required: true },
+    originalMessage: String,
+    category: {
+      type: String,
+      enum: ["technical", "billing", "content", "other"],
+    },
+    summary: String,
+    severity: String,
+    status: { type: String, default: "open" },
+  },
+  { timestamps: true },
+);
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
 userDownloadsSchema.index({ userId: 1 });
