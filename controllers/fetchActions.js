@@ -427,24 +427,68 @@ export const fetchUserNotifications = async (req, res) => {
       return res.status(400).json({ message: "Missing userId" });
     }
 
-    const filter = {
+    const matchStage = {
       $or: [{ recipientId: userId }, { isPublic: true }],
     };
-    if (unread === "true") {
-      filter.isRead = false;
-    }
-    if (category) {
-      filter.category = category;
-    }
-    const notifications = await Notification.find(filter)
-      .sort({ createdAt: -1 })
-      .skip(Math.max(parseInt(offset), 0))
-      .limit(Math.max(parseInt(limit), 1));
+    if (unread === "true") matchStage.isRead = false;
+    if (category) matchStage.category = category;
 
-    res.status(200).json({ notifications });
+    const notifications = await Notification.aggregate([
+      { $match: matchStage },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          id: {
+            actionType: "$actionType",
+            entityId: {
+              $ifNull: [
+                "$payload.postId",
+                "$payload.followerId",
+                "$payload.viewerUid",
+                "$notificationId",
+              ],
+            },
+          },
+          latest: { $first: "$$ROOT" },
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          id: 0,
+          notification: {
+            $mergeObjects: [
+              "$latest",
+              {
+                payload: {
+                  $mergeObjects: [
+                    "$latest.payload",
+                    {
+                      primaryUser: {
+                        $ifNull: [
+                          "$latest.payload.userName",
+                          "$latest.payload.firstname",
+                          "Someone",
+                        ],
+                      },
+                      othersCount: { $subtract: ["$count", 1] },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+      { $replaceRoot: { newRoot: "$notification" } },
+      { $sort: { createdAt: -1 } },
+      { $skip: Math.max(parseInt(offset), 0) },
+      { $limit: Math.max(parseInt(limit), 1) },
+    ]);
+    res.status(200).json({ notifications, success: true });
   } catch (error) {
     console.error("Error fetching notifications:", error);
-    res.status(500).json({ message: "Server error" });
+    res.status(500).json({ message: "Server error", success: false });
   }
 };
 export const fetchSingleNotification = async (req, res) => {
