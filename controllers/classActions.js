@@ -139,6 +139,7 @@ export const submitLectureException = async (req, res) => {
     const studentId = req.user.id;
 
     const user = await User.findOne({ uid: studentId });
+    const lecture = await Lectures.findOne({ id: lectureId });
     if (!user) return res.status(404).json({ message: "User not found" });
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
@@ -195,8 +196,8 @@ export const submitLectureException = async (req, res) => {
     await exception.save();
 
     const notificationMessage = isPaidRequest
-      ? `Your exception for ${courseInfo.courseCode} was received. ${EXCEPTION_COST_IN_ICASH} iCash has been deducted.`
-      : `Your free exception for ${courseInfo.courseCode} was successfully submitted.`;
+      ? `Your exception for ${courseInfo.courseTitle} was received. ${EXCEPTION_COST_IN_ICASH} iCash has been deducted.`
+      : `Your free exception for ${courseInfo.courseTitle} was successfully submitted.`;
 
     createNotification({
       notificationId: generateNotificationId("classroom"),
@@ -208,7 +209,8 @@ export const submitLectureException = async (req, res) => {
       payload: {
         exceptionId: exception.id,
         newBalance: user.pointsBalance,
-        courseCode: courseInfo.courseCode,
+        courseTitle: courseInfo.courseTitle,
+        lectureTitle: lecture.topicName,
       },
       sendEmail: false,
       sendPush: true,
@@ -305,6 +307,7 @@ export const manageExceptions = async (req, res) => {
     await exception.save();
 
     const student = await User.findOne({ uid: exception.studentId });
+    const lecture = await Lectures.findOne({ id: exception.lectureId });
     if (student) {
       createNotification({
         notificationId: generateNotificationId("classroom"),
@@ -312,11 +315,11 @@ export const manageExceptions = async (req, res) => {
         category: "classroom",
         actionType: "EXCEPTION_UPDATED",
         title: `Exception ${status === "approved" ? "Approved" : "Rejected"}`,
-        message: `Your request for ${exception.courseInfo?.courseCode || "your course"} has been ${status}.`,
+        message: `Your lecture exception request for ${lecture.topicName || "your course"} has been ${status}.`,
         payload: {
           exceptionId: id,
           status,
-          courseCode: exception.courseInfo?.courseCode,
+          courseTitle: exception.courseInfo?.courseTitle,
         },
         sendPush: true,
         sendSocket: true,
@@ -614,6 +617,7 @@ export const deleteLecture = async (req, res) => {
           payload: {
             courseId: courseId,
             lectureId: id,
+            course,
           },
           entityId: id,
           entityType: "lecture",
@@ -1002,7 +1006,7 @@ export const deleteCourseMaterial = async (req, res) => {
             actionType: "MATERIAL_DELETED",
             title: "Study Material Removed",
             message: `A resource file has been removed from ${updatedCourse.courseTitle}.`,
-            payload: { courseId, fileName },
+            payload: { course, fileName },
             sendPush: true,
             sendSocket: true,
             saveToDb: true,
@@ -1069,7 +1073,11 @@ export const createCourseContent = async (req, res) => {
             actionType: "CONTENT_ADDED",
             title: "New Topic Added",
             message: `A new topic "${topic}" was added to ${course.courseCode}.`,
-            payload: { courseId: course.courseId, topic },
+            payload: {
+              courseId: course.courseId,
+              topic,
+              courseTitle: course.courseTitle,
+            },
             sendPush: false,
             sendSocket: true,
             saveToDb: true,
@@ -1144,7 +1152,11 @@ export const editCourseContent = async (req, res) => {
             actionType: "CONTENT_MUTATED",
             title: "Course Syllabus Updated",
             message: `A topic in ${updatedCourse.courseCode} has been edited to "${updatedTopic}".`,
-            payload: { course: updatedCourse, updatedTopic },
+            payload: {
+              course: updatedCourse,
+              updatedTopic,
+              courseTitle: updatedCourse.courseTitle,
+            },
             sendEmail: false,
             sendPush: false,
             sendSocket: true,
@@ -1211,7 +1223,12 @@ export const deleteCourseContent = async (req, res) => {
             actionType: "CONTENT_DELETION",
             title: "Syllabus Content Removed",
             message: `"${removedTopic}" was removed from the course plan of ${course.courseCode}.`,
-            payload: { courseId: course.courseId, removedTopic },
+            payload: {
+              courseId: course.courseId,
+              removedTopic,
+              course,
+              courseTitle: course.courseTitle,
+            },
             sendEmail: false,
             sendPush: false,
             sendSocket: true,
@@ -1352,7 +1369,7 @@ export const deleteCourseAssignment = async (req, res) => {
             actionType: "ASSIGNMENT_REMOVED",
             title: "Assignment Cancelled",
             message: `The assignment "${targetAssignment.title}" has been removed by the instructor.`,
-            payload: { courseId, assignmentId },
+            payload: { course, assignmentId, title: targetAssignment.title },
             sendEmail: false,
             sendPush: true,
             sendSocket: true,
@@ -1540,6 +1557,7 @@ export const submitAssessment = async (req, res) => {
         submissionId: customSubmissionId,
         isFlagged,
         actionEnforced: isImpersonator ? "SCORE_NULLIFIED" : "RECORDED",
+        title: test?.title,
       },
       sendPush: true,
       sendSocket: true,
@@ -1686,6 +1704,7 @@ export const editLectures = async (req, res) => {
           courseId: courseId,
           lectureId: lectureId,
           changedAttributes: changes,
+          course,
         },
         entityId: lectureId,
         sendPush: true,
@@ -1897,6 +1916,8 @@ export const uploadCourseDetails = async (req, res) => {
         courseCount: courses.length,
         level: studentInfo.level,
         matricNo: studentInfo.matricNo,
+        semester: courses.semester.toLowerCase(),
+        session: courses.session,
       },
       sendPush: true,
       sendSocket: true,

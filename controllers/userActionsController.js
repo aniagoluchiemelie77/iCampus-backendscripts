@@ -728,7 +728,10 @@ export const toggleFollowingUsers = async (req, res) => {
         actionType: "NEW_FOLLOWER",
         title: "New Follower",
         message: `${followerName} started following you`,
-        payload: { followerId },
+        payload: {
+          followerId,
+          firstname: followerName,
+        },
         sendPush: true,
         sendSocket: true,
         saveToDb: true,

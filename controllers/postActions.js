@@ -521,7 +521,7 @@ export const pollVote = async (req, res) => {
         actionType: "POLL_MILESTONE",
         title: "Poll Update",
         message: `${updatedPost.poll.totalVotes} people have now voted in your poll!`,
-        payload: { postId: updatedPost._id },
+        payload: { postId: updatedPost.postId },
         sendPush: true,
         saveToDb: true,
       });

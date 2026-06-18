@@ -195,35 +195,21 @@ export const createNotification = async ({
         message =
           message || "Your post has been successfully deleted from your feed.";
         break;
-      case "MATERIAL_DELETED":
-        category = "classroom";
-        title = title || "Study Material Removed";
-        message =
-          message || `A course resource file was deleted by the instructor.`;
-        break;
-      case "ASSIGNMENT_REMOVED":
-        category = "classroom";
-        subject = `Course Update: Assignment Removed`;
-        title = title || "Assignment Removed";
-        message = message || "An assignment was removed by your instructor.";
-        break;
       case "LEARNING_REMINDER":
         subject = "Ready to continue your learning journey?";
         title = title || "Don't break your streak!";
-        message =
-          message || `Pick up where you left off in ${payload.productName}.`;
-        break;
-      case "EXCEPTION_UPDATED":
-        subject = `Update on your Exception: ${payload.courseCode}`;
         break;
       case "TEST_SUBMITTED":
-        subject = "Submission Confirmed";
+        subject = "Assessment Submission Confirmed";
+        message = `Assessment for ${payload.title} submitted successfully`;
         break;
       case "EXCEPTION_SUBMITTED":
-        subject = "Exception Payment Confirmed";
+        subject = "Lecture Exception Submited";
+        message = `Lecture exception for ${payload.lectureTitle} submitted and awaiting approval`;
         break;
       case "COURSES_EXTRACTED":
-        subject = "Registration Sync Complete";
+        subject = "Courses Verification Complete";
+        message = `Courses extraction for ${payload.semester} semester ${payload.session} session completed and verified`;
         break;
       case "PASSWORD_RESET_CODE":
         subject = "Your iCampus Verification Code";
@@ -266,7 +252,7 @@ export const createNotification = async ({
         }
         break;
 
-      //first navigate to notification detail, show a review button which then navigates to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId
+      //navigate to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId
       case "LECTURER_REVIEW_REQUEST":
         category = "classroom";
         subject = `How was your lecture on "${payload.topicName}"?`;
@@ -275,7 +261,8 @@ export const createNotification = async ({
           message ||
           `Hi ${payload.userName || "Student"}, how was today's session on "${payload.topicName}"? Rate your experience to help the iCampus community.`;
         break;
-      //first navigate to notification detail, show a button which then navigates to CourseSubPage, param: title: 'View Lecture Schedule'
+
+      //navigate to CourseSubPage, param: title: 'View Lecture Schedule', userRole: user.usertype,
       case "LECTURE_CANCELLED":
       case "LECTURE_POSTPONED":
       case "LECTURE_SCHEDULED":
@@ -287,7 +274,7 @@ export const createNotification = async ({
 
       //first navigate to notification detail screen, then eith a download button for the payload.url to download the certificate
       case "COURSE_COMPLETED":
-        subject = `Congratulations on finishing ${payload.productName}! 🎓`;
+        subject = `Congratulations on finishing ${payload.productName}!`;
         if (canSendEmail) {
           htmlContent = courseCompletionEmailTemplate(
             payload.userName,
@@ -302,9 +289,10 @@ export const createNotification = async ({
           `You've officially finished ${payload.productName}. Well done!`;
         break;
 
-      //initially navigate to notification detail, then navigate to CourseSubPage param: title = 'Assessments', userRole: user.usertype
+      //navigate to CourseSubPage, param: title = 'Assessments', userRole: user.usertype
       case "TEST_CREATED":
-        subject = `New Assessment: ${payload.courseCode}`;
+        subject = `New Assessment update: ${payload.courseTitle}`;
+        message = `New assessment created for ${payload.courseTitle}`;
         htmlContent = testCreatedTemplate(
           payload.userName,
           payload.courseTitle,
@@ -315,7 +303,7 @@ export const createNotification = async ({
         );
         break;
 
-      //Initially navigate to notification details, but should contain a button that redirects to the review screen
+      //navigate to CreateReviewScreen, param: productType: 'product', targetId: payload.targetId,
       case "ORDER_REVIEW_REQUEST":
         subject = `How was your purchase of ${payload.productName}?`;
         if (canSendEmail) {
@@ -455,6 +443,11 @@ export const createNotification = async ({
         title = title || "New Study Material";
         message = message || `A new resource file has been uploaded.`;
         break;
+      case "MATERIAL_DELETED":
+        category = "classroom";
+        title = title || "Study Material Removed";
+        message = `A course resource file ${payload.fileName} was deleted by the instructor.`;
+        break;
 
       //navigate to CourseSubPage param: title = 'Assignments', userRole: user.usertype course: payload.course
       case "ASSIGNMENT_CREATED":
@@ -465,66 +458,51 @@ export const createNotification = async ({
           message ||
           `A new assignment has been uploaded for your course. Due: ${payload.dueDate || "See app for details"}`;
         break;
+      case "ASSIGNMENT_REMOVED":
+        category = "classroom";
+        subject = `Course Update: Assignment Removed`;
+        title = title || "Assignment Removed";
+        message = `An assignment ${payload.title} was removed by your instructor.`;
+        break;
 
       //navigate to CourseSubPage param: title = 'Course Contents', userRole: user.usertype, course: payload.course
       case "CONTENT_MUTATED":
-        subject = `Syllabus Update: ${payload.courseCode}`;
-        break;
-
-      //navigate to Profile, param: identifier: payload.userName
-      case "NEW_FOLLOWER":
-        subject = "You have a new follower!";
-        title = "New Follower";
-        message = `${payload.userName} started following you.`;
-        break;
-
-        if (actionType === "LECTURE_VENUE_CHANGE") {
-          subject = subject || `Venue Update: ${payload.topicName}`;
-          title = title || "Lecture Venue Changed";
-          message =
-            message ||
-            `The venue for "${payload.topicName}" has been updated to ${payload.location}.`;
-        } else if (actionType === "LECTURE_TYPE_CHANGE") {
-          subject = subject || `Format Update: ${payload.topicName}`;
-          title = title || "Lecture Delivery Format Changed";
-          message =
-            message ||
-            `The class format for "${payload.topicName}" has been changed to ${payload.lectureType}.`;
-        } else if (actionType === "LECTURE_POSTPONED") {
-          subject = subject || `Rescheduled: ${payload.topicName}`;
-          title = title || "Lecture Rescheduled";
-          message =
-            message ||
-            `The lecture "${payload.topicName}" has been postponed to ${payload.newDate} at ${payload.newTime}.`;
-        }
+        category = "classroom";
+        subject = `Syllabus Update: ${payload.courseTitle || "Course Plan Updated"}`;
+        title = title || "Course Syllabus Updated";
+        message = `A syllabus topic: ${payload.updatedTopic} has been updated by your instructor.`;
         break;
       case "CONTENT_ADDED":
         category = "classroom";
-        subject = `New Syllabus Topic: ${payload.courseCode || "Course Plan Updated"}`;
+        subject = `New Syllabus Topic: ${payload.courseTitle || "Course Plan Updated"}`;
         title = title || "New Topic Added";
-        message = message || "A new topic has been added to your curriculum.";
+        message = `A new topic: ${payload.topic} has been added to your ${payload.courseTitle} curriculum.`;
         break;
       case "CONTENT_DELETION":
         category = "classroom";
-        subject = `Syllabus Revision: ${payload.courseCode || "Course Plan Updated"}`;
+        subject = `Syllabus Revision: ${payload.courseTitle || "Course Plan Updated"}`;
         title = title || "Syllabus Content Removed";
-        message =
-          message || "A syllabus topic was removed from the course plan.";
-        break;
-      case "CONTENT_MUTATED":
-        category = "classroom";
-        subject = `Syllabus Update: ${payload.courseCode || "Course Plan Updated"}`;
-        title = title || "Course Syllabus Updated";
-        message =
-          message || "A syllabus topic has been updated by your instructor.";
+        message = `A syllabus topic: ${payload.removedTopic} was removed from your ${payload.courseTitle} curriculum.`;
         break;
 
-      case "PROFILE_VIEW":
-        subject = "Someone viewed your profile";
+      //navigate to CourseSubPage param: title = 'Exceptions', userRole: user.usertype
+      case "EXCEPTION_UPDATED":
+        subject = `Update on your Exception: ${payload.courseTitle}`;
         break;
 
+      //navigate to Profile, param: identifier: payload.followerId
+      case "NEW_FOLLOWER":
+        subject = "You have a new follower!";
+        title = "New Follower";
+        message = `${payload.firstname} started following you.`;
+        break;
+
+      // navigate to Profile, param: identifier: user.uid
       case "PROFILE_UPDATED":
         subject = "Security Alert: Profile Change";
+        break;
+      case "PROFILE_VIEW":
+        subject = "Someone viewed your profile";
         break;
 
       default:
