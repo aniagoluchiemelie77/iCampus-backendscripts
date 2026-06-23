@@ -9,6 +9,46 @@ export const attendanceSchema = new mongoose.Schema({
   timestamp: { type: Date, default: Date.now },
   deviceId: { type: String },
 });
+const questionSchema = new mongoose.Schema({
+  id: { type: String, required: true }, // Frontend-generated ID
+  type: {
+    type: String,
+    enum: ["MCQ", "ShortAnswer", "TrueFalse"],
+    required: true,
+  },
+  questionText: { type: String, required: true },
+  options: [{ type: String }], // Array of strings for MCQs
+  correctAnswer: { type: String, required: true },
+  points: { type: Number, default: 0 },
+});
+export const assessmentSchema = new mongoose.Schema(
+  {
+    id: { type: String, unique: true },
+    courseId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    title: { type: String, required: true, trim: true },
+    description: { type: String },
+    duration: { type: Number, required: true }, // Minutes
+    totalMarks: { type: Number, required: true },
+    questions: [questionSchema], // Array of sub-documents
+    isPublished: { type: Boolean, default: false },
+    status: {
+      type: String,
+      enum: ["published", "draft"],
+      default: "draft",
+    },
+    scheduledStart: { type: Date, default: Date.now },
+    dueDate: { type: Date, required: true },
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now },
+  },
+  {
+    timestamps: true, // Automatically manages createdAt and updatedAt
+  },
+);
 export const commentSchema = new mongoose.Schema({
   id: { type: String, required: true },
   userId: { type: String, required: true },
@@ -17,7 +57,6 @@ export const commentSchema = new mongoose.Schema({
   text: { type: String, required: true },
   timestamp: { type: Date, default: Date.now },
   likes: { type: Number, default: 0 },
-  replies: [this],
 });
 export const lectureSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },
@@ -251,6 +290,16 @@ export const userSchema = new mongoose.Schema({
     type: String,
     enum: ["free", "pro", "premium"],
     default: "free",
+  },
+  role: {
+    type: String,
+    enum: ["user", "admin", "master_admin"],
+    default: "user",
+  },
+  usertype: {
+    type: String,
+    enum: ["student", "lecturer", "otherUser", "enterprise"],
+    default: null,
   },
   itagusername: { type: String, unique: true },
   referralCode: { type: String, unique: true, required: true },
@@ -816,46 +865,6 @@ export const exceptionSchema = new mongoose.Schema(
   },
   { timestamps: true }, // Automatically creates createdAt and updatedAt
 );
-const questionSchema = new mongoose.Schema({
-  id: { type: String, required: true }, // Frontend-generated ID
-  type: {
-    type: String,
-    enum: ["MCQ", "ShortAnswer", "TrueFalse"],
-    required: true,
-  },
-  questionText: { type: String, required: true },
-  options: [{ type: String }], // Array of strings for MCQs
-  correctAnswer: { type: String, required: true },
-  points: { type: Number, default: 0 },
-});
-export const assessmentSchema = new mongoose.Schema(
-  {
-    id: { type: String, unique: true },
-    courseId: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    title: { type: String, required: true, trim: true },
-    description: { type: String },
-    duration: { type: Number, required: true }, // Minutes
-    totalMarks: { type: Number, required: true },
-    questions: [questionSchema], // Array of sub-documents
-    isPublished: { type: Boolean, default: false },
-    status: {
-      type: String,
-      enum: ["published", "draft"],
-      default: "draft",
-    },
-    scheduledStart: { type: Date, default: Date.now },
-    dueDate: { type: Date, required: true },
-    createdAt: { type: Date, default: Date.now },
-    updatedAt: { type: Date, default: Date.now },
-  },
-  {
-    timestamps: true, // Automatically manages createdAt and updatedAt
-  },
-);
 export const testSubmissionSchema = new mongoose.Schema({
   id: { type: String, unique: true },
   testId: { type: String, required: true },
@@ -1109,6 +1118,9 @@ export const supportTicketSchema = new mongoose.Schema(
 );
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });
+commentSchema.add({
+  replies: [commentSchema],
+});
 userDownloadsSchema.index({ userId: 1 });
 impressionLogSchema.index(
   { userId: 1, productId: 1, monthYear: 1 },

@@ -2,9 +2,35 @@ import { Lectures } from "../tableDeclarations.js";
 import { v4 as uuidv4 } from "uuid";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import { createNotification } from "../services/notification.js";
-import { createClient } from "@deepgram/sdk";
+import { DeepgramClient } from "@deepgram/sdk";
 
 const activeClassroomConnections = new Map();
+export const generateDeepgramToken = async (req, res) => {
+  try {
+    const deepgram = new DeepgramClient(process.env.DEEPGRAM_API_KEY);
+    const { result, error } = await deepgram.auth.createKey(
+      process.env.DEEPGRAM_PROJECT_ID,
+      {
+        comment: `iCampus Live Classroom Token - User: ${req.user.firstname} (${req.user.uid})`,
+        scopes: ["usage:write"],
+        time_to_live_in_seconds: 60,
+      },
+    );
+
+    if (error) {
+      console.error("[DEEPGRAM_SDK_ERROR]:", error);
+      return res.status(500).json({ error: "Failed to create key" });
+    }
+
+    return res.status(200).json({
+      success: true,
+      token: result.key,
+    });
+  } catch (error) {
+    console.error("[DEEPGRAM_CRITICAL_FAILURE]:", error);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+};
 
 async function broadcastAttendeeList(io, lectureId) {
   const lectureRoomId = `lecture_${lectureId}`;
@@ -892,25 +918,7 @@ export const handleDeepgramTokenGeneration = async (req, res) => {
         message: "Target live classroom session cannot be identified.",
       });
     }
-    const deepgram = createClient(process.env.DEEPGRAM_API_KEY);
-    const { result, error } = await deepgram.manage.createProjectKey(
-      process.env.DEEPGRAM_PROJECT_ID,
-      {
-        comment: `iCampus Live Classroom Token - User: ${req.user.firstname} (${req.user.uid})`,
-        scopes: ["usage:write"],
-        time_to_live_in_seconds: 60,
-      },
-    );
-
-    if (error) {
-      console.error(
-        "[DEEPGRAM_SDK_ERROR] Failed during remote key creation request:",
-        error,
-      );
-      throw new Error(
-        error.message || "Deepgram remote infrastructure exception.",
-      );
-    }
+    generateDeepgramToken(req, res);
     return res.status(200).json({
       success: true,
       token: result.key,
