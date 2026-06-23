@@ -27,7 +27,6 @@ async function broadcastAttendeeList(io, lectureId) {
   const attendeePayloadList = Array.from(uniqueStudentsMap.values());
   io.to(lectureRoomId).emit("update_attendee_list", attendeePayloadList);
 }
-
 export const registerLectureStreamHandlers = (io, socket) => {
   socket.on("stream_ready", async (payload) => {
     try {
@@ -483,6 +482,14 @@ export const registerSpeakerTrackingHandlers = (io, socket) => {
       });
     }
   });
+  socket.on("share_transcription_chunk", (payload) => {
+    const { lectureId, speakerLabel, text } = payload;
+    const lectureRoomId = `lecture_${lectureId}`;
+    socket.to(lectureRoomId).emit("share_transcription_chunk", {
+      speakerLabel,
+      text,
+    });
+  });
 };
 export const registerAttendanceTrackingHandlers = (io, socket) => {
   socket.on("join_lecture_session", async (payload) => {
@@ -706,6 +713,41 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
         action: "end_lecture",
         message:
           "Internal server failure processing lecture termination cycles.",
+      });
+    }
+  });
+};
+export const registerStudentLifecycleHandlers = (io, socket) => {
+  socket.on("leave_lecture", async (payload) => {
+    try {
+      const { lectureId, uid } = payload;
+
+      if (!lectureId || !uid) {
+        socket.emit("error_response", {
+          action: "leave_lecture",
+          message:
+            "Malformed departure payload. lectureId and uid are required.",
+        });
+        return;
+      }
+
+      const lectureRoomId = `lecture_${lectureId}`;
+      socket.leave(lectureRoomId);
+      await ActiveLectureState.updateOne(
+        { lectureId },
+        { $pull: { wavers: { uid: uid } } },
+      );
+      await broadcastAttendeeList(io, lectureId);
+
+      console.log(`[LIFECYCLE_ENGINE] User ${uid} left lecture ${lectureId}`);
+    } catch (error) {
+      console.error(
+        "[STUDENT_LEAVE_ERROR] Failed to process departure:",
+        error.message,
+      );
+      socket.emit("error_response", {
+        action: "leave_lecture",
+        message: "Internal server failure processing lecture departure.",
       });
     }
   });

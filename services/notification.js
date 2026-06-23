@@ -7,7 +7,6 @@ import {
   welcomeEmailTemplate,
   productUpdateTemplate,
   courseCompletionEmailTemplate,
-  purchaseTemplate,
   newOrderTemplate,
   passwordResetTemplate,
   lectureScheduledTemplate,

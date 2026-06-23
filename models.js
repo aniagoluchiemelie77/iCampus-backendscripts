@@ -1095,6 +1095,7 @@ export const schoolConfigurationSchema = new mongoose.Schema(
 export const supportTicketSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true },
+    ticketRefId: { type: String, unique: true, index: true }, // Add unique index
     originalMessage: String,
     category: {
       type: String,

@@ -1,7 +1,6 @@
 import mongoose from "mongoose";
 import {
   dropOffStation,
-  reviewSchema,
   iTagSchema,
   messageSchema,
   notificationSchema,
@@ -12,7 +11,6 @@ import {
   verifyLecturerSchema,
   eventSchema,
   productSchema,
-  userRecordsSchema,
   userSchema,
   EmailVerificationSchema,
   transactionSchema,
@@ -62,9 +60,6 @@ export const UserBankOrCardDetails =
     userBankOrCardDetails,
     "userBankDetails",
   );
-export const UserRecords =
-  mongoose.models.UserRecords ||
-  mongoose.model("UserRecords", userRecordsSchema, "records");
 export const EmailVerification = mongoose.model(
   "EmailVerification",
   EmailVerificationSchema,

@@ -291,3 +291,17 @@ export function generateSubmissionId(assessmentId, studentId = "STUD") {
    */
   return `SUB-${asmFragment}${studentFragment}-${dateStr}`;
 }
+export const generateTicketId = (userId) => {
+  const now = new Date();
+  const dateStr = now.toISOString().slice(2, 10).replace(/-/g, "");
+  const timeStr =
+    now.getHours().toString().padStart(2, "0") +
+    now.getMinutes().toString().padStart(2, "0");
+
+  const userStr = userId ? userId.toString() : "ANON";
+  const userPart = userStr.slice(-4).toUpperCase();
+  const randomStr = Math.random().toString(36).substring(2, 5).toUpperCase();
+
+  // TKT-YYMMDD-HHMM-Last 4 characters of UID-3 random characters
+  return `TKT-${dateStr}-${timeStr}-${userPart}-${randomStr}`;
+};
