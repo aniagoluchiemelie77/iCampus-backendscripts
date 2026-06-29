@@ -13,6 +13,7 @@ import {
   Lectures,
   OperationalInstitutions,
   Assessment,
+  Admin,
 } from "../tableDeclarations.js";
 import { client } from "../workers/reditFile.js";
 import { createNotification } from "../services/notificationService.js";
@@ -1141,5 +1142,16 @@ export const fetchLecturerEnrolledCourses = async (req, res) => {
   } catch (error) {
     console.error("Lecturer Fetch Courses Error:", error);
     res.status(500).json({ message: "Error fetching lecturer courses" });
+  }
+};
+export const fetchAllAdmins = async (req, res) => {
+  try {
+    const admins = await Admin.find({}).select(
+      "uid firstname lastname profilePic adminType lastAccessed",
+    );
+    console.log(`Admin ${req.admin.uid} fetched the administrator list.`);
+    res.status(200).json(admins);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch administrator list" });
   }
 };

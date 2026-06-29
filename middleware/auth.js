@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import admin from "firebase-admin";
 const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-import { User, UserRecords } from "../tableDeclarations.js";
+import { User, UserRecords, Admin } from "../tableDeclarations.js";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
 import path from "path";
@@ -92,3 +92,21 @@ export const upload = multer({
   storage: storage,
   limits: { fileSize: 1024 * 1024 * 25 },
 });
+export const verifyAdmin = async (req, res, next) => {
+  try {
+    if (!req.user || !req.user.uid) {
+      return res.status(401).json({ error: "Authentication required" });
+    }
+    const admin = await Admin.findOne({ uid: req.user.uid });
+
+    if (!admin) {
+      return res.status(403).json({
+        error: "Access denied. Administrative privileges required.",
+      });
+    }
+    req.admin = admin;
+    next();
+  } catch (err) {
+    res.status(500).json({ error: "Server error during authorization" });
+  }
+};

@@ -55,6 +55,7 @@ mongoose
     const webhooksRoutes = await import("./routes/webhooks.js");
     const appAuthRoutes = await import("./routes/appAuth.js");
     const messageRoutes = await import("./routes/messages.js");
+    const adminRoutes = await import("./routes/admin.js");
     const userAccountDetailsRoute =
       await import("./routes/userAccountDetails.js");
     const studentClassDetails = await import("./routes/class/students.js");
@@ -68,6 +69,7 @@ mongoose
     app.use("/users", userRoutes);
     app.use("/reviews", reviewsRoutes);
     app.use("/webhooks", webhooksRoutes);
+    app.use("/admins", adminRoutes);
     app.use("/v1/auth", appAuthRoutes);
     app.use("/users/messages", messageRoutes);
     app.use("/user", userAccountDetailsRoute);
