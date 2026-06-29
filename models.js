@@ -291,11 +291,6 @@ export const userSchema = new mongoose.Schema({
     enum: ["free", "pro", "premium"],
     default: "free",
   },
-  role: {
-    type: String,
-    enum: ["user", "admin", "master_admin"],
-    default: "user",
-  },
   usertype: {
     type: String,
     enum: ["student", "lecturer", "otherUser", "enterprise"],
@@ -392,6 +387,25 @@ export const userSchema = new mongoose.Schema({
   ],
   personaInquiryId: { type: String, default: null },
   sessions: [sessionSchema],
+});
+export const adminSchema = new mongoose.Schema({
+  uid: { type: String, index: true, required: true, unique: true },
+  firstname: { type: String, required: true },
+  lastname: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  adminType: {
+    type: String,
+    enum: ["super_admin", "moderator", "support"],
+    required: true,
+  },
+  profilePic: [String],
+  providerId: { type: String, enum: ["password"], default: "password" },
+  country: String,
+  isVerified: { type: Boolean, required: true, default: true },
+  lastAccessed: { type: Date, default: Date.now },
+  sessions: [sessionSchema],
+  createdAt: { type: Date, default: Date.now },
 });
 userSchema.index(
   { matricNumber: 1, department: 1 },

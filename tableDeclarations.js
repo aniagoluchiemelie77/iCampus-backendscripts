@@ -34,6 +34,7 @@ import {
   statementSchema,
   schoolConfigurationSchema,
   supportTicketSchema,
+  adminSchema,
 } from "./models.js";
 
 export const Posts = mongoose.model("Posts", postSchema, "posts");
@@ -164,3 +165,4 @@ export const SupportTicket = mongoose.model(
   supportTicketSchema,
   "supportTicket",
 );
+export const Admin = mongoose.model("Admin", adminSchema, "admins");

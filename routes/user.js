@@ -51,6 +51,7 @@ import {
   toggleTheme,
   refreshUserDetails,
   aiChat,
+  AdminLogin,
 } from "../controllers/userActionsController.js";
 import {
   signUp,
@@ -70,6 +71,7 @@ export default function () {
 
   router.post("/register", signUp);
   router.post("/login", authLimiter, Login);
+  router.post("/admin-login", authLimiter, AdminLogin);
   router.post("/revoke-session", protect, revokeLoggedInDeviceSession);
   router.post("/refresh-token", refreshToken);
   router.post("/institutions/validate", validateInstitution);

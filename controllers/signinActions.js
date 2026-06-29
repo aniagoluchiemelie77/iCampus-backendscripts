@@ -5,6 +5,7 @@ import {
   EmailVerification,
   SchoolConfiguration,
   userPrefs,
+  Admin,
 } from "../tableDeclarations.js";
 import { getChannel } from "../rabbitmq.js";
 import crypto from "crypto";
@@ -268,6 +269,57 @@ export const Login = async (req, res) => {
   } catch (error) {
     console.error("Login Error:", error);
     res.status(500).json({ error: error.message || "Login error" });
+  }
+};
+export const AdminLogin = async (req, res) => {
+  const { identifier, password, deviceId, deviceName } = req.body;
+
+  try {
+    const admin = await Admin.findOne({ email: identifier });
+    if (!admin)
+      return res.status(404).json({ error: "Admin credentials invalid." });
+
+    const isMatch = await bcrypt.compare(password, admin.password);
+    if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
+
+    const { accessToken, refreshToken } = await generateTokens(admin);
+
+    // 4. Handle Session
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const geo = geoip.lookup(ip);
+    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+
+    const sessionData = {
+      deviceId,
+      deviceName,
+      ipAddress: ip,
+      location,
+      refreshToken,
+      lastUsed: new Date(),
+    };
+    const existingSessionIndex = admin.sessions.findIndex(
+      (s) => s.deviceId === deviceId,
+    );
+
+    if (existingSessionIndex > -1) {
+      admin.sessions[existingSessionIndex] = sessionData;
+    } else {
+      admin.sessions.push(sessionData);
+    }
+
+    admin.lastAccessed = new Date();
+    await admin.save();
+    const { password: _, ...safeAdmin } = admin.toObject();
+
+    res.status(200).json({
+      message: "Admin login successful",
+      admin: safeAdmin,
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.error("Admin Login Error:", error);
+    res.status(500).json({ error: "Internal server error during login" });
   }
 };
 export const refreshToken = async (req, res) => {
