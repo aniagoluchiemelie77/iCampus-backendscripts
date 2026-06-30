@@ -13,3 +13,12 @@ export const EXCEPTION_ACCOUNT_LIMITS = Object.freeze({
 });
 export const TAX_RATE = 0.02;
 export const AGENT_RATE = 0.06;
+
+export const CATEGORY_ROLES = Object.freeze({
+  security: ["super_admin"],
+  finance: ["super_admin", "finance"],
+  social: ["support", "moderator"],
+  profile: ["super_admin"],
+  subscription: ["super_admin"],
+  store: ["super_admin", "finance"],
+});

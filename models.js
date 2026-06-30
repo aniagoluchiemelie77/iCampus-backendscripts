@@ -396,7 +396,7 @@ export const adminSchema = new mongoose.Schema({
   password: { type: String, required: true },
   adminType: {
     type: String,
-    enum: ["super_admin", "moderator", "support"],
+    enum: ["super_admin", "moderator", "support", "finance", "analyst"],
     required: true,
   },
   profilePic: [String],

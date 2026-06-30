@@ -821,3 +821,15 @@ export const agentAwaitingPickupEmailTemplate = (
   `;
   return emailWrapper(body);
 };
+export const newAdminWelcomeTemplate = (adminName, creatorName) => {
+  const body = `
+    <h2 style="color: ${colors.primary};">Welcome to iCampus Admin</h2>
+    <p style="color: ${colors.text}; margin: 5px 0;">Hi <strong>${adminName}</strong>,</p>
+    <p style="color: ${colors.text};">Your iCampus administrator account has been successfully created by <strong>${creatorName}</strong>.</p>
+    <p>You can now log in to the admin dashboard to begin managing iCampus operations.</p>
+    <div style="background: #f4f4f4; padding: 10px; border-left: 4px solid ${colors.primary};">
+      <p style="margin: 0; color: ${colors.text};"><strong>Stay Secure:</strong> Always ensure you are accessing the dashboard through the official iCampus admin portal.</p>
+    </div>
+  `;
+  return emailWrapper(body);
+};

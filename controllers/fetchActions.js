@@ -22,6 +22,7 @@ import axiosRetry from "axios-retry";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { getFallbackBooks } from "../utils/libraryHelpers.js";
+import { CATEGORY_ROLES } from "../constants/inAppConstants.js";
 axiosRetry(axios, { retries: 3 });
 
 export const getDownloads = async (req, res) => {
@@ -1153,5 +1154,32 @@ export const fetchAllAdmins = async (req, res) => {
     res.status(200).json(admins);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch administrator list" });
+  }
+};
+export const getNotifications = async (req, res) => {
+  try {
+    const { category, page = 1, limit = 20 } = req.query;
+    const adminType = req.admin.adminType;
+    const allowedRoles = CATEGORY_ROLES[category];
+    if (!allowedRoles || !allowedRoles.includes(adminType)) {
+      return res.status(403).json({
+        error:
+          "Access denied. Your role does not have permission to view this category.",
+      });
+    }
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const notifications = await Notification.find({ category })
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    res.status(200).json({
+      success: true,
+      data: notifications,
+      currentPage: parseInt(page),
+    });
+  } catch (error) {
+    console.error("Fetch Notifications Error:", error);
+    res.status(500).json({ error: "Internal server error" });
   }
 };

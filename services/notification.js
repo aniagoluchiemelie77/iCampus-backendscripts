@@ -27,6 +27,7 @@ import {
   productDeletionTemplate,
   orderDroppedOffEmailTemplate,
   agentAwaitingPickupEmailTemplate,
+  newAdminWelcomeTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -502,6 +503,34 @@ export const createNotification = async ({
         break;
       case "PROFILE_VIEW":
         subject = "Someone viewed your profile";
+        break;
+
+      //admin notifications
+      case "NEW_ADMIN_CREATED":
+        title = title || "New Administrator Alert";
+        message = message || "A new admin has been added to the system.";
+        break;
+      case "WELCOME_ADMIN":
+        subject = "Welcome to the iCampus Admin Team";
+        if (canSendEmail) {
+          htmlContent = newAdminWelcomeTemplate(
+            payload.adminName,
+            payload.creatorName,
+          );
+        }
+        break;
+      case "ADMIN_DELETED":
+        title = title || "Security Alert: Admin Removed";
+        message = message || "An administrator account has been deleted.";
+        break;
+      case "PROFILE_UPDATED":
+        title = title || "Account Information Updated";
+        message = message || "Your account details have been modified.";
+        break;
+      case "ADMIN_PERMISSIONS_CHANGED":
+        title = title || "Security Alert: Permissions Changed";
+        message =
+          message || "An administrator's access level has been modified.";
         break;
 
       default:
