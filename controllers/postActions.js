@@ -6,6 +6,8 @@ import {
 } from "../utils/idGenerator.js";
 import { extractMentions } from "../utils/postMentionsRegex.js";
 import { storage } from "../config/firebaseAdmin.js";
+import { notifyAdmins } from "../services/adminNotification.js";
+import { scan } from "../services/visionAi.js";
 
 const getPostStats = (post) => ({
   likes: post.likes || [],
@@ -15,7 +17,35 @@ const getPostStats = (post) => ({
   commentsCount: post.commentsCount || 0,
   totalVotes: post.poll?.totalVotes || 0,
 });
-
+export const moderateContent = async (postId, content, media) => {
+  if (media?.url && media.url.length > 0) {
+    scan(media.url, content)
+      .then(async (result) => {
+        if (result?.isViolation) {
+          await Posts.findOneAndUpdate(
+            { postId: postId },
+            { $set: { status: "hidden" } },
+          );
+          await notifyAdmins(
+            { role: ["moderator", "super_admin"] },
+            {
+              actionType: "MODERATION_ALERT_NUDITY",
+              payload: {
+                postId: postId,
+                reason: moderationResult.flaggedCategory,
+                confidence: moderationResult.confidence,
+              },
+              senderId: "system",
+            },
+            true,
+          );
+        }
+      })
+      .catch(console.error);
+  } else {
+    return;
+  }
+};
 export const createPost = async (req, res) => {
   try {
     const { content, media, poll, isSubscriptionContent } = req.body;
@@ -31,9 +61,10 @@ export const createPost = async (req, res) => {
     );
     if (!author) return res.status(404).json({ message: "Author not found" });
     const authorName = `${author.firstname} ${author.lastname}`;
+    const newPostId = generatePostId();
 
     const newPost = new Posts({
-      postId: generatePostId(),
+      postId: newPostId,
       originalAuthor: userId,
       content,
       isSubscriptionContent: isSubscriptionContent || false,
@@ -54,6 +85,9 @@ export const createPost = async (req, res) => {
     });
 
     await newPost.save();
+    moderateContent(newPostId, content, newPost.media).catch((err) =>
+      console.error("Moderation trigger failed:", err),
+    );
 
     const mentionedUsernames = extractMentions(content);
     let notifiedUids = new Set();
@@ -77,8 +111,6 @@ export const createPost = async (req, res) => {
         });
       });
     }
-
-    // Notify Followers
     const followers = await Follow.find({ followingId: userId }).select(
       "followerId",
     );
@@ -101,8 +133,6 @@ export const createPost = async (req, res) => {
         });
       }
     });
-
-    // iScore updates
     if (req.user.usertype !== "enterprise") {
       await User.updateOne(
         { uid: req.user.uid },

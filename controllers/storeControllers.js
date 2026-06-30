@@ -24,6 +24,7 @@ import {
 import { calculateHaversineDistance } from "../utils/distanceCalHelper.js";
 import fs from "fs/promises";
 import { TAX_RATE, AGENT_RATE } from "../constants/inAppConstants.js";
+import { notifyAdmins } from "../services/adminNotification.js";
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
   year: "numeric",
@@ -413,8 +414,17 @@ export const initializeCheckout = async (req, res) => {
       });
     }
     await session.commitTransaction();
-    await sendOrderNotifications(buyer, processedResults, buyerTxId);
     session.endSession();
+    await sendOrderNotifications(buyer, processedResults, buyerTxId);
+    await notifyAdmins(
+      { role: ["super_admin", "finance"] },
+      {
+        actionType: "NEW_PURCHASE_ORDER",
+        title: "New Purchase Order",
+        message: `Order set #${buyerTxId} created with ${items.length} items.`,
+        payload: { transactionId: buyerTxId, itemCount: items.length, buyerId },
+      },
+    );
     res
       .status(200)
       .json({ success: true, data: processedResults.map((r) => r.order) });
@@ -454,13 +464,66 @@ export const completeOrderDelivery = async (req, res) => {
     const payableAmount = totalHeld - taxAmount;
     let sellerEarnings = payableAmount;
     let agentEarnings = 0;
+    let agent;
     if (order.deliveryMethod === "drop_off" && order.agentId) {
-      const agent = await User.findOne({ uid: order.agentId }).session(session);
+      agent = await User.findOne({ uid: order.agentId }).session(session);
       if (!agent) throw new Error("Drop-off agent not found.");
       agentEarnings = payableAmount * AGENT_RATE;
       sellerEarnings -= agentEarnings;
       agent.pendingSalesBalance += agentEarnings;
       await agent.save({ session });
+    }
+    seller.pendingSalesBalance += sellerEarnings;
+    await seller.save({ session });
+
+    order.status = "completed";
+    order.completedAt = new Date().toISOString();
+    await order.save({ session });
+
+    await new ProductSales({
+      sellerId: order.sellerId,
+      productId: order.productId,
+      orderId,
+      productType: "physical",
+      quantity: order.quantity || 1,
+      buyerId: order.buyerId,
+      amountPaid: order.amountPaid,
+      netEarnings: sellerEarnings,
+    }).save({ session });
+    await session.commitTransaction();
+    session.endSession();
+    await createNotification({
+      notificationId: generateNotificationId("store"),
+      recipientId: order.buyerId,
+      category: "store",
+      actionType: "ORDER_REVIEW_REQUEST",
+      title: "Share your experience",
+      message: `How was your ${product.title}? Rate your experience to help the icampus community.`,
+      payload: {
+        orderId: order.orderId,
+        productName: product.title,
+        targetId: order.productId,
+        userName: buyer ? buyer.firstname : "Valued User",
+      },
+    });
+    await createNotification({
+      notificationId: generateNotificationId("store"),
+      recipientId: seller.uid,
+      recipientEmail: seller.email,
+      category: "finance",
+      actionType: "ORDER_COMPLETED",
+      title: "Payment Received",
+      message: `Your sale for ${product.title} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
+      payload: {
+        amount: sellerEarnings,
+        userName: seller.firstname,
+        productName: product.title,
+        orderId: orderId,
+        role: "seller",
+      },
+      sendEmail: true,
+    });
+    if (order.deliveryMethod === "drop_off" && order.agentId) {
       await createNotification({
         notificationId: generateNotificationId("store"),
         recipientId: agent.uid,
@@ -479,56 +542,21 @@ export const completeOrderDelivery = async (req, res) => {
         sendEmail: true,
       });
     }
-    seller.pendingSalesBalance += sellerEarnings;
-    await seller.save({ session });
-
-    order.status = "completed";
-    order.completedAt = new Date().toISOString();
-    await order.save({ session });
-
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: seller.uid,
-      recipientEmail: seller.email,
-      category: "finance",
-      actionType: "ORDER_COMPLETED",
-      title: "Payment Received",
-      message: `Your sale for ${product.title} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
-      payload: {
-        amount: sellerEarnings,
-        userName: seller.firstname,
-        productName: product.title,
-        orderId: orderId,
-        role: "seller",
+    await notifyAdmins(
+      { role: ["super_admin", "finance"] },
+      {
+        actionType: "PURCHASE_ORDER_COMPLETION",
+        title: "Order Completed",
+        message: `Order #${orderId} has been completed and funds settled.`,
+        payload: {
+          orderId,
+          sellerId: order.sellerId,
+          buyerId: order.buyerId,
+          agentId: order.agentId ? order.agentId : "",
+        },
       },
-      sendEmail: true,
-    });
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: order.buyerId,
-      category: "store",
-      actionType: "ORDER_REVIEW_REQUEST",
-      title: "Share your experience",
-      message: `How was your ${product.title}? Rate your experience to help the icampus community.`,
-      payload: {
-        orderId: order.orderId,
-        productName: product.title,
-        targetId: order.productId,
-        userName: buyer ? buyer.firstname : "Valued User",
-      },
-    });
-    await new ProductSales({
-      sellerId: order.sellerId,
-      productId: order.productId,
-      orderId,
-      productType: "physical",
-      quantity: order.quantity || 1,
-      buyerId: order.buyerId,
-      amountPaid: order.amountPaid,
-      netEarnings: sellerEarnings,
-    }).save({ session });
-    await session.commitTransaction();
-    session.endSession();
+      false,
+    );
 
     res.status(200).json({
       success: true,
@@ -588,6 +616,7 @@ export const cancelOrder = async (req, res) => {
       reference: `REF-${orderId}`,
       createdAt: new Date(),
     }).save({ session });
+    await session.commitTransaction();
     await createNotification({
       notificationId: generateNotificationId("store"),
       recipientId: seller.uid,
@@ -606,7 +635,15 @@ export const cancelOrder = async (req, res) => {
       },
       sendEmail: true,
     });
-    await session.commitTransaction();
+    await notifyAdmins(
+      { role: ["super_admin", "finance"] },
+      {
+        actionType: "ORDER_CANCELLED_ADMIN",
+        title: "Order Cancelled Audit",
+        message: `Order #${orderId} has been cancelled. Buyer ${buyer.uid} refunded.`,
+        payload: { orderId, sellerId: seller.uid, reason },
+      },
+    );
     res.status(200).json({
       success: true,
       message: "Order cancelled, buyer refunded, and seller notified.",
@@ -782,6 +819,15 @@ export const requestPayout = async (req, res) => {
         time: formattedTime,
       },
     });
+    await notifyAdmins(
+      { role: ["finance", "super_admin"] },
+      {
+        actionType: "SALES_PAYOUT_ADMIN_ALERT",
+        title: "New Sales Payout Processed",
+        message: `User ${user.uid} successfully withdrew ${amount} iCash to their wallet.`,
+        payload: { userId: user.uid, amount, payoutId, transactionId },
+      },
+    );
     return {
       success: true,
       newPointsBalance: user.pointsBalance,
@@ -1031,6 +1077,19 @@ export const saveProductController = async (req, res) => {
       (err) =>
         console.error("Background task pipeline error context captured:", err),
     );
+    await notifyAdmins(
+      { role: ["super_admin", "moderator"] },
+      {
+        actionType: isEditing ? "PRODUCT_UPDATE" : "PRODUCT_CREATION",
+        title: isEditing ? "Product Updated" : "New Product Listed",
+        message: `Product "${product.title}" was ${isEditing ? "updated" : "listed"} by ${sellerName}.`,
+        payload: {
+          productId: product.productId,
+          productName: product.title,
+          sellerId: userUid,
+        },
+      },
+    );
 
     return res.status(isEditing ? 200 : 201).json({
       success: true,
@@ -1049,27 +1108,21 @@ export const saveProductController = async (req, res) => {
   }
 };
 export const deleteProductController = async (req, res) => {
+  const session = await mongoose.startSession();
   try {
+    session.startTransaction();
     const userUid = req.user.uid;
     const { productId } = req.params;
 
-    if (!productId) {
-      return res.status(400).json({
-        success: false,
-        message: "Missing required product identification parameter.",
-      });
-    }
+    if (!productId)
+      throw new Error("Missing required product identification parameter.");
     const product = await Product.findOneAndDelete({
       productId: productId,
       sellerId: userUid,
     });
-
-    if (!product) {
-      return res.status(404).json({
-        success: false,
-        message: "Product record not found or unauthorized deletion access.",
-      });
-    }
+    if (!product)
+      throw new Error("Product record not found or unauthorized access.");
+    await session.commitTransaction();
     if (product.productType === "file" && product.fileDetails?.fileUrl) {
       fs.unlink(product.fileDetails.fileUrl).catch((err) =>
         console.error(
@@ -1138,6 +1191,15 @@ export const deleteProductController = async (req, res) => {
       },
     }).catch((err) =>
       console.error("Non-blocking deletion log emission failure:", err),
+    );
+    await notifyAdmins(
+      { role: ["super_admin", "moderator"] },
+      {
+        actionType: "PRODUCT_DELETION_ADMIN",
+        title: "Product Deletion Audit",
+        message: `Product "${product.title}" was deleted by seller ${userUid}.`,
+        payload: { productId, productName: product.title, sellerId: userUid },
+      },
     );
     return res.status(200).json({
       success: true,

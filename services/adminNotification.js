@@ -4,7 +4,12 @@ import { createNotification } from "./notification.js";
 export const notifyAdmins = async (target, params, sendEmailFlag = false) => {
   try {
     let query = {};
-    if (target.role) query = { adminType: target.role };
+
+    if (target.role) {
+      const roles = Array.isArray(target.role) ? target.role : [target.role];
+      query = { adminType: { $in: roles } };
+    }
+    
     if (target.uids) query = { uid: { $in: target.uids } };
 
     const admins = await Admin.find(query);

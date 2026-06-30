@@ -251,6 +251,14 @@ export const createNotification = async ({
           );
         }
         break;
+      case "VERIFICATION_SUCCESS":
+        category = "system";
+        subject = "Account Verified";
+        title = title || "Identity Verified!";
+        message =
+          message ||
+          "Your identity has been successfully verified. You now have full access to all platform features.";
+        break;
 
       //navigate to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId
       case "LECTURER_REVIEW_REQUEST":
@@ -531,6 +539,143 @@ export const createNotification = async ({
         title = title || "Security Alert: Permissions Changed";
         message =
           message || "An administrator's access level has been modified.";
+        break;
+      case "PURCHASE_ORDER_COMPLETION":
+        category = "finance";
+        subject = `Order Completed: #${payload.orderId}`;
+        title = title || "Order Delivered & Settled";
+        message =
+          message ||
+          `Order #${payload.orderId} has been successfully completed and funds have been settled.`;
+        break;
+      case "NEW_PURCHASE_ORDER":
+        category = "finance";
+        subject = `New Order Placed: REF-${payload.transactionId}`;
+        title = title || "New Order Activity";
+        message =
+          message ||
+          `A new order batch was purchased by ${payload.buyerId} containing ${payload.itemCount} items.`;
+        entityId = payload.transactionId;
+        entityType = "transaction";
+        break;
+      case "ORDER_CANCELLED_ADMIN":
+        category = "finance";
+        subject = `Audit: Order Cancelled - #${payload.orderId}`;
+        title = title || "Cancellation Audit";
+        message =
+          message ||
+          `Order #${payload.orderId} was cancelled. Reason: ${payload.reason}`;
+        break;
+      case "SALES_PAYOUT_ADMIN_ALERT":
+        category = "finance";
+        subject = "Audit: Sales Payout Processed";
+        title = title || "Payout Audit";
+        message =
+          message ||
+          `A payout of ${payload.amount} iCash was credited to user ${payload.userId}.`;
+        break;
+      case "PRODUCT_CREATION":
+      case "PRODUCT_UPDATE":
+        category = "store";
+        subject =
+          actionType === "PRODUCT_CREATION"
+            ? "New Marketplace Listing"
+            : "Marketplace Update";
+        title =
+          title ||
+          (actionType === "PRODUCT_CREATION"
+            ? "New Product Listed"
+            : "Product Updated");
+        message =
+          message ||
+          `The product "${payload.productName}" has been ${actionType === "PRODUCT_CREATION" ? "added" : "updated"}.`;
+        entityId = payload.productId;
+        entityType = "product";
+        break;
+      case "PRODUCT_DELETION_ADMIN":
+        category = "store";
+        subject = "Audit: Product Deleted";
+        title = "Product Deletion Audit";
+        message = `Product "${payload.productName}" (ID: ${payload.productId}) was removed from the marketplace.`;
+        break;
+      case "USER_VERIFICATION_AUDIT":
+        category = "system";
+        subject = "Audit: Identity Verified";
+        title = "User Verified";
+        message = `The user with UID ${payload.referenceId} has successfully completed Persona verification.`;
+        break;
+      case "ACCOUNT_DELETION_ADMIN_ALERT":
+        category = "system";
+        subject = "Security Alert: Account Deleted";
+        title = "User Account Deletion";
+        message = `User ${payload.userUid} has permanently deleted their account. Reason provided: ${payload.reason || "None"}.`;
+        break;
+      case "ICASH_PIN_RESET_AUDIT":
+        category = "system";
+        subject = "Security Audit: iCash PIN Reset";
+        title = "Security Alert";
+        message = `The iCash PIN for user ${payload.userName} (UID: ${payload.userUid}) was successfully reset.`;
+        break;
+      case "AI_SUPPORT_ESCALATION":
+        category = "system";
+        subject = "Action Required: AI Support Escalation";
+        title = "New Support Ticket Escalated";
+        message = `The AI could not resolve a query from UID ${payload.userUid}. A ticket has been created: ${payload.ticketId}. Please review it in the admin dashboard.`;
+        break;
+      case "ADMIN_LOGIN_AUDIT":
+        category = "security";
+        subject = "Security Audit: Admin Login";
+        title = "Admin Login Detected";
+        message = `Admin ${payload.userEmail} logged in from ${payload.currentLocation}.`;
+        break;
+      case "PASSWORD_CHANGE_AUDIT":
+        category = "security";
+        subject = "Security Audit: Password Changed";
+        title = "User Password Reset";
+        message = `The password for user ${payload.userEmail} (UID: ${payload.userUid}) was successfully changed at ${payload.timestamp}.`;
+        break;
+      case "SUSPICIOUS_PASSWORD_CHANGE":
+        category = "security";
+        subject = "CRITICAL: Suspicious Password Change Detected";
+        title = "Security Alert";
+        message = `Alert: Password for ${payload.userEmail} changed from ${payload.currentCountry}. Previous known location was ${payload.previousCountry}. Immediate review recommended.`;
+        break;
+      case "SUSPICIOUS_ACTIVITY_ALERT":
+        category = "security";
+        subject = "SECURITY ALERT: Unusual Login Activity";
+        title = "Suspicious Access Detected";
+        message = `Security Alert: The account with UID ${payload.userUid} was accessed from ${payload.currentLocation}. This location does not match the user's historical login patterns. Please investigate immediately.`;
+        break;
+      case "MODERATION_ALERT_NUDITY":
+        category = "security";
+        subject = "Urgent: Policy Violation Detected";
+        title = "Content Moderation Alert";
+        message = `An automated system flagged a post (ID: ${payload.postId}) for ${payload.reason} with ${payload.confidence}% confidence. Post has been hidden pending review.`;
+        break;
+      case "FINANCIAL_SECURITY_ALERT":
+        category = "security";
+        subject = "CRITICAL: Potential Financial Fraud Attempt";
+        title = "Price Spoofing Detected";
+        message = `Alert: User ${payload.userId} attempted an iCash purchase that failed integrity checks. Amount requested: ${payload.attemptedAmount}. IP: ${payload.ipAddress}. Investigation recommended.`;
+        break;
+      case "WITHDRAWAL_SUCCESS_AUDIT":
+        category = "finance";
+        subject = "Audit: Successful Withdrawal";
+        title = "New Withdrawal Processed";
+        message = `User ${payload.userId} has successfully withdrawn ${payload.currency} ${payload.amount}. Transaction ID: ${payload.transactionId}.`;
+        break;
+
+      case "WITHDRAWAL_FAILED_AUDIT":
+        category = "finance";
+        subject = "Alert: Withdrawal Failed";
+        title = "Withdrawal Failure";
+        message = `A withdrawal attempt for User ${payload.userId} (ID: ${payload.transactionId}) failed. Funds were reverted.`;
+        break;
+      case "P2P_TRANSFER_AUDIT":
+        category = "finance";
+        subject = "Financial Audit: P2P Transfer";
+        title = "P2P Transaction Logged";
+        message = `A P2P transfer of ${payload.amount} iCash occurred between ${payload.senderId} and ${payload.recipientId}. Ref: ${payload.transactionRef}.`;
         break;
 
       default:

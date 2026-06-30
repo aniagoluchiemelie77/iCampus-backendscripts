@@ -32,6 +32,8 @@ import axiosRetry from "axios-retry";
 import axios from "axios";
 import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { notifyAdmins } from "../services/adminNotification.js";
+
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
   year: "numeric",
@@ -360,6 +362,17 @@ export const deleteAccount = async (req, res) => {
     ).session(session);
 
     await session.commitTransaction();
+    await notifyAdmins(
+      { role: ["super_admin", "support"] },
+      {
+        actionType: "ACCOUNT_DELETION_ADMIN_ALERT",
+        payload: {
+          userUid: userUid,
+          reason: reason,
+        },
+        senderId: "system",
+      },
+    );
     res
       .status(200)
       .json({ status: true, message: "Account deleted successfully." });
@@ -735,7 +748,7 @@ export const resetIcashPin = async (req, res) => {
   user.resetPinOTPExpires = undefined;
   user.iCashAttempts = 0;
   await user.save();
-  createNotification({
+  await createNotification({
     notificationId: generateNotificationId("security"),
     recipientEmail: user.email,
     recoveryEmails: user.recoveryEmails,
@@ -754,6 +767,18 @@ export const resetIcashPin = async (req, res) => {
     sendSocket: true,
     saveToDb: true,
   });
+  await notifyAdmins(
+    { role: ["super_admin", "support"] },
+    {
+      actionType: "ICASH_PIN_RESET_AUDIT",
+      payload: {
+        userUid: user.uid,
+        userName: `${user.firstname} ${user.lastname}`,
+      },
+      senderId: "system",
+    },
+    false, // Typically don't email admins for every PIN reset unless required
+  ).catch((err) => console.error("Admin audit notification failed:", err));
   res.status(200).json({ success: true, message: "PIN updated successfully." });
 };
 export const markAllMessagesAsRead = async (req, res) => {
@@ -1496,13 +1521,28 @@ export const aiChat = async (req, res) => {
       (replyText.includes("escalat") || replyText.includes("ticket"))
     ) {
       const ticket = await SupportTicket.create({
-        userId,
+        userId: uid,
         originalMessage: message,
         status: "open",
         ticketRefId,
         summary: "AI could not resolve query",
       });
       finalReply += `\n\nI have opened a support ticket for you. Reference ID: ${ticket.ticketRefId || ticket._id}`;
+      await notifyAdmins(
+        { role: ["support", "super_admin"] },
+        {
+          actionType: "AI_SUPPORT_ESCALATION",
+          payload: {
+            ticketId: ticket.ticketRefId,
+            userUid: uid,
+            summary: ticket.summary,
+          },
+          senderId: "system",
+        },
+        false,
+      ).catch((err) =>
+        console.error("Admin escalation notification failed:", err),
+      );
     }
     if (userId) {
       await User.findOneAndUpdate(
@@ -1511,7 +1551,7 @@ export const aiChat = async (req, res) => {
       );
     }
 
-    res.json({ reply: finalReply, ticketId });
+    res.json({ reply: finalReply, ticketId: ticket.ticketRefId });
   } catch (error) {
     console.error("AI Chat Error:", error);
     res.status(500).json({ error: "Failed to fetch response" });

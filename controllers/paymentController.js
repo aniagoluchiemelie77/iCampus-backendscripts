@@ -13,6 +13,8 @@ import {generateStatementPDF} from '../templates/transactionHistoryTemplate.js';
 import { sendEmail } from "../services/emailService.js";
 import {encryptCardDetails} from '../utils/encryptionHelper.js';
 import {USD_SUBSCRIPTION_PRICES} from '../constants/inAppConstants.js';
+import { notifyAdmins } from "../services/adminNotification.js";
+import {executeTransferWithRetry} from '../utils/withdrawalRetryHelper.js';
 
 export const getSavedMethods = async (req, res) => {
   try {
@@ -84,6 +86,20 @@ export const initializeBuy = async (req, res) => {
       console.error(
         `Security Alert: Price spoofing detected for User ${userId}`,
       );
+      notifyAdmins(
+        { role: ["super_admin", "finance"] },
+        {
+          actionType: "FINANCIAL_SECURITY_ALERT",
+          payload: {
+            userId: userId,
+            attemptedAmount: iCashAmount,
+            expectedAmount: expectedICash,
+            ipAddress: req.ip
+          },
+          senderId: "system"
+        },
+        true // Send email alert immediately
+      ).catch(console.error);
       return res.status(400).json({
         status: "error",
         message: "Transaction integrity check failed. Please try again.",
@@ -167,25 +183,16 @@ export const initializeWithdraw = async (req, res) => {
       createdAt: Date.now(),
     });
     await user.save();
-    const response = await axios.post(
-      "https://api.flutterwave.com/v3/transfers",
-      {
-        account_bank: bankDetails.bankCode,
-        account_number: bankDetails.accountNumber,
-        amount: amountToReceive,
-        currency: currency,
-        narration: "iCampus iCash Withdrawal",
-        reference: idempotencyKey, 
-        callback_url: `${process.env.BACKEND_URL}/hooks/flutterwave`,
-        debit_currency: "NGN",
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.FLUTTERWAVE_CLIENT_SECRET}`,
-          "Content-Type": "application/json",
-        },
-      },
-    );
+    const response = await executeTransferWithRetry({
+    account_bank: bankDetails.bankCode,
+    account_number: bankDetails.accountNumber,
+    amount: amountToReceive,
+    currency: currency,
+    narration: "iCampus iCash Withdrawal",
+    reference: idempotencyKey, 
+    callback_url: `${process.env.BACKEND_URL}/hooks/flutterwave`,
+    debit_currency: "NGN",
+  });
     if (response.data.status === "success") {
       await Transactions.findOneAndUpdate({ transactionId }, { status: "success" });
       createNotification({
@@ -208,6 +215,15 @@ export const initializeWithdraw = async (req, res) => {
         sendSocket: true,
         saveToDb: true,
       });
+      await notifyAdmins(
+    { role: ["finance", "super_admin"] },
+    {
+      actionType: "WITHDRAWAL_SUCCESS_AUDIT",
+      payload: { userId, amount: amountToReceive, currency, transactionId },
+      senderId: "system"
+    },
+    false
+  ).catch(console.error);
       return res.status(200).json({
         status: "success",
         message: "Transfer initiated successfully",
@@ -217,6 +233,7 @@ export const initializeWithdraw = async (req, res) => {
       user.iCashBalance += iCashAmount;
       await user.save();
       await Transactions.findOneAndUpdate({ transactionId }, { status: "failed" });
+
       return res.status(400).json({ 
         status: "error", 
         message: response.data.message || "Flutterwave declined the transfer." 
@@ -233,6 +250,15 @@ export const initializeWithdraw = async (req, res) => {
     if (error.code === 11000) {
       return res.status(409).json({ message: "Request already in progress." });
     }
+     await notifyAdmins(
+    { role: ["finance", "super_admin"] },
+    {
+      actionType: "WITHDRAWAL_FAILED_AUDIT",
+      payload: { userId, amount: amountToReceive, currency, transactionId },
+      senderId: "system"
+    },
+    false
+  ).catch(console.error);
     res.status(500).json({
       status: "error",
       message: error.response?.data?.message || "Internal Server Error",
@@ -251,7 +277,7 @@ export const handleP2pTransfers = async (req, res) => {
       if (senderId === recipientId)
         return res.status(400).json({ message: "Cannot send to yourself" });
 
-      const sender = await User.findOne({ uid: senderUid }).session(session);
+      const sender = await User.findOne({ uid: senderId }).session(session);
       const recipient = await User.findOne({
         uid: recipientId,
         itagusername: recipientiTagName,
@@ -337,6 +363,20 @@ export const handleP2pTransfers = async (req, res) => {
         sendSocket: true,
         sendPush: true,
       });
+      await notifyAdmins(
+  { role: ["finance", "super_admin"] },
+  {
+    actionType: "P2P_TRANSFER_AUDIT",
+    payload: {
+      senderId: senderId,
+      recipientId: recipientId,
+      amount: amount,
+      transactionRef: transactionRef
+    },
+    senderId: "system"
+  },
+  false 
+).catch(console.error);
       res.status(200).json({ message: "Transfer successful", transactionRef });
     } catch (error) {
       await session.abortTransaction();

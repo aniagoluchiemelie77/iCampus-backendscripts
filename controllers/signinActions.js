@@ -27,6 +27,9 @@ import { generateExpiryDate } from "../utils/dateHelper.js";
 import jwt from "jsonwebtoken";
 import { createNotification } from "../services/notificationService.js";
 import { client } from "../workers/reditFile.js";
+import { notifyAdmins } from "../services/adminNotification.js";
+import { verifyAndNotifyLogin } from "../utils/suspiciousActivityDetector.js";
+
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
   year: "numeric",
@@ -248,6 +251,7 @@ export const Login = async (req, res) => {
       });
     }
     await user.save();
+    await verifyAndNotifyLogin(user, req, "USER_LOGIN_AUDIT");
     const preferences = await userPrefs
       .findOne({
         userId: user.uid,
@@ -309,6 +313,7 @@ export const AdminLogin = async (req, res) => {
 
     admin.lastAccessed = new Date();
     await admin.save();
+    await verifyAndNotifyLogin(admin, req, "ADMIN_LOGIN_AUDIT");
     const { password: _, ...safeAdmin } = admin.toObject();
 
     res.status(200).json({
@@ -581,8 +586,18 @@ export const changePassword = async (req, res) => {
   }
 
   try {
+    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const geo = geoip.lookup(ip);
+    const currentCountry = geo ? geo.country : "Unknown";
     const user = await User.findOne({ email });
     if (!user) return res.status(404).json({ message: "User not found" });
+    const sortedSessions = user.sessions.sort(
+      (a, b) => b.lastUsed - a.lastUsed,
+    );
+    const lastKnownLocation =
+      sortedSessions.length > 0 ? sortedSessions[0].location : null;
+    const isSuspicious =
+      lastKnownLocation && !lastKnownLocation.includes(currentCountry);
     const hashedPassword = await bcrypt.hash(password, 10);
     user.password = hashedPassword;
     user.refreshTokens = [];
@@ -609,6 +624,23 @@ export const changePassword = async (req, res) => {
       saveToDb: true,
     });
     delete verificationCodes[email];
+    notifyAdmins(
+      { role: ["super_admin", "support"] },
+      {
+        actionType: isSuspicious
+          ? "SUSPICIOUS_PASSWORD_CHANGE"
+          : "PASSWORD_CHANGE_AUDIT",
+        payload: {
+          userEmail: user.email,
+          userUid: user.uid,
+          previousLocation: lastKnownLocation || "None",
+          currentLocation: `${geo?.city || "Unknown"}, ${currentCountry}`,
+          severity: isSuspicious ? "HIGH" : "LOW",
+        },
+        senderId: "system",
+      },
+      isSuspicious,
+    ).catch((err) => console.error("Admin audit failed:", err));
     res.status(200).json({ message: "Password changed successfully" });
   } catch (error) {
     console.error("Password change error:", error);
