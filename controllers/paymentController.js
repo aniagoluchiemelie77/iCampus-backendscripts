@@ -15,6 +15,8 @@ import {encryptCardDetails} from '../utils/encryptionHelper.js';
 import {USD_SUBSCRIPTION_PRICES} from '../constants/inAppConstants.js';
 import { notifyAdmins } from "../services/adminNotification.js";
 import {executeTransferWithRetry} from '../utils/withdrawalRetryHelper.js';
+import {checkAndFlagHeavyActivity, addFlag, checkAndFlagWithdrawals} from '../utils/flagger.js';
+
 
 export const getSavedMethods = async (req, res) => {
   try {
@@ -154,14 +156,20 @@ export const initializeBuy = async (req, res) => {
   }
 };
 export const initializeWithdraw = async (req, res) => {
-  const { iCashAmount, amountToReceive, fee, currency, bankDetails } = req.body;
   const userId = req.user.uid;
+  const { iCashAmount, amountToReceive, fee, currency, bankDetails } = req.body;
   const idempotencyKey = `wd-${userId}-${Date.now().toString().substring(0, 10)}`;
   const transactionId = generateTransactionId('withdraw');
   const title = `${iCashAmount} iCash Withdrawal`,
   const user = await User.findOne({ uid: userId });
+  const isFlagged = await checkAndFlagWithdrawals(userId);
+  if (isFlagged) {
+    return res.status(403).json({ 
+      message: "Too many withdrawal requests. Please contact support." 
+    });
+  }
   if (user.iCashBalance < iCashAmount) {
-    return res.status(400).json({ message: "Insufficient iCash balance." });
+    return res.status(403).json({ message: "Insufficient iCash balance." });
   }
   user.iCashBalance -= iCashAmount;
   try {
@@ -291,6 +299,7 @@ export const handleP2pTransfers = async (req, res) => {
 
       sender.pointsBalance -= amount;
       recipient.pointsBalance += amount;
+      await checkAndFlagHeavyActivity(senderId, session);
       await sender.save({ session });
       await recipient.save({ session });
       const senderTransactionId = generateTransactionId("p2p_sent");

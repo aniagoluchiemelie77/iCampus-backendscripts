@@ -664,7 +664,6 @@ export const createNotification = async ({
         title = "New Withdrawal Processed";
         message = `User ${payload.userId} has successfully withdrawn ${payload.currency} ${payload.amount}. Transaction ID: ${payload.transactionId}.`;
         break;
-
       case "WITHDRAWAL_FAILED_AUDIT":
         category = "finance";
         subject = "Alert: Withdrawal Failed";
@@ -676,6 +675,30 @@ export const createNotification = async ({
         subject = "Financial Audit: P2P Transfer";
         title = "P2P Transaction Logged";
         message = `A P2P transfer of ${payload.amount} iCash occurred between ${payload.senderId} and ${payload.recipientId}. Ref: ${payload.transactionRef}.`;
+        break;
+      case "ACCOUNT_SUSPENDED_SECURITY":
+        category = "security";
+        subject = "CRITICAL: Account Suspended";
+        title = "Automatic Security Suspension";
+        message = `User ${payload.userId} has been suspended due to: ${payload.reason}.`;
+        break;
+      case "SECURITY_FLAG_RAISED":
+        category = "security";
+        subject = "Security Notice: New Flag";
+        title = "Account Security Flagged";
+        message = `A '${payload.flagType}' flag was raised for user ${payload.userId}. Please review.`;
+        break;
+      case "SECURITY_ALERT_HEAVY_ACTIVITY":
+        category = "security";
+        subject = "Security Alert: Heavy P2P Activity";
+        title = "Rapid P2P Transactions Detected";
+        message = `Warning: User ${payload.userId} has performed 5+ P2P transfers within one hour.`;
+        break;
+      case "SECURITY_ALERT_HEAVY_WITHDRAWAL":
+        category = "security";
+        subject = "Security Alert: Heavy Withdrawal Activity";
+        title = "Rapid Withdrawal Attempts Detected";
+        message = `Warning: User ${payload.userId} has attempted 5+ withdrawals within one hour.`;
         break;
 
       default:

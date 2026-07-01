@@ -8,12 +8,13 @@ import { extractMentions } from "../utils/postMentionsRegex.js";
 import { storage } from "../config/firebaseAdmin.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { scan } from "../services/visionAi.js";
+import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 
 const getPostStats = (post) => ({
   likes: post.likes || [],
   bookmarks: post.bookmarks || [],
   impressions: post.impressions || 0,
-  repostsCount: post.repostsCount || 0,
+  repostsCount: post.repostersDetails.length || 0,
   commentsCount: post.commentsCount || 0,
   totalVotes: post.poll?.totalVotes || 0,
 });
@@ -474,45 +475,6 @@ export const addComment = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-export const fetchPostUsingPostId = async (req, res) => {
-  try {
-    const { postId } = req.params;
-    const post = await Posts.aggregate([
-      { $match: { postId: postId } },
-      {
-        $lookup: {
-          from: "users",
-          localField: "userId.uid",
-          foreignField: "uid",
-          as: "authorDetails",
-        },
-      },
-      { $unwind: "$authorDetails" },
-      {
-        $project: {
-          postId: 1,
-          content: 1,
-          createdAt: 1,
-          userId: 1,
-          "authorDetails.firstname": 1,
-          "authorDetails.lastname": 1,
-          "authorDetails.username": 1,
-          "authorDetails.tier": 1,
-          "authorDetails.organizationName": 1,
-        },
-      },
-    ]);
-
-    if (!post || post.length === 0) {
-      return res.status(404).json({ error: "Posts not found" });
-    }
-
-    res.json(post[0]);
-  } catch (err) {
-    console.error("Fetch single post error:", err);
-    res.status(500).json({ error: err.message });
-  }
-};
 export const pollVote = async (req, res) => {
   const { postId, optionId, userId } = req.body;
   try {
@@ -615,17 +577,16 @@ export const repost = async (req, res) => {
   const userId = req.user.id;
   try {
     const existingRepost = await Posts.findOne({
-      "userId.uid": userId,
+      "repostersDetails.uid": userId,
       originalPostId,
       isRepost,
     });
     const io = req.app.get("socketio");
 
     if (existingRepost) {
-      await Posts.deleteOne({ postId: existingRepost.postId });
       const updatedOriginal = await Posts.findOneAndUpdate(
         { postId: originalPostId },
-        { $inc: { repostsCount: -1 } },
+        { $pull: { repostersDetails: { uid: userId } } },
         { new: true },
       );
       if (io && updatedOriginal) {
@@ -636,7 +597,7 @@ export const repost = async (req, res) => {
       }
       return res.status(200).json({
         message: "You undid a repost action",
-        repostsCount: updatedOriginal.repostsCount,
+        repostsCount: updatedOriginal.repostersDetails.length,
       });
     } else {
       const repostAuthor = await User.findOne({ uid: userId })
@@ -652,27 +613,19 @@ export const repost = async (req, res) => {
           .status(404)
           .json({ message: "Original post details not found." });
 
-      const repost = new Posts({
-        postId: generatePostId(),
-        userId: {
-          uid: userId,
-          firstname: repostAuthor.firstname,
-          lastname: repostAuthor.lastname,
-          profilePic: repostAuthor.profilePic,
-          tier: repostAuthor.tier,
-          organizationName: repostAuthor.organizationName,
-          username: repostAuthor.username,
-        },
-        originalPostId,
-        isRepost,
-        ...originalPost.toObject(),
-      });
-
-      await repost.save();
-
+      const reposterData = {
+        uid: repostAuthor.uid || userId,
+        firstname: repostAuthor.firstname,
+        lastname: repostAuthor.lastname,
+        tier: repostAuthor.tier,
+        username: repostAuthor.username,
+        organizationName: repostAuthor.organizationName,
+        profilePic: repostAuthor.profilePic,
+        repostedAt: new Date(),
+      };
       const updatedOriginal = await Posts.findOneAndUpdate(
         { postId: originalPostId },
-        { $inc: { repostsCount: 1 } },
+        { $push: { repostersDetails: reposterData } },
         { new: true },
       );
 
@@ -732,7 +685,7 @@ export const repost = async (req, res) => {
 
       return res.status(201).json({
         message: "Posts repost action completed successfully.",
-        repostsCount: updatedOriginal.repostsCount,
+        repostsCount: updatedOriginal.repostersDetails.length,
       });
     }
   } catch (err) {
@@ -754,5 +707,53 @@ export const toggleCommentLike = async (req, res) => {
     res.sendStatus(200);
   } catch (err) {
     res.status(500).send(err.message);
+  }
+};
+export const fetchPostUsingPostId = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const postAggregation = await Posts.aggregate([
+      { $match: { postId: postId } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId.uid",
+          foreignField: "uid",
+          as: "authorDetails",
+        },
+      },
+      { $unwind: "$authorDetails" },
+      {
+        $project: {
+          postId: 1,
+          content: 1,
+          createdAt: 1,
+          userId: 1,
+          "authorDetails.firstname": 1,
+          "authorDetails.lastname": 1,
+          "authorDetails.username": 1,
+          "authorDetails.tier": 1,
+          "authorDetails.organizationName": 1,
+        },
+      },
+    ]);
+
+    if (!postAggregation || postAggregation.length === 0) {
+      return res.status(404).json({ error: "Posts not found" });
+    }
+
+    const post = postAggregation[0];
+    const featuredReposter = await getPriorityReposter(
+      post.repostersDetails || [],
+      userId,
+    );
+
+    res.json({
+      ...post,
+      featuredReposter: featuredReposter,
+    });
+  } catch (err) {
+    console.error("Fetch single post error:", err);
+    res.status(500).json({ error: err.message });
   }
 };

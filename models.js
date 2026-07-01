@@ -1,5 +1,16 @@
 import mongoose from "mongoose";
 
+const reposterSchema = new mongoose.Schema({
+  uid: { type: String, required: true },
+  firstname: { type: String, default: null },
+  lastname: { type: String, default: null },
+  username: { type: String, default: null },
+  tier: { type: String, required: true },
+  organizationName: { type: String, default: null },
+  profilePic: [String],
+  repostedAt: { type: Date, default: Date.now },
+});
+
 export const attendanceSchema = new mongoose.Schema({
   studentId: { type: String, required: true },
   lectureId: { type: String, required: true },
@@ -377,6 +388,22 @@ export const userSchema = new mongoose.Schema({
   resetPinOTP: { type: String },
   resetPinOTPExpires: { type: Date },
   isSuspended: { type: Boolean, default: false },
+  suspiciousActivity: [
+    {
+      type: {
+        type: String,
+        enum: [
+          "UNRECOGNIZED_LOCATION",
+          "HEAVY_TRANSFER",
+          "HEAVY_WITHDRAWAL_ATTEMPT",
+          "SESSION_REVOKED",
+          "PIN_RESET_WHILE_SUSPICIOUS",
+          "FAILED_PIN_ATTEMPT",
+        ],
+      },
+      timestamp: { type: Date, default: Date.now },
+    },
+  ],
   skills: [{ type: String }],
   recoveryEmails: [
     {
@@ -407,14 +434,6 @@ export const adminSchema = new mongoose.Schema({
   sessions: [sessionSchema],
   createdAt: { type: Date, default: Date.now },
 });
-userSchema.index(
-  { matricNumber: 1, department: 1 },
-  { unique: true, partialFilterExpression: { usertype: "student" } },
-);
-userSchema.index(
-  { staff_id: 1, department: 1 },
-  { unique: true, partialFilterExpression: { usertype: "lecturer" } },
-);
 export const dropOffStation = new mongoose.Schema({
   id: { type: String, required: true, index: true },
   name: { type: String, required: true },
@@ -651,7 +670,7 @@ export const verifyLecturerSchema = new mongoose.Schema({
   staff_id: String,
 });
 export const eventSchema = new mongoose.Schema({
-  createdBy: { type: String, required: true }, // ID of the creator
+  createdBy: { type: String, required: true },
   creatorType: {
     type: String,
     enum: ["student", "lecturer"],
@@ -659,26 +678,26 @@ export const eventSchema = new mongoose.Schema({
   },
   title: { type: String, required: true },
   description: { type: String },
-  courseTitle: { type: String }, //For lectures
+  courseTitle: { type: String },
   startDate: { type: String },
   endDate: { type: String },
   eventStartTime: { type: String },
   eventEndTime: { type: String },
-  eventType: { type: String }, // e.g., "lecture", "Webinar", or 'other'
-  lectureType: { type: String }, // e.g., "online", "physical"
+  eventType: { type: String },
+  lectureType: { type: String },
   visibility: {
     type: String,
     enum: ["public", "department", "private"],
     required: true,
   },
-  restriction: { type: String, default: "none" }, // For public events: "none" or level (e.g., "300")
+  restriction: { type: String, default: "none" },
   department: { type: String },
-  isRecurring: { type: Boolean }, //For repeative private events
-  recurrenceRule: { type: String }, // Recurrence rule in iCal format
-  level: { type: String }, // For departmental or restricted public events
-  userId: { type: String }, // For private events
+  isRecurring: { type: Boolean },
+  recurrenceRule: { type: String },
+  level: { type: String },
+  userId: { type: String },
   location: { type: String },
-  tags: { type: [String] }, // Array of tags
+  tags: { type: [String] },
   createdAt: { type: String, default: () => new Date().toISOString() },
 });
 export const EmailVerificationSchema = new mongoose.Schema({
@@ -727,15 +746,6 @@ export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
 export const postSchema = new mongoose.Schema(
   {
     postId: { type: String, required: true, unique: true },
-    userId: {
-      uid: { type: String, default: null },
-      firstname: { type: String, default: null },
-      lastname: { type: String, default: null },
-      profilePic: { type: [String], default: null },
-      tier: { type: String, default: null },
-      organizationName: { type: String, default: null },
-      username: { type: String, default: null },
-    },
     priorityScore: { type: Number, default: 0 },
     isSubscriptionContent: { type: Boolean, default: false },
     content: { type: String, required: true },
@@ -748,7 +758,7 @@ export const postSchema = new mongoose.Schema(
         {
           optionId: String,
           text: String,
-          votes: [String], // Array of User IDs
+          votes: [String],
         },
       ],
       totalVotes: { type: Number, default: 0 },
@@ -774,7 +784,7 @@ export const postSchema = new mongoose.Schema(
     isRepost: { type: Boolean, default: false },
     originalPostId: { type: String, default: null },
     originalAuthor: { type: String, default: null },
-    repostsCount: { type: Number, default: 0 },
+    repostersDetails: [reposterSchema],
     sharesCount: { type: Number, default: 0 },
     postType: {
       type: String,
@@ -806,8 +816,8 @@ export const postSchema = new mongoose.Schema(
 export const followSchema = new mongoose.Schema(
   {
     id: { type: String, unique: true },
-    followerId: { type: String, ref: "User", index: true }, // The person doing the following
-    followingId: { type: String, ref: "User", index: true }, // The person being followed
+    followerId: { type: String, ref: "User", index: true },
+    followingId: { type: String, ref: "User", index: true },
   },
   { timestamps: true },
 );
@@ -877,7 +887,7 @@ export const exceptionSchema = new mongoose.Schema(
       default: null,
     },
   },
-  { timestamps: true }, // Automatically creates createdAt and updatedAt
+  { timestamps: true },
 );
 export const testSubmissionSchema = new mongoose.Schema({
   id: { type: String, unique: true },
@@ -1072,7 +1082,7 @@ export const schoolConfigurationSchema = new mongoose.Schema(
       required: true,
       unique: true,
       trim: true,
-      index: true, // Indexed for fast lookups during signup step 2 & 3
+      index: true,
     },
     name: {
       type: String,
@@ -1087,7 +1097,7 @@ export const schoolConfigurationSchema = new mongoose.Schema(
     },
     domainWhitelist: {
       type: [String],
-      default: [], // e.g., ["unilag.edu.ng", "student.unilag.edu.ng"]
+      default: [],
     },
     isOperational: {
       type: Boolean,
@@ -1112,13 +1122,13 @@ export const schoolConfigurationSchema = new mongoose.Schema(
     },
   },
   {
-    timestamps: true, // Automatically manages createdAt and updatedAt fields
+    timestamps: true,
   },
 );
 export const supportTicketSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true },
-    ticketRefId: { type: String, unique: true, index: true }, // Add unique index
+    ticketRefId: { type: String, unique: true, index: true },
     originalMessage: String,
     category: {
       type: String,
@@ -1129,6 +1139,14 @@ export const supportTicketSchema = new mongoose.Schema(
     status: { type: String, default: "open" },
   },
   { timestamps: true },
+);
+userSchema.index(
+  { matricNumber: 1, department: 1 },
+  { unique: true, partialFilterExpression: { usertype: "student" } },
+);
+userSchema.index(
+  { staff_id: 1, department: 1 },
+  { unique: true, partialFilterExpression: { usertype: "lecturer" } },
 );
 // Ensure a lecturer doesn't accidentally post the same test title twice in one course
 assessmentSchema.index({ courseId: 1, title: 1 });

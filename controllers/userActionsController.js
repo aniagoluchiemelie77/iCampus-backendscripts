@@ -22,6 +22,7 @@ import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
 import { createNotification } from "../services/notificationService.js";
+import { addFlag } from "../utils/flagger.js";
 import {
   generateNotificationId,
   generateTokens,
@@ -33,6 +34,7 @@ import axios from "axios";
 import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { notifyAdmins } from "../services/adminNotification.js";
+import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -593,7 +595,7 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
     if (user.sessions.length === originalLength) {
       return res.status(404).json({ error: "Session not found" });
     }
-
+    await addFlag(userId, "SESSION_REVOKED");
     await user.save();
     res.status(200).json({ message: "Device logged out successfully" });
   } catch (error) {
@@ -670,10 +672,20 @@ export const verifyIcashPin = async (req, res) => {
   const isMatch = await bcrypt.compare(pin, user.iCashPin);
   if (!isMatch) {
     user.iCashAttempts += 1;
+    await addFlag(userId, "FAILED_PIN_ATTEMPT");
     if (user.iCashAttempts >= 5) {
       user.isSuspended = true;
       user.iCashAttempts = 0;
       await user.save();
+      await notifyAdmins(
+        { role: ["moderator", "super_admin"] },
+        {
+          actionType: "ACCOUNT_SUSPENDED_SECURITY",
+          payload: { userId, reason: "Excessive failed iCash PIN attempts" },
+          senderId: "system",
+        },
+        true,
+      );
       return res.status(403).json({
         isSuspended: true,
         message: "Maximum attempts reached. Account suspended for security.",
@@ -737,10 +749,19 @@ export const resetIcashPin = async (req, res) => {
     uid: userId,
     resetPinOTP: otp,
     resetPinOTPExpires: { $gt: Date.now() },
-  }).select("+iCashPin");
+  }).select("+iCashPin suspiciousActivity");
 
   if (!user) {
     return res.status(400).json({ message: "Invalid or expired OTP." });
+  }
+  if (user.suspiciousActivity && user.suspiciousActivity.length > 0) {
+    await addFlag(userId, "PIN_RESET_WHILE_SUSPICIOUS");
+    if (user.suspiciousActivity.length > 3) {
+      return res.status(403).json({
+        message:
+          "Account security in review. Please contact support to reset PIN.",
+      });
+    }
   }
   const salt = await bcrypt.genSalt(10);
   user.iCashPin = await bcrypt.hash(newPin, salt);
@@ -1174,40 +1195,6 @@ export const createPersonaVerifyInquiry = async (req, res) => {
     });
   }
 };
-export const searchPosts = async (req, res) => {
-  try {
-    const searchQuery = req.query.q;
-
-    if (!searchQuery || searchQuery.trim().length < 2) {
-      return res.status(200).json({ success: true, posts: [] });
-    }
-    const sanitizedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const searchRegex = new RegExp(sanitizedQuery, "i");
-    const posts = await Posts.find({
-      $or: [
-        { content: { $regex: searchRegex } },
-        { "comments.comment": { $regex: searchRegex } },
-        { "jobMetadata.title": { $regex: searchRegex } },
-        { "jobMetadata.company": { $regex: searchRegex } },
-        { "eventMetadata.title": { $regex: searchRegex } },
-      ],
-    })
-      .sort({ createdAt: -1 })
-      .limit(40);
-
-    return res.status(200).json({
-      success: true,
-      count: posts.length,
-      posts,
-    });
-  } catch (error) {
-    console.error("Database match compilation exception:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Failed to retrieve posts matching search parameter.",
-    });
-  }
-};
 export const handleUnifiedCourseSearch = async (req, res) => {
   try {
     const searchQuery = req.query.q;
@@ -1229,7 +1216,9 @@ export const handleUnifiedCourseSearch = async (req, res) => {
       .lean();
     const allLecturerUids = [
       ...new Set(
-        institutionalCourses.flatMap((course) => course.lecturerIds || []),
+        institutionalCourses
+          .map((course) => course.lecturerIds?.[course.lecturerIds.length - 1])
+          .filter(Boolean),
       ),
     ];
     let lecturerMap = {};
@@ -1555,5 +1544,52 @@ export const aiChat = async (req, res) => {
   } catch (error) {
     console.error("AI Chat Error:", error);
     res.status(500).json({ error: "Failed to fetch response" });
+  }
+};
+export const searchPosts = async (req, res) => {
+  try {
+    const searchQuery = req.query.q;
+
+    if (!searchQuery || searchQuery.trim().length < 2) {
+      return res.status(200).json({ success: true, posts: [] });
+    }
+    const sanitizedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const searchRegex = new RegExp(sanitizedQuery, "i");
+    const posts = await Posts.find({
+      $or: [
+        { content: { $regex: searchRegex } },
+        { "comments.comment": { $regex: searchRegex } },
+        { "jobMetadata.title": { $regex: searchRegex } },
+        { "jobMetadata.company": { $regex: searchRegex } },
+        { "eventMetadata.title": { $regex: searchRegex } },
+      ],
+    })
+      .sort({ createdAt: -1 })
+      .limit(40);
+
+    const formattedPosts = await Promise.all(
+      posts.map(async (post) => {
+        const featuredReposter = await getPriorityReposter(
+          post.repostersDetails || [],
+          userId,
+        );
+        return {
+          ...post,
+          featuredReposter: featuredReposter,
+        };
+      }),
+    );
+
+    return res.status(200).json({
+      success: true,
+      count: formattedPosts.length,
+      posts: formattedPosts,
+    });
+  } catch (error) {
+    console.error("Database match compilation exception:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve posts matching search parameter.",
+    });
   }
 };

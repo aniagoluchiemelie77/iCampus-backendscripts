@@ -29,6 +29,7 @@ import { createNotification } from "../services/notificationService.js";
 import { client } from "../workers/reditFile.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { verifyAndNotifyLogin } from "../utils/suspiciousActivityDetector.js";
+import { addFlag } from "../utils/flagger.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -249,6 +250,7 @@ export const Login = async (req, res) => {
         sendEmail: true,
         saveToDb: true,
       });
+      await addFlag(user.uid, "UNRECOGNIZED_LOCATION");
     }
     await user.save();
     await verifyAndNotifyLogin(user, req, "USER_LOGIN_AUDIT");

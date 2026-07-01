@@ -349,6 +349,7 @@ export const createLectureSchedule = async (req, res) => {
       lectureType,
     } = req.body;
 
+    const lecturerUid = req.user.uid;
     const finalPayload = req.body;
     const lecturesToCreate = [];
     const datesToCheck = [];
@@ -357,35 +358,30 @@ export const createLectureSchedule = async (req, res) => {
     if (!courseDetails) {
       return res.status(404).json({ message: "Course not found" });
     }
-
+    if (!courseDetails.lecturerIds.includes(lecturerUid)) {
+      return res.status(403).json({
+        message: "Unauthorized: You are not an instructor for this course.",
+      });
+    }
     for (let i = 0; i < (repeatWeeks || 1); i++) {
       const nextDate = new Date(date);
       nextDate.setDate(nextDate.getDate() + i * 7);
       datesToCheck.push(nextDate.toISOString().split("T")[0]);
     }
-
     const conflict = await Lectures.findOne({
       date: { $in: datesToCheck },
       startTime: { $lt: endTime },
       endTime: { $gt: startTime },
       $or: [
-        {
-          lectureType: "Physical",
-          location: location,
-        },
-        {
-          courseId: courseId,
-        },
-        {
-          department: courseDetails.department,
-          level: courseDetails.level,
-        },
+        { lectureType: "Physical", location: location },
+        { courseId: courseId },
+        { department: courseDetails.department, level: courseDetails.level },
       ],
     });
 
     if (conflict) {
       return res.status(409).json({
-        message: `Conflict detected on ${conflict.date}! A lecture (${conflict.topicName || "Class"}) conflicts with this time slot (${conflict.startTime} - ${conflict.endTime}).`,
+        message: `Conflict detected on ${conflict.date}! A lecture (${conflict.topicName || "Class"}) conflicts with this time slot.`,
       });
     }
     datesToCheck.forEach((d) => {
@@ -395,12 +391,13 @@ export const createLectureSchedule = async (req, res) => {
         date: d,
         department: courseDetails.department,
         level: courseDetails.level,
-        hostId: req.user.uid,
+        hostId: lecturerUid,
         status: "scheduled",
         isTaught: false,
         attendance: [],
       });
     });
+
     const result = await Lectures.insertMany(lecturesToCreate);
     const students = await User.find({
       usertype: "student",
@@ -436,12 +433,13 @@ export const createLectureSchedule = async (req, res) => {
         saveToDb: true,
       }),
     );
+
     Promise.all(notificationPromises).catch((err) =>
       console.error("Notification Error:", err),
     );
 
     await User.updateOne(
-      { uid: req.user.uid },
+      { uid: lecturerUid },
       {
         $inc: {
           "monthlyStats.minutesActive": 15,
@@ -449,6 +447,7 @@ export const createLectureSchedule = async (req, res) => {
         },
       },
     );
+
     res.status(201).json({
       message: "Lectures scheduled successfully",
       count: result.length,
