@@ -305,3 +305,15 @@ export const generateTicketId = (userId) => {
   // TKT-YYMMDD-HHMM-Last 4 characters of UID-3 random characters
   return `TKT-${dateStr}-${timeStr}-${userPart}-${randomStr}`;
 };
+export function generateTicketRefId(category) {
+  const now = new Date();
+
+  const timestamp = now
+    .toISOString()
+    .replace(/[-T:.Z]/g, "")
+    .slice(2, 12);
+
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+
+  return `${category}TKT-${timestamp}-${randomSuffix}`;
+}

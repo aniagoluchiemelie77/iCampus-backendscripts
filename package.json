@@ -38,6 +38,7 @@
     "nodemailer": "^7.0.6",
     "pdf-image": "^2.0.0",
     "pdf-poppler": "^0.2.3",
+    "postmark": "^4.0.7",
     "process": "^0.11.10",
     "react-native-webview": "^13.16.1",
     "react-native-youtube-iframe": "^2.4.1",

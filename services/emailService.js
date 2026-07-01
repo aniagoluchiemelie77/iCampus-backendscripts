@@ -1,37 +1,33 @@
-// services/emailService.js
-import nodemailer from "nodemailer";
-/*
-Create Email Accounts: In your iCampus cPanel, 
-create no-reply@icampus.com and support@icampus.com
-*/
-const transporter = nodemailer.createTransport({
-  host: process.env.TRANSPORTER_EMAIL_HOST,
-  port: 465,
-  secure: true,
-  auth: {
-    user: process.env.TRANSPORTER_AUTH_USER,
-    pass: process.env.TRANSPORTER_AUTH_PASS,
-  },
-});
+import { ServerClient } from "postmark";
 
-/**
- * Sends an email
- * @param {Object} options - { to, subject, text, html }
- */
-export const sendEmail = async ({ to, subject, text, html, attachments }) => {
+const postmarkClient = new ServerClient(process.env.POSTMARK_SERVER_TOKEN);
+
+export const sendEmail = async ({
+  to,
+  subject,
+  text,
+  html,
+  attachments = [],
+}) => {
   try {
-    const info = await transporter.sendMail({
-      from: `"iCampus Support" <${process.env.EMAIL_USER}>`,
-      to,
-      subject,
-      text,
-      html,
-      attachments: attachments || [],
+    const response = await postmarkClient.sendEmail({
+      From: "your-verified-sender@example.com", // Must be a verified Sender Signature in Postmark
+      To: to,
+      Subject: subject,
+      TextBody: text,
+      HtmlBody: html,
+      MessageStream: "broadcast",
+      Attachments: attachments.map((att) => ({
+        Name: att.filename,
+        Content: att.content.toString("base64"),
+        ContentType: att.contentType,
+      })),
     });
-    console.log("Email sent: %s", info.messageId);
-    return info;
+
+    console.log("Email sent successfully. Message ID:", response.MessageID);
+    return response;
   } catch (error) {
-    console.error("Email Sending Error:", error);
+    console.error("Postmark Email Sending Error:", error);
     throw error;
   }
 };

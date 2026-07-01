@@ -1127,19 +1127,37 @@ export const schoolConfigurationSchema = new mongoose.Schema(
 );
 export const supportTicketSchema = new mongoose.Schema(
   {
+    id: { type: String, required: true },
     userId: { type: String, required: true },
     ticketRefId: { type: String, unique: true, index: true },
+    source: { type: String, enum: ["in-app", "email"], default: "in-app" },
     originalMessage: String,
     category: {
       type: String,
       enum: ["technical", "billing", "content", "other"],
     },
     summary: String,
-    severity: String,
-    status: { type: String, default: "open" },
+    severity: {
+      type: String,
+      enum: ["low", "medium", "high", "critical"],
+      default: "medium",
+    },
+    status: {
+      type: String,
+      enum: ["open", "pending", "resolved", "closed"],
+      default: "open",
+    },
+    thread: [
+      {
+        sender: String,
+        message: String,
+        timestamp: { type: Date, default: Date.now },
+      },
+    ],
   },
   { timestamps: true },
 );
+
 userSchema.index(
   { matricNumber: 1, department: 1 },
   { unique: true, partialFilterExpression: { usertype: "student" } },

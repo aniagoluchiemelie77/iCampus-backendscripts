@@ -28,6 +28,7 @@ import {
   orderDroppedOffEmailTemplate,
   agentAwaitingPickupEmailTemplate,
   newAdminWelcomeTemplate,
+  supportTicketReceivedTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -167,6 +168,7 @@ export const createNotification = async ({
           payload.location,
           payload.date,
           payload.time,
+          payload.userId,
         );
         break;
       case "PASSWORD_CHANGED":
@@ -175,6 +177,7 @@ export const createNotification = async ({
           payload.userName,
           payload.date,
           payload.time,
+          payload.userId,
         );
         break;
       case "ORDER_COMPLETED":
@@ -258,6 +261,21 @@ export const createNotification = async ({
         message =
           message ||
           "Your identity has been successfully verified. You now have full access to all platform features.";
+        break;
+      case "SUPPORT_TICKET_RECEIVED":
+        category = "system";
+        subject = "We've received your support request";
+        title = "Support Ticket Created";
+        message = `Your ticket (Ref: ${payload.ticketRefId}) has been received. Our team will review your request and reply within 24 hours.`;
+
+        if (canSendEmail) {
+          htmlContent = supportTicketReceivedTemplate(
+            payload.userName,
+            payload.ticketRefId,
+            payload.date,
+            payload.time,
+          );
+        }
         break;
 
       //navigate to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId

@@ -14,11 +14,11 @@ export const theme = {
     white: "#ffffff",
   },
   branding: {
-    logoUrl: "https://icampus.com/assets/logo-email.png",
+    logoUrl: "https://useicampus.io/assets/logo-email.png",
     companyName: "iCampus",
-    supportEmail: "support@useicampus.io",
-    websiteUrl: "https://icampus.io",
-    appDashboardUrl: "https://useicampus.io/dashboard",
+    supportEmail: "@inbound.useicampus.io.",
+    websiteUrl: "https://useicampus.io",
+    appDashboardUrl: "https://useicampus.io/home",
     appReviewsScreenUrl: "https://useicampus.io/reviews",
   },
   typography: {

@@ -25,8 +25,8 @@ export const emailWrapper = (content) => `
 export const welcomeEmailTemplate = (userName) => {
   const body = `
     <h1 style="color: ${colors.primary}; margin-top: 0;">Welcome to iCampus</h1>
-    <p>Hi ${userName},</p>
-    <p>We're thrilled to have you join our community. iCampus is designed to make your academic journey seamless, social, and rewarding.</p>
+    <p style="color: ${colors.text}; margin: 5px 0;">Hi ${userName},</p>
+    <p style="color: ${colors.text};">We're thrilled to have you join our community. iCampus is designed to make your academic journey seamless, social, and rewarding.</p>
     
     <div style="background: #f9f9f9; border-radius: 8px; padding: 20px; margin: 20px 0; border: 1px solid #eee;">
       <h3 style="margin-top: 0; font-size: 16px;">What's Next?</h3>
@@ -37,7 +37,7 @@ export const welcomeEmailTemplate = (userName) => {
       </ul>
     </div>
 
-    <p style="color: ${colors.secondary};">If you have any questions, simply reply to this email. We're here to help!</p>
+    <p style="color: ${colors.secondary}; margin-bottom: 5px;">If you have any questions, simply reply to this email. We're here to help!</p>
     <p style="color: ${colors.secondary};">Happy Learning,<br>The iCampus Team</p>
   `;
   return emailWrapper(body);
@@ -60,17 +60,19 @@ export const loginAlertTemplate = (
       Date: ${date}
       Time: ${time}
     </div>
-    <p style="font-size: 14px; color: ${colors.secondary}">If this was not you, please change your password immediately in the <strong>Profile</strong> section of the app.</p>
+    <div style="background: ${theme.colors.background}; padding: 15px; border-radius: 4px; margin: 20px 0; font-size: 14px;">
+      If you did not make this change, please contact our support team immediately at <a href="mailto:ticket+${userId}${theme.branding.supportEmail}" style="color: ${theme.colors.primary};">${theme.branding.supportEmail}</a>.
+    </div>
   `;
   return emailWrapper(body);
 };
-export const passwordResetSuccessTemplate = (userName, date, time) => {
+export const passwordResetSuccessTemplate = (userName, date, time, userId) => {
   const body = `
     <h2 style="color: ${theme.colors.primary}; margin-top: 0;">Password Changed Successfully</h2>
     <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hello ${userName},</p>
     <p style="color: ${colors.text}; font-size: 13px">This is a confirmation that the password for your iCampus account was recently changed on <strong>${date} ${time}</strong>.</p>
     <div style="background: ${theme.colors.background}; padding: 15px; border-radius: 4px; margin: 20px 0; font-size: 14px;">
-      If you did not make this change, please contact our support team immediately at <a href="mailto:${theme.branding.supportEmail}" style="color: ${theme.colors.primary};">${theme.branding.supportEmail}</a>.
+      If you did not make this change, please contact our support team immediately at <a href="mailto:ticket+${userId}${theme.branding.supportEmail}" style="color: ${theme.colors.primary};">${theme.branding.supportEmail}</a>.
     </div>
   `;
   return emailWrapper(body);
@@ -99,7 +101,7 @@ export const testCreatedTemplate = (
 export const emailVerificationTemplate = (code) => {
   const body = `
     <div style="text-align: center;">
-      <h2 style="color: ${theme.colors.primary};">Welcome to iCampus</h2>
+      <h2 style="color: ${theme.colors.primary}; margin-bottom: 5px;">Welcome to iCampus</h2>
       <p>Please use the verification code below to complete your registration:</p>
       
       <div style="background: ${theme.colors.background}; padding: 25px; margin: 20px 0; border: 2px dashed ${theme.colors.primary}; border-radius: 8px;">
@@ -126,9 +128,9 @@ export const lectureScheduledTemplate = (
   const isOnline = type === "Online";
   const body = `
     <h2 style="color: ${theme.colors.primary};">Lecture Scheduled</h2>
-    <p>Hi ${userName}, a new ${type} lecture has been set for <strong>${topic}</strong>.</p>
-    <p><strong>Time:</strong> ${time}</p>
-    <p><strong>Date:</strong> ${date}</p>
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hi ${userName}, a new ${type} lecture has been set for <strong>${topic}</strong>.</p>
+    <p style="color: ${colors.text}; margin-bottom: 5px; font-size: 13px"><strong>Time:</strong> ${time}</p>
+    <p style="color: ${colors.text}; margin-bottom: 5px; font-size: 13px"><strong>Date:</strong> ${date}</p>
     
     ${
       isOnline
@@ -139,7 +141,7 @@ export const lectureScheduledTemplate = (
       </div>
     `
         : `
-      <p><strong>Location:</strong> ${location}</p>
+      <p style="color: ${colors.text}; font-size: 13px"><strong>Location:</strong> ${location}</p>
     `
     }
   `;
@@ -149,7 +151,7 @@ export const passwordResetTemplate = (userName, code, expiryTime) => {
   const body = `
     <div style="text-align: center;">
       <h2 style="color: ${theme.colors.primary};">Password Reset Request</h2>
-      <p style="color: ${theme.colors.text}; margin-vertical: 20px">Hi ${userName}, use the code below to reset your iCampus account password:</p>
+      <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hi ${userName}, use the code below to reset your iCampus account password:</p>
       
       <div style="background: #f4f4f4; padding: 20px; margin: 20px 0; border-radius: 8px;">
         <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: ${theme.colors.primary};">
@@ -598,7 +600,7 @@ export const courseCompletionEmailTemplate = (
   const reviewUrl = `${branding.appReviewsScreenUrl}?productType=${productType}&targetId=${productId}`;
   const body = `
     <h2 style="color: ${colors.primary}; margin-top: 0;">Congratulations!</h2>
-    <p style="color: ${colors.text}">Hi ${userName},</p>
+    <p style="color: ${colors.text}; margin: 5px 0;">Hi ${userName},</p>
     <p style="color: ${colors.text}">
       Huge news! You have officially completed <strong>${productName}</strong>. This is a significant milestone in your learning journey at iCampus.
     </p>
@@ -674,8 +676,8 @@ export const productCreationTemplate = (
 ) => {
   const body = `
     <h2 style="color: ${colors.success}; margin-top: 0;">Product Listed Successfully!</h2>
-    <p style="color: ${colors.text}">Hi ${username},</p>
-    <p style="color: ${colors.text}">Your product has been approved and is now live on the campus digital marketplace. Other students can view and purchase it immediately.</p>
+    <p style="color: ${colors.text}; margin: 5px 0;">Hi ${username},</p>
+    <p style="color: ${colors.text};">Your product has been approved and is now live on the campus digital marketplace. Other students can view and purchase it immediately.</p>
     
     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
       <p style="color: ${colors.text}; margin: 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Item Details</p>
@@ -714,7 +716,7 @@ export const productUpdateTemplate = (
 ) => {
   const body = `
     <h2 style="color: ${colors.success}; margin-top: 0;">Changes Saved Successfully!</h2>
-    <p style="color: ${colors.text}">Hi ${username},</p>
+    <p style="color: ${colors.text}; margin: 5px 0;">Hi ${username},</p>
     <p style="color: ${colors.text}">Your recent updates to your marketplace listing have been successfully processed and are now live for all users to see.</p>
     
     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0;">
@@ -753,7 +755,7 @@ export const productDeletionTemplate = (
 ) => {
   const body = `
     <h2 style="color: ${colors.primary}; margin-top: 0;">Listing Removed Successfully</h2>
-    <p style="color: ${colors.text}">Hi ${username},</p>
+    <p style="color: ${colors.text}; margin: 5px 0;">Hi ${username},</p>
     <p style="color: ${colors.text}">This is confirmation that your marketplace listing has been removed from the platform on <strong>${date}</strong> at <strong>${time}</strong>.</p>
     
     <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid ${colors.primary};">
@@ -779,7 +781,7 @@ export const orderDroppedOffEmailTemplate = (
 ) => {
   const body = `
     <h2 style="color: ${colors.primary}; margin-top: 0;">Your Package is Ready for Pickup</h2>
-    <p style="color: ${colors.text}">Hi <strong>${userName}</strong>,</p>
+    <p style="color: ${colors.text}; margin: 5px 0;">Hi <strong>${userName}</strong>,</p>
     <p style="color: ${colors.text}">The seller has dropped off your purchase of <strong>${productName}</strong> at your selected station hub.</p>
     
     <div style="background: ${colors.background}; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid ${colors.primary};">
@@ -797,7 +799,6 @@ export const orderDroppedOffEmailTemplate = (
   `;
   return emailWrapper(body);
 };
-
 export const agentAwaitingPickupEmailTemplate = (
   agentName,
   productName,
@@ -826,10 +827,37 @@ export const newAdminWelcomeTemplate = (adminName, creatorName) => {
     <h2 style="color: ${colors.primary};">Welcome to iCampus Admin</h2>
     <p style="color: ${colors.text}; margin: 5px 0;">Hi <strong>${adminName}</strong>,</p>
     <p style="color: ${colors.text};">Your iCampus administrator account has been successfully created by <strong>${creatorName}</strong>.</p>
-    <p>You can now log in to the admin dashboard to begin managing iCampus operations.</p>
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">You can now log in to the admin dashboard to begin managing iCampus operations.</p>
     <div style="background: #f4f4f4; padding: 10px; border-left: 4px solid ${colors.primary};">
       <p style="margin: 0; color: ${colors.text};"><strong>Stay Secure:</strong> Always ensure you are accessing the dashboard through the official iCampus admin portal.</p>
     </div>
+  `;
+  return emailWrapper(body);
+};
+export const supportTicketReceivedTemplate = (
+  userName,
+  ticketRefId,
+  date,
+  time,
+) => {
+  const body = `
+    <h2 style="color: ${theme.colors.primary}; margin-top: 0;">Support Request Received</h2>
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hello ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 13px">
+      We have successfully received your support request. Our team is currently reviewing the details and will get back to you shortly.
+    </p>
+    
+    <div style="background: ${theme.colors.background}; padding: 15px; border-radius: 4px; margin: 20px 0; font-size: 14px;">
+      <strong>Ticket Reference ID:</strong> <span style="color: ${theme.colors.primary}; font-weight: bold;">${ticketRefId}</span><br>
+      <strong>Received:</strong> ${date} at ${time}
+    </div>
+
+    <p style="color: ${colors.text}; font-size: 13px">
+      We aim to respond to all inquiries within <strong>24 hours</strong>. You can reply directly to this email if you have any additional information to add.
+    </p>
+    
+    <p style="color: ${colors.text}; font-size: 13px; margin: 5px 0;">Thank you for your patience.</p>
+    <p style="color: ${colors.text}; font-size: 13px">Best regards,<br><strong>iCampus Support Team</strong></p>
   `;
   return emailWrapper(body);
 };

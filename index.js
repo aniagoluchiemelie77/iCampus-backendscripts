@@ -52,6 +52,7 @@ mongoose
     console.log("✅ MongoDB connected");
     const userRoutes = await import("./routes/user.js");
     const reviewsRoutes = await import("./routes/reviews.js");
+    const ticketingRoutes = await import("./routes/supportTicketing.js");
     const webhooksRoutes = await import("./routes/webhooks.js");
     const appAuthRoutes = await import("./routes/appAuth.js");
     const messageRoutes = await import("./routes/messages.js");
@@ -72,6 +73,7 @@ mongoose
     app.use("/admins", adminRoutes);
     app.use("/v1/auth", appAuthRoutes);
     app.use("/users/messages", messageRoutes);
+    app.use("/support/tickets", ticketingRoutes);
     app.use("/user", userAccountDetailsRoute);
     app.use("/users/student/class", studentClassDetails);
     app.use("/users/lecturers/class", lecturerClassDetails);
@@ -90,7 +92,7 @@ mongoose
   });
 
 export const transporter = nodemailer.createTransport({
-  host: "sandbox.smtp.mailtrap.io",
+  host: "smtp.postmarkapp.com",
   port: 2525,
   auth: {
     user: process.env.TRANSPORTER_AUTH_USER,

@@ -1,5 +1,10 @@
 import crypto from "crypto";
-import { User, Transactions, PaymentMethods } from "../tableDeclarations.js";
+import {
+  User,
+  Transactions,
+  PaymentMethods,
+  SupportTicket,
+} from "../tableDeclarations.js";
 import {
   generateTransactionId,
   generateNotificationId,
@@ -156,5 +161,50 @@ export const handleFlutterwaveWebhook = async (req, res) => {
     }
   } catch (error) {
     console.error("Flutterwave Webhook Error:", error);
+  }
+};
+export const handlePostmarkInboundSupportTickets = async (req, res) => {
+  try {
+    const { ToFull, From, Subject, TextBody, MessageID } = req.body;
+    const recipient = ToFull[0].Email;
+    const userId = recipient.split("+")[1].split("@")[0];
+
+    let ticket = await SupportTicket.findOne({
+      userId,
+      status: { $ne: "closed" },
+    }).sort({ createdAt: -1 });
+
+    if (ticket) {
+      ticket.thread.push({ sender: From, message: TextBody });
+      await ticket.save();
+    } else {
+      ticket = await SupportTicket.create({
+        userId,
+        ticketRefId: generateTicketRefId("technical"),
+        source: "email",
+        severity: "high",
+        originalMessage: TextBody,
+        summary: Subject,
+        thread: [{ sender: From, message: TextBody }],
+      });
+    }
+    await createNotification({
+      recipientId: userId,
+      category: "system",
+      actionType: "SUPPORT_TICKET_RECEIVED",
+      sendEmail: true,
+      recipientEmail: From,
+      payload: {
+        userName: "User",
+        ticketRefId: ticket.ticketRefId,
+        date: new Date().toLocaleDateString(),
+        time: new Date().toLocaleTimeString(),
+      },
+    });
+
+    res.status(200).send("Webhook Processed");
+  } catch (error) {
+    console.error("Postmark Webhook Error:", error);
+    res.status(500).send("Internal Server Error");
   }
 };
