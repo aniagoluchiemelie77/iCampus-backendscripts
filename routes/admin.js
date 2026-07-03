@@ -11,6 +11,7 @@ import {
   updateAdmin,
   createAdmin,
   adminSendTicketNotification,
+  updateUserController,
 } from "../controllers/adminActions.js";
 
 export default function () {
@@ -39,5 +40,6 @@ export default function () {
     verifyAdmin,
     adminSendTicketNotification,
   );
+  router.patch("/edit-users/:uid", protect, verifyAdmin, updateUserController);
   return router;
 }

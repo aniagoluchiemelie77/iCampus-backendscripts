@@ -192,3 +192,68 @@ export const adminSendTicketNotification = async (req, res) => {
     });
   }
 };
+export const updateUserController = async (req, res) => {
+  const { uid } = req.params;
+  const updateData = req.body;
+
+  const requestingAdmin = req.admin;
+  const authorizedRoles = ["super_admin", "support"];
+
+  if (
+    !requestingAdmin ||
+    !authorizedRoles.includes(requestingAdmin.adminType)
+  ) {
+    return res.status(403).json({
+      success: false,
+      message:
+        "Access denied. You do not have permission to perform this action.",
+    });
+  }
+  const allowedUpdates = [
+    "firstname",
+    "lastname",
+    "username",
+    "email",
+    "isSuspended",
+    "website",
+    "department",
+    "organizationName",
+    "staffId",
+    "matricNumber",
+    "itagusername",
+    "schoolName",
+    "current_level",
+  ];
+  const filteredData = {};
+  Object.keys(updateData).forEach((key) => {
+    if (allowedUpdates.includes(key)) {
+      filteredData[key] = updateData[key];
+    }
+  });
+
+  try {
+    const updatedUser = await User.findOneAndUpdate(
+      { uid: uid },
+      { $set: filteredData },
+      { new: true, runValidators: true },
+    );
+
+    if (!updatedUser) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found.",
+      });
+    }
+    return res.status(200).json({
+      success: true,
+      user: updatedUser,
+    });
+  } catch (error) {
+    console.error("Admin Update Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while updating user.",
+      error: error.message,
+    });
+  }
+};
