@@ -3,11 +3,14 @@ import { protect, verifyAdmin } from "../middleware/auth.js";
 import {
   fetchAllAdmins,
   getNotifications,
+  adminFetchUserDetails,
+  adminFetchUserNotifications,
 } from "../controllers/fetchActions.js";
 import {
   deleteAdmin,
   updateAdmin,
   createAdmin,
+  adminSendTicketNotification,
 } from "../controllers/adminActions.js";
 
 export default function () {
@@ -18,5 +21,23 @@ export default function () {
   router.put("/:uid/update", protect, verifyAdmin, updateAdmin);
   router.delete("/:uid/delete", protect, verifyAdmin, deleteAdmin);
   router.get("/get-notifications", protect, verifyAdmin, getNotifications);
+  router.get(
+    "/fetch-user/:userId",
+    protect,
+    verifyAdmin,
+    adminFetchUserDetails,
+  );
+  router.get(
+    "/fetch-notifications/:userId",
+    protect,
+    verifyAdmin,
+    adminFetchUserNotifications,
+  );
+  router.post(
+    "/support/send-notification",
+    protect,
+    verifyAdmin,
+    adminSendTicketNotification,
+  );
   return router;
 }

@@ -599,6 +599,7 @@ export const notificationSchema = new mongoose.Schema(
       enum: [
         "auth",
         "social",
+        "system",
         "classroom",
         "store",
         "finance",
@@ -1127,7 +1128,6 @@ export const schoolConfigurationSchema = new mongoose.Schema(
 );
 export const supportTicketSchema = new mongoose.Schema(
   {
-    id: { type: String, required: true },
     userId: { type: String, required: true },
     ticketRefId: { type: String, unique: true, index: true },
     source: { type: String, enum: ["in-app", "email"], default: "in-app" },

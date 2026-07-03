@@ -14,6 +14,7 @@ import {
   OperationalInstitutions,
   Assessment,
   Admin,
+  SupportTicket,
 } from "../tableDeclarations.js";
 import { client } from "../workers/reditFile.js";
 import { createNotification } from "../services/notificationService.js";
@@ -257,7 +258,7 @@ export const fetchAllUserConversations = async (req, res) => {
       { $sort: { timestamp: -1 } },
       {
         $group: {
-          id: {
+          _id: {
             $cond: [{ $eq: ["$senderId", uid] }, "$recipientId", "$senderId"],
           },
           lastMessage: { $first: "$$ROOT" },
@@ -277,7 +278,7 @@ export const fetchAllUserConversations = async (req, res) => {
       { $unwind: "$otherUser" },
       {
         $project: {
-          id: 0,
+          _id: 0,
           otherUser: {
             uid: 1,
             firstname: 1,
@@ -352,7 +353,7 @@ export const fetchUserNotifications = async (req, res) => {
       { $sort: { createdAt: -1 } },
       {
         $group: {
-          id: {
+          _id: {
             actionType: "$actionType",
             entityId: {
               $ifNull: [
@@ -369,7 +370,7 @@ export const fetchUserNotifications = async (req, res) => {
       },
       {
         $project: {
-          id: 0,
+          _id: 0,
           notification: {
             $mergeObjects: [
               "$latest",
@@ -1191,5 +1192,124 @@ export const fetchPosts = async (req, res) => {
   } catch (err) {
     console.error("Feed error:", err);
     res.status(500).json({ error: err.message });
+  }
+};
+export const fetchActiveTickets = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 10;
+    const cursor = req.query.cursor;
+    const query = {
+      status: { $nin: ["closed", "resolved"] },
+    };
+
+    if (cursor) {
+      query._id = { $lt: cursor };
+    }
+
+    const tickets = await SupportTicket.find(query)
+      .sort({ _id: -1 })
+      .limit(limit)
+      .lean();
+    const nextCursor =
+      tickets.length === limit ? tickets[tickets.length - 1]._id : null;
+    console.log(`Admin ${req.admin.uid} fetched active support tickets.`);
+    res.status(200).json({
+      tickets,
+      nextCursor,
+    });
+  } catch (err) {
+    console.error("Fetch active tickets error:", err);
+    res.status(500).json({ error: "Failed to fetch support tickets" });
+  }
+};
+export const adminFetchUserDetails = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const user = await User.findOne({ uid: userId })
+      .select("-password -iCashPin -resetPinOTP -verificationToken -sessions")
+      .lean();
+
+    if (!user) {
+      return res
+        .status(404)
+        .json({ message: "User not found", success: false });
+    }
+    console.log(`Admin ${req.admin.uid} viewed details for user ${userId}`);
+    res.status(200).json(user);
+  } catch (error) {
+    console.error("Error fetching user details for admin:", error);
+    res.status(500).json({ message: "Server error", success: false });
+  }
+};
+export const adminFetchUserNotifications = async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { limit = "10", offset = "0" } = req.query;
+
+    if (!userId) {
+      return res.status(400).json({ message: "Missing userId parameter" });
+    }
+
+    const matchStage = {
+      $or: [{ recipientId: userId }],
+    };
+
+    const notifications = await Notification.aggregate([
+      { $match: matchStage },
+      { $sort: { createdAt: -1 } },
+      {
+        $group: {
+          _id: {
+            actionType: "$actionType",
+            entityId: {
+              $ifNull: [
+                "$payload.postId",
+                "$payload.followerId",
+                "$payload.viewerUid",
+                "$notificationId",
+              ],
+            },
+          },
+          latest: { $first: "$$ROOT" },
+          count: { $sum: 1 },
+        },
+      },
+      {
+        $project: {
+          _id: 0,
+          notification: {
+            $mergeObjects: [
+              "$latest",
+              {
+                payload: {
+                  $mergeObjects: [
+                    "$latest.payload",
+                    {
+                      primaryUser: {
+                        $ifNull: [
+                          "$latest.payload.username",
+                          "$latest.payload.firstname",
+                          "Someone",
+                        ],
+                      },
+                      othersCount: { $subtract: ["$count", 1] },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      },
+      { $replaceRoot: { newRoot: "$notification" } },
+      { $sort: { createdAt: -1 } },
+      { $skip: Math.max(parseInt(offset), 0) },
+      { $limit: Math.max(parseInt(limit), 1) },
+    ]);
+
+    res.status(200).json({ notifications, success: true });
+  } catch (error) {
+    console.error("Error fetching user notifications for admin:", error);
+    res.status(500).json({ message: "Server error", success: false });
   }
 };

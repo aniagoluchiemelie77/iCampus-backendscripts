@@ -861,3 +861,64 @@ export const supportTicketReceivedTemplate = (
   `;
   return emailWrapper(body);
 };
+export const supportTicketResolvedTemplate = (
+  userName,
+  ticketRefId,
+  date,
+  time,
+) => {
+  const body = `
+    <h2 style="color: ${theme.colors.primary}; margin-top: 0;">Support Ticket Resolved</h2>
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hello ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 13px">
+      Good news! We have successfully resolved your support request. 
+    </p>
+    
+    <div style="background: ${theme.colors.background}; padding: 15px; border-radius: 4px; margin: 20px 0; font-size: 14px;">
+      <strong>Ticket Reference ID:</strong> <span style="color: ${theme.colors.primary}; font-weight: bold;">${ticketRefId}</span><br>
+      <strong>Resolved On:</strong> ${date} at ${time}
+    </div>
+
+    <p style="color: ${colors.text}; font-size: 13px">
+      If you are still experiencing issues or need further assistance regarding this matter, please feel free to reach out and open a new ticket or reply directly to this email. We are always here to help.
+    </p>
+    
+    <p style="color: ${colors.text}; font-size: 13px; margin: 5px 0;">Thank you for your patience and for being part of our community.</p>
+    <p style="color: ${colors.text}; font-size: 13px">Best regards,<br><strong>iCampus Support Team</strong></p>
+  `;
+  return emailWrapper(body);
+};
+export const supportTicketReplyTemplate = (
+  userName,
+  ticketRefId,
+  adminMessage,
+  date,
+  time,
+) => {
+  const body = `
+    <h2 style="color: ${theme.colors.primary}; margin-top: 0;">New Support Response</h2>
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hello ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 13px">
+      Our support team has reviewed your inquiry and posted an update regarding your open ticket.
+    </p>
+    
+    <div style="background: ${theme.colors.background}; border-left: 4px solid ${theme.colors.primary}; padding: 15px; margin: 20px 0; border-radius: 0 4px 4px 0;">
+      <p style="color: ${colors.text}; font-size: 13.5px; line-height: 1.5; margin: 0; white-space: pre-wrap;">
+        ${adminMessage}
+      </p>
+    </div>
+
+    <div style="background: ${theme.colors.background}; padding: 12px 15px; border-radius: 4px; margin: 20px 0; font-size: 13px;">
+      <strong>Ticket Reference ID:</strong> <span style="color: ${theme.colors.primary}; font-weight: bold;">${ticketRefId}</span><br>
+      <strong>Updated:</strong> ${date} at ${time}
+    </div>
+
+    <p style="color: ${colors.text}; font-size: 13px">
+      If this resolves your issue, no further action is required. If you need clarification or additional help, simply reply directly to this email to update the support thread.
+    </p>
+    
+    <p style="color: ${colors.text}; font-size: 13px; margin: 5px 0;">Best regards,</p>
+    <p style="color: ${colors.text}; font-size: 13px"><strong>iCampus Support Team</strong></p>
+  `;
+  return emailWrapper(body);
+};

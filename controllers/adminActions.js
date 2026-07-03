@@ -1,5 +1,18 @@
-import { Admin } from "../tableDeclarations.js";
+import { Admin, SupportTicket, User } from "../tableDeclarations.js";
 import { notifyAdmins } from "../services/adminNotification.js";
+import { createNotification } from "../services/notifications.js";
+import { generateNotificationId } from "../utils/idGenerator.js";
+
+const now = new Date();
+const formattedDate = now.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+const formattedTime = now.toLocaleTimeString("en-US", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 export const deleteAdmin = async (req, res) => {
   try {
@@ -123,5 +136,59 @@ export const updateAdmin = async (req, res) => {
     res.status(200).json(updated);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+};
+export const adminSendTicketNotification = async (req, res) => {
+  try {
+    const { ticketRefId } = req.params;
+    const { recipientId, title, message, category } = req.body;
+
+    if (!message || !recipientId) {
+      return res.status(400).json({
+        success: false,
+        message: "Message and recipientId are required.",
+      });
+    }
+    const ticket = await SupportTicket.findOne({ ticketRefId });
+
+    if (!ticket) {
+      return res.status(404).json({
+        success: false,
+        message: "Ticket not found.",
+      });
+    }
+    const user = await User.findOne({ uid: recipientId }).select("email");
+
+    const notification = await createNotification({
+      notificationId: generateNotificationId("system"),
+      recipientId: recipientId,
+      recipientEmail: user?.email,
+      category: category || "system",
+      actionType: "SUPPORT_TICKET_REPLY",
+      title: title || `Update on Ticket #${ticketRefId}`,
+      message: message,
+      sendEmail: true,
+      payload: {
+        userName: user?.firstname || "User",
+        ticketRefId,
+        adminMessage: message,
+        date: formattedDate,
+        time: formattedTime,
+      },
+    });
+    ticket.status = "pending";
+    await ticket.save();
+    return res.status(200).json({
+      success: true,
+      message: "Notification sent and ticket status updated to pending.",
+      notification,
+      ticket,
+    });
+  } catch (error) {
+    console.error("adminSendTicketNotification Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error sending notification.",
+    });
   }
 };

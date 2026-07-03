@@ -29,6 +29,8 @@ import {
   agentAwaitingPickupEmailTemplate,
   newAdminWelcomeTemplate,
   supportTicketReceivedTemplate,
+  supportTicketResolvedTemplate,
+  supportTicketReplyTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -272,6 +274,39 @@ export const createNotification = async ({
           htmlContent = supportTicketReceivedTemplate(
             payload.userName,
             payload.ticketRefId,
+            payload.date,
+            payload.time,
+          );
+        }
+        break;
+      case "SUPPORT_TICKET_RESOLVED":
+        category = "system";
+        subject = `Update: Support Ticket #${payload.ticketRefId} Resolved`;
+        title = "Support Ticket Resolved";
+        message = `Dear iCampus user, your support ticket (Ref: ${payload.ticketRefId}) has been successfully resolved.`;
+
+        if (
+          canSendEmail &&
+          typeof supportTicketResolvedTemplate === "function"
+        ) {
+          htmlContent = supportTicketResolvedTemplate(
+            payload.userName,
+            payload.ticketRefId,
+            payload.date,
+            payload.time,
+          );
+        }
+        break;
+      case "SUPPORT_TICKET_REPLY":
+        category = "system";
+        subject = `New Response to Ticket #${payload.ticketRefId}`;
+        title = title || "Support Ticket Update";
+        message = message || payload.adminMessage;
+        if (canSendEmail && typeof supportTicketReplyTemplate === "function") {
+          htmlContent = supportTicketReplyTemplate(
+            payload.userName,
+            payload.ticketRefId,
+            payload.adminMessage,
             payload.date,
             payload.time,
           );
@@ -717,6 +752,12 @@ export const createNotification = async ({
         subject = "Security Alert: Heavy Withdrawal Activity";
         title = "Rapid Withdrawal Attempts Detected";
         message = `Warning: User ${payload.userId} has attempted 5+ withdrawals within one hour.`;
+        break;
+      case "SUPPORT_TICKET_RESOLVED_ADMIN":
+        category = "system";
+        subject = `Audit: Ticket Resolved - #${payload.ticketRefId}`;
+        title = "Ticket Resolution Audit";
+        message = `Ticket #${payload.ticketRefId} initiated by user ${payload.userId} was marked as resolved by admin ${payload.adminId}.`;
         break;
 
       default:
