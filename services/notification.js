@@ -312,6 +312,11 @@ export const createNotification = async ({
           );
         }
         break;
+      case "CLASS_SCHEDULED":
+        category = "academic";
+        entityId = payload.lectureId;
+        entityType = "lecture";
+        break;
 
       //navigate to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId
       case "LECTURER_REVIEW_REQUEST":

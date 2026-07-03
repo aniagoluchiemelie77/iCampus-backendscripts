@@ -14,6 +14,7 @@ import {
   Notification,
   UserDownloads,
   SupportTicket,
+  Lectures,
 } from "../tableDeclarations.js";
 import { icashPinResetTemplate } from "../services/emailTemplates.js";
 import { sendEmail } from "../services/emailService.js";
@@ -1591,5 +1592,89 @@ export const searchPosts = async (req, res) => {
       success: false,
       message: "Failed to retrieve posts matching search parameter.",
     });
+  }
+};
+export const createQuickMeeting = async (req, res) => {
+  try {
+    const { date, startTime, endTime, topicName, lectureType } = req.body;
+    const hostId = req.user.uid;
+
+    const conflict = await Lectures.findOne({
+      date: date,
+      hostId: hostId,
+      startTime: { $lt: endTime },
+      endTime: { $gt: startTime },
+    });
+
+    if (conflict) {
+      return res.status(409).json({
+        message: `Conflict detected! You are already scheduled for "${conflict.topicName}" at this time.`,
+      });
+    }
+
+    const location =
+      lectureType === "Online"
+        ? `https://live.useicampus.io/${hostId}/${Math.random().toString(36).substring(7)}`
+        : req.body.location;
+
+    const newMeeting = {
+      id: generateLectureId(hostId, lectureType),
+      hostId,
+      topicName,
+      date,
+      startTime,
+      endTime,
+      lectureType,
+      location,
+      status: "scheduled",
+      isTaught: false,
+      attendance: [],
+      courseId: null,
+      department: null,
+      level: null,
+    };
+
+    const result = await Lectures.create(newMeeting);
+    const readableDate = new Date(date).toLocaleDateString("en-US", {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    });
+    const message = `Your online class session '${topicName}' is set for ${readableDate} at ${startTime}. Click here to join: ${location}`;
+
+    await createNotification({
+      notificationId: generateNotificationId("meeting"),
+      recipientId: hostId,
+      category: "academic",
+      actionType: "CLASS_SCHEDULED",
+      title: "Class Scheduled",
+      message,
+      payload: {
+        topicName,
+        lectureId: result.id,
+        location,
+        time: startTime,
+        date: readableDate,
+      },
+      entityId: result.id,
+      entityType: "lecture",
+      sendPush: true,
+      sendSocket: true,
+      saveToDb: true,
+    });
+    await User.updateOne(
+      { uid: hostId },
+      {
+        $inc: { "monthlyStats.minutesActive": 15, "monthlyStats.aiQueries": 2 },
+      },
+    );
+
+    res.status(201).json({
+      message: "Meeting scheduled successfully",
+      meeting: result,
+    });
+  } catch (error) {
+    console.error("Quick Meeting Error:", error);
+    res.status(500).json({ message: "Internal Server Error" });
   }
 };

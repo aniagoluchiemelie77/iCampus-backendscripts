@@ -52,6 +52,7 @@ import {
   refreshUserDetails,
   aiChat,
   AdminLogin,
+  createQuickMeeting,
 } from "../controllers/userActionsController.js";
 import {
   signUp,
@@ -162,6 +163,7 @@ export default function () {
   router.put("/preferences/toggleTheme", protect, toggleTheme);
   router.get("/refresh-user-details", protect, refreshUserDetails);
   router.post("/courses/manual-create", protect, uploadCourseDetailsManually);
+  router.post("/online-classes/create", protect, createQuickMeeting);
 
   return router;
 }
