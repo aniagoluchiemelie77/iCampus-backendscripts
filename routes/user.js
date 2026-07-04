@@ -51,7 +51,6 @@ import {
   toggleTheme,
   refreshUserDetails,
   aiChat,
-  AdminLogin,
   createQuickMeeting,
 } from "../controllers/userActionsController.js";
 import {
@@ -64,6 +63,7 @@ import {
   verifyEmailUsingCode,
   forgotPassword,
   changePassword,
+  AdminLogin,
 } from "../controllers/signinActions.js";
 import { Lectures } from "../tableDeclarations.js";
 

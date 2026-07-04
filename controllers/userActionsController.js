@@ -36,6 +36,7 @@ import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
+import { logControllerPerformance } from "../utils/eventLogger.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -184,6 +185,9 @@ const FAQ_DATA = [
 ];
 
 export const createReviewController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "ReviewController";
+  const action = "createReview";
   try {
     let reviewerId = null;
     reviewerId = req.user?.id;
@@ -220,6 +224,14 @@ export const createReviewController = async (req, res) => {
       attributes,
     } = req.body;
     if (!targetId || !targetType || !rating) {
+      const cause = "Missing required tracking metrics";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
       return res.status(400).json({
         success: false,
         message:
@@ -266,12 +278,23 @@ export const createReviewController = async (req, res) => {
     });
 
     await newReview.save();
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(201).json({
       success: true,
       message: "Reviews validation metrics published successfully.",
     });
   } catch (error) {
-    console.error("Global crash layer hit in createReviewController:", error);
+    console.error(
+      "Global crash layer hit in createReviewController:",
+      error.message,
+    );
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message:
@@ -280,6 +303,9 @@ export const createReviewController = async (req, res) => {
   }
 };
 export const createNewPasswordInApp = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "InAppPasswordCreationController";
+  const action = "createPasswordInApp";
   const { newPassword } = req.body;
   try {
     const user = await User.findOne({ uid: req.user.id });
@@ -307,16 +333,27 @@ export const createNewPasswordInApp = async (req, res) => {
       sendSocket: true,
       saveToDb: true,
     });
+    logControllerPerformance(controllerName, action, startTime, "success");
     res
       .status(200)
       .json({ success: true, message: "Password updated successfully" });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res
       .status(500)
       .json({ success: false, message: "Could not update password" });
   }
 };
 export const deleteAccount = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deleteAccountController";
+  const action = "deleteAccount";
   const session = await mongoose.startSession();
   session.startTransaction();
   try {
@@ -324,7 +361,17 @@ export const deleteAccount = async (req, res) => {
     const { reason } = req.body;
 
     const user = await User.findOne({ uid: userUid });
-    if (!user) throw new Error("User not found");
+    if (!user) {
+      const cause = "User not found";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
+      throw new Error("User not found");
+    }
     await DeletedUser.create(
       [
         {
@@ -376,11 +423,19 @@ export const deleteAccount = async (req, res) => {
         senderId: "system",
       },
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res
       .status(200)
       .json({ status: true, message: "Account deleted successfully." });
   } catch (error) {
     await session.abortTransaction();
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     console.error("Cleanup Failed:", error);
     res
       .status(500)
@@ -390,6 +445,9 @@ export const deleteAccount = async (req, res) => {
   }
 };
 export const verifyPhoneNumberOTP = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyPhoneNumberController";
+  const action = "verifyPhoneNumber";
   const { phoneNumber, codeInput } = req.body;
 
   const hashedInput = crypto
@@ -403,6 +461,8 @@ export const verifyPhoneNumberOTP = async (req, res) => {
   });
 
   if (!verificationRecord) {
+    const cause = "Invalid or expired code";
+    logControllerPerformance(controllerName, action, startTime, "error", cause);
     return res.status(400).json({ message: "Invalid or expired code" });
   }
 
@@ -413,9 +473,12 @@ export const verifyPhoneNumberOTP = async (req, res) => {
   );
 
   if (!updatedUser) {
+    const cause = "User not found";
+    logControllerPerformance(controllerName, action, startTime, "error", cause);
     return res.status(404).json({ message: "User not found" });
   }
   await PhoneNumberVerification.deleteOne({ _id: verificationRecord._id });
+  logControllerPerformance(controllerName, action, startTime, "success");
 
   res.status(200).json({
     success: true,
@@ -424,6 +487,9 @@ export const verifyPhoneNumberOTP = async (req, res) => {
   });
 };
 export const updateEmails = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "updateEmailController";
+  const action = "updateEmail";
   const { email, type } = req.body;
   const userUid = req.user.id;
   let update = {};
@@ -437,6 +503,8 @@ export const updateEmails = async (req, res) => {
       },
     };
   } else {
+    const cause = "Invalid update type";
+    logControllerPerformance(controllerName, action, startTime, "error", cause);
     return res
       .status(400)
       .json({ message: "Invalid update type", success: false });
@@ -445,29 +513,47 @@ export const updateEmails = async (req, res) => {
     new: true,
   });
   if (!updatedUser) {
+    const cause = "User not found";
+    logControllerPerformance(controllerName, action, startTime, "error", cause);
     return res.status(404).json({ message: "User not found", success: false });
   }
+  logControllerPerformance(controllerName, action, startTime, "success");
   return res.status(200).json({
     message: `${type === "primary" ? "Primary" : "Recovery"} email updated`,
     success: true,
   });
 };
 export const deleteRecoveryEmail = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deleteRecoveryEmailController";
+  const action = "deleteRecoveryEmail";
   const { emailToDelete } = req.body;
-  const userUid = req.user.iid;
+  const userUid = req.user.id;
   const updatedUser = await User.findOneAndUpdate(
     { uid: userUid },
     { $pull: { recoveryEmails: { email: emailToDelete } } },
     { new: true },
   );
+  logControllerPerformance(controllerName, action, startTime, "success");
   res.json({ success: true, recoveryEmails: updatedUser.recoveryEmails });
 };
 export const deletePhoneNumber = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deletePhoneNumberController";
+  const action = "deletePhoneNumber";
   try {
     const { phoneNumber } = req.body;
     const userUid = req.user.id;
 
     if (!phoneNumber) {
+      const cause = "Phone number is required";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
       return res.status(400).json({ message: "Phone number is required" });
     }
     const updatedUser = await User.findOneAndUpdate(
@@ -476,18 +562,37 @@ export const deletePhoneNumber = async (req, res) => {
       { new: true },
     );
     if (!updatedUser) {
+      const cause = "User not found";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
       return res.status(404).json({ message: "User not found" });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Phone number deleted successfully",
       phoneNumbers: updatedUser.phoneNumbers,
     });
   } catch (error) {
     console.error("Delete phone error:", error);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({ message: "Server error" });
   }
 };
 export const toggleBlockedUsers = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleBlockUsersController";
+  const action = "toggleBlockUsers";
   const { targetUserId } = req.body;
   const userId = req.user.uid;
 
@@ -500,6 +605,7 @@ export const toggleBlockedUsers = async (req, res) => {
         { uid: userId },
         { $pull: { blockedUsers: targetUserId } },
       );
+      logControllerPerformance(controllerName, action, startTime, "success");
       res.status(200).json({ action: "unblocked" });
     } else {
       await User.updateOne(
@@ -512,18 +618,37 @@ export const toggleBlockedUsers = async (req, res) => {
           { followerId: targetUserId, followingId: userId },
         ],
       });
+      logControllerPerformance(controllerName, action, startTime, "success");
       res.status(200).json({ action: "blocked" });
     }
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ error: err.message });
   }
 };
 export const customizeItag = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "customizeItagController";
+  const action = "customizeItag";
   try {
     const userId = req.user.id;
     const { updates } = req.body;
 
     if (!userId) {
+      const cause = "User ID is required";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
       return res.status(400).json({
         success: false,
         message: "User ID is required",
@@ -535,12 +660,20 @@ export const customizeItag = async (req, res) => {
       { new: true, runValidators: true },
     );
     if (!updatedITag) {
+      const cause = "iTag not found";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
       return res.status(404).json({
         success: false,
         message: "iTag not found",
       });
     }
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: "iTag updated successfully",
@@ -548,6 +681,13 @@ export const customizeItag = async (req, res) => {
     });
   } catch (error) {
     console.error("Update Error:", error);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     if (error.code === 11000) {
       return res.status(400).json({
         success: false,
@@ -561,49 +701,108 @@ export const customizeItag = async (req, res) => {
   }
 };
 export const verifyPasswordInapp = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyPasswordInAppController";
+  const action = "verifyPasswordInApp";
   const { password } = req.body;
   const userId = req.user.id;
   try {
     const user = await User.findOne({ uid: userId }).select("+password");
     if (!user) {
+      const cause = "User not found";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
     }
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
+      const cause = "Incorrect current password";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
       return res
         .status(401)
         .json({ success: false, message: "Incorrect current password" });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ success: true, message: "Password verified" });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const revokeLoggedInDeviceSession = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "revokeLoggedInDeviceController";
+  const action = "revokeLoggedInDevice";
   const userId = req.user.id;
   const { deviceIdToRevoke } = req.body;
 
   try {
     const user = await User.findOne({ uid: userId });
-    if (!user) return res.status(404).json({ error: "User not found" });
+    if (!user) {
+      const cause = "User not found";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
+      return res.status(404).json({ error: "User not found" });
+    }
     const originalLength = user.sessions.length;
     user.sessions = user.sessions.filter(
       (s) => s.deviceId !== deviceIdToRevoke,
     );
 
     if (user.sessions.length === originalLength) {
+      const cause = "Session not found";
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        cause,
+      );
       return res.status(404).json({ error: "Session not found" });
     }
     await addFlag(userId, "SESSION_REVOKED");
     await user.save();
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ message: "Device logged out successfully" });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ error: "Could not revoke session" });
   }
 };
 export const patchUserPreferences = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "updateUserPreferencesController";
+  const action = "updateUserPreferences";
   const userId = req.user.id;
   const updateData = req.body;
 
@@ -613,16 +812,27 @@ export const patchUserPreferences = async (req, res) => {
       { $set: updateData },
       { new: true, upsert: true },
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       message: "Preferences updated successfully",
       preferences: updatedPrefs,
     });
   } catch (error) {
     console.error(error);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ error: "Server error updating preferences" });
   }
 };
 export const sendPhoneNumberOTP = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "sendOtpToMobileController";
+  const action = "sendOtpToMobile";
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
   const client = twilio(accountSid, authToken);
@@ -642,29 +852,59 @@ export const sendPhoneNumberOTP = async (req, res) => {
       contentVariables: JSON.stringify({ 1: otpCode }),
       to: `${channel}:${phoneNumber}`,
     });
-
-    console.log("WhatsApp sent:", message.sid);
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ success: true, message: "OTP sent to WhatsApp" });
   } catch (error) {
     console.error("Twilio Error:", error);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res
       .status(500)
       .json({ success: false, message: "Failed to send WhatsApp message" });
   }
 };
 export const verifyIcashPin = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyIcashPinController";
+  const action = "verifyIcashPin";
   const { pin } = req.body;
   const userId = req.user.id;
   const user = await User.findOne({ uid: userId }).select("+iCashPin");
   if (!user) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "User not found",
+    );
     return res.status(404).json({ message: "User not found" });
   }
   if (user.iCashLockoutUntil && user.iCashLockoutUntil > Date.now()) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Locked. Try again",
+    );
     return res.status(403).json({
       message: `Locked. Try again after ${moment(user.iCashLockoutUntil).format("LT")}`,
     });
   }
   if (user.isSuspended) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "This account is already suspended.",
+    );
     return res.status(403).json({
       isSuspended: true,
       message: "This account is already suspended.",
@@ -687,6 +927,13 @@ export const verifyIcashPin = async (req, res) => {
         },
         true,
       );
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Maximum attempts reached. Account suspended for security.",
+      );
       return res.status(403).json({
         isSuspended: true,
         message: "Maximum attempts reached. Account suspended for security.",
@@ -694,6 +941,13 @@ export const verifyIcashPin = async (req, res) => {
     }
 
     await user.save();
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid PIN.",
+    );
     return res.status(401).json({
       message: "Invalid PIN",
       attemptsRemaining: 5 - user.iCashAttempts,
@@ -702,14 +956,24 @@ export const verifyIcashPin = async (req, res) => {
   user.iCashAttempts = 0;
   user.iCashLockoutUntil = null;
   await user.save();
-
+  logControllerPerformance(controllerName, action, startTime, "success");
   res.status(200).json({ success: true });
 };
 export const icashPinSetup = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "icashPinSetupController";
+  const action = "icashPinSetup";
   const { pin } = req.body;
   const userId = req.user.id;
   const user = await User.findOne({ uid: userId }).select("+iCashPin");
   if (user.iCashPin) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "PIN already exists. Use the 'Reset PIN' flow to change it.",
+    );
     return res.status(400).json({
       message: "PIN already exists. Use the 'Reset PIN' flow to change it.",
     });
@@ -718,9 +982,13 @@ export const icashPinSetup = async (req, res) => {
   user.iCashPin = await bcrypt.hash(pin, salt);
   user.twoFactorEnabled = true;
   await user.save();
+  logControllerPerformance(controllerName, action, startTime, "success");
   res.status(200).json({ success: true, message: "iCash PIN secured." });
 };
 export const requestIcashPinReset = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "requestIcashPinResetController";
+  const action = "requestIcashPinReset";
   const userId = req.user.id;
   const user = await User.findOne({ uid: userId });
   const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -735,15 +1003,26 @@ export const requestIcashPinReset = async (req, res) => {
       message: `Your reset code is ${otp}`,
       html: htmlContent,
     });
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ message: "OTP sent to your registered email." });
   } catch (err) {
     user.resetPinOTP = undefined;
     user.resetPinOTPExpires = undefined;
     await user.save();
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Email could not be sent.",
+    );
     res.status(500).json({ message: "Email could not be sent." });
   }
 };
 export const resetIcashPin = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "resetIcashPinController";
+  const action = "resetIcashPin";
   const { otp, newPin } = req.body;
   const userId = req.user.id;
   const user = await User.findOne({
@@ -753,14 +1032,28 @@ export const resetIcashPin = async (req, res) => {
   }).select("+iCashPin suspiciousActivity");
 
   if (!user) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid or expired OTP.",
+    );
     return res.status(400).json({ message: "Invalid or expired OTP." });
   }
   if (user.suspiciousActivity && user.suspiciousActivity.length > 0) {
     await addFlag(userId, "PIN_RESET_WHILE_SUSPICIOUS");
     if (user.suspiciousActivity.length > 3) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Account security in review. Please contact support to help reset PIN.",
+      );
       return res.status(403).json({
         message:
-          "Account security in review. Please contact support to reset PIN.",
+          "Account security in review. Please contact support to help reset PIN.",
       });
     }
   }
@@ -801,21 +1094,36 @@ export const resetIcashPin = async (req, res) => {
     },
     false, // Typically don't email admins for every PIN reset unless required
   ).catch((err) => console.error("Admin audit notification failed:", err));
+  logControllerPerformance(controllerName, action, startTime, "success");
   res.status(200).json({ success: true, message: "PIN updated successfully." });
 };
 export const markAllMessagesAsRead = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "markAllMessagesAsReadController";
+  const action = "markAllMessagesAsRead";
   try {
     const userId = req.user.id;
     await Message.updateMany(
       { recipientId: userId, status: { $ne: "seen" } },
       { $set: { status: "seen" } },
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json({ success: true });
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ error: err.message, success: false });
   }
 };
 export const markNotificationAsRead = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "markNotificationAsReadController";
+  const action = "markNotificationAsRead";
   try {
     const { id } = req.params;
     const userId = req.user.uid;
@@ -829,9 +1137,17 @@ export const markNotificationAsRead = async (req, res) => {
     );
 
     if (!notification) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Notification not found",
+      );
       return res.status(404).json({ message: "Notification not found" });
     }
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       message: "Notification marked as read",
@@ -839,10 +1155,20 @@ export const markNotificationAsRead = async (req, res) => {
     });
   } catch (error) {
     console.error("Error marking notification as read:", error);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const markAllNotificationsAsRead = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "markAllNotificationAsReadController";
+  const action = "markAllNotificationAsRead";
   try {
     const userId = req.user.uid;
     const result = await Notification.updateMany(
@@ -854,7 +1180,7 @@ export const markAllNotificationsAsRead = async (req, res) => {
         $set: { isRead: true },
       },
     );
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       message: "All notifications marked as read",
@@ -862,22 +1188,46 @@ export const markAllNotificationsAsRead = async (req, res) => {
     });
   } catch (error) {
     console.error("Error marking all notifications as read:", error);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res
       .status(500)
       .json({ success: false, message: "Server error updating notifications" });
   }
 };
 export const toggleFollowingUsers = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleFollowingController";
+  const action = "toggleFollowing";
   try {
     const followerId = req.user.uid;
     const { followingId } = req.body;
 
     if (!followingId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing target followingId",
+      );
       return res
         .status(400)
         .json({ success: false, message: "Missing target followingId" });
     }
     if (followerId === followingId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "You cannot follow yourself",
+      );
       return res
         .status(400)
         .json({ success: false, message: "You cannot follow yourself" });
@@ -885,11 +1235,12 @@ export const toggleFollowingUsers = async (req, res) => {
     const existingFollow = await Follow.findOne({ followerId, followingId });
 
     if (existingFollow) {
-      await Follow.deleteOne({ _id: existingFollow._id }); // Fix: mongoose use _id
+      await Follow.deleteOne({ _id: existingFollow._id });
       const targetUser = await User.findOne({ uid: followingId })
         .select("firstname")
         .lean();
 
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         success: true,
         action: "unfollowed",
@@ -917,7 +1268,7 @@ export const toggleFollowingUsers = async (req, res) => {
         sendSocket: true,
         saveToDb: true,
       }).catch((err) => console.error("Follow Notification Error:", err));
-
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         success: true,
         action: "followed",
@@ -926,10 +1277,20 @@ export const toggleFollowingUsers = async (req, res) => {
     }
   } catch (error) {
     console.error("Follow Toggle Error:", error);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const updateUserProfile = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "updateUserProfileController";
+  const action = "updateUserProfile";
   try {
     const userId = req.user.id;
     const updates = req.body;
@@ -961,15 +1322,26 @@ export const updateUserProfile = async (req, res) => {
       { new: true },
     ).select("-resetPinOTP -iCashPin -password -refreshTokens");
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       data: updatedUser,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 export const updateDownloadedCourseViewProgress = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "updateDownloadedCourseViewProgressController";
+  const action = "updateDownloadedCourseViewProgress";
   const { productId, progress, completedLessons, lastWatched } = req.body;
   const userId = req.user.id;
   try {
@@ -990,31 +1362,64 @@ export const updateDownloadedCourseViewProgress = async (req, res) => {
     );
 
     if (!updatedUserDownloads) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Product not found in user's library",
+      );
       return res
         .status(404)
         .json({ message: "Product not found in user's library" });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ success: true, data: updatedUserDownloads });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Server Error", error });
   }
 };
 export const verifyiTagUsernameAvailability = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyiTagUsernameAvailabilityController";
+  const action = "verifyiTagUsernameAvailability";
   try {
     const { val } = req.params;
     const iTagData = await ITag.findOne({ username: val });
 
     if (!iTagData) {
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(404).json({
         available: true,
         message: "iTag username available",
       });
     }
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "iTag username already exists",
+    );
     return res.status(200).json({
       available: false,
       message: "iTag username already exists",
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     console.error("Error fetching iTag:", error);
     return res.status(500).json({
       message: "Server error",
@@ -1022,6 +1427,9 @@ export const verifyiTagUsernameAvailability = async (req, res) => {
   }
 };
 export const searchBookInLibrary = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "searchBookInLibraryController";
+  const action = "searchBookInLibrary";
   const { q } = req.query;
   const userId = req.user.id;
   const searchUrl = `https://1lib.sk/s/${encodeURIComponent(q)}`;
@@ -1052,19 +1460,14 @@ export const searchBookInLibrary = async (req, res) => {
 
     const $ = cheerio.load(data);
     const books = [];
-
-    // 1lib.sk specific selectors
     $(".resItemBox").each((index, element) => {
       const row = $(element);
-
-      // Extracting metadata
       const title = row.find('h3[itemprop="name"] a').text().trim();
       const author = row.find(".authors a").text().trim() || "Unknown Author";
       const thumbnail =
         row.find(".cover").attr("data-src") || row.find(".cover").attr("src");
       const detailsUrl = row.find('h3[itemprop="name"] a').attr("href");
 
-      // Filesize and Extension are usually inside .property_value or property_size
       const extension = row.find(".property_value").first().text().trim();
       const size = row.find(".property_size").text().trim();
       const year = row.find(".property_year").text().trim();
@@ -1084,14 +1487,24 @@ export const searchBookInLibrary = async (req, res) => {
         });
       }
     });
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json(books);
   } catch (error) {
     console.error("Scraping Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ error: "Failed to connect to the library" });
   }
 };
 export const searchUserUsingUidOrNameQuery = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "searchUserUsingUidOrNameQueryController";
+  const action = "searchUserUsingUidOrNameQuery";
   const { q, uid, viewerRole, viewerTier } = req.query;
   try {
     let users;
@@ -1108,6 +1521,13 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
         ],
       }).limit(20);
     } else {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Query or UID required",
+      );
       return res
         .status(400)
         .json({ success: false, message: "Query or UID required" });
@@ -1131,18 +1551,36 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
           isEnterprise || isPro ? Math.round(u.currentIScore) : "Locked",
       };
     });
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json({ success: true, data: uid ? safeResults[0] : safeResults });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message, success: false });
   }
 };
 export const checkAccountState = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "checkAccountStateController";
+  const action = "checkAccountState";
   try {
     const user = await User.findOne({ uid: req.user.uid });
     if (!user) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
       return res.status(404).json({ message: "User not found" });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       user: {
@@ -1151,10 +1589,20 @@ export const checkAccountState = async (req, res) => {
       },
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Server error" });
   }
 };
 export const createPersonaVerifyInquiry = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createPersonaVerifyInquiryController";
+  const action = "createPersonaVerifyInquiry";
   try {
     const userId = req.user.id;
     const { userType } = req.body;
@@ -1187,9 +1635,17 @@ export const createPersonaVerifyInquiry = async (req, res) => {
       },
     );
     const inquiryId = response.data.data.id;
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ inquiryId });
   } catch (error) {
     console.error("Persona API Error:", error.response?.data || error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({
       error: "Failed to initialize verification session",
       details: error.response?.data?.errors,
@@ -1197,6 +1653,9 @@ export const createPersonaVerifyInquiry = async (req, res) => {
   }
 };
 export const handleUnifiedCourseSearch = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "handleUnifiedCourseSearchController";
+  const action = "handleUnifiedCourseSearch";
   try {
     const searchQuery = req.query.q;
     if (!searchQuery || searchQuery.trim().length < 2) {
@@ -1303,13 +1762,20 @@ export const handleUnifiedCourseSearch = async (req, res) => {
       ...normalizedInstitutional,
       ...normalizedPremium,
     ].sort((a, b) => a.title.localeCompare(b.title));
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       courses: dynamicUnifiedResults,
     });
   } catch (error) {
-    console.error("Unified course search failure:", error);
+    console.error("Unified course search failure:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: "Internal server lookup engine exception error.",
@@ -1317,6 +1783,9 @@ export const handleUnifiedCourseSearch = async (req, res) => {
   }
 };
 export const handleUnifiedResourceSearch = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "handleUnifiedResourceSearchController";
+  const action = "handleUnifiedResourceSearch";
   try {
     const searchQuery = req.query.q;
     if (!searchQuery || searchQuery.trim().length < 2) {
@@ -1395,12 +1864,20 @@ export const handleUnifiedResourceSearch = async (req, res) => {
       ...normalizedPremium,
     ].sort((a, b) => a.title.localeCompare(b.title));
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       resources: unifiedResources,
     });
   } catch (error) {
-    console.error("Unified resource library lookup down: ", error);
+    console.error("Unified resource library lookup down: ", error.message);
+    await logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: "Internal engine error resolving resource records.",
@@ -1408,10 +1885,20 @@ export const handleUnifiedResourceSearch = async (req, res) => {
   }
 };
 export const toggleTheme = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleThemeController";
+  const action = "toggleTheme";
   try {
     const { theme } = req.body;
 
     if (!["light", "dark", "system"].includes(theme)) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid choice schema profile allocation assignment.",
+      );
       return res.status(400).json({
         message: "Invalid choice schema profile allocation assignment.",
       });
@@ -1422,21 +1909,39 @@ export const toggleTheme = async (req, res) => {
       { new: true, upsert: true },
     );
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: "Theme synchronization configurations stored successfully.",
     });
   } catch (error) {
-    console.error("Preferences Update Engine System Fault:", error);
+    console.error("Preferences Update Engine System Fault:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res
       .status(500)
       .json({ message: "Internal Server Error", error: error.message });
   }
 };
 export const refreshUserDetails = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "refreshUserDetailsController";
+  const action = "refreshUserDetails";
   try {
     const uid = req.user.uid;
     if (!uid) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized: Missing user identifier",
+      );
       return res
         .status(401)
         .json({ message: "Unauthorized: Missing user identifier" });
@@ -1446,6 +1951,13 @@ export const refreshUserDetails = async (req, res) => {
       userPrefs.findOne({ uid }),
     ]);
     if (!user) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
       return res.status(404).json({ message: "User not found" });
     }
 
@@ -1457,6 +1969,7 @@ export const refreshUserDetails = async (req, res) => {
     } = user.toObject();
     safeUser.theme = preferences ? preferences.theme : "light";
     const { accessToken, refreshToken } = await generateTokens(user);
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Refresh successful",
       user: safeUser,
@@ -1464,11 +1977,21 @@ export const refreshUserDetails = async (req, res) => {
       refreshToken,
     });
   } catch (error) {
-    console.error("Error in user refresh handler:", error);
+    console.error("Error in user refresh handler:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({ message: "Internal server error" });
   }
 };
 export const aiChat = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createQuickMeetingController";
+  const action = "createQuickMeeting";
   const { message, context, history } = req.body;
   const uid = req.user.uid;
   const { type, data } = context;
@@ -1541,17 +2064,29 @@ export const aiChat = async (req, res) => {
       );
     }
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json({ reply: finalReply, ticketId: ticket.ticketRefId });
   } catch (error) {
-    console.error("AI Chat Error:", error);
+    console.error("AI Chat Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ error: "Failed to fetch response" });
   }
 };
 export const searchPosts = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "searchPostsController";
+  const action = "searchPosts";
   try {
     const searchQuery = req.query.q;
 
     if (!searchQuery || searchQuery.trim().length < 2) {
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({ success: true, posts: [] });
     }
     const sanitizedQuery = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1580,14 +2115,21 @@ export const searchPosts = async (req, res) => {
         };
       }),
     );
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       count: formattedPosts.length,
       posts: formattedPosts,
     });
   } catch (error) {
-    console.error("Database match compilation exception:", error);
+    console.error("Database match compilation exception:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: "Failed to retrieve posts matching search parameter.",
@@ -1595,6 +2137,9 @@ export const searchPosts = async (req, res) => {
   }
 };
 export const createQuickMeeting = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createQuickMeetingController";
+  const action = "createQuickMeeting";
   try {
     const { date, startTime, endTime, topicName, lectureType } = req.body;
     const hostId = req.user.uid;
@@ -1607,6 +2152,13 @@ export const createQuickMeeting = async (req, res) => {
     });
 
     if (conflict) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Conflict detected",
+      );
       return res.status(409).json({
         message: `Conflict detected! You are already scheduled for "${conflict.topicName}" at this time.`,
       });
@@ -1669,12 +2221,20 @@ export const createQuickMeeting = async (req, res) => {
       },
     );
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(201).json({
       message: "Meeting scheduled successfully",
       meeting: result,
     });
   } catch (error) {
-    console.error("Quick Meeting Error:", error);
+    console.error("Quick Meeting Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Internal Server Error" });
   }
 };

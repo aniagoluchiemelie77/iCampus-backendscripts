@@ -25,6 +25,7 @@ import { calculateHaversineDistance } from "../utils/distanceCalHelper.js";
 import fs from "fs/promises";
 import { TAX_RATE, AGENT_RATE } from "../constants/inAppConstants.js";
 import { notifyAdmins } from "../services/adminNotification.js";
+import { logControllerPerformance } from "../utils/eventLogger.js";
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
   year: "numeric",
@@ -187,6 +188,9 @@ async function processNotificationFanOut(
   }
 }
 export const fetchStoreProducts = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchStoreProductsController";
+  const action = "fetchStoreProducts";
   const { q, category, cursor, limit = 10 } = req.query;
   try {
     let query = { isAvailable: true };
@@ -209,19 +213,31 @@ export const fetchStoreProducts = async (req, res) => {
     const products = await Product.find(query).sort(sort).limit(Number(limit));
     const nextCursor =
       products.length === Number(limit)
-        ? products[products.length - 1]._id
+        ? products[products.length - 1].productId
         : null;
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json({ products, nextCursor });
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ message: err.message });
   }
 };
 export const fetchAllProducts = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllProductsController";
+  const action = "fetchAllProducts";
   const CACHE_KEY = "catalog:all_products";
   try {
     const cachedProducts = await redis.get(CACHE_KEY);
 
     if (cachedProducts) {
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         success: true,
         products: JSON.parse(cachedProducts),
@@ -237,17 +253,28 @@ export const fetchAllProducts = async (req, res) => {
       EX: 18000,
     });
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       products,
       source: "database",
     });
   } catch (error) {
-    console.error("Cache/DB Error:", error);
+    console.error("Cache/DB Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: "Internal server error" });
   }
 };
 export const clearUserCart = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "clearUserCartController";
+  const action = "clearUserCart";
   try {
     const userId = req.user.id;
 
@@ -258,19 +285,39 @@ export const clearUserCart = async (req, res) => {
     );
 
     if (!updatedUser) {
+      logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            'User not found',
+          );
       return res.status(404).json({
         status: false,
         message: "User not found",
       });
     }
 
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success"
+        );
     res.status(200).json({
       status: true,
       message: "Cart cleared successfully",
       cart: updatedUser.cart,
     });
   } catch (error) {
-    console.error("Clear Cart Error:", error);
+    console.error("Clear Cart Error:", error.message);
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
     res.status(500).json({
       status: false,
       message: "An error occurred while clearing the cart",
@@ -278,6 +325,9 @@ export const clearUserCart = async (req, res) => {
   }
 };
 export const bulkAddToCart = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "bulkAddToCartController";
+  const action = "bulkAddToCart";
   const { items } = req.body;
   const userId = req.user.id;
   const user = await User.findOne({ uid: userId });
@@ -289,6 +339,12 @@ export const bulkAddToCart = async (req, res) => {
   });
   user.cart = newCart;
   await user.save();
+  logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "success"
+      );
   res.status(200).json({
     status: true,
     cart: user.cart,
@@ -296,11 +352,23 @@ export const bulkAddToCart = async (req, res) => {
   });
 };
 export const clearFavorites = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "clearFavoritesController";
+  const action = "clearFavorites";
   const userId = req.user.id;
   await User.findOneAndUpdate({ uid: userId }, { $set: { favorites: [] } });
+  logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "success"
+      );
   res.status(200).json({ status: true });
 };
 export const initializeCheckout = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "initializeCheckoutController";
+  const action = "initializeCheckout";
   const { items, totals, buyerId, shippingContact } = req.body;
   const session = await mongoose.startSession();
   const PAYOUT_FACTOR = 1 - TAX_RATE;
@@ -308,6 +376,13 @@ export const initializeCheckout = async (req, res) => {
     session.startTransaction();
     const buyer = await User.findOne({ uid: buyerId }).session(session);
     if (!buyer || buyer.pointsBalance < totals.grandTotal) {
+      logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Insufficient iCash balance to complete purchase or user not found.",
+          );
       throw new Error(
         "Insufficient iCash balance to complete purchase or user not found.",
       );
@@ -335,8 +410,16 @@ export const initializeCheckout = async (req, res) => {
       const seller = await User.findOne({ uid: item.sellerId }).session(
         session,
       );
-      if (!product || !seller)
+      if (!product || !seller) {
+        logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Product or Seller info not found."
+          );
         throw new Error("Product or Seller info not found.");
+      }
 
       const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
       let filePassword = null;
@@ -373,6 +456,13 @@ export const initializeCheckout = async (req, res) => {
       } else if (product.type === "physical") {
         const currentStock = product?.amountInStock || 1;
         if (currentStock < item.quantity) {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            `Insufficient stock for ${product.title}. Available: ${currentStock}`
+          );
           throw new Error(
             `Insufficient stock for ${product.title}. Available: ${currentStock}`,
           );
@@ -425,16 +515,32 @@ export const initializeCheckout = async (req, res) => {
         payload: { transactionId: buyerTxId, itemCount: items.length, buyerId },
       },
     );
+    logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success"
+          );
     res
       .status(200)
       .json({ success: true, data: processedResults.map((r) => r.order) });
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+    logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+           error.message
+          );
     res.status(500).json({ success: false, message: error.message });
   }
 };
 export const completeOrderDelivery = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "completeOrderDeliveryController";
+  const action = "completeOrderDelivery";
   const { orderId } = req.body;
   const scannerUid = req.user.id;
   const session = await mongoose.startSession();
@@ -442,13 +548,36 @@ export const completeOrderDelivery = async (req, res) => {
     session.startTransaction();
     const order = await ProductOrder.findOne({ orderId }).session(session);
     const salesIncrement = order.quantity || 1;
-    if (!order) throw new Error("Product order not found.");
+    if (!order) {
+      logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Product order not found."
+          );
+      throw new Error("Product order not found.");
+    }
     if (order.status !== "pending_delivery" && order.status !== "dropped_off") {
+      logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Product order is already processed or cancelled."
+          );
       throw new Error("Product order is already processed or cancelled.");
     }
     const isSeller = order.sellerId === scannerUid;
     const isAgent = order.agentId === scannerUid;
     if (!isSeller && !isAgent) {
+      logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "You are not authorized to verify this delivery."
+          );
       throw new Error("You are not authorized to verify this delivery.");
     }
     const product = await Product.findOneAndUpdate(
@@ -458,7 +587,16 @@ export const completeOrderDelivery = async (req, res) => {
     );
     const seller = await User.findOne({ uid: order.sellerId }).session(session);
     const buyer = await User.findOne({ uid: order.buyerId }).session(session);
-    if (!seller) throw new Error("Seller account no longer exists.");
+    if (!seller) {
+      logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Seller account no longer exists."
+          );
+      throw new Error("Seller account no longer exists.");
+    }
     const totalHeld = order.amountPaid;
     const taxAmount = totalHeld * TAX_RATE;
     const payableAmount = totalHeld - taxAmount;
@@ -467,7 +605,16 @@ export const completeOrderDelivery = async (req, res) => {
     let agent;
     if (order.deliveryMethod === "drop_off" && order.agentId) {
       agent = await User.findOne({ uid: order.agentId }).session(session);
-      if (!agent) throw new Error("Drop-off agent not found.");
+      if (!agent) {
+        logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Drop-off agent not found."
+          );
+        throw new Error("Drop-off agent not found.");
+      }
       agentEarnings = payableAmount * AGENT_RATE;
       sellerEarnings -= agentEarnings;
       agent.pendingSalesBalance += agentEarnings;
@@ -557,6 +704,12 @@ export const completeOrderDelivery = async (req, res) => {
       },
       false,
     );
+    logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success"
+          );
 
     res.status(200).json({
       success: true,
@@ -569,10 +722,20 @@ export const completeOrderDelivery = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+    logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+             error.message
+          );
     res.status(400).json({ success: false, message: error.message });
   }
 };
 export const cancelOrder = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "cancelOrderController";
+  const action = "cancelOrder";
   const { orderId, reason } = req.body;
   const userId = req.user.id;
   const session = await mongoose.startSession();
@@ -584,6 +747,13 @@ export const cancelOrder = async (req, res) => {
       buyerId: userId,
     }).session(session);
     if (!order || order.status !== "pending_delivery") {
+      logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Order not found or you do not have permission to cancel it.",
+          );
       throw new Error(
         "Order not found or you do not have permission to cancel it.",
       );
@@ -594,7 +764,16 @@ export const cancelOrder = async (req, res) => {
       productId: order.productId,
     }).session(session);
 
-    if (!seller) throw new Error("Seller not found.");
+    if (!seller) {
+      logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Seller not found."
+          );
+      throw new Error("Seller not found.");
+    }
     buyer.pointsBalance += order.amountPaid;
     await buyer.save({ session });
     if (product && product.type === "physical") {
@@ -644,30 +823,62 @@ export const cancelOrder = async (req, res) => {
         payload: { orderId, sellerId: seller.uid, reason },
       },
     );
+    logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success"
+          );
     res.status(200).json({
       success: true,
       message: "Order cancelled, buyer refunded, and seller notified.",
     });
   } catch (error) {
     await session.abortTransaction();
+    logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            error.message
+          );
     res.status(400).json({ success: false, message: error.message });
   } finally {
     session.endSession();
   }
 };
 export const getPendingOrders = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getPendingOrdersController";
+  const action = "getPendingOrders";
   try {
     const userId = req.user.id;
     const orders = await ProductOrder.find({
       buyerId: userId,
       status: { $in: ["pending_delivery", "dropped_off"] },
     }).sort({ createdAt: -1 });
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success"
+        );
     res.status(200).json({ success: true, data: orders });
   } catch (error) {
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
     res.status(500).json({ success: false, message: error.message });
   }
 };
 export const logProductImpression = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "logProductImpressionController";
+  const action = "logProductImpression";
   const { productId } = req.body;
   const userId = req.user.id;
   const currentMonthYear = new Date().toISOString().slice(0, 7);
@@ -691,18 +902,35 @@ export const logProductImpression = async (req, res) => {
         .status(200)
         .json({ success: true, message: "Impression logged" });
     }
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success"
+        );
     res.status(200).json({
       success: true,
       message: `${productId} impressions increment by ${userId} for ${currentMonthYear}`,
     });
   } catch (error) {
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
     res.status(500).json({ success: false, message: error.message });
   }
 };
 export const getSellerSalesHistory = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getSellerSalesHistoryController";
+  const action = "getSellerSalesHistory";
   try {
     const sellerId = req.user.id;
     if (!sellerId) {
+      
       return res.status(401).json({
         success: false,
         message: "Unauthorized: Seller ID missing",

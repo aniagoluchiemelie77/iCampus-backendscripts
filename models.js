@@ -1157,7 +1157,14 @@ export const supportTicketSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
-
+export const controllerLogSchema = new mongoose.Schema({
+  controllerName: { type: String, required: true, index: true },
+  action: { type: String, required: true },
+  status: { type: String, enum: ["success", "error"], required: true },
+  cause: String,
+  latency: Number,
+  timestamp: { type: Date, default: Date.now, expires: "30d" },
+});
 userSchema.index(
   { matricNumber: 1, department: 1 },
   { unique: true, partialFilterExpression: { usertype: "student" } },
