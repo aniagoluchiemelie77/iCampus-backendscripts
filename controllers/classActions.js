@@ -35,6 +35,8 @@ import { GoogleGenAI } from "@google/genai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import axios from "axios";
 import mongoose from "mongoose";
+import { logControllerPerformance } from "../utils/eventLogger.js";
+
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const now = new Date();
@@ -64,6 +66,10 @@ const checkContentAuthorization = async (userId, course, lectureId = null) => {
   return false;
 };
 export const handleGenerateCertificate = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "handleGenerateCertificateController";
+  const action = "handleGenerateCertificate";
+
   const { productId } = req.body;
   const { uid, email } = req.user;
 
@@ -121,6 +127,7 @@ export const handleGenerateCertificate = async (req, res) => {
         productId: productId,
       },
     });
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       pdfUrl: firebaseUrl,
@@ -128,11 +135,21 @@ export const handleGenerateCertificate = async (req, res) => {
       composition,
     });
   } catch (error) {
-    console.error("Cert Flow Error:", error);
+    console.error("Cert Flow Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: "Internal Server Error" });
   }
 };
 export const submitLectureException = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "submitLectureExceptionController";
+  const action = "submitLectureException";
   try {
     const { courseId, lectureId, reason, reasonCategory, courseInfo } =
       req.body;
@@ -140,7 +157,16 @@ export const submitLectureException = async (req, res) => {
 
     const user = await User.findOne({ uid: studentId });
     const lecture = await Lectures.findOne({ id: lectureId });
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
+      return res.status(404).json({ message: "User not found" });
+    }
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
@@ -154,6 +180,13 @@ export const submitLectureException = async (req, res) => {
     let chargedAmount = 0;
     if (isPaidRequest) {
       if ((user.pointsBalance || 0) < EXCEPTION_COST_IN_ICASH) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          `Monthly free limit (${userLimit}) reached. This exception costs ${EXCEPTION_COST_IN_ICASH} iCash, and your balance is insufficient.`,
+        );
         return res.status(402).json({
           message: `Monthly free limit (${userLimit}) reached. This exception costs ${EXCEPTION_COST_IN_ICASH} iCash, and your balance is insufficient.`,
         });
@@ -217,7 +250,7 @@ export const submitLectureException = async (req, res) => {
       sendSocket: true,
       saveToDb: true,
     });
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(201).json({
       success: true,
       message: "Exception submitted successfully",
@@ -225,10 +258,20 @@ export const submitLectureException = async (req, res) => {
       charged: chargedAmount > 0,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const checkTestStatus = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "checkTestStatusController";
+  const action = "checkTestStatus";
   try {
     const { assessmentId } = req.params;
     const studentId = req.user.uid;
@@ -236,34 +279,66 @@ export const checkTestStatus = async (req, res) => {
       $or: [{ id: assessmentId }],
     });
     if (!test) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Assessment not found",
+      );
       return res.status(404).json({ message: "Assessment not found" });
     }
     const submission = await TestSubmission.findOne({
       testId: assessmentId,
       studentId: studentId,
     });
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       hasSubmitted: !!submission,
       test: test,
     });
   } catch (error) {
-    console.error("Error checking test status:", error);
+    console.error("Error checking test status:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res
       .status(500)
       .json({ message: "Server error checking assessment status" });
   }
 };
 export const manageExceptions = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "manageExceptionsController";
+  const action = "manageExceptions";
   try {
     const { id } = req.params;
     const { status } = req.body;
 
     const exception = await Exceptions.findOne({ id: id });
     if (!exception) {
-      return res.status(404).json({ message: "Exception not found" });
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Lecture Exception not found",
+      );
+      return res.status(404).json({ message: "Lecture Exception not found" });
     }
 
     if (exception.status !== "pending") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "This exception has already been processed",
+      );
       return res
         .status(400)
         .json({ message: "This exception has already been processed" });
@@ -326,17 +401,27 @@ export const manageExceptions = async (req, res) => {
         saveToDb: true,
       });
     }
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       message: `Exception ${status} successfully.`,
       newIcashBalance: lecturer ? lecturer.pointsBalance : undefined,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const createLectureSchedule = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createLectureScheduleController";
+  const action = "createLectureSchedule";
   try {
     const {
       date,
@@ -356,9 +441,23 @@ export const createLectureSchedule = async (req, res) => {
 
     const courseDetails = await Course.findOne({ courseId });
     if (!courseDetails) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
       return res.status(404).json({ message: "Course not found" });
     }
     if (!courseDetails.lecturerIds.includes(lecturerUid)) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized: You are not an instructor for this course.",
+      );
       return res.status(403).json({
         message: "Unauthorized: You are not an instructor for this course.",
       });
@@ -380,6 +479,13 @@ export const createLectureSchedule = async (req, res) => {
     });
 
     if (conflict) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        `Conflict detected on ${conflict.date}! A lecture (${conflict.topicName || "Class"}) conflicts with this time slot.`,
+      );
       return res.status(409).json({
         message: `Conflict detected on ${conflict.date}! A lecture (${conflict.topicName || "Class"}) conflicts with this time slot.`,
       });
@@ -447,18 +553,28 @@ export const createLectureSchedule = async (req, res) => {
         },
       },
     );
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(201).json({
       message: "Lectures scheduled successfully",
       count: result.length,
       lecture: result[0],
     });
   } catch (error) {
-    console.error(error);
+    console.error(error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const createAssessment = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createAssessmentController";
+  const action = "createAssessment";
   try {
     const { courseId } = req.params;
     const {
@@ -479,6 +595,13 @@ export const createAssessment = async (req, res) => {
 
     const course = await Course.findOne({ courseId });
     if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
       return res.status(404).json({ message: "Course not found" });
     }
 
@@ -565,26 +688,51 @@ export const createAssessment = async (req, res) => {
         });
       });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(existingAssessment ? 200 : 201).json({
       message: isPublished ? "Assessment Published" : "Draft Synced",
       data: assessment,
     });
   } catch (error) {
     console.error("Assessment Error:", error);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const deleteLecture = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deleteLectureController";
+  const action = "deleteLecture";
   try {
     const { lectureId } = req.params;
     const lecture = await Lectures.findOne({ id: lectureId });
     if (!lecture) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Lecture not found",
+      );
       return res.status(404).json({ message: "Lecture not found" });
     }
 
     const { courseId, topicName, date, id, hostId } = lecture;
     const course = await Course.findOne({ courseId });
     if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Associated course not found",
+      );
       return res.status(404).json({ message: "Associated course not found" });
     }
     const isCourseLecturer =
@@ -592,6 +740,13 @@ export const deleteLecture = async (req, res) => {
     const isLectureHost = hostId === req.user.uid;
 
     if (!isCourseLecturer && !isLectureHost) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Access denied. You do not have permissions to cancel this specific lecture slot.",
+      );
       return res.status(403).json({
         success: false,
         message:
@@ -630,23 +785,40 @@ export const deleteLecture = async (req, res) => {
         console.error("Delete Notification Error:", err),
       );
     }
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: "Lecture successfully cancelled and enrolled students notified.",
     });
   } catch (error) {
-    console.error("Delete Lecture Error:", error);
+    console.error("Delete Lecture Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Internal server error" });
   }
 };
 export const fetchLectureAttendanceReport = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchLectureAttendanceReportController";
+  const action = "fetchLectureAttendanceReport";
   try {
     const { lectureId } = req.params;
     const { exceptions = [] } = req.body;
 
     const lecture = await Lectures.findOne({ id: lectureId });
     if (!lecture) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Lecture record not found.",
+      );
       return res.status(404).json({ message: "Lecture record not found." });
     }
 
@@ -682,22 +854,39 @@ export const fetchLectureAttendanceReport = async (req, res) => {
         { pdfUrl: firebaseUrl },
       );
     }
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: "Attendance sheet compiled successfully!",
       pdfUrl: firebaseUrl,
     });
   } catch (error) {
-    console.error("Backend PDF Engine Error:", error);
+    console.error("Backend PDF Engine Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Internal server compilation error." });
   }
 };
 export const getCourseFinalAttendanceSummary = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getCourseFinalAttendanceSummaryController";
+  const action = "getCourseFinalAttendanceSummary";
   try {
     const { courseId } = req.params;
     const course = await Course.findOne({ courseId });
     if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course context not found.",
+      );
       return res.status(404).json({ message: "Course context not found." });
     }
     const totalLecturesCount = await Lectures.countDocuments({
@@ -706,6 +895,13 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
       lectureType: { $ne: "Recorded" },
     });
     if (totalLecturesCount === 0) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "No live lectures recorded yet.",
+      );
       return res
         .status(200)
         .json({ message: "No live lectures recorded yet.", summary: [] });
@@ -765,7 +961,7 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
       },
       { $sort: { matricNumber: 1 } },
     ]);
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       courseCode: course.courseCode,
@@ -774,13 +970,26 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
       data: attendanceSummary,
     });
   } catch (error) {
-    console.error("End of Semester Analytics Aggregation Error:", error);
+    console.error(
+      "End of Semester Analytics Aggregation Error:",
+      error.message,
+    );
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res
       .status(500)
       .json({ message: "Failed to generate course grading summary sheet." });
   }
 };
 export const getCourseLecturePdfDirectory = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getCourseLecturePdfDirectoryController";
+  const action = "getCourseLecturePdfDirectory";
   try {
     const { courseId } = req.params;
     const lectureHistory = await Lectures.find({
@@ -789,19 +998,38 @@ export const getCourseLecturePdfDirectory = async (req, res) => {
     })
       .select("id topicName date startTime pdfUrl getAttendanceMode")
       .sort({ date: -1 });
+
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       history: lectureHistory,
     });
   } catch (error) {
-    console.error("Fetch Directory Error:", error);
+    console.error("Fetch Directory Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Internal server registry lookup error." });
   }
 };
 export const compareStudentFacesWithGemini = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "compareStudentFacesWithGeminiController";
+  const action = "compareStudentFacesWithGemini";
   try {
     const { selfieBase64, targetImageUrl } = req.body;
     if (!selfieBase64 || !targetImageUrl) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Verification parameters are missing.",
+      );
       return res.status(400).json({
         verified: false,
         message: "Verification parameters are missing.",
@@ -848,6 +1076,13 @@ export const compareStudentFacesWithGemini = async (req, res) => {
 
     const aiOutputText = response.text;
     if (!aiOutputText) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "AI Engine returned empty validation text.",
+      );
       return res.status(500).json({
         verified: false,
         message: "AI Engine returned empty validation text.",
@@ -856,18 +1091,34 @@ export const compareStudentFacesWithGemini = async (req, res) => {
     const validationResult = JSON.parse(aiOutputText);
 
     if (validationResult.verified === true) {
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         verified: true,
         message: "Identity confirmed successfully.",
       });
     } else {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        validationResult.reason || "Facial signature mismatch.",
+      );
+
       return res.status(401).json({
         verified: false,
         message: validationResult.reason || "Facial signature mismatch.",
       });
     }
   } catch (error) {
-    console.error("Gemini Multi-Modal verification exception:", error);
+    console.error("Gemini Multi-Modal verification exception:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       verified: false,
       message: "Internal server processing failure.",
@@ -875,22 +1126,46 @@ export const compareStudentFacesWithGemini = async (req, res) => {
   }
 };
 export const uploadCourseMaterial = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "uploadCourseMaterialController";
+  const action = "uploadCourseMaterial";
   try {
     const { courseId } = req.params;
     const { materialUrl, title } = req.body;
 
     if (!materialUrl) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing material URL parameter.",
+      );
       return res
         .status(400)
         .json({ message: "Missing material URL parameter." });
     }
     const course = await Course.findOne({ courseId });
     if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course context not found.",
+      );
       return res.status(404).json({ message: "Course context not found." });
     }
     const isAuthorized =
       course.lecturerIds && course.lecturerIds.includes(req.user.uid);
     if (!isAuthorized) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized. You are not a lecturer for this course.",
+      );
       return res.status(403).json({
         message: "Unauthorized. You are not a lecturer for this course.",
       });
@@ -935,26 +1210,51 @@ export const uploadCourseMaterial = async (req, res) => {
         },
       },
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Material added successfully",
     });
   } catch (error) {
-    console.error("Backend Upload Sync Error:", error);
+    console.error("Backend Upload Sync Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res
       .status(500)
       .json({ message: "Server error during upload synchronization." });
   }
 };
 export const deleteCourseMaterial = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deleteCourseMaterialController";
+  const action = "deleteCourseMaterial";
   try {
     const { courseId } = req.params;
     const { materialUrl } = req.body;
 
     if (!materialUrl) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing reference target URL.",
+      );
       return res.status(400).json({ message: "Missing reference target URL." });
     }
     const course = await Course.findOne({ courseId });
     if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course context target not found.",
+      );
       return res
         .status(404)
         .json({ message: "Course context target not found." });
@@ -962,6 +1262,13 @@ export const deleteCourseMaterial = async (req, res) => {
     const isAuthorized =
       course.lecturerIds && course.lecturerIds.includes(req.user.uid);
     if (!isAuthorized) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Action Denied. Access authorization mismatch.",
+      );
       return res
         .status(403)
         .json({ message: "Action Denied. Access authorization mismatch." });
@@ -980,6 +1287,13 @@ export const deleteCourseMaterial = async (req, res) => {
     } catch (storageError) {
       console.error(
         "Firebase Storage Cleanup Failed (Link may be orphaned):",
+        storageError,
+      );
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
         storageError,
       );
     }
@@ -1018,40 +1332,73 @@ export const deleteCourseMaterial = async (req, res) => {
           err,
         ),
       );
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Material permanently deleted",
       resources: updatedCourse.resources,
     });
   } catch (error) {
-    console.error("Backend Deletion Pipeline Error: ", error);
+    console.error("Backend Deletion Pipeline Error: ", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       message: "Internal server error occurred while deleting resource.",
     });
   }
 };
 export const createCourseContent = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createCourseContentController";
+  const action = "createCourseContent";
   try {
     const { courseId } = req.params;
     const { topic, lectureId } = req.body;
     const requesterUid = req.user.uid;
 
     if (!topic || typeof topic !== "string") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid or missing topic content",
+      );
       return res
         .status(400)
         .json({ message: "Invalid or missing topic content" });
     }
 
     const course = await Course.findOne({ courseId });
-    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
     const isAuthorized = await checkContentAuthorization(
       requesterUid,
       course,
       lectureId,
     );
     if (!isAuthorized) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized Access",
+      );
       return res.status(403).json({
-        message:
-          "Unauthorized: You do not have hosting rights for this curriculum",
+        message: "Unauthorized Access",
       });
     }
 
@@ -1085,30 +1432,57 @@ export const createCourseContent = async (req, res) => {
       })
       .catch((err) => console.error("Notification Fetch Error:", err));
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Topic added successfully",
       updatedContents: course.courseContents,
     });
   } catch (error) {
-    console.error("Add Content Error:", error);
+    console.error("Add Content Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res
       .status(500)
       .json({ message: "Server error processing your request" });
   }
 };
 export const editCourseContent = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "editCourseContentController";
+  const action = "editCourseContent";
   try {
     const { courseId } = req.params;
     const { index, updatedTopic, lectureId } = req.body;
     const requesterUid = req.user.uid;
 
     if (typeof index !== "number" || !updatedTopic) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required update body fields",
+      );
       return res
         .status(400)
         .json({ message: "Missing required update body fields" });
     }
     const course = await Course.findOne({ courseId });
-    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
 
     const isAuthorized = await checkContentAuthorization(
       requesterUid,
@@ -1116,13 +1490,26 @@ export const editCourseContent = async (req, res) => {
       lectureId,
     );
     if (!isAuthorized) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized Access",
+      );
       return res.status(403).json({
-        message:
-          "Unauthorized: You do not have access to edit this course content",
+        message: "Unauthorized Access",
       });
     }
 
     if (index < 0 || index >= course.courseContents.length) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Target topic position index out of bounds",
+      );
       return res
         .status(400)
         .json({ message: "Target topic position index out of bounds" });
@@ -1165,30 +1552,57 @@ export const editCourseContent = async (req, res) => {
       })
       .catch((err) => console.error("Notification Error:", err));
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Topic updated successfully",
       updatedContents: updatedCourse.courseContents,
     });
   } catch (error) {
-    console.error("Edit Content Error:", error);
+    console.error("Edit Content Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res
       .status(500)
       .json({ message: "Server error updating curriculum topic" });
   }
 };
 export const deleteCourseContent = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deleteCourseContentController";
+  const action = "deleteCourseContent";
   try {
     const { courseId } = req.params;
     const { index, lectureId } = req.body;
     const requesterUid = req.user.uid;
 
     if (typeof index !== "number") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Target element index parameter required",
+      );
       return res
         .status(400)
         .json({ message: "Target element index parameter required" });
     }
     const course = await Course.findOne({ courseId });
-    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
 
     const isAuthorized = await checkContentAuthorization(
       requesterUid,
@@ -1196,10 +1610,24 @@ export const deleteCourseContent = async (req, res) => {
       lectureId,
     );
     if (!isAuthorized) {
-      return res.status(403).json({ message: "Unauthorized: Access denied" });
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized Access",
+      );
+      return res.status(403).json({ message: "Unauthorized Access" });
     }
 
     if (index < 0 || index >= course.courseContents.length) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Target position index out of array bounds",
+      );
       return res
         .status(400)
         .json({ message: "Target position index out of array bounds" });
@@ -1237,18 +1665,29 @@ export const deleteCourseContent = async (req, res) => {
       })
       .catch((err) => console.error("Notification Error:", err));
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Topic removed successfully",
       updatedContents: course.courseContents,
     });
   } catch (error) {
-    console.error("Delete Content Error:", error);
+    console.error("Delete Content Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res
       .status(500)
       .json({ message: "Server error processing array removal operation" });
   }
 };
 export const createCourseAssignment = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createCourseAssignmentController";
+  const action = "createCourseAssignment";
   try {
     const { courseId } = req.params;
     const { title, description, dueDate, submissionMethod, lectureId } =
@@ -1256,16 +1695,31 @@ export const createCourseAssignment = async (req, res) => {
     const requesterUid = req.user.uid;
 
     const course = await Course.findOne({ courseId });
-    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
     const isAuthorized = await checkContentAuthorization(
       requesterUid,
       course,
       lectureId,
     );
     if (!isAuthorized) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized Access",
+      );
       return res.status(403).json({
-        message:
-          "Unauthorized: You do not have permissions to post assignments here",
+        message: "Unauthorized Access",
       });
     }
 
@@ -1317,23 +1771,50 @@ export const createCourseAssignment = async (req, res) => {
         console.error("Assignment Notification Dispatch Failure:", err),
       );
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(201).json(course.assignments);
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({ message: error.message });
   }
 };
 export const deleteCourseAssignment = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deleteCourseAssignmentController";
+  const action = "deleteCourseAssignment";
   try {
     const { courseId, assignmentId } = req.params;
     const requesterUid = req.user.uid;
 
     const course = await Course.findOne({ courseId });
-    if (!course) return res.status(404).json({ message: "Course not found" });
+    if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
 
     const targetAssignment = course.assignments.find(
       (asg) => asg.assignmentId === assignmentId,
     );
     if (!targetAssignment) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Target assignment not found within this course profile",
+      );
       return res.status(404).json({
         message: "Target assignment not found within this course profile",
       });
@@ -1344,7 +1825,14 @@ export const deleteCourseAssignment = async (req, res) => {
       targetAssignment.lectureId,
     );
     if (!isAuthorized) {
-      return res.status(403).json({ message: "Unauthorized: Access denied" });
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized Access",
+      );
+      return res.status(403).json({ message: "Unauthorized Access" });
     }
 
     const updatedCourse = await Course.findOneAndUpdate(
@@ -1378,25 +1866,52 @@ export const deleteCourseAssignment = async (req, res) => {
       })
       .catch((err) => console.error("Wipe notification thread failed:", err));
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Assignment deleted successfully",
       assignments: updatedCourse.assignments,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({ message: error.message });
   }
 };
 export const getAssessmentReport = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getAssessmentReportController";
+  const action = "getAssessmentReport";
   try {
     const token = req.headers.authorization?.split(" ")[1] || req.query.token;
     if (!token) return res.status(401).json({ error: "Unauthorized" });
 
     const { testId } = req.params;
     const test = await Assessment.findOne({ id: testId });
-    if (!test) return res.status(404).json({ error: "Assessment not found" });
+    if (!test) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Assessment not found",
+      );
+      return res.status(404).json({ error: "Assessment not found" });
+    }
 
     const isPastDue = new Date() > new Date(test.dueDate);
     if (!isPastDue) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Analysis is only available after the due date.",
+      );
       return res
         .status(403)
         .json({ error: "Analysis is only available after the due date." });
@@ -1408,6 +1923,7 @@ export const getAssessmentReport = async (req, res) => {
 
     if (exists) {
       const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({ success: true, downloadUrl: firebaseUrl });
     }
     const course = await Course.findOne({ courseId: test.courseId });
@@ -1462,24 +1978,42 @@ export const getAssessmentReport = async (req, res) => {
     });
 
     const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       downloadUrl: firebaseUrl,
       assessmentAnalytics: reportData,
     });
   } catch (error) {
-    console.error("PDF Handler Exception Error: ", error);
+    console.error("PDF Handler Exception Error: ", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       error: "Error generating or processing assessment analysis report",
     });
   }
 };
 export const submitAssessment = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "submitAssessmentController";
+  const action = "submitAssessment";
   const session = await mongoose.startSession();
   session.startTransaction();
 
   try {
     const { testId, answers, proctoringData, score } = req.body;
     if (!testId || !answers) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required submission data.",
+      );
       return res
         .status(400)
         .json({ message: "Missing required submission data." });
@@ -1489,6 +2023,13 @@ export const submitAssessment = async (req, res) => {
       studentId: req.user.uid,
     }).session(session);
     if (existingSubmission) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "You have already submitted this test.",
+      );
       return res
         .status(403)
         .json({ message: "You have already submitted this test." });
@@ -1563,6 +2104,7 @@ export const submitAssessment = async (req, res) => {
       saveToDb: true,
     });
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(201).json({
       success: !isImpersonator,
       message: isImpersonator
@@ -1573,7 +2115,14 @@ export const submitAssessment = async (req, res) => {
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("Submission Error Engine Exception:", error);
+    console.error("Submission Error Engine Exception:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res
       .status(500)
       .json({ message: "Internal Server Error", error: error.message });
@@ -1582,6 +2131,9 @@ export const submitAssessment = async (req, res) => {
   }
 };
 export const editLectures = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "editLecturesController";
+  const action = "editLectures";
   try {
     const { lectureId, courseId } = req.params;
     const { newDate, newStartTime, topicName, lectureType, location } =
@@ -1589,10 +2141,24 @@ export const editLectures = async (req, res) => {
 
     const originalLecture = await Lectures.findOne({ id: lectureId });
     if (!originalLecture) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Lecture not found",
+      );
       return res.status(404).json({ message: "Lecture not found" });
     }
     const course = await Course.findOne({ courseId });
     if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Associated course not found",
+      );
       return res.status(404).json({ message: "Associated course not found" });
     }
     const isCourseLecturer =
@@ -1600,10 +2166,16 @@ export const editLectures = async (req, res) => {
     const isLectureHost = originalLecture.hostId === req.user.uid;
 
     if (!isCourseLecturer && !isLectureHost) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Access denied",
+      );
       return res.status(403).json({
         success: false,
-        message:
-          "Access denied. You do not have permissions to modify this live lecture slot.",
+        message: "Access denied",
       });
     }
 
@@ -1716,20 +2288,38 @@ export const editLectures = async (req, res) => {
       console.error("Notify Error:", err),
     );
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       message: `Lecture modified successfully. Notification sent with type: ${primaryActionType}`,
       updatedLecture,
     });
   } catch (error) {
-    console.error("Update Handler Error:", error);
+    console.error("Update Handler Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const submitOnlineClassAttendance = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "submitOnlineClassAttendanceController";
+  const action = "submitOnlineClassAttendance";
   try {
     const { lectureId, courseId, status } = req.body;
     const studentId = req.user.uid;
     if (!lectureId || !courseId || !status) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required online attendance parameters.",
+      );
       return res
         .status(400)
         .json({ error: "Missing required online attendance parameters." });
@@ -1737,6 +2327,13 @@ export const submitOnlineClassAttendance = async (req, res) => {
 
     const lecture = await Lectures.findOne({ id: lectureId });
     if (!lecture) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Lecture not found.",
+      );
       return res.status(404).json({ error: "Lecture not found." });
     }
 
@@ -1745,9 +2342,15 @@ export const submitOnlineClassAttendance = async (req, res) => {
     const expiryTime = new Date(lecture.endTime).getTime() + gracePeriod;
 
     if (currentTime.getTime() > expiryTime) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Submission window closed",
+      );
       return res.status(403).json({
-        error:
-          "Submission window closed. Attendance must be synced within 60 mins of class end.",
+        error: "Submission window closed",
       });
     }
     const existingRecord = await Attendance.findOne({ studentId, lectureId });
@@ -1778,20 +2381,38 @@ export const submitOnlineClassAttendance = async (req, res) => {
       ]);
     }
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: "Attendance recorded successfully at end of class session.",
     });
   } catch (err) {
-    console.error("iCampus Backend Error:", err);
+    console.error("iCampus Backend Error:", err.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res
       .status(500)
       .json({ error: "Internal server error during attendance sync." });
   }
 };
 export const uploadCourseDetails = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "uploadCourseDetailsController";
+  const action = "uploadCourseDetails";
   try {
     if (!req.files || req.files.length === 0) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "No files uploaded",
+      );
       return res.status(400).json({ message: "No files uploaded" });
     }
 
@@ -1841,6 +2462,13 @@ export const uploadCourseDetails = async (req, res) => {
     try {
       extraction = JSON.parse(result.response.text());
     } catch (e) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "AI returned invalid JSON structure.",
+      );
       return res
         .status(422)
         .json({ message: "AI returned invalid JSON structure." });
@@ -1849,6 +2477,13 @@ export const uploadCourseDetails = async (req, res) => {
     const { studentInfo, courses } = extraction;
 
     if (!studentInfo || !courses || courses.length === 0) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Failed to extract structured course records.",
+      );
       return res
         .status(422)
         .json({ message: "Failed to extract structured course records." });
@@ -1861,8 +2496,15 @@ export const uploadCourseDetails = async (req, res) => {
       .toLowerCase();
 
     if (!submittedMatric || submittedMatric !== userMatric) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        `Document verification failed. Matric Number mismatch.`,
+      );
       return res.status(403).json({
-        message: `Document verification failed. Matric mismatch. Expected your registered matric but found: ${studentInfo.matricNo || "None"}`,
+        message: `Document verification failed. Matric Number mismatch.`,
       });
     }
 
@@ -1923,24 +2565,42 @@ export const uploadCourseDetails = async (req, res) => {
       saveToDb: true,
     }).catch((err) => console.error("Notification Dispatch Error:", err));
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       message: `Processed ${courses.length} courses successfully.`,
       studentName: studentInfo.studentName,
       coursesCount: courses.length,
     });
   } catch (error) {
-    console.error("Extraction Route Error:", error);
+    console.error("Extraction Route Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const uploadCourseDetailsManually = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "uploadCourseDetailsManuallyController";
+  const action = "uploadCourseDetailsManually";
   try {
     const { courseTitle, courseCode, credits } = req.body;
     const { uid, usertype, schoolName, department } = req.user;
     if (!courseTitle || !courseCode) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course Title or Code is required.",
+      );
       return res
         .status(400)
-        .json({ message: "Course Title and Code are required." });
+        .json({ message: "Course Title or Code is required." });
     }
     const cleanCode = courseCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
     const cleanTitle = courseTitle.toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -1988,6 +2648,7 @@ export const uploadCourseDetailsManually = async (req, res) => {
       { uid: uid },
       { $addToSet: { [userFieldToUpdate]: assignedCourseId } },
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: course
         ? "You have been added to this existing course curriculum successfully."
@@ -1995,11 +2656,21 @@ export const uploadCourseDetailsManually = async (req, res) => {
       courseId: assignedCourseId,
     });
   } catch (error) {
-    console.error("Manual Course Creation Error:", error);
+    console.error("Manual Course Creation Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const handleUpcomingLectureRemindersCron = async () => {
+  const startTime = Date.now();
+  const controllerName = "handleUpcomingLectureRemindersCronController";
+  const action = "handleUpcomingLectureRemindersCron";
   try {
     const leadTimeMinutes = 45;
     const targetTime = new Date(Date.now() + leadTimeMinutes * 60 * 1000);
@@ -2100,6 +2771,7 @@ export const handleUpcomingLectureRemindersCron = async () => {
 
       await Promise.all(notificationPromises);
 
+      logControllerPerformance(controllerName, action, startTime, "success");
       console.log(
         `[CRON_SUCCESS] Dispatched reminders for ${lecture.courseContext.courseCode} - "${lecture.topicName}" to ${enrolledStudents.length} students.`,
       );
@@ -2109,9 +2781,19 @@ export const handleUpcomingLectureRemindersCron = async () => {
       "[CRON_CRITICAL_EXCEPTION] Failed executing automated reminder cycles:",
       error.message,
     );
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
   }
 };
 export const sendInactiveUserReminders = async () => {
+  const startTime = Date.now();
+  const controllerName = "sendInactiveUserRemindersController";
+  const action = "sendInactiveUserReminders";
   try {
     const threeDaysAgo = new Date();
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
@@ -2155,10 +2837,18 @@ export const sendInactiveUserReminders = async () => {
     const results = await Promise.all(notificationPromises);
     const sentCount = results.filter((result) => result !== null).length;
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     console.log(
       `[REMINDER_CRON] Reminder notifications sent to ${sentCount} users.`,
     );
   } catch (error) {
     console.error("[REMINDER_CONTROLLER_ERR]:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
   }
 };

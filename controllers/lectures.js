@@ -1,4 +1,4 @@
-import { Attendance, User } from "../tableDeclarations.js";
+import { User } from "../tableDeclarations.js";
 import {
   pushToCloudStorage,
   checkDeepfakeDetectionAPI,
@@ -6,39 +6,21 @@ import {
 import ffmpeg from "fluent-ffmpeg";
 import path from "path";
 import fs from "fs";
-
-export const getGroupedAttendance = async (lectureId) => {
-  return await Attendance.aggregate([
-    { $match: { lectureId: lectureId } },
-    {
-      $lookup: {
-        from: "users",
-        localField: "studentId",
-        foreignField: "uid",
-        as: "studentInfo",
-      },
-    },
-    { $unwind: "$studentInfo" },
-    {
-      $group: {
-        _id: "$studentInfo.department",
-        students: {
-          $push: {
-            firstname: "$studentInfo.firstname",
-            lastname: "$studentInfo.lastname",
-            matricNumber: "$studentInfo.matricNumber",
-            timestamp: "$timestamp",
-          },
-        },
-      },
-    },
-    { $sort: { _id: 1 } }, // Sort by Department Name
-  ]);
-};
+import { logControllerPerformance } from "../utils/eventLogger.js";
 
 export const uploadAndVerifyLessonVideo = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "uploadAndVerifyLessonVideoController";
+  const action = "uploadAndVerifyLessonVideo";
   try {
     if (!req.file) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "No video payload discovered.",
+      );
       return res
         .status(400)
         .json({ success: false, message: "No video payload discovered." });
@@ -56,6 +38,13 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
     ffmpeg.ffprobe(localFilePath, async (err, metadata) => {
       if (err) {
         if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath);
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "File format parsing error.",
+        );
         return res
           .status(500)
           .json({ success: false, message: "File format parsing error." });
@@ -113,6 +102,7 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
       }
       if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath);
 
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         success: true,
         message:
@@ -128,6 +118,13 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
     });
   } catch (error) {
     if (req.file && fs.existsSync(req.file.path)) fs.unlinkSync(req.file.path);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res
       .status(500)
       .json({ success: false, message: "Internal validation router fault." });

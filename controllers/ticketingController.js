@@ -5,8 +5,12 @@ import {
   generateNotificationId,
 } from "../utils/idGenerator.js";
 import { notifyAdmins } from "../services/adminNotification.js";
+import { logControllerPerformance } from "../utils/eventLogger.js";
 
 export const createTicket = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createTicketController";
+  const action = "createTicket";
   try {
     const { message, category } = req.body;
     const userId = req.user.uid;
@@ -34,8 +38,16 @@ export const createTicket = async (req, res) => {
       },
     });
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(201).json(newTicket);
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ error: "Failed to create ticket" });
   }
 };

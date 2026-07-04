@@ -11,8 +11,12 @@ import {
 } from "../utils/idGenerator.js";
 import { createNotification } from "../services/notification.js";
 import { notifyAdmins } from "../services/adminNotification.js";
+import { logControllerPerformance } from "../utils/eventLogger.js";
 
 export const personaVerifyConfirmation = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "personaVerifyConfirmationController";
+  const action = "personaVerifyConfirmation";
   const personaSignature = req.headers["persona-signature"];
   const WEBHOOK_SECRET = process.env.PERSONA_WEBHOOK_SECRET;
 
@@ -22,7 +26,14 @@ export const personaVerifyConfirmation = async (req, res) => {
     .digest("hex");
 
   if (hash !== personaSignature) {
-    return res.status(401).send("Invalid signature");
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid Persona signature",
+    );
+    return res.status(401).send("Invalid Persona signature");
   }
   res.status(200).send("Webhook accepted");
   try {
@@ -60,17 +71,42 @@ export const personaVerifyConfirmation = async (req, res) => {
               payload: { referenceId, inquiryId },
             },
           );
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
         }
       }
     }
   } catch (error) {
-    console.error("Webhook processing error:", error);
+    console.error("Webhook processing error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
   }
 };
 export const handleFlutterwaveWebhook = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "handleFlutterwaveWebhookController";
+  const action = "handleFlutterwaveWebhook";
   const secretHash = process.env.FLW_WEBHOOK_HASH;
   const signature = req.headers["verif-hash"];
-  if (!signature || signature !== secretHash) return res.status(401).end();
+  if (!signature || signature !== secretHash) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid Flutterwave signature",
+    );
+    return res.status(401).end();
+  }
   res.status(200).end();
   try {
     const { event, data } = req.body;
@@ -131,6 +167,12 @@ export const handleFlutterwaveWebhook = async (req, res) => {
               },
             },
           );
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
         }
       }
       const paymentToken = data.card?.token || data.account?.token;
@@ -156,6 +198,12 @@ export const handleFlutterwaveWebhook = async (req, res) => {
                 }
               : undefined,
           });
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
         }
       }
     }
@@ -164,6 +212,9 @@ export const handleFlutterwaveWebhook = async (req, res) => {
   }
 };
 export const handlePostmarkInboundSupportTickets = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "postmarkInboundEmailWebhookController";
+  const action = "postmarkInboundEmailWebhook";
   try {
     const { ToFull, From, Subject, TextBody, MessageID } = req.body;
     const recipient = ToFull[0].Email;
@@ -202,9 +253,17 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
       },
     });
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).send("Webhook Processed");
   } catch (error) {
-    console.error("Postmark Webhook Error:", error);
+    console.error("Postmark Webhook Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).send("Internal Server Error");
   }
 };

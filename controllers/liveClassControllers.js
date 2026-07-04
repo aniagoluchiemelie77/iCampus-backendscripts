@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import { createNotification } from "../services/notification.js";
 import { DeepgramClient } from "@deepgram/sdk";
+import { logControllerPerformance } from "../utils/eventLogger.js";
 
 const activeClassroomConnections = new Map();
 export const generateDeepgramToken = async (req, res) => {
@@ -55,9 +56,19 @@ async function broadcastAttendeeList(io, lectureId) {
 }
 export const registerLectureStreamHandlers = (io, socket) => {
   socket.on("stream_ready", async (payload) => {
+    const startTime = Date.now();
+    const controllerName = "onlineClassStreamReadyController";
+    const action = "onlineClassStreamReady";
     try {
       const { lectureId, streamUrl } = payload;
       if (!lectureId || !streamUrl) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing invalid payload dependencies.",
+        );
         socket.emit("error_response", {
           action: "stream_ready",
           message: "Missing invalid payload dependencies.",
@@ -80,6 +91,13 @@ export const registerLectureStreamHandlers = (io, socket) => {
         console.warn(
           `[LIVE_CLASS_ENGINE] Stream initialization failed. Lecture id "${lectureId}" not found.`,
         );
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Target lecture track reference could not be resolved.",
+        );
         socket.emit("error_response", {
           action: "stream_ready",
           message: "Target lecture track reference could not be resolved.",
@@ -87,6 +105,7 @@ export const registerLectureStreamHandlers = (io, socket) => {
         return;
       }
       const lectureRoomId = `lecture_${lectureId}`;
+      logControllerPerformance(controllerName, action, startTime, "success");
       await socket.join(lectureRoomId);
       io.to(lectureRoomId).emit("live_stream_started", {
         lectureId: updatedLecture.id,
@@ -102,6 +121,13 @@ export const registerLectureStreamHandlers = (io, socket) => {
     } catch (error) {
       console.error(
         "[CORE_SOCKET_EXCEPTION] stream_ready handling failure:",
+        error.message,
+      );
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
         error.message,
       );
 
@@ -158,6 +184,9 @@ export const registerWebRTCSignalingHandlers = (io, socket) => {
 };
 export const registerAudioControlHandlers = (io, socket) => {
   socket.on("toggle_lecturer_mic", async (payload) => {
+    const startTime = Date.now();
+    const controllerName = "toggleMicController";
+    const action = "toggleMic";
     try {
       const { lectureId, isMuted } = payload;
       if (!lectureId || typeof isMuted !== "boolean") {

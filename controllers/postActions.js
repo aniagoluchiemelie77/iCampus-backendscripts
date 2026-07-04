@@ -9,6 +9,7 @@ import { storage } from "../config/firebaseAdmin.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { scan } from "../services/visionAi.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
+import { logControllerPerformance } from "../utils/eventLogger.js";
 
 const getPostStats = (post) => ({
   likes: post.likes || [],
@@ -48,6 +49,9 @@ export const moderateContent = async (postId, content, media) => {
   }
 };
 export const createPost = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createPostController";
+  const action = "createPost";
   try {
     const { content, media, poll, isSubscriptionContent } = req.body;
     const userId = req.user.uid;
@@ -60,7 +64,16 @@ export const createPost = async (req, res) => {
     const author = await User.findOne({ uid: userId }).select(
       "firstname lastname username profilePic",
     );
-    if (!author) return res.status(404).json({ message: "Author not found" });
+    if (!author) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Author not found",
+      );
+      return res.status(404).json({ message: "Author not found" });
+    }
     const authorName = `${author.firstname} ${author.lastname}`;
     const newPostId = generatePostId();
 
@@ -140,16 +153,27 @@ export const createPost = async (req, res) => {
         { $inc: { "monthlyStats.libraryUsageSessions": 1 } },
       );
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
 
     res
       .status(201)
       .json({ message: "Posts created successfully", data: newPost });
   } catch (error) {
-    console.error("Create Posts Error:", error);
+    console.error("Create Posts Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const updatePost = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "updatePostController";
+  const action = "updatePost";
   try {
     const { postId } = req.params;
     const { content, media, poll, isSubscriptionContent } = req.body;
@@ -157,6 +181,13 @@ export const updatePost = async (req, res) => {
     const post = await Posts.findOne({ postId, originalAuthor: userId });
 
     if (!post) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Posts not found or unauthorized to edit.",
+      );
       return res
         .status(404)
         .json({ message: "Posts not found or unauthorized to edit." });
@@ -229,18 +260,36 @@ export const updatePost = async (req, res) => {
       sendSocket: true,
       saveToDb: true,
     });
+    logControllerPerformance(controllerName, action, startTime, "success");
 
     res.status(200).json({ message: "Posts updated successfully", post });
   } catch (error) {
-    console.error("Update Posts Error:", error);
+    console.error("Update Posts Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const deletePost = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deletePostController";
+  const action = "deletePost";
   try {
     const userUid = req.user.uid;
     const { postId } = req.params;
     if (!postId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required post identification parameter.",
+      );
       return res.status(400).json({
         success: false,
         message: "Missing required post identification parameter.",
@@ -251,6 +300,13 @@ export const deletePost = async (req, res) => {
       originalAuthor: userUid,
     });
     if (!post) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Posts record not found or unauthorized deletion access.",
+      );
       return res.status(404).json({
         success: false,
         message: "Posts record not found or unauthorized deletion access.",
@@ -312,13 +368,24 @@ export const deletePost = async (req, res) => {
     }).catch((err) =>
       console.error("Non-blocking post deletion log emission failure:", err),
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: "Posts entry successfully unlinked and purged.",
       data: { postId },
     });
   } catch (error) {
-    console.error("Global crash layer hit in deletePostController:", error);
+    console.error(
+      "Global crash layer hit in deletePostController:",
+      error.message,
+    );
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: "Internal application routing anomaly.",
@@ -326,12 +393,24 @@ export const deletePost = async (req, res) => {
   }
 };
 export const toggleLike = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleLikeController";
+  const action = "toggleLike";
   const { postId } = req.params;
   const userId = req.user.id;
 
   try {
     const post = await Posts.findOne({ postId });
-    if (!post) return res.status(404).send("Posts not found");
+    if (!post) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Post not found",
+      );
+      return res.status(404).send("Post not found");
+    }
     const isLiked = post.likes.includes(userId);
     const postUpdate = isLiked
       ? { $pull: { likes: userId } }
@@ -368,17 +447,37 @@ export const toggleLike = async (req, res) => {
         stats: getPostStats(updatedPost),
       });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json({ updatedPost, message });
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ message: err.message });
   }
 };
 export const toggleBookmark = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleBookmarkController";
+  const action = "toggleBookmark";
   const { postId } = req.params;
   const userId = req.user.id;
   try {
     const post = await Posts.findOne({ postId });
-    if (!post) return res.status(404).json({ message: "Posts not found" });
+    if (!post) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Post not found",
+      );
+      return res.status(404).json({ message: "Post not found" });
+    }
     const isBookmarked = (post.bookmarks ?? []).includes(userId);
     const postUpdate = isBookmarked
       ? { $pull: { bookmarks: userId } }
@@ -399,7 +498,7 @@ export const toggleBookmark = async (req, res) => {
         stats: getPostStats(updatedPost),
       });
     }
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       isBookmarked: !isBookmarked,
       count: updatedPost.bookmarks.length,
@@ -408,10 +507,20 @@ export const toggleBookmark = async (req, res) => {
         : "You bookmarked a post",
     });
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ message: err.message });
   }
 };
 export const addComment = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "addCommentController";
+  const action = "addComment";
   const { postId } = req.params;
   const { comment, parentId } = req.body;
   const userId = req.user.id;
@@ -436,7 +545,16 @@ export const addComment = async (req, res) => {
       { new: true },
     ).populate("comments.userId", "firstname lastname profilePic username");
 
-    if (!updatedPost) return res.status(404).json({ error: "Posts not found" });
+    if (!updatedPost) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Post not found",
+      );
+      return res.status(404).json({ error: "Post not found" });
+    }
 
     const populatedComment = updatedPost.comments.find(
       (c) => c.commentId === tempCommentId,
@@ -470,26 +588,61 @@ export const addComment = async (req, res) => {
         saveToDb: true,
       });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(201).json(populatedComment);
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ error: err.message });
   }
 };
 export const pollVote = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "pollVoteController";
+  const action = "pollVote";
   const { postId, optionId, userId } = req.body;
   try {
     const post = await Posts.findOne({ postId });
-    if (!post || !post.poll)
+    if (!post || !post.poll) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Poll not found",
+      );
       return res.status(404).json({ error: "Poll not found" });
+    }
 
     if (post.poll.expiresAt && new Date() > new Date(post.poll.expiresAt)) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Poll has expired",
+      );
       return res.status(400).json({ error: "Poll has expired" });
     }
 
     const hasVoted = post.poll.options.some((opt) =>
       opt.votes.includes(userId),
     );
-    if (hasVoted) return res.status(400).json({ error: "Already voted" });
+    if (hasVoted) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Already voted",
+      );
+      return res.status(400).json({ error: "Already voted" });
+    }
 
     const updatedPost = await Posts.findOneAndUpdate(
       { postId: postId, "poll.options.optionId": optionId },
@@ -526,13 +679,23 @@ export const pollVote = async (req, res) => {
         saveToDb: true,
       });
     }
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(updatedPost);
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ error: error.message });
   }
 };
 export const incrementImpressions = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "incrementImpressionsController";
+  const action = "incrementImpressions";
   try {
     const { postId } = req.params;
     const updatedPost = await Posts.findOneAndUpdate(
@@ -542,7 +705,14 @@ export const incrementImpressions = async (req, res) => {
     );
 
     if (!updatedPost) {
-      return res.status(404).send("Posts not found");
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Post not found",
+      );
+      return res.status(404).send("Post not found");
     }
     const author = await User.findOne({ uid: updatedPost.userId.uid });
     if (author && author.usertype !== "enterprise") {
@@ -562,17 +732,27 @@ export const incrementImpressions = async (req, res) => {
         stats: getPostStats(updatedPost),
       });
     }
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       impressions: updatedPost.impressions,
     });
   } catch (err) {
-    console.error("Impression error:", err);
+    console.error("Impression error:", err.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).send(err.message);
   }
 };
 export const repost = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "repostController";
+  const action = "repost";
   const { originalPostId, isRepost } = req.body;
   const userId = req.user.id;
   try {
@@ -595,6 +775,7 @@ export const repost = async (req, res) => {
           stats: getPostStats(updatedOriginal),
         });
       }
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         message: "You undid a repost action",
         repostsCount: updatedOriginal.repostersDetails.length,
@@ -608,10 +789,18 @@ export const repost = async (req, res) => {
       const originalPost = await Posts.findOne({
         postId: originalPostId,
       }).select("-postId -isRepost");
-      if (!repostAuthor || !originalPost)
+      if (!repostAuthor || !originalPost) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Original post details not found.",
+        );
         return res
           .status(404)
           .json({ message: "Original post details not found." });
+      }
 
       const reposterData = {
         uid: repostAuthor.uid || userId,
@@ -682,17 +871,27 @@ export const repost = async (req, res) => {
           });
         }
       });
-
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(201).json({
         message: "Posts repost action completed successfully.",
         repostsCount: updatedOriginal.repostersDetails.length,
       });
     }
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ message: err.message });
   }
 };
 export const toggleCommentLike = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleCommentLikeController";
+  const action = "toggleCommentLike";
   const { postId, commentId } = req.params;
   const userId = req.user.id;
   try {
@@ -704,12 +903,23 @@ export const toggleCommentLike = async (req, res) => {
       { postId, "comments.commentId": commentId },
       { [operator]: { "comments.$.likes": userId } },
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.sendStatus(200);
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).send(err.message);
   }
 };
 export const fetchPostUsingPostId = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchPostUsingPostIdController";
+  const action = "fetchPostUsingPostId";
   try {
     const { postId } = req.params;
     const postAggregation = await Posts.aggregate([
@@ -739,7 +949,14 @@ export const fetchPostUsingPostId = async (req, res) => {
     ]);
 
     if (!postAggregation || postAggregation.length === 0) {
-      return res.status(404).json({ error: "Posts not found" });
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Post not found",
+      );
+      return res.status(404).json({ error: "Post not found" });
     }
 
     const post = postAggregation[0];
@@ -747,13 +964,20 @@ export const fetchPostUsingPostId = async (req, res) => {
       post.repostersDetails || [],
       userId,
     );
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json({
       ...post,
       featuredReposter: featuredReposter,
     });
   } catch (err) {
-    console.error("Fetch single post error:", err);
+    console.error("Fetch single post error:", err.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ error: err.message });
   }
 };

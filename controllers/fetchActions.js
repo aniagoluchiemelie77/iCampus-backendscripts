@@ -25,14 +25,25 @@ import * as cheerio from "cheerio";
 import { getFallbackBooks } from "../utils/libraryHelpers.js";
 import { CATEGORY_ROLES } from "../constants/inAppConstants.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
+import { logControllerPerformance } from "../utils/eventLogger.js";
 axiosRetry(axios, { retries: 3 });
 
 export const getDownloads = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getDownloadsController";
+  const action = "getDownloads";
   try {
     const userId = req.user.id;
     const userLibrary = await UserDownloads.findOne({ userId });
 
     if (!userLibrary || !userLibrary.ownedProducts.length) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "success",
+        "No Downloads found.",
+      );
       return res.status(200).json({ success: true, data: [] });
     }
     const productIds = userLibrary.ownedProducts.map((p) => p.productId);
@@ -51,21 +62,40 @@ export const getDownloads = async (req, res) => {
       })
       .filter((item) => item.title);
 
+    logControllerPerformance(controllerName, action, startTime, "success");
+
     res.status(200).json({
       success: true,
       data: mergedData,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: error.message });
   }
 };
 export const fetchConnections = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchConnectionsController";
+  const action = "fetchConnections";
   try {
     const currentUserId = req.user.uid;
     const connections = await Follow.find({ followerId: currentUserId }).select(
       "followingId",
     );
     if (!connections.length) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "success",
+        "No connections found.",
+      );
       return res.json({ success: true, data: [] });
     }
     const followingUids = connections.map((c) => c.followingId);
@@ -82,14 +112,24 @@ export const fetchConnections = async (req, res) => {
       organizationName: u.organizationName,
       profilePic: u.profilePic || "",
     }));
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json({ success: true, data: formattedConnections });
   } catch (error) {
-    console.error("fetchConnections Error:", error);
+    console.error("fetchConnections Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: error.message });
   }
 };
 export const fetchUserTransactionHistory = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchUserTransactionHistoryController";
+  const action = "fetchUserTransactionHistory";
   try {
     const userId = req.user.uid;
     const page = parseInt(req.query.page) || 1;
@@ -103,7 +143,7 @@ export const fetchUserTransactionHistory = async (req, res) => {
       Transactions.countDocuments({ userId }),
     ]);
     const totalPages = Math.ceil(total / limit);
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       data: transactions,
@@ -115,10 +155,20 @@ export const fetchUserTransactionHistory = async (req, res) => {
       },
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const fetchUserTransactionStats = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchUserTransactionStatsController";
+  const action = "fetchUserTransactionStats";
   try {
     const userId = req.user.uid;
     let { month, year } = req.query;
@@ -135,6 +185,13 @@ export const fetchUserTransactionStats = async (req, res) => {
       targetMonth < 1 ||
       targetMonth > 12
     ) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid month or year parameter values provided.",
+      );
       return res.status(400).json({
         success: false,
         message: "Invalid month or year parameter values provided.",
@@ -163,7 +220,7 @@ export const fetchUserTransactionStats = async (req, res) => {
             {
               $lookup: {
                 from: "users",
-                localField: "_id",
+                localField: "uid",
                 foreignField: "uid",
                 as: "userDetails",
               },
@@ -207,17 +264,28 @@ export const fetchUserTransactionStats = async (req, res) => {
       },
     ]);
     const result = stats[0] || { flow: [], topRecipients: [], monthly: [] };
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       period: { month: targetMonth, year: targetYear },
       data: result,
     });
   } catch (e) {
-    console.error("Aggregation crash in fetchUserTransactionStats:", e);
+    console.error("Aggregation crash in fetchUserTransactionStats:", e.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      e.message,
+    );
     res.status(500).json({ success: false, error: e.message });
   }
 };
 export const fetchItagByUsername = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchItagByUsernameController";
+  const action = "fetchItagByUsername";
   try {
     const { username } = req.params;
     let isPremium;
@@ -226,12 +294,19 @@ export const fetchItagByUsername = async (req, res) => {
       username: { $regex: new RegExp(`^${username}$`, "i") },
     });
     if (!iTagData) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
       return res.status(404).json({ message: "User not found" });
     }
     const maskedNumber = iTagData.cardNumber.replace(/\d(?=\d{4})/g, "*");
     isPremium = iTagData.tier === "premium";
     isUser = iTagData.userId === req.user.id;
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       userId: iTagData.userId,
       username: iTagData.username,
@@ -243,10 +318,20 @@ export const fetchItagByUsername = async (req, res) => {
       isUser,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Internal Server Error",
+    );
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const fetchAllUserConversations = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllUserConversationsController";
+  const action = "fetchAllUserConversations";
   try {
     const uid = req.user.id;
     const page = parseInt(req.query.page) || 1;
@@ -270,7 +355,7 @@ export const fetchAllUserConversations = async (req, res) => {
       {
         $lookup: {
           from: "users",
-          localField: "id",
+          localField: "uid",
           foreignField: "uid",
           as: "otherUser",
         },
@@ -292,17 +377,27 @@ export const fetchAllUserConversations = async (req, res) => {
         },
       },
     ]);
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json({
       success: true,
       data: conversations,
       hasMore: conversations.length === limit,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: error.message });
   }
 };
 export const fetchPal2PalConversation = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchPal2PalConversationController";
+  const action = "fetchPal2PalConversation";
   const { recipientId } = req.params;
   const userId = req.user.id;
   const { page = 1, limit = 20 } = req.query;
@@ -324,21 +419,39 @@ export const fetchPal2PalConversation = async (req, res) => {
         { senderId: recipientId, recipientId: userId },
       ],
     });
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json({
       success: true,
       data: messages.reverse(),
       hasMore: skip + messages.length < totalMessages,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: error.message });
   }
 };
 export const fetchUserNotifications = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchUserNotificationsController";
+  const action = "fetchUserNotifications";
   try {
     const userId = req.user.id;
     const { limit = "50", offset = "0", unread, category } = req.query;
 
     if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing userId",
+      );
       return res.status(400).json({ message: "Missing userId" });
     }
 
@@ -381,7 +494,7 @@ export const fetchUserNotifications = async (req, res) => {
                     {
                       primaryUser: {
                         $ifNull: [
-                          "$latest.payload.userName",
+                          "$latest.payload.username",
                           "$latest.payload.firstname",
                           "Someone",
                         ],
@@ -400,13 +513,24 @@ export const fetchUserNotifications = async (req, res) => {
       { $skip: Math.max(parseInt(offset), 0) },
       { $limit: Math.max(parseInt(limit), 1) },
     ]);
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ notifications, success: true });
   } catch (error) {
-    console.error("Error fetching notifications:", error);
+    console.error("Error fetching notifications:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Server error", success: false });
   }
 };
 export const fetchSingleNotification = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchSingleNotificationController";
+  const action = "fetchSingleNotification";
   try {
     const { id } = req.params;
     const userId = req.user.uid;
@@ -415,6 +539,13 @@ export const fetchSingleNotification = async (req, res) => {
       recipientId: userId,
     });
     if (!notification) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Notification not found",
+      );
       return res.status(404).json({
         message: "Notification not found",
         notification: null,
@@ -424,13 +555,20 @@ export const fetchSingleNotification = async (req, res) => {
       notification.isRead = true;
       await notification.save();
     }
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       notification,
     });
   } catch (error) {
-    console.error("Error fetching single notification:", error);
+    console.error("Error fetching single notification:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({
       success: false,
       message: "Server error fetching notification details",
@@ -438,6 +576,9 @@ export const fetchSingleNotification = async (req, res) => {
   }
 };
 export const fetchProfileInformation = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchProfileInformationController";
+  const action = "fetchProfileInformation";
   try {
     const { identifier } = req.params;
     const viewerUid = req.user.uid;
@@ -453,6 +594,13 @@ export const fetchProfileInformation = async (req, res) => {
       .select("-password -refreshTokens -iCashPin")
       .lean();
     if (!targetUser) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
       return res
         .status(404)
         .json({ success: false, message: "User not found" });
@@ -468,6 +616,13 @@ export const fetchProfileInformation = async (req, res) => {
       viewerUid,
     );
     if (isBlockedByViewer || isViewerBlockedByTarget) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found or you have restricted access to this profile.",
+      );
       return res.status(403).json({
         success: false,
         message:
@@ -564,16 +719,27 @@ export const fetchProfileInformation = async (req, res) => {
       bookmarksCount: targetUser.bookmarks?.length || 0,
       likesCount: targetUser.likes?.length || 0,
     };
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       data: profileData,
     });
   } catch (error) {
-    console.error("Comprehensive Profile Fetch Error:", error);
+    console.error("Comprehensive Profile Fetch Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const fetchBlockedUsers = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchBlockedUsersController";
+  const action = "fetchBlockedUsers";
   try {
     const user = await User.findOne({ uid: req.user.uid });
     const blockedList = await User.find({
@@ -581,18 +747,36 @@ export const fetchBlockedUsers = async (req, res) => {
     }).select(
       "uid firstname lastname username profilePic tier organizationName",
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(blockedList);
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ error: err.message });
   }
 };
 export const fetchLectureExceptions = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchLectureExceptionsController";
+  const action = "fetchLectureExceptions";
   try {
     const { courseId } = req.query;
     const userId = req.user.uid;
     const userRole = req.user.usertype;
 
     if (!courseId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "courseId is required",
+      );
       return res.status(400).json({ message: "courseId is required" });
     }
 
@@ -605,12 +789,26 @@ export const fetchLectureExceptions = async (req, res) => {
         lecturerIds: userId,
       });
       if (!course) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Access denied. You do not teach this course.",
+        );
         return res.status(403).json({
           success: false,
           message: "Access denied. You do not teach this course.",
         });
       }
     } else {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user type",
+      );
       return res.status(403).json({ message: "Unauthorized user type" });
     }
 
@@ -618,33 +816,70 @@ export const fetchLectureExceptions = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       count: exceptions.length,
       exceptions,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const fetchCourseAssignments = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchCourseAssignmentsController";
+  const action = "fetchCourseAssignments";
   try {
     const course = await Course.findOne(
       { courseId: req.params.courseId },
       "assignments",
     );
-    if (!course) return res.status(404).json({ message: "Course not found" });
-
+    if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(course.assignments);
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const fetchCourseLectures = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchCourseLecturesController";
+  const action = "fetchCourseLectures";
   try {
     const { lectureId } = req.params;
     const lecture = await Lectures.findOne({ id: lectureId });
     if (!lecture) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Lectures session not found",
+      );
       return res.status(404).json({ error: "Lectures session not found" });
     }
     const now = new Date();
@@ -654,40 +889,75 @@ export const fetchCourseLectures = async (req, res) => {
       lecture.status = "ongoing";
       await lecture.save();
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json(lecture);
   } catch (err) {
-    console.error("Fetch lecture error:", err);
+    console.error("Fetch lecture error:", err.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res
       .status(500)
       .json({ error: "Server error while fetching lecture details" });
   }
 };
 export const fetchLectureExceptionsLecturerView = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchLectureExceptionsLecturerViewController";
+  const action = "fetchLectureExceptionsLecturerView";
   try {
     const { courseId } = req.params;
     const userId = req.user.id;
     const course = await Course.findOne({ courseId: courseId });
     if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
       return res.status(404).json({ message: "Course not found" });
     }
     const isLecturer = course.lecturerIds?.some(
       (id) => id.toString() === userId.toString(),
     );
     if (!isLecturer) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Access Denied: You are not authorized to view this course's exceptions",
+      );
       return res.status(403).json({
         message:
           "Access Denied: You are not authorized to view this course's exceptions",
       });
     }
     const exceptions = await Exceptions.find({ courseId }).sort({ date: -1 });
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(exceptions);
   } catch (error) {
-    console.error("Error fetching lecture exceptions:", error);
+    console.error("Error fetching lecture exceptions:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Failed to fetch course exceptions" });
   }
 };
 export const fetchLeaderBoards = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchLeaderBoardsController";
+  const action = "fetchLeaderBoards";
   try {
     const topStudents = await User.find({ usertype: "student" })
       .sort({ currentIScore: -1 })
@@ -708,6 +978,7 @@ export const fetchLeaderBoards = async (req, res) => {
       .sort({ currentiScoreAvg: -1 })
       .limit(10);
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       data: {
@@ -717,10 +988,20 @@ export const fetchLeaderBoards = async (req, res) => {
       },
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const fetchBanksUsingCountryCode = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchBanksUsingCountryCodeController";
+  const action = "fetchBanksUsingCountryCode";
   const { countryCode } = req.params;
 
   try {
@@ -733,12 +1014,23 @@ export const fetchBanksUsingCountryCode = async (req, res) => {
       },
     );
     const data = await flwResponse.json();
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(flwResponse.status).json(data);
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ status: "error", message: "Failed to fetch banks" });
   }
 };
 export const fetchOngoingLectures = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchOngoingLecturesController";
+  const action = "fetchOngoingLectures";
   try {
     const userId = req.user.id;
     const enrolledOrTaughtCourseIds = await Course.find({
@@ -749,18 +1041,30 @@ export const fetchOngoingLectures = async (req, res) => {
       courseId: { $in: enrolledOrTaughtCourseIds },
     }).populate("courseId");
     if (ongoingLecture) {
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         ongoing: true,
         lecture: ongoingLecture,
       });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ ongoing: false });
   } catch (err) {
-    console.error("Error fetching ongoing lecture:", err);
+    console.error("Error fetching ongoing lecture:", err.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ error: err.message });
   }
 };
 export const fetchFeaturedBooksFromLibrary = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchFeaturedBooksFromLibraryController";
+  const action = "fetchFeaturedBooksFromLibrary";
   try {
     const rawDept = req.query.department;
     const department =
@@ -820,38 +1124,77 @@ export const fetchFeaturedBooksFromLibrary = async (req, res) => {
     if (featuredBooks.length === 0) {
       return res.json(getFallbackBooks());
     }
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json(featuredBooks);
   } catch (error) {
     console.error("Featured Scrape Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.json(getFallbackBooks());
   }
 };
 export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchCourseDetailsForOngoingLectureController";
+  const action = "fetchCourseDetailsForOngoingLecture";
   try {
     const { courseId } = req.params;
     const course = await Course.findOne({ courseId: courseId }).lean();
     if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
       return res.status(404).json({ message: "Course not found" });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(course);
   } catch (error) {
-    console.error("Fetch Course Error:", error);
+    console.error("Fetch Course Error:", error.messsage);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.messsage,
+    );
     res.status(500).json({ message: "Internal server error" });
   }
 };
 export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllExceptionsForOngoingLectureController";
+  const action = "fetchAllExceptionsForOngoingLecture";
   try {
     const { lectureId } = req.params;
     const exceptions = await Exceptions.find({ lectureId }).sort({
       date: -1,
     });
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(exceptions);
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Failed to fetch course exceptions" });
   }
 };
 export const fetchCourseDetails = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchCourseDetailsController";
+  const action = "fetchCourseDetails";
   try {
     const { courseId } = req.params;
     const userId = req.user.uid;
@@ -861,18 +1204,36 @@ export const fetchCourseDetails = async (req, res) => {
       $or: [{ studentsEnrolled: userId }, { lecturerIds: userId }],
     });
     if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found or you do not have permission to view it.",
+      );
       return res.status(404).json({
         success: false,
         message: "Course not found or you do not have permission to view it.",
       });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
 
     return res.status(200).json({
       success: true,
       data: course,
     });
   } catch (error) {
-    console.error(`Error fetching course ${req.params.courseId}:`, error);
+    console.error(
+      `Error fetching course ${req.params.courseId}:`,
+      error.message,
+    );
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: "Server error while fetching course details.",
@@ -881,6 +1242,9 @@ export const fetchCourseDetails = async (req, res) => {
   }
 };
 export const fetchStudentsLecturesTimeline = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchStudentsLecturesTimelineController";
+  const action = "fetchStudentsLecturesTimeline";
   try {
     const studentId = req.user.uid;
     const enrolledCourses = await Course.find({
@@ -901,47 +1265,86 @@ export const fetchStudentsLecturesTimeline = async (req, res) => {
         courseTitle: courseInfo?.courseTitle,
       };
     });
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ success: true, data: decoratedLectures });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const fetchAllCourseAssessments = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllCourseAssessmentsController";
+  const action = "fetchAllCourseAssessments";
   try {
     const { courseId } = req.params;
     const assessments = await Assessment.find({ courseId })
       .sort({ updatedAt: -1 })
       .select("-__v");
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       count: assessments.length,
       data: assessments,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const fetchAllLecturesByCourseId = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllLecturesByCourseIdController";
+  const action = "fetchAllLecturesByCourseId";
   try {
     const { courseId } = req.params;
     const lectures = await Lectures.find({ courseId: courseId }).lean();
 
     if (!lectures || lectures.length === 0) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "No lectures found for this course",
+      );
       return res
         .status(404)
         .json({ error: "No lectures found for this course" });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json(lectures);
   } catch (err) {
-    console.error("Fetch course lectures error:", err);
+    console.error("Fetch course lectures error:", err.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res
       .status(500)
       .json({ error: "Server error while fetching lectures for this course" });
   }
 };
 export const fetchLecturersLecturesTimeline = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchLecturersLecturesTimelineController";
+  const action = "fetchLecturersLecturesTimeline";
   try {
     const lecturerId = req.user.uid;
     const taughtCourses = await Course.find({
@@ -962,18 +1365,35 @@ export const fetchLecturersLecturesTimeline = async (req, res) => {
         courseTitle: courseInfo?.courseTitle,
       };
     });
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ success: true, data: decoratedLectures });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: error.message });
   }
 };
 export const getTransactionById = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getTransactionByIdController";
+  const action = "getTransactionById";
   try {
     const { transactionId } = req.params;
     const currentUserId = req.user.id;
 
     if (!transactionId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Transaction ID parameter is required",
+      );
       return res.status(400).json({
         success: false,
         message: "Transaction ID parameter is required",
@@ -981,6 +1401,13 @@ export const getTransactionById = async (req, res) => {
     }
     const transaction = await Transactions.findOne({ transactionId }).lean();
     if (!transaction) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Transaction detail not found",
+      );
       return res.status(404).json({
         success: false,
         message: "Transaction detail not found",
@@ -992,18 +1419,33 @@ export const getTransactionById = async (req, res) => {
     const isRecipient = transaction.metadata?.recipientId === currentUserId;
 
     if (!isOwner && !isSender && !isRecipient) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized access to this transaction record",
+      );
       return res.status(403).json({
         success: false,
         message: "Unauthorized access to this transaction record",
       });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       data: transaction,
       message: "Success",
     });
   } catch (error) {
-    console.error("Backend getTransactionById Error:", error);
+    console.error("Backend getTransactionById Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: error.message || "Internal Server Error",
@@ -1011,6 +1453,9 @@ export const getTransactionById = async (req, res) => {
   }
 };
 export const fetchStudentsEnrolledCourses = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchStudentsEnrolledCoursesController";
+  const action = "fetchStudentsEnrolledCourses";
   try {
     const { semester, session } = req.query;
     const userId = req.user.uid;
@@ -1029,12 +1474,23 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
       .limit(25)
       .lean();
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(courses);
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Error fetching your courses" });
   }
 };
 export const fetchLecturerEnrolledCourses = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchLecturerEnrolledCoursesController";
+  const action = "fetchLecturerEnrolledCourses";
   try {
     const { semester, session } = req.query;
     const lecturerId = req.user.uid;
@@ -1052,20 +1508,39 @@ export const fetchLecturerEnrolledCourses = async (req, res) => {
       ...course,
     }));
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(results);
   } catch (error) {
-    console.error("Lecturer Fetch Courses Error:", error);
+    console.error("Lecturer Fetch Courses Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Error fetching lecturer courses" });
   }
 };
 export const fetchAllAdmins = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllAdminsController";
+  const action = "fetchAllAdmins";
   try {
     const admins = await Admin.find({}).select(
       "uid firstname lastname profilePic adminType lastAccessed",
     );
     console.log(`Admin ${req.admin.uid} fetched the administrator list.`);
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(admins);
   } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ error: "Failed to fetch administrator list" });
   }
 };
@@ -1097,6 +1572,9 @@ export const getNotifications = async (req, res) => {
   }
 };
 export const fetchPosts = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchPostsController";
+  const action = "fetchPosts";
   const limit = parseInt(req.query.limit) || 15;
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const isInitialLoad = !cursorScore;
@@ -1188,9 +1666,17 @@ export const fetchPosts = async (req, res) => {
     const nextCursor =
       posts.length === limit ? posts[posts.length - 1].rankingScore : null;
     const responseData = { posts: processedPosts, nextCursor };
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.json(responseData);
   } catch (err) {
-    console.error("Feed error:", err);
+    console.error("Feed error:", err.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     res.status(500).json({ error: err.message });
   }
 };

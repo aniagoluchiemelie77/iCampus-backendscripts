@@ -26,6 +26,7 @@ import fs from "fs/promises";
 import { TAX_RATE, AGENT_RATE } from "../constants/inAppConstants.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
   year: "numeric",
@@ -286,24 +287,19 @@ export const clearUserCart = async (req, res) => {
 
     if (!updatedUser) {
       logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            'User not found',
-          );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
       return res.status(404).json({
         status: false,
         message: "User not found",
       });
     }
 
-    logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "success"
-        );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       status: true,
       message: "Cart cleared successfully",
@@ -312,12 +308,12 @@ export const clearUserCart = async (req, res) => {
   } catch (error) {
     console.error("Clear Cart Error:", error.message);
     logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          error.message,
-        );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({
       status: false,
       message: "An error occurred while clearing the cart",
@@ -339,12 +335,7 @@ export const bulkAddToCart = async (req, res) => {
   });
   user.cart = newCart;
   await user.save();
-  logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "success"
-      );
+  logControllerPerformance(controllerName, action, startTime, "success");
   res.status(200).json({
     status: true,
     cart: user.cart,
@@ -357,12 +348,7 @@ export const clearFavorites = async (req, res) => {
   const action = "clearFavorites";
   const userId = req.user.id;
   await User.findOneAndUpdate({ uid: userId }, { $set: { favorites: [] } });
-  logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "success"
-      );
+  logControllerPerformance(controllerName, action, startTime, "success");
   res.status(200).json({ status: true });
 };
 export const initializeCheckout = async (req, res) => {
@@ -377,12 +363,12 @@ export const initializeCheckout = async (req, res) => {
     const buyer = await User.findOne({ uid: buyerId }).session(session);
     if (!buyer || buyer.pointsBalance < totals.grandTotal) {
       logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Insufficient iCash balance to complete purchase or user not found.",
-          );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Insufficient iCash balance to complete purchase or user not found.",
+      );
       throw new Error(
         "Insufficient iCash balance to complete purchase or user not found.",
       );
@@ -412,12 +398,12 @@ export const initializeCheckout = async (req, res) => {
       );
       if (!product || !seller) {
         logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Product or Seller info not found."
-          );
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Product or Seller info not found.",
+        );
         throw new Error("Product or Seller info not found.");
       }
 
@@ -461,7 +447,7 @@ export const initializeCheckout = async (req, res) => {
             action,
             startTime,
             "error",
-            `Insufficient stock for ${product.title}. Available: ${currentStock}`
+            `Insufficient stock for ${product.title}. Available: ${currentStock}`,
           );
           throw new Error(
             `Insufficient stock for ${product.title}. Available: ${currentStock}`,
@@ -515,12 +501,7 @@ export const initializeCheckout = async (req, res) => {
         payload: { transactionId: buyerTxId, itemCount: items.length, buyerId },
       },
     );
-    logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success"
-          );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res
       .status(200)
       .json({ success: true, data: processedResults.map((r) => r.order) });
@@ -528,12 +509,12 @@ export const initializeCheckout = async (req, res) => {
     await session.abortTransaction();
     session.endSession();
     logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-           error.message
-          );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -550,34 +531,34 @@ export const completeOrderDelivery = async (req, res) => {
     const salesIncrement = order.quantity || 1;
     if (!order) {
       logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Product order not found."
-          );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Product order not found.",
+      );
       throw new Error("Product order not found.");
     }
     if (order.status !== "pending_delivery" && order.status !== "dropped_off") {
       logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Product order is already processed or cancelled."
-          );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Product order is already processed or cancelled.",
+      );
       throw new Error("Product order is already processed or cancelled.");
     }
     const isSeller = order.sellerId === scannerUid;
     const isAgent = order.agentId === scannerUid;
     if (!isSeller && !isAgent) {
       logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "You are not authorized to verify this delivery."
-          );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "You are not authorized to verify this delivery.",
+      );
       throw new Error("You are not authorized to verify this delivery.");
     }
     const product = await Product.findOneAndUpdate(
@@ -589,12 +570,12 @@ export const completeOrderDelivery = async (req, res) => {
     const buyer = await User.findOne({ uid: order.buyerId }).session(session);
     if (!seller) {
       logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Seller account no longer exists."
-          );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Seller account no longer exists.",
+      );
       throw new Error("Seller account no longer exists.");
     }
     const totalHeld = order.amountPaid;
@@ -607,12 +588,12 @@ export const completeOrderDelivery = async (req, res) => {
       agent = await User.findOne({ uid: order.agentId }).session(session);
       if (!agent) {
         logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Drop-off agent not found."
-          );
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Drop-off agent not found.",
+        );
         throw new Error("Drop-off agent not found.");
       }
       agentEarnings = payableAmount * AGENT_RATE;
@@ -704,12 +685,7 @@ export const completeOrderDelivery = async (req, res) => {
       },
       false,
     );
-    logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success"
-          );
+    logControllerPerformance(controllerName, action, startTime, "success");
 
     res.status(200).json({
       success: true,
@@ -723,12 +699,12 @@ export const completeOrderDelivery = async (req, res) => {
     await session.abortTransaction();
     session.endSession();
     logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-             error.message
-          );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(400).json({ success: false, message: error.message });
   }
 };
@@ -748,12 +724,12 @@ export const cancelOrder = async (req, res) => {
     }).session(session);
     if (!order || order.status !== "pending_delivery") {
       logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Order not found or you do not have permission to cancel it.",
-          );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Order not found or you do not have permission to cancel it.",
+      );
       throw new Error(
         "Order not found or you do not have permission to cancel it.",
       );
@@ -766,12 +742,12 @@ export const cancelOrder = async (req, res) => {
 
     if (!seller) {
       logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Seller not found."
-          );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Seller not found.",
+      );
       throw new Error("Seller not found.");
     }
     buyer.pointsBalance += order.amountPaid;
@@ -823,12 +799,7 @@ export const cancelOrder = async (req, res) => {
         payload: { orderId, sellerId: seller.uid, reason },
       },
     );
-    logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success"
-          );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       message: "Order cancelled, buyer refunded, and seller notified.",
@@ -836,12 +807,12 @@ export const cancelOrder = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            error.message
-          );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(400).json({ success: false, message: error.message });
   } finally {
     session.endSession();
@@ -857,21 +828,16 @@ export const getPendingOrders = async (req, res) => {
       buyerId: userId,
       status: { $in: ["pending_delivery", "dropped_off"] },
     }).sort({ createdAt: -1 });
-    logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "success"
-        );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ success: true, data: orders });
   } catch (error) {
     logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          error.message,
-        );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -902,24 +868,19 @@ export const logProductImpression = async (req, res) => {
         .status(200)
         .json({ success: true, message: "Impression logged" });
     }
-    logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "success"
-        );
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       message: `${productId} impressions increment by ${userId} for ${currentMonthYear}`,
     });
   } catch (error) {
     logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          error.message,
-        );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -930,7 +891,13 @@ export const getSellerSalesHistory = async (req, res) => {
   try {
     const sellerId = req.user.id;
     if (!sellerId) {
-      
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized: Seller ID missing",
+      );
       return res.status(401).json({
         success: false,
         message: "Unauthorized: Seller ID missing",
@@ -939,13 +906,22 @@ export const getSellerSalesHistory = async (req, res) => {
     const sales = await ProductSales.find({ sellerId })
       .sort({ createdAt: -1 })
       .lean();
+
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       count: sales.length,
       data: sales,
     });
   } catch (error) {
-    console.error("getSellerSalesHistory Error:", error);
+    console.error("getSellerSalesHistory Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({
       success: false,
       message: "Internal server error while fetching sales records",
@@ -953,9 +929,19 @@ export const getSellerSalesHistory = async (req, res) => {
   }
 };
 export const getPayoutHistory = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getPayoutHistoryController";
+  const action = "getPayoutHistory";
   try {
     const userUid = req.user.id;
     if (!userUid) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User identification missing.",
+      );
       return res.status(400).json({
         success: false,
         message: "User identification missing.",
@@ -964,13 +950,22 @@ export const getPayoutHistory = async (req, res) => {
     const history = await Payout.find({ sellerUid: userUid })
       .sort({ createdAt: -1 })
       .select("-__v");
+
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       data: history,
       message: "Payout history retrieved successfully.",
     });
   } catch (error) {
-    console.error("Fetch Payout Error:", error);
+    console.error("Fetch Payout Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: "An internal error occurred while fetching payout history.",
@@ -979,6 +974,9 @@ export const getPayoutHistory = async (req, res) => {
   }
 };
 export const requestPayout = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "requestPayoutController";
+  const action = "requestPayout";
   const { amount } = req.body;
   const userId = req.user.id;
   const session = await mongoose.startSession();
@@ -988,10 +986,24 @@ export const requestPayout = async (req, res) => {
     const user = await User.findOne({ uid: userId }).session(session);
 
     if (!user) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found.",
+      );
       throw new Error("User not found.");
     }
 
     if (user.pendingSalesBalance < amount) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Insufficient pending balance.",
+      );
       throw new Error("Insufficient pending balance.");
     }
     user.pendingSalesBalance -= amount;
@@ -1056,6 +1068,7 @@ export const requestPayout = async (req, res) => {
         payload: { userId: user.uid, amount, payoutId, transactionId },
       },
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     return {
       success: true,
       newPointsBalance: user.pointsBalance,
@@ -1063,17 +1076,34 @@ export const requestPayout = async (req, res) => {
     };
   } catch (error) {
     await session.abortTransaction();
-    console.error("Payout Error:", error);
+    console.error("Payout Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     throw error;
   } finally {
     session.endSession();
   }
 };
 export const getDropOffStations = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getDropOffStationsController";
+  const action = "getDropOffStations";
   try {
     const { lat, lng } = req.query;
     const stations = await DropOffStation.find({}).lean();
     if (!lat || !lng) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Stations fetched successfully",
+      );
       return res.status(200).json({
         success: true,
         message: "Stations fetched successfully",
@@ -1097,13 +1127,22 @@ export const getDropOffStations = async (req, res) => {
         };
       })
       .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: "Closest stations fetched successfully",
       data: stationsWithDistance,
     });
   } catch (error) {
-    console.error("Error fetching stations:", error);
+    console.error("Error fetching stations:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: "Internal server error processing station data",
@@ -1111,6 +1150,9 @@ export const getDropOffStations = async (req, res) => {
   }
 };
 export const saveProductController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "saveProductController";
+  const action = "saveProduct";
   try {
     const userUid = req.user.uid;
     const { productId } = req.params;
@@ -1119,6 +1161,13 @@ export const saveProductController = async (req, res) => {
 
     if (!title || !description || !productType || !price) {
       if (req.file) await fs.unlink(req.file.path).catch(() => {});
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required product fields.",
+      );
       return res
         .status(400)
         .json({ success: false, message: "Missing required product fields." });
@@ -1198,6 +1247,13 @@ export const saveProductController = async (req, res) => {
 
       if (!existingProduct) {
         if (req.file) await fs.unlink(req.file.path).catch(() => {});
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Product not found.",
+        );
         return res
           .status(404)
           .json({ success: false, message: "Product not found." });
@@ -1249,6 +1305,13 @@ export const saveProductController = async (req, res) => {
         { new: true },
       );
       if (!product) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Product record not found or unauthorized editing access.",
+        );
         return res.status(404).json({
           success: false,
           message: "Product record not found or unauthorized editing access.",
@@ -1296,8 +1359,6 @@ export const saveProductController = async (req, res) => {
       });
       await product.save();
     }
-
-    // 6. Handle Background Fan-out Pipelines
     const seller = await User.findOne({ uid: userUid }).lean();
     const sellerName = seller ? seller.firstname : "A creator you follow";
 
@@ -1319,6 +1380,7 @@ export const saveProductController = async (req, res) => {
       },
     );
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(isEditing ? 200 : 201).json({
       success: true,
       message: isEditing
@@ -1328,7 +1390,17 @@ export const saveProductController = async (req, res) => {
     });
   } catch (error) {
     if (req.file) await fs.unlink(req.file.path).catch(() => {});
-    console.error("Global crash layer hit in saveProductController:", error);
+    console.error(
+      "Global crash layer hit in saveProductController:",
+      error.message,
+    );
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: "Internal application routing anomaly.",
@@ -1336,20 +1408,39 @@ export const saveProductController = async (req, res) => {
   }
 };
 export const deleteProductController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deleteProductController";
+  const action = "deleteProduct";
   const session = await mongoose.startSession();
   try {
     session.startTransaction();
     const userUid = req.user.uid;
     const { productId } = req.params;
 
-    if (!productId)
+    if (!productId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required product identification parameter.",
+      );
       throw new Error("Missing required product identification parameter.");
+    }
     const product = await Product.findOneAndDelete({
       productId: productId,
       sellerId: userUid,
     });
-    if (!product)
+    if (!product) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Product record not found or unauthorized access.",
+      );
       throw new Error("Product record not found or unauthorized access.");
+    }
     await session.commitTransaction();
     if (product.productType === "file" && product.fileDetails?.fileUrl) {
       fs.unlink(product.fileDetails.fileUrl).catch((err) =>
@@ -1429,13 +1520,24 @@ export const deleteProductController = async (req, res) => {
         payload: { productId, productName: product.title, sellerId: userUid },
       },
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: "Product entry successfully unlinked and purged.",
       data: { productId },
     });
   } catch (error) {
-    console.error("Global crash layer hit in deleteProductController:", error);
+    console.error(
+      "Global crash layer hit in deleteProductController:",
+      error.message,
+    );
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({
       success: false,
       message: "Internal application routing anomaly.",
@@ -1443,6 +1545,9 @@ export const deleteProductController = async (req, res) => {
   }
 };
 export const togglefavoriteActionController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "togglefavoriteActionController";
+  const action = "togglefavoriteAction";
   const { productId } = req.body;
   const userId = req.user.id;
   try {
@@ -1459,6 +1564,7 @@ export const togglefavoriteActionController = async (req, res) => {
       updateQuery,
       { new: true },
     ).select("favorites");
+    logControllerPerformance(controllerName, action, startTime, "success");
 
     res.status(200).json({
       success: true,
@@ -1466,10 +1572,20 @@ export const togglefavoriteActionController = async (req, res) => {
       message: isFavorited ? "Removed from favorites" : "Added to favorites",
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: error.message });
   }
 };
 export const toggleCartActionController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleCartActionController";
+  const action = "toggleCartAction";
   const {
     productId,
     action,
@@ -1481,7 +1597,16 @@ export const toggleCartActionController = async (req, res) => {
 
   try {
     const user = await User.findOne({ uid: userId });
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
+      return res.status(404).json({ message: "User not found" });
+    }
 
     let updatedUser;
 
@@ -1510,6 +1635,7 @@ export const toggleCartActionController = async (req, res) => {
         { new: true },
       ).select("cart");
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
 
     res.status(200).json({
       success: true,
@@ -1517,10 +1643,20 @@ export const toggleCartActionController = async (req, res) => {
       message: `Cart updated successfully`,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ success: false, message: error.message });
   }
 };
 export const markOrderAsDroppedOff = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "markOrderAsDroppedOffController";
+  const action = "markOrderAsDroppedOff";
   const { orderId } = req.body;
   const sellerId = req.user.id;
   const session = await mongoose.startSession();
@@ -1529,9 +1665,34 @@ export const markOrderAsDroppedOff = async (req, res) => {
     session.startTransaction();
 
     const order = await ProductOrder.findOne({ orderId }).session(session);
-    if (!order) throw new Error("Order not found.");
-    if (order.sellerId !== sellerId) throw new Error("Unauthorized action.");
+    if (!order) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Order not found.",
+      );
+      throw new Error("Order not found.");
+    }
+    if (order.sellerId !== sellerId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized action.",
+      );
+      throw new Error("Unauthorized action.");
+    }
     if (order.deliveryMethod !== "drop_off") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "This action is only valid for station drop-offs.",
+      );
       throw new Error("This action is only valid for station drop-offs.");
     }
 
@@ -1539,6 +1700,8 @@ export const markOrderAsDroppedOff = async (req, res) => {
     order.droppedOffAt = new Date().toISOString();
     await order.save({ session });
     const buyer = await User.findOne({ uid: order.buyerId }).session(session);
+    await session.commitTransaction();
+    session.endSession();
     await createNotification({
       notificationId: generateNotificationId("store"),
       recipientId: order.buyerId,
@@ -1572,8 +1735,7 @@ export const markOrderAsDroppedOff = async (req, res) => {
         },
       });
     }
-    await session.commitTransaction();
-    session.endSession();
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       message: "Order updated to dropped off. Buyer notified.",
@@ -1582,6 +1744,13 @@ export const markOrderAsDroppedOff = async (req, res) => {
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(400).json({ success: false, message: error.message });
   }
 };

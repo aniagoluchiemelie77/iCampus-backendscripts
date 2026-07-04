@@ -16,20 +16,40 @@ import {USD_SUBSCRIPTION_PRICES} from '../constants/inAppConstants.js';
 import { notifyAdmins } from "../services/adminNotification.js";
 import {executeTransferWithRetry} from '../utils/withdrawalRetryHelper.js';
 import {checkAndFlagHeavyActivity, addFlag, checkAndFlagWithdrawals} from '../utils/flagger.js';
+import { logControllerPerformance } from "../utils/eventLogger.js";
 
 
 export const getSavedMethods = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getSavedMethodsController";
+  const action = "getSavedMethods";
   try {
     const methods = await PaymentMethods.findAll({
       where: { userId: req.params.userId },
       order: [["createdAt", "DESC"]],
     });
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success"
+        );
     res.json(methods);
   } catch (error) {
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
     res.status(500).json({ error: error.message });
   }
 };
 export const createPaymentMethod = async (userId, cardDetails) => {
+  const startTime = Date.now();
+  const controllerName = "createPaymentMethodController";
+  const action = "createPaymentMethod";
   try {
     const response = await flutterwavedoc.payment_methods_post({
       type: "card",
@@ -46,17 +66,33 @@ export const createPaymentMethod = async (userId, cardDetails) => {
       await PaymentMethods.create({
         userId: userId,
         type: "card",
-        flw_token: pmd.id, // The pmd_... ID
+        flw_token: pmd.id, 
         last4: pmd.card.last4,
         card_type: pmd.card.network,
         expiry: `${pmd.card.expiry_month}/${pmd.card.expiry_year}`,
       });
+      logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success"
+          );
     }
   } catch (err) {
-    console.error("Hydraulic failure in payment processing:", err);
+    console.error("Hydraulic failure in payment processing:", err.message);
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          err.message,
+        );
   }
 };
 export const initializeBuy = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "initializeBuyController";
+  const action = "initializeBuy";
   const {
     amount,
     currency,
@@ -68,12 +104,26 @@ export const initializeBuy = async (req, res) => {
   } = req.body;
 
   if (!country) {
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Country information is required to calculate exchange rates.",
+        );
     return res.status(400).json({
       status: "error",
       message: "Country information is required to calculate exchange rates.",
     });
   }
   if (!amount || !paymentToken) {
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing payment details"
+        );
     return res
       .status(400)
       .json({ status: "error", message: "Missing payment details" });
@@ -100,8 +150,15 @@ export const initializeBuy = async (req, res) => {
           },
           senderId: "system"
         },
-        true // Send email alert immediately
+        true 
       ).catch(console.error);
+      logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Transaction integrity check failed. Please try again.",
+        );
       return res.status(400).json({
         status: "error",
         message: "Transaction integrity check failed. Please try again.",
@@ -135,6 +192,12 @@ export const initializeBuy = async (req, res) => {
     );
     const result = response.data;
     if (result.status === "success") {
+      logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success",
+        );
       return res.status(200).json({
         status: "success",
         message: "Charge initiated",
@@ -142,6 +205,13 @@ export const initializeBuy = async (req, res) => {
         data: result.data,
       });
     } else {
+      logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          result.message
+        );
       return res.status(400).json({ status: "error", message: result.message });
     }
   } catch (error) {
@@ -149,6 +219,13 @@ export const initializeBuy = async (req, res) => {
       "Tokenized Charge Error:",
       error.response?.data || error.message,
     );
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.response?.data || error.message
+        );
     res.status(500).json({
       status: "error",
       message: error.response?.data?.message || "Internal Server Error",
@@ -156,6 +233,9 @@ export const initializeBuy = async (req, res) => {
   }
 };
 export const initializeWithdraw = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "initializeWithdrawController";
+  const action = "initializeWithdraw";
   const userId = req.user.uid;
   const { iCashAmount, amountToReceive, fee, currency, bankDetails } = req.body;
   const idempotencyKey = `wd-${userId}-${Date.now().toString().substring(0, 10)}`;
@@ -164,11 +244,25 @@ export const initializeWithdraw = async (req, res) => {
   const user = await User.findOne({ uid: userId });
   const isFlagged = await checkAndFlagWithdrawals(userId);
   if (isFlagged) {
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Too many withdrawal requests. Please contact support." 
+        );
     return res.status(403).json({ 
       message: "Too many withdrawal requests. Please contact support." 
     });
   }
   if (user.iCashBalance < iCashAmount) {
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Insufficient iCash balance."
+        );
     return res.status(403).json({ message: "Insufficient iCash balance." });
   }
   user.iCashBalance -= iCashAmount;
@@ -232,6 +326,12 @@ export const initializeWithdraw = async (req, res) => {
     },
     false
   ).catch(console.error);
+  logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success",
+        );
       return res.status(200).json({
         status: "success",
         message: "Transfer initiated successfully",
@@ -242,6 +342,13 @@ export const initializeWithdraw = async (req, res) => {
       await user.save();
       await Transactions.findOneAndUpdate({ transactionId }, { status: "failed" });
 
+      logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          response.data.message || "Flutterwave declined the transfer." 
+        );
       return res.status(400).json({ 
         status: "error", 
         message: response.data.message || "Flutterwave declined the transfer." 
@@ -249,6 +356,13 @@ export const initializeWithdraw = async (req, res) => {
     }
   } catch (error) {
     console.error("Withdrawal Error:", error.response?.data || error.message);
+    logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          response.data.message || error.message
+        );
     if (error.response || error.request) {
       const user = await User.findOne({ uid: userId });
       user.iCashBalance += iCashAmount;
@@ -274,16 +388,35 @@ export const initializeWithdraw = async (req, res) => {
   }
 };
 export const handleP2pTransfers = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "handleP2pTransfersController";
+  const action = "handleP2pTransfers";
     const session = await mongoose.startSession();
     session.startTransaction();
 
     try {
       const { recipientId, amount, description, recipientiTagName } = req.body;
       const senderId = req.user.id;
-      if (amount <= 0)
-        return res.status(400).json({ message: "Invalid amount" });
-      if (senderId === recipientId)
-        return res.status(400).json({ message: "Cannot send to yourself" });
+      if (amount <= 0) {
+        logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              "Invalid amount"
+            );
+        throw new Error("Invalid amount");
+      }
+      if (senderId === recipientId) {
+        logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              "Cannot send to yourself"
+            );
+          throw new Error("Cannot send to yourself");
+      }
 
       const sender = await User.findOne({ uid: senderId }).session(session);
       const recipient = await User.findOne({
@@ -291,9 +424,26 @@ export const handleP2pTransfers = async (req, res) => {
         itagusername: recipientiTagName,
       }).session(session);
 
-      if (!recipient) throw new Error("Recipient not found");
-      if (sender.pointsBalance < amount)
-        return res.status(400).json({ message: "Insufficient iCash balance" });
+      if (!recipient) {
+        logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              'Recipient not found'
+            );
+        throw new Error("Recipient not found");
+      }
+      if (sender.pointsBalance < amount) {
+        logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              "Insufficient iCash balance"
+            );
+        throw new Error("Insufficient iCash balance");
+      }
 
       const transactionRef = `P2P-${uuidv4().substring(0, 8).toUpperCase()}`;
 
@@ -386,19 +536,42 @@ export const handleP2pTransfers = async (req, res) => {
   },
   false 
 ).catch(console.error);
+logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success"
+            );
       res.status(200).json({ message: "Transfer successful", transactionRef });
     } catch (error) {
       await session.abortTransaction();
       session.endSession();
+      logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              error.message
+            );
       res
         .status(500)
         .json({ message: error.message || "Internal Server Error" });
     }
 };
 export const verifySubscriptionFlwPayment = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifySubscriptionFlwPaymentController";
+  const action = "verifySubscriptionFlwPayment";
     const { transactionId, tier, currentExchangeRate } = req.body;
     const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
     if (!transactionId) {
+      logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              "Transactions ID is required"
+            );
       return res
         .status(400)
         .json({ status: "error", message: "Transactions ID is required" });
@@ -415,17 +588,38 @@ export const verifySubscriptionFlwPayment = async (req, res) => {
       );
       const { status, currency, id, amount, customer } = response.data.data;
       if (status !== "successful") {
+        logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              "Transactions not successful"
+            );
         return res
           .status(400)
           .json({ status: "error", message: "Transactions not successful" });
       }
       const baseUsdPrice = USD_SUBSCRIPTION_PRICES[tier];
       if (baseUsdPrice === undefined) {
+        logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              "Invalid tier selected"
+            );
         return res.status(400).json({ message: "Invalid tier selected" });
       }
       const expectedLocalPrice = baseUsdPrice * currentExchangeRate;
       const margin = 1;
       if (amount < expectedLocalPrice - margin) {
+        logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              `Insufficient payment. Expected approx ${expectedLocalPrice} ${currency}`,
+            );
         return res.status(400).json({
           message: `Insufficient payment. Expected approx ${expectedLocalPrice} ${currency}`,
         });
@@ -460,7 +654,12 @@ export const verifySubscriptionFlwPayment = async (req, res) => {
           transactionId: id,
         },
       });
-
+      logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success"
+            );
       return res.status(200).json({
         status: "success",
         message: "Subscription verified and activated",
@@ -472,6 +671,13 @@ export const verifySubscriptionFlwPayment = async (req, res) => {
         "FLW Verification Error:",
         error.response?.data || error.message,
       );
+      logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              error.response?.data || error.message,
+            );
       return res.status(500).json({
         status: "error",
         message: "Internal server error during verification",
@@ -479,12 +685,24 @@ export const verifySubscriptionFlwPayment = async (req, res) => {
     }
   };
 export const generateTransactionHistory = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "generateTransactionHistoryController";
+  const action = "generateTransactionHistory";
     try {
       const { colors } = theme;
       const { startDate, endDate } = req.body;
       const userId = req.user.id;
       const user = await User.findOne({ uid: userId });
-      if (!user) return res.status(404).json({ message: "User not found" });
+      if (!user) {
+        logControllerPerformance(
+                controllerName,
+                action,
+                startTime,
+                "error",
+                "User not found"
+              );
+        return res.status(404).json({ message: "User not found" });
+      }
 
       const start = new Date(startDate);
       const end = new Date(endDate);
@@ -614,6 +832,12 @@ export const generateTransactionHistory = async (req, res) => {
           },
         ],
       });
+      logControllerPerformance(
+                controllerName,
+                action,
+                startTime,
+                "success"
+              );
 
       res.json({
         success: true,
@@ -621,11 +845,21 @@ export const generateTransactionHistory = async (req, res) => {
         pdfUrl: firebaseUrl,
       });
     } catch (error) {
-      console.error("AccountStatement Flow Error:", error);
+      console.error("AccountStatement Flow Error:", error.message);
+      logControllerPerformance(
+                controllerName,
+                action,
+                startTime,
+                "error",
+                error.message
+              );
       res.status(500).json({ success: false, error: error.message });
     }
   };
 export const initiateFlwCharge =  async (req, res) => {
+    const startTime = Date.now();
+  const controllerName = "initiateFlwChargeController";
+  const action = "initiateFlwCharge";
     const { paymentType, cardData, isInternational, currencyCode } = req.body;
     const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
     const ENCRYPTION_KEY = process.env.FLUTTERWAVE_CLIENT_EKEY;
@@ -680,9 +914,22 @@ export const initiateFlwCharge =  async (req, res) => {
       );
 
       const data = await flwResponse.json();
+      logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success"
+            );
       res.status(flwResponse.status).json({ success: true, data });
     } catch (err) {
-      console.error("Flutterwave Server Error:", err);
+      console.error("Flutterwave Server Error:", err.message);
+      logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              err.message
+            );
       res
         .status(500)
         .json({
@@ -692,6 +939,9 @@ export const initiateFlwCharge =  async (req, res) => {
     }
   };
 export const validatePaymentOTP = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "validatePaymentOTPController";
+  const action = "validatePaymentOTP";
   try {
     const { otpCode, flw_ref, type } = req.body;
     if (!otpCode || !flw_ref) {
@@ -715,12 +965,25 @@ export const validatePaymentOTP = async (req, res) => {
       }
     );
     if (response.data.status === 'success') {
+      logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success"
+            );
       return res.status(200).json({
         success: true,
         message: "Payment verified successfully",
         data: response.data.data
       });
     } else {
+      logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              response.data.message || "Verification failed"
+            );
       return res.status(400).json({
         success: false,
         message: response.data.message || "Verification failed"
@@ -729,6 +992,13 @@ export const validatePaymentOTP = async (req, res) => {
 
   } catch (error) {
     console.error("Flutterwave OTP Error:", error.response?.data || error.message);
+    logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              error.response?.data || error.message
+            );
     return res.status(error.response?.status || 500).json({
       success: false,
       message: error.response?.data?.message || "Internal Server Error during verification"

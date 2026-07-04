@@ -30,6 +30,7 @@ import { client } from "../workers/reditFile.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { verifyAndNotifyLogin } from "../utils/suspiciousActivityDetector.js";
 import { addFlag } from "../utils/flagger.js";
+import { logControllerPerformance } from "../utils/eventLogger.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -44,6 +45,9 @@ const formattedTime = now.toLocaleTimeString("en-US", {
 const verificationCodes = {};
 
 export const signUp = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "signUpController";
+  const action = "signUp";
   const {
     usertype,
     email,
@@ -66,6 +70,13 @@ export const signUp = async (req, res) => {
     }).lean();
 
     if (existingUser) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User already exists.",
+      );
       return res
         .status(409)
         .json({ message: "User already exists.", success: false });
@@ -156,7 +167,7 @@ export const signUp = async (req, res) => {
       sendPush: true,
       saveToDb: true,
     });
-
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(201).json({
       message: "User created successfully",
       success: true,
@@ -165,7 +176,14 @@ export const signUp = async (req, res) => {
       refreshToken,
     });
   } catch (error) {
-    console.error("❌ Insert failed:", error);
+    console.error("❌ Insert failed:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
 
     if (error.code === 11000) {
       return res.status(409).json({
@@ -180,6 +198,9 @@ export const signUp = async (req, res) => {
   }
 };
 export const Login = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "LoginController";
+  const action = "Login";
   const {
     identifier,
     password,
@@ -190,23 +211,63 @@ export const Login = async (req, res) => {
   } = req.body.credentials || req.body;
   try {
     const user = await User.findOne({ email: identifier });
-    if (!user)
+    if (!user) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Account not found. Please sign up first.",
+      );
       return res
         .status(404)
         .json({ error: "Account not found. Please sign up first." });
+    }
     if (socialProvider === "google") {
       const isValid = await verifyGoogleToken(idToken, identifier);
-      if (!isValid)
+      if (!isValid) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid Google token",
+        );
         return res.status(401).json({ error: "Invalid Google token" });
+      }
     } else if (socialProvider === "github") {
       const isValid = await verifyGithubToken(idToken, identifier);
-      if (!isValid)
+      if (!isValid) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid GitHub token",
+        );
         return res.status(401).json({ error: "Invalid GitHub token" });
+      }
     } else {
       const isMatch = await bcrypt.compare(password, user.password);
-      if (!isMatch) return res.status(401).json({ error: "Invalid password" });
+      if (!isMatch) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid password",
+        );
+        return res.status(401).json({ error: "Invalid password" });
+      }
     }
     if (socialProvider && user.providerId !== socialProvider) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
+      );
       return res.status(400).json({
         error: `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
       });
@@ -267,6 +328,7 @@ export const Login = async (req, res) => {
       ...safeUser
     } = user.toObject();
     safeUser.theme = preferences ? preferences.theme : "light";
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       message: "Login successful",
       user: safeUser,
@@ -274,7 +336,14 @@ export const Login = async (req, res) => {
       refreshToken,
     });
   } catch (error) {
-    console.error("Login Error:", error);
+    console.error("Login Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ error: error.message || "Login error" });
   }
 };
@@ -360,10 +429,20 @@ export const refreshToken = async (req, res) => {
   }
 };
 export const fetchInstitutionByCountry = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchInstitutionByCountryController";
+  const action = "fetchInstitutionByCountry";
   try {
     const { country } = req.query;
 
     if (!country) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Country is required",
+      );
       return res.status(400).json({ message: "Country is required" });
     }
 
@@ -373,10 +452,18 @@ export const fetchInstitutionByCountry = async (req, res) => {
     try {
       const cached = await client.get(cacheKey);
       if (cached) {
+        logControllerPerformance(controllerName, action, startTime, "success");
         return res.json({ cached: true, ...JSON.parse(cached) });
       }
     } catch (err) {
-      console.error("Redis Cache Error:", err);
+      console.error("Redis Cache Error:", err.message);
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      );
     }
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=universities+in+${encodeURIComponent(normalizedCountry)}&key=${apiKey}`;
@@ -386,6 +473,13 @@ export const fetchInstitutionByCountry = async (req, res) => {
       response.data.status !== "OK" &&
       response.data.status !== "ZERO_RESULTS"
     ) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        response.data.status,
+      );
       throw new Error(`Google API Error: ${response.data.status}`);
     }
     const institutions = response.data.results.map((item) => ({
@@ -404,27 +498,54 @@ export const fetchInstitutionByCountry = async (req, res) => {
       institutions,
     };
     await client.setEx(cacheKey, 3600, JSON.stringify(responsePayload));
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.json(responsePayload);
   } catch (error) {
     console.error("Institutions fetch error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({ message: "Failed to retrieve institutions" });
   }
 };
 export const validateInstitution = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "validateInstitutionController";
+  const action = "validateInstitution";
   try {
     const { schoolName } = req.body;
-    if (!schoolName)
+    if (!schoolName) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "School name required",
+      );
       return res.status(400).json({ message: "School name required" });
+    }
     const institution = await OperationalInstitutions.findOne({
       schoolName: { $regex: new RegExp(`^${schoolName.trim()}$`, "i") },
     }).lean();
     if (!institution) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "iCampus not yet operational in this institution. Student/Lecturer verification is unavailable.",
+      );
       return res.status(404).json({
         verified: false,
         message:
           "iCampus not yet operational in this institution. Student/Lecturer verification is unavailable.",
       });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Institution verified",
       schoolName: institution.schoolName,
@@ -433,13 +554,32 @@ export const validateInstitution = async (req, res) => {
       logo: institution.logo,
     });
   } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Server error" });
   }
 };
 export const validateEmail = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "validateEmailController";
+  const action = "validateEmail";
   try {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ message: "Email is required" });
+    if (!email) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Email is required",
+      );
+      return res.status(400).json({ message: "Email is required" });
+    }
 
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
@@ -467,19 +607,37 @@ export const validateEmail = async (req, res) => {
       "emailQueue",
       Buffer.from(JSON.stringify(notificationJob)),
     );
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Verification code sent",
       codeSent: true,
     });
   } catch (error) {
-    console.error("Email verification error:", error);
+    console.error("Email verification error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({ message: "Server error" });
   }
 };
 export const verifyEmailUsingCode = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyEmailUsingCodeController";
+  const action = "verifyEmailUsingCode";
   try {
     const { email, code } = req.body;
     if (!email || !code) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Email and code are required",
+      );
       return res.status(400).json({ message: "Email and code are required" });
     }
     const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
@@ -489,41 +647,87 @@ export const verifyEmailUsingCode = async (req, res) => {
       expiresAt: { $gt: new Date() },
     });
     if (!record) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "No verification request found",
+      );
       return res
         .status(404)
         .json({ message: "No verification request found", verified: false });
     }
     if (record.code !== hashedCode) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid verification code",
+      );
       return res
         .status(400)
         .json({ message: "Invalid verification code", verified: false });
     }
     if (record.expiresAt < new Date()) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Verification code has expired",
+      );
       return res
         .status(400)
         .json({ message: "Verification code has expired", verified: false });
     }
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Email verified successfully",
       verified: true,
       email,
     });
   } catch (error) {
-    console.error("verifyEmailCode error:", error);
+    console.error("verifyEmailCode error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     return res.status(500).json({ message: "Server error", verified: false });
   }
 };
 export const forgotPassword = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "forgotPasswordController";
+  const action = "forgotPassword";
   try {
     const { email } = req.body;
     const user = await User.findOne({ email });
     if (!user) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
       return res.status(404).json({ message: "User not found" });
     }
     const existingRecord = await EmailVerification.findOne({ email });
     if (existingRecord) {
       const timeSinceLastSent = Date.now() - (existingRecord.updatedAt || 0);
       if (timeSinceLastSent < 60000) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Please wait before requesting another code.",
+        );
         return res.status(429).json({
           message: "Please wait before requesting another code.",
         });
@@ -564,25 +768,50 @@ export const forgotPassword = async (req, res) => {
       sendSocket: true,
       saveToDb: false,
     });
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       message: "Verification code sent, check your email",
       email,
     });
   } catch (error) {
-    console.error("Forgot Password Error:", error);
+    console.error("Forgot Password Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const changePassword = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "changePasswordController";
+  const action = "changePassword";
   const { email, password, confirmPassword } = req.body;
   const record = verificationCodes[email];
   if (!record || !record.verified) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Email not verified for password reset",
+    );
     return res
       .status(403)
       .json({ message: "Email not verified for password reset" });
   }
 
   if (!password || !confirmPassword || password !== confirmPassword) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Passwords do not match or are missing",
+    );
     return res
       .status(400)
       .json({ message: "Passwords do not match or are missing" });
@@ -593,7 +822,16 @@ export const changePassword = async (req, res) => {
     const geo = geoip.lookup(ip);
     const currentCountry = geo ? geo.country : "Unknown";
     const user = await User.findOne({ email });
-    if (!user) return res.status(404).json({ message: "User not found" });
+    if (!user) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
+      return res.status(404).json({ message: "User not found" });
+    }
     const sortedSessions = user.sessions.sort(
       (a, b) => b.lastUsed - a.lastUsed,
     );
@@ -645,13 +883,24 @@ export const changePassword = async (req, res) => {
       },
       isSuspicious,
     ).catch((err) => console.error("Admin audit failed:", err));
+    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ message: "Password changed successfully" });
   } catch (error) {
-    console.error("Password change error:", error);
+    console.error("Password change error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
     res.status(500).json({ message: "Internal server error" });
   }
 };
 export const verifyStudent = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyStudentController";
+  const action = "verifyStudent";
   const { school_id, matriculation_number } = req.body;
 
   try {
@@ -659,6 +908,13 @@ export const verifyStudent = async (req, res) => {
       schoolId: school_id,
     });
     if (!schoolConfig || !schoolConfig.isOperational) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "iCampus is not active at this institution.",
+      );
       return res
         .status(400)
         .json({ message: "iCampus is not active at this institution." });
@@ -679,11 +935,19 @@ export const verifyStudent = async (req, res) => {
     );
 
     if (!schoolApiResponse.ok) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Student record not found in school directory.",
+      );
       return res
         .status(404)
-        .json({ message: "Student record not found via school directory." });
+        .json({ message: "Student record not found in school directory." });
     }
     const schoolStudent = await schoolApiResponse.json();
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.json({
       firstname: schoolStudent.first_name,
       lastname: schoolStudent.last_name,
@@ -694,15 +958,32 @@ export const verifyStudent = async (req, res) => {
       isVerified: true,
     });
   } catch (err) {
-    console.error("External institutional verification failed:", err);
+    console.error("External institutional verification failed:", err.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     return res
       .status(500)
       .json({ message: "Unable to reach school verification system." });
   }
 };
 export const verifyLecturer = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyLecturerController";
+  const action = "verifyLecturer";
   const { school_id, staff_id: incomingStaffId } = req.body;
   if (!school_id || !incomingStaffId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Missing required fields",
+    );
     return res
       .status(400)
       .json({ message: "Missing required fields", verified: false });
@@ -714,6 +995,13 @@ export const verifyLecturer = async (req, res) => {
     });
 
     if (!schoolConfig || !schoolConfig.isOperational) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "iCampus is not operational or active at this institution.",
+      );
       return res.status(400).json({
         message: "iCampus is not operational or active at this institution.",
         verified: false,
@@ -737,9 +1025,18 @@ export const verifyLecturer = async (req, res) => {
     );
 
     if (!portalResponse.ok) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Instructor credentials not found in school records",
+      );
       return res
         .status(404)
-        .json({ message: "Instructor credentials not found on portal" });
+        .json({
+          message: "Instructor credentials not found in school records",
+        });
     }
 
     const externalLecturer = await portalResponse.json();
@@ -750,6 +1047,7 @@ export const verifyLecturer = async (req, res) => {
       staff_id: externalLecturer.staff_id,
     };
 
+    logControllerPerformance(controllerName, action, startTime, "success");
     return res.json({
       firstname: lecturerData.firstname,
       lastname: lecturerData.lastname,
@@ -758,7 +1056,14 @@ export const verifyLecturer = async (req, res) => {
       isVerified: true,
     });
   } catch (err) {
-    console.error("Lecturer Verification error:", err);
+    console.error("Lecturer Verification error:", err.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      err.message,
+    );
     return res
       .status(500)
       .json({ message: "Server error during verification", verified: false });
