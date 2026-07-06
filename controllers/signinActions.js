@@ -82,7 +82,9 @@ export const signUp = async (req, res) => {
         .json({ message: "User already exists.", success: false });
     }
     const uid = generateUserUID();
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+      .split(",")[0]
+      .trim();
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
     let hashedPassword = null;
@@ -273,7 +275,9 @@ export const Login = async (req, res) => {
       });
     }
     const { accessToken, refreshToken } = await generateTokens(user);
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+      .split(",")[0]
+      .trim();
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 
@@ -361,7 +365,9 @@ export const AdminLogin = async (req, res) => {
     const { accessToken, refreshToken } = await generateTokens(admin);
 
     // 4. Handle Session
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+      .split(",")[0]
+      .trim();
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 

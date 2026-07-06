@@ -2002,7 +2002,17 @@ export const aiChat = async (req, res) => {
       systemInstruction = `You are iAssistant, the official Support AI for iCampus. 
       Use the provided FAQ knowledge: ${JSON.stringify(FAQ_DATA)}. 
       If the user's issue cannot be resolved via the FAQs, acknowledge the limitation 
-      and state that you are escalating the issue to a human support ticket.`;
+      and state that you are escalating the issue to a human support ticket.
+      If the issue requires escalation, respond in a JSON format:
+{
+  "reply": "Your natural language response to the user...",
+  "requiresEscalation": true,
+  "suggestedCategory": "technical|billing|content|other",
+  "suggestedSummary": "A very short 5- 10 words summary of the issue",
+  "suggestedSeverity": "low|medium|high|critical"
+}
+If no escalation is needed, just provide your response as plain text.
+      `;
     } else {
       systemInstruction = `You are iAssistant, the official Academic AI Tutor for iCampus. 
       Your purpose is to help students and lecturers understand educational material. 
@@ -2026,21 +2036,28 @@ export const aiChat = async (req, res) => {
 
     const result = await chat.sendMessage(message);
     const replyText = result.response.text();
-    let finalReply = replyText;
+    let finalReply;
+    let aiResponse;
     const ticketRefId = generateTicketId(uid);
 
-    if (
-      type === "support" &&
-      (replyText.includes("escalat") || replyText.includes("ticket"))
-    ) {
+    try {
+      aiResponse = JSON.parse(replyText);
+    } catch (e) {
+      aiResponse = { reply: replyText, requiresEscalation: false };
+    }
+
+    if (aiResponse.requiresEscalation) {
       const ticket = await SupportTicket.create({
         userId: uid,
         originalMessage: message,
         status: "open",
         ticketRefId,
-        summary: "AI could not resolve query",
+        summary: aiResponse.suggestedSummary || "AI could not resolve query",
+        category: aiResponse.suggestedCategory || "other",
+        severity: aiResponse.suggestedSeverity || "medium",
+        thread: [{ sender: "user", message: message }],
       });
-      finalReply += `\n\nI have opened a support ticket for you. Reference ID: ${ticket.ticketRefId || ticket._id}`;
+      finalReply = aiResponse.reply + `\n\nTicket ID: ${ticket.ticketRefId}`;
       await notifyAdmins(
         { role: ["support", "super_admin"] },
         {
@@ -2056,10 +2073,12 @@ export const aiChat = async (req, res) => {
       ).catch((err) =>
         console.error("Admin escalation notification failed:", err),
       );
+    } else {
+      finalReply = aiResponse.reply;
     }
-    if (userId) {
+    if (uid) {
       await User.findOneAndUpdate(
-        { uid: userId },
+        { uid },
         { $inc: { "monthlyStats.aiQueries": 1 } },
       );
     }

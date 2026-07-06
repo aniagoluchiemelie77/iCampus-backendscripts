@@ -1,4 +1,13 @@
-import { Admin, SupportTicket, User } from "../tableDeclarations.js";
+import {
+  Admin,
+  SupportTicket,
+  User,
+  Transactions,
+  Payout,
+  OperationalInstitutions,
+  DropOffStation,
+  ControllerLog,
+} from "../tableDeclarations.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { createNotification } from "../services/notifications.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
@@ -255,5 +264,150 @@ export const updateUserController = async (req, res) => {
       message: "Server error while updating user.",
       error: error.message,
     });
+  }
+};
+export const getAdminMetrics = async (req, res) => {
+  try {
+    const [
+      userMetrics,
+      liquidityTrendData,
+      payoutStats,
+      pendingTickets,
+      recentSchools,
+      recentStations,
+      latencyData,
+    ] = await Promise.all([
+      User.aggregate([
+        { $match: { isSuspended: false } },
+        {
+          $facet: {
+            platformTotals: [
+              {
+                $group: {
+                  _id: null,
+                  totalLiquidity: { $sum: "$pointsBalance" },
+                  totalUsers: { $sum: 1 },
+                },
+              },
+            ],
+            locationStats: [
+              { $unwind: "$sessions" },
+              { $group: { _id: "$sessions.location", count: { $sum: 1 } } },
+              { $sort: { count: -1 } },
+              { $limit: 10 },
+            ],
+          },
+        },
+      ]),
+      // Inside your controller
+      Transactions.aggregate([
+        {
+          $match: {
+            status: "success",
+            createdAt: {
+              $gte: new Date(new Date().setDate(new Date().getDate() - 7)),
+            },
+          },
+        },
+        {
+          $group: {
+            _id: { $dateToString: { format: "%m-%d", date: "$createdAt" } },
+            inFlow: {
+              $sum: { $cond: [{ $eq: ["$payType", "in"] }, "$amountLocal", 0] },
+            },
+            outFlow: {
+              $sum: {
+                $cond: [{ $eq: ["$payType", "out"] }, "$amountLocal", 0],
+              },
+            },
+          },
+        },
+        { $sort: { _id: 1 } },
+        {
+          $group: {
+            _id: null,
+            labels: { $push: "$_id" },
+            inFlow: { $push: "$inFlow" },
+            outFlow: { $push: "$outFlow" },
+          },
+        },
+      ]),
+      Payout.aggregate([
+        {
+          $group: {
+            _id: "$status",
+            totalAmount: { $sum: "$amount" },
+            count: { $sum: 1 },
+          },
+        },
+      ]),
+      SupportTicket.countDocuments({ status: { $in: ["open", "pending"] } }),
+      OperationalInstitutions.find().sort({ createdAt: -1 }).limit(10),
+
+      DropOffStation.find().sort({ createdAt: -1 }).limit(10),
+      ControllerLog.aggregate([
+        { $group: { _id: null, avgLatency: { $avg: "$latency" } } },
+      ]),
+    ]);
+    const userFacet = userMetrics[0];
+    const locationStats = userFacet?.locationStats || [];
+
+    res.json({
+      activeUsers: userFacet?.platformTotals[0]?.totalUsers || 0,
+      platformLiquidity: userFacet?.platformTotals[0]?.totalLiquidity || 0,
+      payoutStats,
+      pendingTickets,
+      recentSchools: {
+        items: recentSchools,
+        total: await OperationalInstitutions.countDocuments(),
+      },
+      recentStations: {
+        items: recentStations,
+        total: await DropOffStation.countDocuments(),
+      },
+      latencyData: latencyData[0]?.avgLatency || 0,
+      liquidityTrend: liquidityTrendData[0] || {
+        labels: [],
+        inFlow: [],
+        outFlow: [],
+      },
+      locationStats: locationStats,
+    });
+  } catch (error) {
+    console.error("Dashboard Stats Error:", error);
+    res.status(500).json({ error: "Failed to fetch dashboard metrics" });
+  }
+};
+export const getInstitutions = async (req, res) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const institutions = await OperationalInstitutions.find()
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
+
+    res.json(institutions);
+  } catch (error) {
+    console.error("Get Institutions Error:", error);
+    res.status(500).json({ message: "Failed to retrieve institutions" });
+  }
+};
+export const getDropOffStations = async (req, res) => {
+  try {
+    const { page = 1, limit = 20 } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+
+    const stations = await DropOffStation.find()
+      .sort({ createdAt: -1 })
+      .skip((pageNum - 1) * limitNum)
+      .limit(limitNum);
+
+    res.json(stations);
+  } catch (error) {
+    console.error("Get Drop-Off Stations Error:", error);
+    res.status(500).json({ message: "Failed to retrieve drop-off stations" });
   }
 };

@@ -1549,17 +1549,41 @@ export const getNotifications = async (req, res) => {
     const { category, page = 1, limit = 20 } = req.query;
     const adminType = req.admin.adminType;
     const allowedRoles = CATEGORY_ROLES[category];
+
     if (!allowedRoles || !allowedRoles.includes(adminType)) {
       return res.status(403).json({
         error:
           "Access denied. Your role does not have permission to view this category.",
       });
     }
+
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    const notifications = await Notification.find({ category })
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
+    //Attach the user.usertype
+    const notifications = await Notification.aggregate([
+      { $match: { category } },
+      { $sort: { createdAt: -1 } },
+      { $skip: skip },
+      { $limit: parseInt(limit) },
+      {
+        $lookup: {
+          from: "users",
+          localField: "recipientId",
+          foreignField: "uid",
+          as: "receipientDetails",
+        },
+      },
+      {
+        $addFields: {
+          recipientUserType: {
+            $ifNull: [
+              { $arrayElemAt: ["$receipientDetails.usertype", 0] },
+              "unknown",
+            ],
+          },
+        },
+      },
+      { $project: { receipientDetails: 0 } },
+    ]);
 
     res.status(200).json({
       success: true,
@@ -1581,6 +1605,11 @@ export const fetchPosts = async (req, res) => {
 
   try {
     const pipeline = [
+      {
+        $match: {
+          status: { $ne: "hidden" },
+        },
+      },
       {
         $lookup: {
           from: "users",

@@ -443,6 +443,7 @@ export const dropOffStation = new mongoose.Schema({
   agentId: { type: String, required: true },
   latitude: { type: Number },
   longitude: { type: Number },
+  createdAt: { type: Date, required: true },
 });
 export const impressionLogSchema = new mongoose.Schema({
   userId: String,
@@ -525,7 +526,7 @@ export const productSchema = new mongoose.Schema({
   ],
   favCount: { type: Number, default: 0 },
   isAvailable: { type: Boolean, default: true },
-  createdAt: { type: String, default: null },
+  createdAt: { type: Date, default: null },
 });
 export const orderSchema = new mongoose.Schema({
   orderId: { type: String, required: true, index: true },
@@ -555,8 +556,8 @@ export const orderSchema = new mongoose.Schema({
   verificationQrCode: { type: String, required: true },
   isVerifiedByScan: { type: Boolean, default: true },
   fileUrl: { type: String, default: null },
-  createdAt: { type: String, required: true },
-  completedAt: { type: String },
+  createdAt: { type: Date, required: true },
+  completedAt: { type: Date },
 });
 export const productSalesSchema = new mongoose.Schema({
   sellerId: { type: String, required: true, index: true },
@@ -699,7 +700,7 @@ export const eventSchema = new mongoose.Schema({
   userId: { type: String },
   location: { type: String },
   tags: { type: [String] },
-  createdAt: { type: String, default: () => new Date().toISOString() },
+  createdAt: { type: Date, default: () => new Date().toISOString() },
 });
 export const EmailVerificationSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
@@ -743,6 +744,7 @@ export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
   logo: { type: String },
   currentiScoreAvg: { type: Number },
   previousiScoreAvg: { type: Number },
+  createdAt: { type: Date, default: () => new Date() },
 });
 export const postSchema = new mongoose.Schema(
   {
@@ -1165,6 +1167,8 @@ export const controllerLogSchema = new mongoose.Schema({
   latency: Number,
   timestamp: { type: Date, default: Date.now, expires: "30d" },
 });
+
+supportTicketSchema.index({ category: 1, status: 1 });
 userSchema.index(
   { matricNumber: 1, department: 1 },
   { unique: true, partialFilterExpression: { usertype: "student" } },
@@ -1173,7 +1177,7 @@ userSchema.index(
   { staff_id: 1, department: 1 },
   { unique: true, partialFilterExpression: { usertype: "lecturer" } },
 );
-// Ensure a lecturer doesn't accidentally post the same test title twice in one course
+
 assessmentSchema.index({ courseId: 1, title: 1 });
 commentSchema.add({
   replies: [commentSchema],
@@ -1184,10 +1188,8 @@ impressionLogSchema.index(
   { unique: true },
 );
 
-// Indexing for faster lookups when checking monthly limits
 exceptionSchema.index({ studentId: 1, date: -1 });
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-// Add this to the end of your postSchema file
 postSchema.index({ userId: 1, createdAt: -1 });
 attendanceSchema.index({ studentId: 1, lectureId: 1 }, { unique: true });
 postSchema.index(

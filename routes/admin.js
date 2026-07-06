@@ -12,6 +12,9 @@ import {
   createAdmin,
   adminSendTicketNotification,
   updateUserController,
+  getAdminMetrics,
+  getInstitutions,
+  getDropOffStations,
 } from "../controllers/adminActions.js";
 
 export default function () {
@@ -41,5 +44,13 @@ export default function () {
     adminSendTicketNotification,
   );
   router.patch("/edit-users/:uid", protect, verifyAdmin, updateUserController);
+  router.get("/get-overview", protect, verifyAdmin, getAdminMetrics);
+  router.get("/get-institutions", protect, verifyAdmin, getInstitutions);
+  router.get(
+    "/get-drop-off-stations",
+    protect,
+    verifyAdmin,
+    getDropOffStations,
+  );
   return router;
 }

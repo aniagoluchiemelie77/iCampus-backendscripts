@@ -923,7 +923,12 @@ export const fetchPostUsingPostId = async (req, res) => {
   try {
     const { postId } = req.params;
     const postAggregation = await Posts.aggregate([
-      { $match: { postId: postId } },
+      {
+        $match: {
+          postId: postId,
+          status: { $ne: "hidden" },
+        },
+      },
       {
         $lookup: {
           from: "users",
