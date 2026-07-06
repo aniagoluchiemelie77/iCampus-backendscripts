@@ -317,6 +317,26 @@ export const createNotification = async ({
         entityId = payload.lectureId;
         entityType = "lecture";
         break;
+      case "STATION_DELETION":
+        category = "system";
+        subject = "Important: Station Removal Notice";
+        title = title || "Station Removed";
+        message =
+          message ||
+          `Your drop-off station "${payload.stationName}" has been removed. Please contact support if this was an error.`;
+        break;
+      case "STATION_CREATED":
+        category = "system";
+        subject = "New Drop-off Station Creation";
+        title = "Drop-off Station Assigned";
+        message = `Dear iCampus User, your request to create an iCampus drop off station has been approved and you have been assigned to manage station: ${payload.stationName}.`;
+        break;
+      case "STATION_UPDATED":
+        category = "system";
+        subject = "Update: Drop-off Station Settings";
+        title = "Drop-off Station Updated";
+        message = `The settings for your station "${payload.stationName}" have been modified.`;
+        break;
 
       //navigate to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId
       case "LECTURER_REVIEW_REQUEST":
@@ -763,6 +783,52 @@ export const createNotification = async ({
         subject = `Audit: Ticket Resolved - #${payload.ticketRefId}`;
         title = "Ticket Resolution Audit";
         message = `Ticket #${payload.ticketRefId} initiated by user ${payload.userId} was marked as resolved by admin ${payload.adminId}.`;
+        break;
+      case "ADMIN_INSTITUTION_DELETED":
+        category = "system";
+        subject = "Audit: Institution Deletion";
+        title = title || "Institution Removed";
+        message =
+          message ||
+          `Institution ${payload.schoolName} was deleted from the system.`;
+        break;
+      case "STATION_DELETION_ADMIN":
+        category = "system";
+        subject = "Audit: Drop-Off Station Deletion";
+        title = title || "Station Deletion Audit";
+        message =
+          message ||
+          `Station "${payload.stationName}" (Agent: ${payload.agentId}) was deleted.`;
+        break;
+      case "ADMIN_INSTITUTION_CREATED":
+        category = "system";
+        subject = "New Institution Onboarding";
+        title = title || "Institution Added";
+        message =
+          message ||
+          `A new institution, ${payload.schoolName}, has joined the platform.`;
+        break;
+      case "ADMIN_INSTITUTION_UPDATED":
+        category = "system";
+        subject = "Audit: Institution Update";
+        title = title || "Configuration Changed";
+        message =
+          message ||
+          `Institution ${payload.schoolName} (ID: ${payload.schoolId}) was updated by an admin.`;
+        break;
+      case "STATION_CREATED_ADMIN":
+        category = "system";
+        subject = "Audit: New Drop-off Station";
+        title = title || "Drop-off Station Created";
+        message =
+          message ||
+          `Drop-off Station ${payload.stationName} successfully linked to Agent ${payload.agentId}.`;
+        break;
+      case "STATION_UPDATED_ADMIN":
+        category = "system";
+        subject = "Audit: Drop-off Station Modification";
+        title = "Drop-off Station Edit Audit";
+        message = `Audit: Drop-off Station ${payload.stationId} (Agent: ${payload.agentId}) was updated.`;
         break;
 
       default:

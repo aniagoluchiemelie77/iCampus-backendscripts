@@ -317,3 +317,16 @@ export function generateTicketRefId(category) {
 
   return `${category}TKT-${timestamp}-${randomSuffix}`;
 }
+export function generateSchoolId(name) {
+  const shortName = name.replace(/\s+/g, "").substring(0, 4).toUpperCase();
+  const timestamp = Date.now().toString().slice(-6);
+  const random = Math.floor(1000 + Math.random() * 9000);
+  // Example: SCH-LAGOS-240512-4829
+  return `${shortName}-${timestamp}-${random}`;
+}
+export function generateStationId() {
+  const now = new Date();
+  const datePart = now.toISOString().slice(2, 10).replace(/-/g, ""); // 260706
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000); // 4829
+  return `STN-${datePart}-${randomSuffix}`;
+}

@@ -440,6 +440,7 @@ export const dropOffStation = new mongoose.Schema({
   address: { type: String, required: true },
   code: { type: String },
   contactPerson: { type: String },
+  images: [{ type: String }],
   agentId: { type: String, required: true },
   latitude: { type: Number },
   longitude: { type: Number },
@@ -719,6 +720,7 @@ export const phoneVerificationSchema = new mongoose.Schema({
   expiresAt: { type: Date, required: true, expires: 900 },
 });
 export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
   schoolName: {
     type: String,
     required: true,
@@ -1115,7 +1117,7 @@ export const schoolConfigurationSchema = new mongoose.Schema(
     externalApiConfig: {
       endpoint: { type: String, trim: true },
       sharedSecret: { type: String },
-      timeoutMs: { type: Number, default: 5000 }, // 5-second default safety window
+      timeoutMs: { type: Number, default: 5000 },
     },
     ssoConfig: {
       provider: { type: String, enum: ["OIDC", "SAML"] },

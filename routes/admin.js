@@ -15,6 +15,14 @@ import {
   getAdminMetrics,
   getInstitutions,
   getDropOffStations,
+  deleteInstitution,
+  deleteDropOffStation,
+  createInstitution,
+  updateInstitution,
+  createStation,
+  updateStation,
+  getInstitutionDetails,
+  getStationDetails,
 } from "../controllers/adminActions.js";
 
 export default function () {
@@ -51,6 +59,44 @@ export default function () {
     protect,
     verifyAdmin,
     getDropOffStations,
+  );
+  router.delete(
+    "/institutions/:id/delete",
+    protect,
+    verifyAdmin,
+    deleteInstitution,
+  );
+  router.delete(
+    "/stations/:id/delete",
+    protect,
+    verifyAdmin,
+    deleteDropOffStation,
+  );
+  router.post("/institutions/create", protect, verifyAdmin, createInstitution);
+  router.patch(
+    "/institutions/:id/update",
+    protect,
+    verifyAdmin,
+    updateInstitution,
+  );
+  router.post("/stations/create", protect, verifyAdmin, createStation);
+  router.patch(
+    "/stations/:stationId/update",
+    protect,
+    verifyAdmin,
+    updateStation,
+  );
+  router.get(
+    "/institutions/:schoolId/get-details",
+    protect,
+    verifyAdmin,
+    getInstitutionDetails,
+  );
+  router.get(
+    "/stations/:stationId/details",
+    protect,
+    verifyAdmin,
+    getStationDetails,
   );
   return router;
 }
