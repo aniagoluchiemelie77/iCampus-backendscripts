@@ -36,6 +36,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import axios from "axios";
 import mongoose from "mongoose";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -423,16 +424,17 @@ export const createLectureSchedule = async (req, res) => {
   const controllerName = "createLectureScheduleController";
   const action = "createLectureSchedule";
   try {
+    const preparedData = prepareLectureData(req.body);
     const {
       date,
       repeatWeeks,
-      startTime,
+      startTime: lectureStartTime,
       endTime,
       location,
       courseId,
       topicName,
       lectureType,
-    } = req.body;
+    } = preparedData;
 
     const lecturerUid = req.user.uid;
     const finalPayload = req.body;
@@ -470,7 +472,7 @@ export const createLectureSchedule = async (req, res) => {
     const conflict = await Lectures.findOne({
       date: { $in: datesToCheck },
       startTime: { $lt: endTime },
-      endTime: { $gt: startTime },
+      endTime: { $gt: lectureStartTime },
       $or: [
         { lectureType: "Physical", location: location },
         { courseId: courseId },
@@ -482,7 +484,7 @@ export const createLectureSchedule = async (req, res) => {
       logControllerPerformance(
         controllerName,
         action,
-        startTime,
+        lectureStartTime,
         "error",
         `Conflict detected on ${conflict.date}! A lecture (${conflict.topicName || "Class"}) conflicts with this time slot.`,
       );
@@ -2850,5 +2852,119 @@ export const sendInactiveUserReminders = async () => {
       "error",
       error.message,
     );
+  }
+};
+export const getCourseGradebook = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getCourseGradebookController";
+  const action = "getCourseGradebook";
+  const { courseId } = req.params;
+
+  try {
+    const course = await Course.findOne({ courseId }).select(
+      "studentsEnrolled tests",
+    );
+    if (!course) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course not found",
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
+    const gradebookData = await User.aggregate([
+      { $match: { uid: { $in: course.studentsEnrolled } } },
+      {
+        $lookup: {
+          from: "lectures",
+          let: { studentId: "$uid" },
+          pipeline: [
+            { $match: { courseId: courseId } },
+            { $unwind: "$attendance" },
+            {
+              $match: {
+                $expr: { $eq: ["$attendance.studentId", "$$studentId"] },
+              },
+            },
+          ],
+          as: "attendanceRecords",
+        },
+      },
+      {
+        $lookup: {
+          from: "testSubmission",
+          let: { studentId: "$uid" },
+          pipeline: [
+            { $match: { testId: { $in: course.tests.map((t) => t.id) } } },
+            { $match: { $expr: { $eq: ["$studentId", "$$studentId"] } } },
+          ],
+          as: "testSubmissions",
+        },
+      },
+      {
+        $lookup: {
+          from: "exceptions",
+          let: { studentId: "$uid" },
+          pipeline: [
+            { $match: { courseId: courseId } },
+            { $match: { $expr: { $eq: ["$studentId", "$$studentId"] } } },
+          ],
+          as: "exceptions",
+        },
+      },
+      {
+        $project: {
+          studentName: { $concat: ["$firstname", " ", "$lastname"] },
+          matricNumber: "$matricNumber",
+          attendanceCount: { $size: "$attendanceRecords" },
+          attendanceSum: {
+            $add: [
+              {
+                $size: {
+                  $filter: {
+                    input: "$attendanceRecords",
+                    as: "rec",
+                    cond: { $eq: ["$$rec.attendance.status", "Present"] },
+                  },
+                },
+              },
+              {
+                $size: {
+                  $filter: {
+                    input: "$exceptions",
+                    as: "ex",
+                    cond: { $eq: ["$$ex.status", "approved"] },
+                  },
+                },
+              },
+            ],
+          },
+          testScores: "$testSubmissions.score",
+          testSum: { $sum: "$testSubmissions.score" },
+          exceptions: "$exceptions",
+          allActivities: {
+            $concatArrays: [
+              "$attendanceRecords",
+              "$testSubmissions",
+              "$exceptions",
+            ],
+          },
+        },
+      },
+    ]);
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+    res.status(200).json({ success: true, data: gradebookData });
+  } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    res.status(500).json({ message: error.message });
   }
 };

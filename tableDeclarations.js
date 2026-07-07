@@ -75,7 +75,7 @@ export const Exceptions = mongoose.model(
   exceptionSchema,
   "exceptions",
 );
-export const Lectures = mongoose.model("Lectures", lectureSchema, "Lectures");
+export const Lectures = mongoose.model("Lectures", lectureSchema, "lectures");
 export const Assessment = mongoose.model(
   "Assessment",
   assessmentSchema,

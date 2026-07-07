@@ -16,6 +16,7 @@ import {
   deleteCourseAssignment,
   getAssessmentReport,
   editLectures,
+  getCourseGradebook,
 } from "../../controllers/classActions.js";
 import {
   fetchAllCourseAssessments,
@@ -90,6 +91,11 @@ export default function () {
     "/lectures/:lectureId/report",
     protect,
     fetchLectureAttendanceReport,
+  );
+  router.get(
+    "/:courseId/get-performance-analysis",
+    protect,
+    getCourseGradebook,
   );
   return router;
 }

@@ -37,6 +37,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -2160,14 +2161,22 @@ export const createQuickMeeting = async (req, res) => {
   const controllerName = "createQuickMeetingController";
   const action = "createQuickMeeting";
   try {
-    const { date, startTime, endTime, topicName, lectureType } = req.body;
+    const preparedData = prepareLectureData(req.body);
+    const {
+      date,
+      startTime: meetingStartTime,
+      endTime,
+      topicName,
+      lectureType,
+      location,
+    } = preparedData;
     const hostId = req.user.uid;
 
     const conflict = await Lectures.findOne({
       date: date,
       hostId: hostId,
       startTime: { $lt: endTime },
-      endTime: { $gt: startTime },
+      endTime: { $gt: meetingStartTime },
     });
 
     if (conflict) {
@@ -2182,11 +2191,6 @@ export const createQuickMeeting = async (req, res) => {
         message: `Conflict detected! You are already scheduled for "${conflict.topicName}" at this time.`,
       });
     }
-
-    const location =
-      lectureType === "Online"
-        ? `https://live.useicampus.io/${hostId}/${Math.random().toString(36).substring(7)}`
-        : req.body.location;
 
     const newMeeting = {
       id: generateLectureId(hostId, lectureType),

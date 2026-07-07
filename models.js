@@ -872,21 +872,15 @@ export const exceptionSchema = new mongoose.Schema(
       enum: ["pending", "approved", "rejected"],
       default: "pending",
     },
-
-    // Feedback from the lecturer
     lecturerComment: {
       type: String,
       default: "",
     },
-
-    // The date the exception is for (to handle the "3 per month" logic)
     date: {
       type: Date,
       required: true,
       default: Date.now,
     },
-
-    // Proof of claim (optional URL to an image/PDF)
     attachmentUrl: {
       type: String,
       default: null,
