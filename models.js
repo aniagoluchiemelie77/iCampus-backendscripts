@@ -57,7 +57,7 @@ export const assessmentSchema = new mongoose.Schema(
     updatedAt: { type: Date, default: Date.now },
   },
   {
-    timestamps: true, // Automatically manages createdAt and updatedAt
+    timestamps: true,
   },
 );
 export const commentSchema = new mongoose.Schema({
@@ -664,14 +664,6 @@ export const userDownloadsSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
-export const verifyLecturerSchema = new mongoose.Schema({
-  firstname: String,
-  lastname: String,
-  department: String,
-  phone_number: String,
-  school_name: String,
-  staff_id: String,
-});
 export const eventSchema = new mongoose.Schema({
   createdBy: { type: String, required: true },
   creatorType: {

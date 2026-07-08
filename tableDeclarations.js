@@ -8,7 +8,6 @@ import {
   userBankOrCardDetails,
   courseSchema,
   userDownloadsSchema,
-  verifyLecturerSchema,
   eventSchema,
   productSchema,
   userSchema,
@@ -39,11 +38,6 @@ import {
 } from "./models.js";
 
 export const Posts = mongoose.model("Posts", postSchema, "posts");
-export const Lecturer = mongoose.model(
-  "Lecturer",
-  verifyLecturerSchema,
-  "lecturers",
-);
 export const Event = mongoose.model("Event", eventSchema, "events");
 export const Product =
   mongoose.models.Product ||
