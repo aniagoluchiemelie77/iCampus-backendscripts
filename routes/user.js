@@ -163,5 +163,5 @@ export default router;
 //Mongod summon: mongod --dbpath D:\MongoDB\data
 //backend summon: npx nodemon index.js
 //ngrok http 5000
-
+//node --trace-warnings controllers/paymentController.js
 //On powershell as admin: Start-Service RabbitMQ

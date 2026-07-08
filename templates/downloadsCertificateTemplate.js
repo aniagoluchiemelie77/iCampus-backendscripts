@@ -1,7 +1,7 @@
 import PDFDocument from 'pdfkit';
 import fs from 'fs';
 import { Buffer } from 'node:buffer'; 
-import {theme} from '../services/emailTheme';
+import { theme } from "../services/emailTheme.js";
 
 export const generateCertificatePDF = async (composition) => {
   return new Promise((resolve, reject) => {

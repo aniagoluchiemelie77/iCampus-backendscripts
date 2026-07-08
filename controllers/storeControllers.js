@@ -453,7 +453,9 @@ export const initializeCheckout = async (req, res) => {
             `Insufficient stock for ${product.title}. Available: ${currentStock}`,
           );
         }
-        product?.amountInStock -= item.quantity;
+        if (product.amountInStock !== undefined) {
+          product.amountInStock -= item.quantity;
+        }
         if (product?.amountInStock === 0) {
           product.isAvailable = false;
         }
@@ -1585,7 +1587,7 @@ export const togglefavoriteActionController = async (req, res) => {
 export const toggleCartActionController = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "toggleCartActionController";
-  const action = "toggleCartAction";
+  const controllerAction = "toggleCartAction";
   const {
     productId,
     action,
@@ -1600,7 +1602,7 @@ export const toggleCartActionController = async (req, res) => {
     if (!user) {
       logControllerPerformance(
         controllerName,
-        action,
+        controllerAction,
         startTime,
         "error",
         "User not found",
@@ -1635,7 +1637,12 @@ export const toggleCartActionController = async (req, res) => {
         { new: true },
       ).select("cart");
     }
-    logControllerPerformance(controllerName, action, startTime, "success");
+    logControllerPerformance(
+      controllerName,
+      controllerAction,
+      startTime,
+      "success",
+    );
 
     res.status(200).json({
       success: true,
@@ -1645,7 +1652,7 @@ export const toggleCartActionController = async (req, res) => {
   } catch (error) {
     logControllerPerformance(
       controllerName,
-      action,
+      controllerAction,
       startTime,
       "error",
       error.message,

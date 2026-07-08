@@ -1,5 +1,5 @@
 import PDFDocument from "pdfkit";
-import { theme } from "../services/emailTheme";
+import { theme } from "../services/emailTheme.js";
 
 export const generateStatementPDF = async (reportData) => {
   const { colors } = theme;

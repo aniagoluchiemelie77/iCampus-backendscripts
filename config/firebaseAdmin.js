@@ -13,9 +13,7 @@ if (!admin.apps.length) {
       "../secrets/serviceAccountKey.json",
     );
     const fileContent = readFileSync(serviceAccountPath, "utf8");
-    console.log("Raw File Content:", fileContent);
     const serviceAccount = JSON.parse(fileContent);
-    console.log("Type of serviceAccount:", typeof serviceAccount);
 
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),

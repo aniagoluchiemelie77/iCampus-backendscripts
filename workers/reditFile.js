@@ -10,8 +10,6 @@ if (!client) {
   client.on("error", (err) => console.error("Redis Error:", err));
 
   await client.connect();
-  console.log("Redis client instance:", client);
-  console.log("Client address:", client?.options?.socket);
 }
 
 export { client };

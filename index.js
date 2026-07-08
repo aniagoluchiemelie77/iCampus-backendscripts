@@ -15,7 +15,7 @@ import { pathToFileURL } from "url";
 import path from "path";
 import { fileURLToPath } from "url";
 
-const dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = path.__dirname(fileURLToPath(import.meta.url));
 
 dotenv.config();
 
@@ -54,70 +54,84 @@ connectQueue();
 mongoose
   .connect(MONGO_URI)
   .then(async () => {
-    console.log("✅ MongoDB connected");
-    //const routePath = path.join(__dirname, "routes/user.js");
-    //const userRoutes = await import(pathToFileURL(routePath).href);
-    /*
-    const reviewsRoutes = await import(
+    const studentVerifyModule = await import(
+      pathToFileURL(path.join(__dirname, "routes/verify/students.js")).href
+    );
+    const reviewsModule = await import(
       pathToFileURL(path.join(__dirname, "routes/reviews.js")).href
     );
-    const ticketingRoutes = await import(
+    const ticketingModule = await import(
       pathToFileURL(path.join(__dirname, "routes/supportTicketing.js")).href
     );
-    const webhooksRoutes = await import(
+    const webhooksModule = await import(
       pathToFileURL(path.join(__dirname, "routes/webhooks.js")).href
     );
-    const appAuthRoutes = await import(
+    const appAuthModule = await import(
       pathToFileURL(path.join(__dirname, "routes/appAuth.js")).href
     );
-    const messageRoutes = await import(
+    const messageModule = await import(
       pathToFileURL(path.join(__dirname, "routes/messages.js")).href
     );
-    const adminRoutes = await import(
+    const adminModule = await import(
       pathToFileURL(path.join(__dirname, "routes/admin.js")).href
     );
-    const userAccountDetailsRoute = await import(
+    const userAccountDetailsModule = await import(
       pathToFileURL(path.join(__dirname, "routes/userAccountDetails.js")).href
     );
-    const studentClassDetails = await import(
+    const studentClassModule = await import(
       pathToFileURL(path.join(__dirname, "routes/class/students.js")).href
     );
-    const lecturerClassDetails = await import(
+    const lecturerClassModule = await import(
       pathToFileURL(path.join(__dirname, "routes/class/lecturers.js")).href
     );
-    const storeRoutes = await import(
+    const storeModule = await import(
       pathToFileURL(path.join(__dirname, "routes/store.js")).href
     );
-    const postRoutes = await import(
+    const postModule = await import(
       pathToFileURL(path.join(__dirname, "routes/posts.js")).href
     );
-    const userVerifyRoutes = await import(
+    const userVerifyModule = await import(
       pathToFileURL(path.join(__dirname, "routes/verify/users.js")).href
     );
-    const lecturerVerifyRoutes = await import(
+    const lecturerVerifyModule = await import(
       pathToFileURL(path.join(__dirname, "routes/verify/lecturers.js")).href
     );
-    */
-    const studentVerifyRoutes = await import(
-      pathToFileURL(path.join(dirname, "routes/verify/students.js")).href
-    );
-    console.log("✅ MongoDB connected");
+    const routePath = path.join(__dirname, "routes/user.js");
+    const userModule = await import(pathToFileURL(routePath).href);
 
-    //app.use("/users", userRoutes);
-    //app.use("/reviews", reviewsRoutes);
-    //app.use("/webhooks", webhooksRoutes);
-    //app.use("/admins", adminRoutes);
-    //app.use("/v1/auth", appAuthRoutes);
-    //app.use("/users/messages", messageRoutes);
-    //app.use("/support/tickets", ticketingRoutes);
-    //app.use("/user", userAccountDetailsRoute);
-    //app.use("/users/student/class", studentClassDetails);
-    //app.use("/users/lecturers/class", lecturerClassDetails);
-    //app.use("/posts", postRoutes);
-    //app.use("/store", storeRoutes);
+    const userRoutes = userModule.default;
+    const lecturerVerifyRoutes = lecturerVerifyModule.default;
+    const userVerifyRoutes = userVerifyModule.default;
+    const postRoutes = postModule.default;
+    const studentVerifyRoutes = studentVerifyModule.default;
+    const reviewsRoutes = reviewsModule.default;
+    const ticketingRoutes = ticketingModule.default;
+    const webhooksRoutes = webhooksModule.default;
+    const appAuthRoutes = appAuthModule.default;
+    const messageRoutes = messageModule.default;
+    const adminRoutes = adminModule.default;
+    const userAccountDetailsRoute = userAccountDetailsModule.default;
+    const studentClassDetails = studentClassModule.default;
+    const lecturerClassDetails = lecturerClassModule.default;
+    const storeRoutes = storeModule.default;
+
+    app.use("/users", userRoutes);
+    app.use("/reviews", reviewsRoutes);
+    app.use("/webhooks", webhooksRoutes);
+    app.use("/admins", adminRoutes);
+    app.use("/v1/auth", appAuthRoutes);
+    app.use("/users/messages", messageRoutes);
+    app.use("/support/tickets", ticketingRoutes);
+    app.use("/user", userAccountDetailsRoute);
+    app.use("/users/student/class", studentClassDetails);
+    app.use("/users/lecturers/class", lecturerClassDetails);
+    app.use("/posts", postRoutes);
+    app.use("/store", storeRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);
-    //app.use("/verifyInstructor", lecturerVerifyRoutes);
-    //app.use("/verifyUser", userVerifyRoutes);
+    app.use("/verifyInstructor", lecturerVerifyRoutes);
+    app.use("/verifyUser", userVerifyRoutes);
+
+    console.log("✅ MongoDB connected");
     httpServer.listen(5000, "0.0.0.0", () => {
       console.log("🚀 Backend & Socket.io running on port 5000");
     });

@@ -1,14 +1,10 @@
 import jwt from "jsonwebtoken";
-import admin from "firebase-admin";
-const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+import { admin } from "../config/firebaseAdmin.js";
 import { User, Admin } from "../tableDeclarations.js";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
 import path from "path";
 
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccountPath),
-});
 export const protect = async (req, res, next) => {
   let token;
   if (req.headers.authorization?.startsWith("Bearer")) {

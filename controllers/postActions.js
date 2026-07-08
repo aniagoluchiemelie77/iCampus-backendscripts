@@ -1,4 +1,4 @@
-import { createNotification } from "../services/notificationService.js";
+import { createNotification } from "../services/notification.js";
 import { Follow, User, Posts } from "../tableDeclarations.js";
 import {
   generateNotificationId,
