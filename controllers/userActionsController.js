@@ -22,7 +22,7 @@ import twilio from "twilio";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcrypt";
-import { createNotification } from "../services/notificationService.js";
+import { createNotification } from "../services/notification.js";
 import { addFlag } from "../utils/flagger.js";
 import {
   generateNotificationId,
@@ -1963,9 +1963,9 @@ export const refreshUserDetails = async (req, res) => {
     }
 
     const {
-      password: _,
-      iCashPin: _,
-      userAccountDetails: _,
+      password: passwordToIgnore,
+      iCashPin: pinToIgnore,
+      userAccountDetails: detailsToIgnore,
       ...safeUser
     } = user.toObject();
     safeUser.theme = preferences ? preferences.theme : "light";

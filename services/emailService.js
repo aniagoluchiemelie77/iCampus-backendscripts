@@ -1,6 +1,9 @@
 import { ServerClient } from "postmark";
+import dotenv from "dotenv";
 
-const postmarkClient = new ServerClient(process.env.POSTMARK_SERVER_TOKEN);
+dotenv.config();
+
+const postmarkClient = new ServerClient(process.env.POSTMARK_API_KEY);
 
 export const sendEmail = async ({
   to,
@@ -11,7 +14,7 @@ export const sendEmail = async ({
 }) => {
   try {
     const response = await postmarkClient.sendEmail({
-      From: "your-verified-sender@example.com", // Must be a verified Sender Signature in Postmark
+      From: "support@uniquetechcontentwriter.com",
       To: to,
       Subject: subject,
       TextBody: text,

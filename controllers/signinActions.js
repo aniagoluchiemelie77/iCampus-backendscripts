@@ -1,7 +1,7 @@
 import {
   User,
   OperationalInstitutions,
-  iTag,
+  ITag,
   EmailVerification,
   SchoolConfiguration,
   userPrefs,
@@ -25,7 +25,7 @@ import {
 import bcrypt from "bcrypt";
 import { generateExpiryDate } from "../utils/dateHelper.js";
 import jwt from "jsonwebtoken";
-import { createNotification } from "../services/notificationService.js";
+import { createNotification } from "../services/notification.js";
 import { client } from "../workers/reditFile.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { verifyAndNotifyLogin } from "../utils/suspiciousActivityDetector.js";
@@ -110,7 +110,7 @@ export const signUp = async (req, res) => {
     if (iSCardEligible) {
       const newCardNumber = await generateUniqueCardNumber();
       const expiryDate = await generateExpiryDate();
-      const newITag = new iTag({
+      const newITag = new ITag({
         userId: uid,
         username: itagusername,
         cardHolderName: `${firstname} ${lastname}`,
@@ -152,7 +152,11 @@ export const signUp = async (req, res) => {
     };
     newUser.sessions.push(initialSession);
     await newUser.save();
-    const { password: _, iCashPin: _, ...safeUser } = newUser.toObject();
+    const {
+      password: passwordToIgnore,
+      iCashPin: pinToIgnore,
+      ...safeUser
+    } = newUser.toObject();
     safeUser.theme = defaultPreferences.theme;
     await createNotification({
       notificationId: generateNotificationId("signup"),
@@ -326,9 +330,9 @@ export const Login = async (req, res) => {
       })
       .lean();
     const {
-      password: _,
-      iCashPin: _,
-      userAccountDetails: _,
+      password: passwordToIgnore,
+      iCashPin: pinToIgnore,
+      userAccountDetails: detailsToIgnore,
       ...safeUser
     } = user.toObject();
     safeUser.theme = preferences ? preferences.theme : "light";
@@ -392,7 +396,7 @@ export const AdminLogin = async (req, res) => {
     admin.lastAccessed = new Date();
     await admin.save();
     await verifyAndNotifyLogin(admin, req, "ADMIN_LOGIN_AUDIT");
-    const { password: _, ...safeAdmin } = admin.toObject();
+    const { password: passwordToIgnore, ...safeAdmin } = admin.toObject();
 
     res.status(200).json({
       message: "Admin login successful",

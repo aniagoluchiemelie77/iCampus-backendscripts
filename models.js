@@ -1178,7 +1178,6 @@ assessmentSchema.index({ courseId: 1, title: 1 });
 commentSchema.add({
   replies: [commentSchema],
 });
-userDownloadsSchema.index({ userId: 1 });
 impressionLogSchema.index(
   { userId: 1, productId: 1, monthYear: 1 },
   { unique: true },
@@ -1186,7 +1185,6 @@ impressionLogSchema.index(
 
 exceptionSchema.index({ studentId: 1, date: -1 });
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-postSchema.index({ userId: 1, createdAt: -1 });
 attendanceSchema.index({ studentId: 1, lectureId: 1 }, { unique: true });
 postSchema.index(
   {
@@ -1195,6 +1193,7 @@ postSchema.index(
     "jobMetadata.title": "text",
     "jobMetadata.company": "text",
     "eventMetadata.title": "text",
+    createdAt: -1,
   },
   {
     weights: {

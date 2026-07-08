@@ -11,6 +11,11 @@ import { client } from "./workers/reditFile.js";
 import { initEmailQueue } from "./controllers/emailProducers.js";
 import { startWorker } from "./workers/emailWorker.js";
 import { init as initSocket } from "./controllers/socket.js";
+import { pathToFileURL } from "url";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const dirname = path.dirname(fileURLToPath(import.meta.url));
 
 dotenv.config();
 
@@ -50,39 +55,69 @@ mongoose
   .connect(MONGO_URI)
   .then(async () => {
     console.log("✅ MongoDB connected");
-    const userRoutes = await import("./routes/user.js");
-    const reviewsRoutes = await import("./routes/reviews.js");
-    const ticketingRoutes = await import("./routes/supportTicketing.js");
-    const webhooksRoutes = await import("./routes/webhooks.js");
-    const appAuthRoutes = await import("./routes/appAuth.js");
-    const messageRoutes = await import("./routes/messages.js");
-    const adminRoutes = await import("./routes/admin.js");
-    const userAccountDetailsRoute =
-      await import("./routes/userAccountDetails.js");
-    const studentClassDetails = await import("./routes/class/students.js");
-    const lecturerClassDetails = await import("./routes/class/lecturers.js");
-    const storeRoutes = await import("./routes/store.js");
-    const postRoutes = await import("./routes/posts.js");
-    const studentVerifyRoutes = await import("./routes/verify/students.js");
-    const userVerifyRoutes = await import("./routes/verify/users.js");
-    const lecturerVerifyRoutes = await import("./routes/verify/lecturers.js");
+    //const routePath = path.join(__dirname, "routes/user.js");
+    //const userRoutes = await import(pathToFileURL(routePath).href);
+    /*
+    const reviewsRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/reviews.js")).href
+    );
+    const ticketingRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/supportTicketing.js")).href
+    );
+    const webhooksRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/webhooks.js")).href
+    );
+    const appAuthRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/appAuth.js")).href
+    );
+    const messageRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/messages.js")).href
+    );
+    const adminRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/admin.js")).href
+    );
+    const userAccountDetailsRoute = await import(
+      pathToFileURL(path.join(__dirname, "routes/userAccountDetails.js")).href
+    );
+    const studentClassDetails = await import(
+      pathToFileURL(path.join(__dirname, "routes/class/students.js")).href
+    );
+    const lecturerClassDetails = await import(
+      pathToFileURL(path.join(__dirname, "routes/class/lecturers.js")).href
+    );
+    const storeRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/store.js")).href
+    );
+    const postRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/posts.js")).href
+    );
+    const userVerifyRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/verify/users.js")).href
+    );
+    const lecturerVerifyRoutes = await import(
+      pathToFileURL(path.join(__dirname, "routes/verify/lecturers.js")).href
+    );
+    */
+    const studentVerifyRoutes = await import(
+      pathToFileURL(path.join(dirname, "routes/verify/students.js")).href
+    );
+    console.log("✅ MongoDB connected");
 
-    app.use("/users", userRoutes);
-    app.use("/reviews", reviewsRoutes);
-    app.use("/webhooks", webhooksRoutes);
-    app.use("/admins", adminRoutes);
-    app.use("/v1/auth", appAuthRoutes);
-    app.use("/users/messages", messageRoutes);
-    app.use("/support/tickets", ticketingRoutes);
-    app.use("/user", userAccountDetailsRoute);
-    app.use("/users/student/class", studentClassDetails);
-    app.use("/users/lecturers/class", lecturerClassDetails);
-    app.use("/posts", postRoutes);
-    app.use("/store", storeRoutes);
+    //app.use("/users", userRoutes);
+    //app.use("/reviews", reviewsRoutes);
+    //app.use("/webhooks", webhooksRoutes);
+    //app.use("/admins", adminRoutes);
+    //app.use("/v1/auth", appAuthRoutes);
+    //app.use("/users/messages", messageRoutes);
+    //app.use("/support/tickets", ticketingRoutes);
+    //app.use("/user", userAccountDetailsRoute);
+    //app.use("/users/student/class", studentClassDetails);
+    //app.use("/users/lecturers/class", lecturerClassDetails);
+    //app.use("/posts", postRoutes);
+    //app.use("/store", storeRoutes);
     app.use("/verifyStudent", studentVerifyRoutes);
-    app.use("/verifyInstructor", lecturerVerifyRoutes);
-    app.use("/verifyUser", userVerifyRoutes);
-    // 6. Change app.listen to httpServer.listen
+    //app.use("/verifyInstructor", lecturerVerifyRoutes);
+    //app.use("/verifyUser", userVerifyRoutes);
     httpServer.listen(5000, "0.0.0.0", () => {
       console.log("🚀 Backend & Socket.io running on port 5000");
     });

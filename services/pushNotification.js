@@ -7,12 +7,7 @@ admin.initializeApp({
   credential: admin.credential.cert(serviceAccountPath),
 });
 
-export const sendPushNotification = async (
-  recipientId,
-  title,
-  body,
-  data = {},
-) => {
+export const sendPushNotification = async (recipientId, title, body, data = {}) => {
   try {
     // 1. Find the user's device token from your DB
     const user = await User.findById(recipientId);
@@ -38,5 +33,3 @@ export const sendPushNotification = async (
     console.error("Error sending push notification:", error);
   }
 };
-
-module.exports = { sendPushNotification };

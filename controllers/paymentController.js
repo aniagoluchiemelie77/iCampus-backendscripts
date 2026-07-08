@@ -240,7 +240,7 @@ export const initializeWithdraw = async (req, res) => {
   const { iCashAmount, amountToReceive, fee, currency, bankDetails } = req.body;
   const idempotencyKey = `wd-${userId}-${Date.now().toString().substring(0, 10)}`;
   const transactionId = generateTransactionId('withdraw');
-  const title = `${iCashAmount} iCash Withdrawal`,
+  const title = `${iCashAmount} iCash Withdrawal`;
   const user = await User.findOne({ uid: userId });
   const isFlagged = await checkAndFlagWithdrawals(userId);
   if (isFlagged) {

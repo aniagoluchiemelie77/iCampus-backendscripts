@@ -3,9 +3,8 @@ import { protect } from "../middleware/auth.js";
 import {fetchSellerReviews} from '../controllers/reviewsControllers.js';
 
 
-export default function () {
-  const router = express.Router();
+const router = express.Router();
 
-  router.get("/fetch-seller-reviews", protect, fetchSellerReviews);
-  return router;
-}
+router.get("/fetch-seller-reviews", protect, fetchSellerReviews);
+
+export default router;

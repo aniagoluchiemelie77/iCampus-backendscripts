@@ -65,108 +65,101 @@ import {
   changePassword,
   AdminLogin,
 } from "../controllers/signinActions.js";
-import { Lectures } from "../tableDeclarations.js";
 
-export default function () {
-  const router = express.Router();
+const router = express.Router();
 
-  router.post("/register", signUp);
-  router.post("/login", authLimiter, Login);
-  router.post("/admin-login", authLimiter, AdminLogin);
-  router.post("/revoke-session", protect, revokeLoggedInDeviceSession);
-  router.post("/refresh-token", refreshToken);
-  router.post("/institutions/validate", validateInstitution);
-  router.post("/verifyEmail", validateEmail);
-  router.get("/institutions", fetchInstitutionByCountry);
-  router.post("/verifyEmailCode", authLimiter, verifyEmailUsingCode);
-  router.post("/forgotPassword", forgotPassword);
-  router.post("/changePassword", changePassword);
-  router.get("/get-notifications", protect, fetchUserNotifications);
-  router.get("/notifications/:id", protect, fetchSingleNotification);
-  router.patch(
-    "/notifications/mark-all-read",
-    protect,
-    markAllNotificationsAsRead,
-  );
-  router.patch("/notifications/:id/read", protect, markNotificationAsRead);
-  router.get(
-    "/exceptions/course/:courseId",
-    protect,
-    fetchLectureExceptionsLecturerView,
-  );
-  router.get(
-    "/exceptions/lectures/:lectureId",
-    protect,
-    fetchAllExceptionsForOngoingLecture,
-  );
-  router.get(
-    "/course/ongoing-lecture/:courseId",
-    protect,
-    fetchCourseDetailsForOngoingLecture,
-  );
-  router.get(
-    "/courses/fetch-course-details/:courseId",
-    protect,
-    fetchCourseDetails,
-  );
-  router.get("/courses/:courseId/assignments", protect, fetchCourseAssignments);
-  router.get("/exceptions", protect, fetchLectureExceptions);
-  router.get("/courses/lectures/:lectureId", fetchCourseLectures);
-  router.get("/lectures/ongoing", protect, fetchOngoingLectures);
-  router.post("/ai/chat", protect, aiChat);
-  router.get("/check-account-state", protect, checkAccountState);
-  router.get("/library/search", protect, searchBookInLibrary);
-  router.get("/library/featured", protect, fetchFeaturedBooksFromLibrary);
-  router.get("/fetchLeaderBoards", protect, fetchLeaderBoards);
-  router.get("/search", protect, searchUserUsingUidOrNameQuery);
-  router.get("/fetch-connections", protect, fetchConnections);
-  router.get("/profile/search:identifier", protect, fetchProfileInformation);
-  router.post("/follow/toggle", protect, toggleFollowingUsers);
-  router.put("/update-itag", protect, customizeItag);
-  router.get("/check-itag/:val", protect, verifyiTagUsernameAvailability);
-  router.patch("/update-profile", protect, updateUserProfile);
-  router.post("/payments/initiate-charge", protect, initiateFlwCharge);
-  router.get(
-    "/payments/banks/:countryCode",
-    protect,
-    fetchBanksUsingCountryCode,
-  );
-  router.post("/block/toggle", protect, toggleBlockedUsers);
-  router.get("/blocked-list", protect, fetchBlockedUsers);
-  router.patch("/preferences/:userId", protect, patchUserPreferences);
-  router.delete("/account/delete", protect, deleteAccount);
-  router.post("/password/verify", protect, verifyPasswordInapp);
-  router.put("/password/update", protect, createNewPasswordInApp);
-  router.patch("/update-emails", protect, updateEmails);
-  router.delete("/recovery-email", protect, deleteRecoveryEmail);
-  router.delete("/phone-number", protect, deletePhoneNumber);
-  router.post("/verify-phone-otp", protect, verifyPhoneNumberOTP);
-  router.post("/send-phone-otp", protect, sendPhoneNumberOTP);
-  router.get("/downloads/fetch-all", protect, getDownloads);
-  router.get("/courses/search", protect, handleUnifiedCourseSearch);
-  router.patch(
-    "/downloads/update-progress",
-    protect,
-    updateDownloadedCourseViewProgress,
-  );
-  router.post(
-    "/downloads/generate-certificate",
-    protect,
-    handleGenerateCertificate,
-  );
-  router.post("/reviews/create", createReviewController);
-  router.get(
-    "/courses/:courseId/fetch-all-lectures",
-    protect,
-    fetchAllLecturesByCourseId,
-  );
-  router.put("/preferences/toggleTheme", protect, toggleTheme);
-  router.get("/refresh-user-details", protect, refreshUserDetails);
-  router.post("/courses/manual-create", protect, uploadCourseDetailsManually);
-  router.post("/online-classes/create", protect, createQuickMeeting);
+router.post("/register", signUp);
+router.post("/login", authLimiter, Login);
+router.post("/admin-login", authLimiter, AdminLogin);
+router.post("/revoke-session", protect, revokeLoggedInDeviceSession);
+router.post("/refresh-token", refreshToken);
+router.post("/institutions/validate", validateInstitution);
+router.post("/verifyEmail", validateEmail);
+router.get("/institutions", fetchInstitutionByCountry);
+router.post("/verifyEmailCode", authLimiter, verifyEmailUsingCode);
+router.post("/forgotPassword", forgotPassword);
+router.post("/changePassword", changePassword);
+router.get("/get-notifications", protect, fetchUserNotifications);
+router.get("/notifications/:id", protect, fetchSingleNotification);
+router.patch(
+  "/notifications/mark-all-read",
+  protect,
+  markAllNotificationsAsRead,
+);
+router.patch("/notifications/:id/read", protect, markNotificationAsRead);
+router.get(
+  "/exceptions/course/:courseId",
+  protect,
+  fetchLectureExceptionsLecturerView,
+);
+router.get(
+  "/exceptions/lectures/:lectureId",
+  protect,
+  fetchAllExceptionsForOngoingLecture,
+);
+router.get(
+  "/course/ongoing-lecture/:courseId",
+  protect,
+  fetchCourseDetailsForOngoingLecture,
+);
+router.get(
+  "/courses/fetch-course-details/:courseId",
+  protect,
+  fetchCourseDetails,
+);
+router.get("/courses/:courseId/assignments", protect, fetchCourseAssignments);
+router.get("/exceptions", protect, fetchLectureExceptions);
+router.get("/courses/lectures/:lectureId", fetchCourseLectures);
+router.get("/lectures/ongoing", protect, fetchOngoingLectures);
+router.post("/ai/chat", protect, aiChat);
+router.get("/check-account-state", protect, checkAccountState);
+router.get("/library/search", protect, searchBookInLibrary);
+router.get("/library/featured", protect, fetchFeaturedBooksFromLibrary);
+router.get("/fetchLeaderBoards", protect, fetchLeaderBoards);
+router.get("/search", protect, searchUserUsingUidOrNameQuery);
+router.get("/fetch-connections", protect, fetchConnections);
+router.get("/profile/search:identifier", protect, fetchProfileInformation);
+router.post("/follow/toggle", protect, toggleFollowingUsers);
+router.put("/update-itag", protect, customizeItag);
+router.get("/check-itag/:val", protect, verifyiTagUsernameAvailability);
+router.patch("/update-profile", protect, updateUserProfile);
+router.post("/payments/initiate-charge", protect, initiateFlwCharge);
+router.get("/payments/banks/:countryCode", protect, fetchBanksUsingCountryCode);
+router.post("/block/toggle", protect, toggleBlockedUsers);
+router.get("/blocked-list", protect, fetchBlockedUsers);
+router.patch("/preferences/:userId", protect, patchUserPreferences);
+router.delete("/account/delete", protect, deleteAccount);
+router.post("/password/verify", protect, verifyPasswordInapp);
+router.put("/password/update", protect, createNewPasswordInApp);
+router.patch("/update-emails", protect, updateEmails);
+router.delete("/recovery-email", protect, deleteRecoveryEmail);
+router.delete("/phone-number", protect, deletePhoneNumber);
+router.post("/verify-phone-otp", protect, verifyPhoneNumberOTP);
+router.post("/send-phone-otp", protect, sendPhoneNumberOTP);
+router.get("/downloads/fetch-all", protect, getDownloads);
+router.get("/courses/search", protect, handleUnifiedCourseSearch);
+router.patch(
+  "/downloads/update-progress",
+  protect,
+  updateDownloadedCourseViewProgress,
+);
+router.post(
+  "/downloads/generate-certificate",
+  protect,
+  handleGenerateCertificate,
+);
+router.post("/reviews/create", createReviewController);
+router.get(
+  "/courses/:courseId/fetch-all-lectures",
+  protect,
+  fetchAllLecturesByCourseId,
+);
+router.put("/preferences/toggleTheme", protect, toggleTheme);
+router.get("/refresh-user-details", protect, refreshUserDetails);
+router.post("/courses/manual-create", protect, uploadCourseDetailsManually);
+router.post("/online-classes/create", protect, createQuickMeeting);
 
-  return router;
-}
+export default router;
 //Mongod summon: mongod --dbpath D:\MongoDB\data
 //backend summon: npx nodemon index.js
 //ngrok http 5000

@@ -11,7 +11,7 @@ import {
   Posts,
 } from "../tableDeclarations.js";
 import { notifyAdmins } from "../services/adminNotification.js";
-import { createNotification } from "../services/notifications.js";
+import { createNotification } from "../services/notification.js";
 import {
   generateNotificationId,
   generateSchoolId,

@@ -106,7 +106,6 @@ export const registerPrivateChatHandlers = (io, socket) => {
   });
   socket.on("msg_delivered", async (payload) => {
     const startTime = Date.now();
-    const startTime = Date.now();
     const controllerName = "markMessageAsDeliveredController";
     const action = "markMessageAsDelivered";
     try {

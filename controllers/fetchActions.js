@@ -17,7 +17,7 @@ import {
   SupportTicket,
 } from "../tableDeclarations.js";
 import { client } from "../workers/reditFile.js";
-import { createNotification } from "../services/notificationService.js";
+import { createNotification } from "../services/notification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import axiosRetry from "axios-retry";
 import axios from "axios";

@@ -1,7 +1,7 @@
 import jwt from "jsonwebtoken";
 import admin from "firebase-admin";
 const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-import { User, UserRecords, Admin } from "../tableDeclarations.js";
+import { User, Admin } from "../tableDeclarations.js";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
 import path from "path";
