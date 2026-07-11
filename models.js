@@ -280,11 +280,25 @@ export const payoutSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
+const phoneNumberSchema = new mongoose.Schema({
+  number: { type: String, index: true, required: true },
+  isVerified: { type: Boolean, default: false },
+  usertype: {
+    type: String,
+    enum: ["sms", "whatsapp"],
+    default: "whatsapp",
+  },
+  addedAt: { type: Date, default: Date.now },
+});
 export const userSchema = new mongoose.Schema({
   headline: { type: String },
   uid: { type: String, index: true, required: true },
   bio: { type: String },
   currentIScore: {
+    type: Number,
+    default: 5,
+  },
+  previousIScore: {
     type: Number,
     default: 5,
   },
@@ -412,6 +426,7 @@ export const userSchema = new mongoose.Schema({
       addedAt: { type: Date, default: Date.now },
     },
   ],
+  phoneNumbers: [phoneNumberSchema],
   personaInquiryId: { type: String, default: null },
   sessions: [sessionSchema],
 });
