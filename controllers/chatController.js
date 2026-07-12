@@ -174,4 +174,123 @@ export const registerPrivateChatHandlers = (io, socket) => {
       );
     }
   });
+
+  socket.on("edit_message", ({ messageId, newText, recipientId }) => {
+    const roomId = [socket.userId, recipientId].sort().join("_");
+
+    socket.to(roomId).emit("message_edited", {
+      messageId,
+      newText,
+    });
+  });
+
+  socket.on("delete_message", ({ messageId, recipientId }) => {
+    const roomId = [socket.userId, recipientId].sort().join("_");
+
+    socket.to(roomId).emit("message_deleted", {
+      messageId,
+    });
+  });
+};
+export const markAllMessagesAsRead = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "markAllMessagesAsReadController";
+  const action = "markAllMessagesAsRead";
+  try {
+    const userId = req.user.id;
+    await Message.updateMany(
+      { recipientId: userId, status: { $ne: "seen" } },
+      { $set: { status: "seen" } },
+    );
+    logControllerPerformance(controllerName, action, startTime, "success");
+    res.json({ success: true });
+  } catch (err) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    res.status(500).json({ error: err.message, success: false });
+  }
+};
+export const editMessage = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "editMessageController";
+  const action = "editMessage";
+  try {
+    const { messageId } = req.params;
+    const { text } = req.body;
+    const senderId = req.user.uid;
+
+    const message = await Message.findOneAndUpdate(
+      { id: messageId, senderId: senderId },
+      { text: text, isEdited: true },
+      { new: true },
+    );
+
+    if (!message) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Message not found or unauthorized",
+      );
+      return res
+        .status(404)
+        .json({ message: "Message not found or unauthorized" });
+    }
+    logControllerPerformance(controllerName, action, startTime, "success");
+
+    res.status(200).json({ success: true, message });
+  } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    res.status(500).json({ message: "Server error" });
+  }
+};
+
+export const deleteMessage = async (req, res) => {
+  try {
+    const { messageId } = req.params;
+    const senderId = req.user.uid;
+
+    const message = await Message.findOneAndUpdate(
+      { id: messageId, senderId: senderId },
+      { status: "deleted", text: "This message was deleted" },
+      { new: true },
+    );
+
+    if (!message) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Message not found or unauthorized",
+      );
+      return res
+        .status(404)
+        .json({ message: "Message not found or unauthorized" });
+    }
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+    res.status(200).json({ success: true });
+  } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    res.status(500).json({ message: "Server error" });
+  }
 };

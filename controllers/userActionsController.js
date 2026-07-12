@@ -1098,29 +1098,6 @@ export const resetIcashPin = async (req, res) => {
   logControllerPerformance(controllerName, action, startTime, "success");
   res.status(200).json({ success: true, message: "PIN updated successfully." });
 };
-export const markAllMessagesAsRead = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "markAllMessagesAsReadController";
-  const action = "markAllMessagesAsRead";
-  try {
-    const userId = req.user.id;
-    await Message.updateMany(
-      { recipientId: userId, status: { $ne: "seen" } },
-      { $set: { status: "seen" } },
-    );
-    logControllerPerformance(controllerName, action, startTime, "success");
-    res.json({ success: true });
-  } catch (err) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    res.status(500).json({ error: err.message, success: false });
-  }
-};
 export const markNotificationAsRead = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "markNotificationAsReadController";
