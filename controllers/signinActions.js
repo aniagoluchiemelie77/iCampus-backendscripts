@@ -964,6 +964,7 @@ export const verifyStudent = async (req, res) => {
       department: schoolStudent.faculty_dept,
       current_level: schoolStudent.level,
       schoolAvatarUrl: schoolStudent.profile_picture_url,
+      isStillInSchool: schoolStudent.isStillInSchool,
       matricNumber: matriculation_number,
       isVerified: true,
     });

@@ -337,6 +337,14 @@ export const createNotification = async ({
         title = "Drop-off Station Updated";
         message = `The settings for your station "${payload.stationName}" have been modified.`;
         break;
+      case "GRADUATION_CONGRATULATIONS":
+        category = "system";
+        subject = "Account Update: Welcome to Alumni status";
+        title = title || "Transition to Alumni";
+        message =
+          message ||
+          "Congratulations! Your account has been officially upgraded to Alumni status. You now have access to exclusive alumni features on iCampus.";
+        break;
 
       //navigate to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId
       case "LECTURER_REVIEW_REQUEST":

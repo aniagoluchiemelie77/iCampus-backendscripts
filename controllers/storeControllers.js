@@ -23,9 +23,10 @@ import {
 } from "../utils/idGenerator.js";
 import { calculateHaversineDistance } from "../utils/distanceCalHelper.js";
 import fs from "fs/promises";
-import { TAX_RATE, AGENT_RATE } from "../constants/inAppConstants.js";
+import { TAX_RATE, DELIVERY_FEES } from "../constants/inAppConstants.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+import { calculateDistribution } from "../utils/finance.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -355,7 +356,8 @@ export const initializeCheckout = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "initializeCheckoutController";
   const action = "initializeCheckout";
-  const { items, totals, buyerId, shippingContact } = req.body;
+  const { items, totals, shippingContact } = req.body;
+  const buyerId = req.user.id;
   const session = await mongoose.startSession();
   const PAYOUT_FACTOR = 1 - TAX_RATE;
   try {
@@ -396,6 +398,7 @@ export const initializeCheckout = async (req, res) => {
       const seller = await User.findOne({ uid: item.sellerId }).session(
         session,
       );
+      const tier = buyer.tier || "free";
       if (!product || !seller) {
         logControllerPerformance(
           controllerName,
@@ -580,6 +583,10 @@ export const completeOrderDelivery = async (req, res) => {
       );
       throw new Error("Seller account no longer exists.");
     }
+    const buyerTier = buyer?.tier || "free";
+    const deliveryFeeRate =
+      DELIVERY_FEES[buyerTier]?.[order.deliveryMethod] || 0;
+    const deliveryFeeAmount = order.amountPaid * deliveryFeeRate;
     const totalHeld = order.amountPaid;
     const taxAmount = totalHeld * TAX_RATE;
     const payableAmount = totalHeld - taxAmount;
@@ -598,10 +605,14 @@ export const completeOrderDelivery = async (req, res) => {
         );
         throw new Error("Drop-off agent not found.");
       }
-      agentEarnings = payableAmount * AGENT_RATE;
-      sellerEarnings -= agentEarnings;
+      agentEarnings = deliveryFeeAmount * 0.5;
+      const sellerDeliveryShare = deliveryFeeAmount * 0.5;
+      sellerEarnings += sellerDeliveryShare;
       agent.pendingSalesBalance += agentEarnings;
       await agent.save({ session });
+    } else if (order.deliveryMethod === "home_delivery") {
+      const sellerDeliveryShare = deliveryFeeAmount * 0.7;
+      sellerEarnings += sellerDeliveryShare;
     }
     seller.pendingSalesBalance += sellerEarnings;
     await seller.save({ session });

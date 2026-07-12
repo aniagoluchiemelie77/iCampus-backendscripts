@@ -11,8 +11,21 @@ export const EXCEPTION_ACCOUNT_LIMITS = Object.freeze({
   pro: 2,
   premium: 3,
 });
+export const DELIVERY_FEES = Object.freeze({
+  free: {
+    home_delivery: 0.08,
+    drop_off: 0.05,
+  },
+  pro: {
+    home_delivery: 0.06,
+    drop_off: 0.04,
+  },
+  premium: {
+    home_delivery: 0.03,
+    drop_off: 0.02,
+  },
+});
 export const TAX_RATE = 0.02;
-export const AGENT_RATE = 0.06;
 
 export const CATEGORY_ROLES = Object.freeze({
   security: ["super_admin"],

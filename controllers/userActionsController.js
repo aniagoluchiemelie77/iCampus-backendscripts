@@ -106,7 +106,7 @@ const FAQ_DATA = [
     id: "iap-2",
     question: "How does the drop-off station delivery option work?",
     answer:
-      "If you choose a drop-off location, you will select from a list of nearby stations and agents during checkout. The seller is notified to drop the product off there. Once it arrives, you head to the station, and the agent scans your phone’s QR code to confirm pickup. This instantly dispatches payment to both the seller and the agent (their cut).",
+      "If you choose to receive your purchased product at a selected drop-off location during checkout, the seller will be notified immediately to drop the product at your selected locatio. Once it arrives, you will be notified, then head to the station, and the agent scans the generated order QR code from your device to confirm pickup. This instantly dispatches payment to both the seller and the agent (their cut).",
   },
   {
     id: "icash-3",
