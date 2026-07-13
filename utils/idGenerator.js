@@ -326,7 +326,15 @@ export function generateSchoolId(name) {
 }
 export function generateStationId() {
   const now = new Date();
-  const datePart = now.toISOString().slice(2, 10).replace(/-/g, ""); // 260706
-  const randomSuffix = Math.floor(1000 + Math.random() * 9000); // 4829
+  const datePart = now.toISOString().slice(2, 10).replace(/-/g, "");
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
   return `STN-${datePart}-${randomSuffix}`;
+}
+export function generateItagUsername(firstName, digitCount = 4) {
+  const cleanName = firstName.toLowerCase().replace(/[^a-z]/g, "");
+  const min = Math.pow(10, digitCount - 1);
+  const max = Math.pow(10, digitCount) - 1;
+  const randomSuffix = Math.floor(Math.random() * (max - min + 1) + min);
+
+  return `${cleanName}${randomSuffix}`;
 }

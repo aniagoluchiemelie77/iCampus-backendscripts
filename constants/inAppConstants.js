@@ -30,7 +30,7 @@ export const TAX_RATE = 0.02;
 export const CATEGORY_ROLES = Object.freeze({
   security: ["super_admin"],
   finance: ["super_admin", "finance"],
-  social: ["support", "moderator"],
+  social: ["support", "moderator", "super_admin"],
   profile: ["super_admin"],
   subscription: ["super_admin"],
   store: ["super_admin", "finance"],

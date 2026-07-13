@@ -31,6 +31,9 @@ import {
   supportTicketReceivedTemplate,
   supportTicketResolvedTemplate,
   supportTicketReplyTemplate,
+  suspiciousPasswordChangeTemplate,
+  financialSecurityAlertTemplate,
+  newStationRegistrationTemplate,
 } from "./emailTemplates.js";
 
 export const createNotification = async ({
@@ -612,6 +615,12 @@ export const createNotification = async ({
         title = title || "New Administrator Alert";
         message = message || "A new admin has been added to the system.";
         break;
+      case "ADMIN_SUBSCRIPTION_UPGRADED":
+        title = title || "Subscription Upgraded";
+        message =
+          message ||
+          `User ${payload.userName} upgraded to the ${payload.tier.toUpperCase()} plan.`;
+        break;
       case "WELCOME_ADMIN":
         subject = "Welcome to the iCampus Admin Team";
         if (canSendEmail) {
@@ -625,7 +634,7 @@ export const createNotification = async ({
         title = title || "Security Alert: Admin Removed";
         message = message || "An administrator account has been deleted.";
         break;
-      case "PROFILE_UPDATED":
+      case "ADMIN_PROFILE_UPDATED":
         title = title || "Account Information Updated";
         message = message || "Your account details have been modified.";
         break;
@@ -635,7 +644,7 @@ export const createNotification = async ({
           message || "An administrator's access level has been modified.";
         break;
       case "PURCHASE_ORDER_COMPLETION":
-        category = "finance";
+        category = "store";
         subject = `Order Completed: #${payload.orderId}`;
         title = title || "Order Delivered & Settled";
         message =
@@ -643,7 +652,7 @@ export const createNotification = async ({
           `Order #${payload.orderId} has been successfully completed and funds have been settled.`;
         break;
       case "NEW_PURCHASE_ORDER":
-        category = "finance";
+        category = "store";
         subject = `New Order Placed: REF-${payload.transactionId}`;
         title = title || "New Order Activity";
         message =
@@ -653,7 +662,7 @@ export const createNotification = async ({
         entityType = "transaction";
         break;
       case "ORDER_CANCELLED_ADMIN":
-        category = "finance";
+        category = "store";
         subject = `Audit: Order Cancelled - #${payload.orderId}`;
         title = title || "Cancellation Audit";
         message =
@@ -661,7 +670,7 @@ export const createNotification = async ({
           `Order #${payload.orderId} was cancelled. Reason: ${payload.reason}`;
         break;
       case "SALES_PAYOUT_ADMIN_ALERT":
-        category = "finance";
+        category = "store";
         subject = "Audit: Sales Payout Processed";
         title = title || "Payout Audit";
         message =
@@ -693,25 +702,25 @@ export const createNotification = async ({
         message = `Product "${payload.productName}" (ID: ${payload.productId}) was removed from the marketplace.`;
         break;
       case "USER_VERIFICATION_AUDIT":
-        category = "system";
+        category = "social";
         subject = "Audit: Identity Verified";
         title = "User Verified";
         message = `The user with UID ${payload.referenceId} has successfully completed Persona verification.`;
         break;
       case "ACCOUNT_DELETION_ADMIN_ALERT":
-        category = "system";
+        category = "profile";
         subject = "Security Alert: Account Deleted";
         title = "User Account Deletion";
         message = `User ${payload.userUid} has permanently deleted their account. Reason provided: ${payload.reason || "None"}.`;
         break;
       case "ICASH_PIN_RESET_AUDIT":
-        category = "system";
+        category = "security";
         subject = "Security Audit: iCash PIN Reset";
         title = "Security Alert";
         message = `The iCash PIN for user ${payload.userName} (UID: ${payload.userUid}) was successfully reset.`;
         break;
       case "AI_SUPPORT_ESCALATION":
-        category = "system";
+        category = "social";
         subject = "Action Required: AI Support Escalation";
         title = "New Support Ticket Escalated";
         message = `The AI could not resolve a query from UID ${payload.userUid}. A ticket has been created: ${payload.ticketId}. Please review it in the admin dashboard.`;
@@ -733,6 +742,15 @@ export const createNotification = async ({
         subject = "CRITICAL: Suspicious Password Change Detected";
         title = "Security Alert";
         message = `Alert: Password for ${payload.userEmail} changed from ${payload.currentCountry}. Previous known location was ${payload.previousCountry}. Immediate review recommended.`;
+        if (
+          canSendEmail &&
+          typeof suspiciousPasswordChangeTemplate === "function"
+        ) {
+          htmlContent = suspiciousPasswordChangeTemplate(
+            payload,
+            payload.isSuspicious,
+          );
+        }
         break;
       case "SUSPICIOUS_ACTIVITY_ALERT":
         category = "security";
@@ -741,7 +759,7 @@ export const createNotification = async ({
         message = `Security Alert: The account with UID ${payload.userUid} was accessed from ${payload.currentLocation}. This location does not match the user's historical login patterns. Please investigate immediately.`;
         break;
       case "MODERATION_ALERT_NUDITY":
-        category = "security";
+        category = "social";
         subject = "Urgent: Policy Violation Detected";
         title = "Content Moderation Alert";
         message = `An automated system flagged a post (ID: ${payload.postId}) for ${payload.reason} with ${payload.confidence}% confidence. Post has been hidden pending review.`;
@@ -752,6 +770,12 @@ export const createNotification = async ({
         title = "Price Spoofing Detected";
         message = `Alert: User ${payload.userId} attempted an iCash purchase that failed integrity checks. Amount requested: ${payload.attemptedAmount}. IP: ${payload.ipAddress}. Investigation recommended.`;
         break;
+        if (
+          canSendEmail &&
+          typeof financialSecurityAlertTemplate === "function"
+        ) {
+          htmlContent = financialSecurityAlertTemplate(payload);
+        }
       case "WITHDRAWAL_SUCCESS_AUDIT":
         category = "finance";
         subject = "Audit: Successful Withdrawal";
@@ -795,13 +819,12 @@ export const createNotification = async ({
         message = `Warning: User ${payload.userId} has attempted 5+ withdrawals within one hour.`;
         break;
       case "SUPPORT_TICKET_RESOLVED_ADMIN":
-        category = "system";
+        category = "social";
         subject = `Audit: Ticket Resolved - #${payload.ticketRefId}`;
         title = "Ticket Resolution Audit";
         message = `Ticket #${payload.ticketRefId} initiated by user ${payload.userId} was marked as resolved by admin ${payload.adminId}.`;
         break;
       case "ADMIN_INSTITUTION_DELETED":
-        category = "system";
         subject = "Audit: Institution Deletion";
         title = title || "Institution Removed";
         message =
@@ -809,7 +832,6 @@ export const createNotification = async ({
           `Institution ${payload.schoolName} was deleted from the system.`;
         break;
       case "STATION_DELETION_ADMIN":
-        category = "system";
         subject = "Audit: Drop-Off Station Deletion";
         title = title || "Station Deletion Audit";
         message =
@@ -817,7 +839,6 @@ export const createNotification = async ({
           `Station "${payload.stationName}" (Agent: ${payload.agentId}) was deleted.`;
         break;
       case "ADMIN_INSTITUTION_CREATED":
-        category = "system";
         subject = "New Institution Onboarding";
         title = title || "Institution Added";
         message =
@@ -825,7 +846,6 @@ export const createNotification = async ({
           `A new institution, ${payload.schoolName}, has joined the platform.`;
         break;
       case "ADMIN_INSTITUTION_UPDATED":
-        category = "system";
         subject = "Audit: Institution Update";
         title = title || "Configuration Changed";
         message =
@@ -833,7 +853,6 @@ export const createNotification = async ({
           `Institution ${payload.schoolName} (ID: ${payload.schoolId}) was updated by an admin.`;
         break;
       case "STATION_CREATED_ADMIN":
-        category = "system";
         subject = "Audit: New Drop-off Station";
         title = title || "Drop-off Station Created";
         message =
@@ -841,22 +860,30 @@ export const createNotification = async ({
           `Drop-off Station ${payload.stationName} successfully linked to Agent ${payload.agentId}.`;
         break;
       case "STATION_UPDATED_ADMIN":
-        category = "system";
         subject = "Audit: Drop-off Station Modification";
         title = "Drop-off Station Edit Audit";
         message = `Audit: Drop-off Station ${payload.stationId} (Agent: ${payload.agentId}) was updated.`;
         break;
       case "NEW_STATION_REGISTRATION":
-        category = "admin_action";
+        category = "store";
         subject = "Action Required: New Station Registration";
         title = title || "New Station Pending Review";
         message =
           message ||
           `A new drop-off station registration has been submitted and requires admin review. Ticket Ref: ${data?.ticketRefId || "N/A"}`;
+        if (
+          canSendEmail &&
+          typeof newStationRegistrationTemplate === "function"
+        ) {
+          htmlContent = newStationRegistrationTemplate(
+            payload.name,
+            payload.userId,
+            payload,
+          );
+        }
         break;
-
       case "STATION_APPROVAL_UPDATE":
-        category = "system";
+        category = "store";
         subject = "Station Registration: Status Update";
         title = title || "Update on your Station Request";
         message =

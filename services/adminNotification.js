@@ -1,5 +1,5 @@
-import { Admin } from "../tableDeclarations.js"; 
-import { createNotification } from "./notification.js"; 
+import { Admin } from "../tableDeclarations.js";
+import { createNotification } from "./notification.js";
 
 export const notifyAdmins = async (target, params, sendEmailFlag = false) => {
   try {
@@ -9,19 +9,19 @@ export const notifyAdmins = async (target, params, sendEmailFlag = false) => {
       const roles = Array.isArray(target.role) ? target.role : [target.role];
       query = { adminType: { $in: roles } };
     }
-    
+
     if (target.uids) query = { uid: { $in: target.uids } };
 
     const admins = await Admin.find(query);
-    const recipients = admins.filter(a => a.uid !== params.senderId);
+    const recipients = admins.filter((a) => a.uid !== params.senderId);
 
     const notifications = recipients.map((admin) =>
       createNotification({
         ...params,
         recipientId: admin.uid,
         recipientEmail: admin.email,
-        sendEmail: sendEmailFlag, 
-      })
+        sendEmail: sendEmailFlag,
+      }),
     );
 
     return await Promise.all(notifications);

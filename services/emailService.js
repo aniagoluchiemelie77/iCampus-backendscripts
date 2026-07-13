@@ -14,7 +14,7 @@ export const sendEmail = async ({
 }) => {
   try {
     const response = await postmarkClient.sendEmail({
-      From: "support@uniquetechcontentwriter.com",
+      From: process.env.POSTMARK_SENDER_SIGNATURE,
       To: to,
       Subject: subject,
       TextBody: text,

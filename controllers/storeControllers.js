@@ -500,11 +500,13 @@ export const initializeCheckout = async (req, res) => {
     await notifyAdmins(
       { role: ["super_admin", "finance"] },
       {
+        notificationId: generateNotificationId("admin_notification"),
         actionType: "NEW_PURCHASE_ORDER",
         title: "New Purchase Order",
         message: `Order set #${buyerTxId} created with ${items.length} items.`,
         payload: { transactionId: buyerTxId, itemCount: items.length, buyerId },
       },
+      false
     );
     logControllerPerformance(controllerName, action, startTime, "success");
     res
@@ -686,6 +688,7 @@ export const completeOrderDelivery = async (req, res) => {
     await notifyAdmins(
       { role: ["super_admin", "finance"] },
       {
+        notificationId: generateNotificationId("admin_notification"),
         actionType: "PURCHASE_ORDER_COMPLETION",
         title: "Order Completed",
         message: `Order #${orderId} has been completed and funds settled.`,
@@ -806,11 +809,13 @@ export const cancelOrder = async (req, res) => {
     await notifyAdmins(
       { role: ["super_admin", "finance"] },
       {
+        notificationId: generateNotificationId("admin_notification"),
         actionType: "ORDER_CANCELLED_ADMIN",
         title: "Order Cancelled Audit",
         message: `Order #${orderId} has been cancelled. Buyer ${buyer.uid} refunded.`,
         payload: { orderId, sellerId: seller.uid, reason },
       },
+      false
     );
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
@@ -1075,11 +1080,13 @@ export const requestPayout = async (req, res) => {
     await notifyAdmins(
       { role: ["finance", "super_admin"] },
       {
+        notificationId: generateNotificationId("admin_notification"),
         actionType: "SALES_PAYOUT_ADMIN_ALERT",
         title: "New Sales Payout Processed",
         message: `User ${user.uid} successfully withdrew ${amount} iCash to their wallet.`,
         payload: { userId: user.uid, amount, payoutId, transactionId },
       },
+      false
     );
     logControllerPerformance(controllerName, action, startTime, "success");
     return {
@@ -1382,6 +1389,7 @@ export const saveProductController = async (req, res) => {
     await notifyAdmins(
       { role: ["super_admin", "moderator"] },
       {
+        notificationId: generateNotificationId("admin_notification"),
         actionType: isEditing ? "PRODUCT_UPDATE" : "PRODUCT_CREATION",
         title: isEditing ? "Product Updated" : "New Product Listed",
         message: `Product "${product.title}" was ${isEditing ? "updated" : "listed"} by ${sellerName}.`,
@@ -1391,6 +1399,7 @@ export const saveProductController = async (req, res) => {
           sellerId: userUid,
         },
       },
+      false
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -1527,11 +1536,13 @@ export const deleteProductController = async (req, res) => {
     await notifyAdmins(
       { role: ["super_admin", "moderator"] },
       {
+        notificationId: generateNotificationId("admin_notification"),
         actionType: "PRODUCT_DELETION_ADMIN",
         title: "Product Deletion Audit",
         message: `Product "${product.title}" was deleted by seller ${userUid}.`,
         payload: { productId, productName: product.title, sellerId: userUid },
       },
+      false
     );
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({

@@ -98,8 +98,7 @@ export const adminUpdateTicketStatus = async (req, res) => {
         notifyAdmins(
           { role: ["super_admin", "support"] },
           {
-            notificationId: generateNotificationId("system"),
-            category: "system",
+            notificationId: generateNotificationId("admin_notification"),
             actionType: "SUPPORT_TICKET_RESOLVED_ADMIN",
             sendEmailFlag: false,
             senderId: req.admin.uid,
@@ -109,6 +108,7 @@ export const adminUpdateTicketStatus = async (req, res) => {
               adminId: req.admin.uid,
             },
           },
+          false,
         ),
       ]);
     }

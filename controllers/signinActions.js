@@ -17,6 +17,7 @@ import {
   generateTokens,
   generateCode,
   generateUniqueReferralCode,
+  generateItagUsername,
 } from "../utils/idGenerator.js";
 import {
   verifyGoogleToken,
@@ -55,7 +56,6 @@ export const signUp = async (req, res) => {
     staff_id,
     department,
     password,
-    itagusername,
     firstname,
     lastname,
     deviceId,
@@ -91,9 +91,11 @@ export const signUp = async (req, res) => {
     if (password && password !== "SOCIAL_AUTH") {
       hashedPassword = await bcrypt.hash(password, 10);
     }
+    const itagusername = generateItagUsername(firstname, 5);
     const newUser = new User({
       uid,
       ...req.body,
+      itagusername,
       referralCode: await generateUniqueReferralCode(req.body),
       password: hashedPassword,
       isVerified:
@@ -879,6 +881,7 @@ export const changePassword = async (req, res) => {
     notifyAdmins(
       { role: ["super_admin", "support"] },
       {
+        notificationId: generateNotificationId("admin_notification"),
         actionType: isSuspicious
           ? "SUSPICIOUS_PASSWORD_CHANGE"
           : "PASSWORD_CHANGE_AUDIT",

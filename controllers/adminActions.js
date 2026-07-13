@@ -52,7 +52,8 @@ export const deleteAdmin = async (req, res) => {
     await notifyAdmins(
       { role: "super_admin" },
       {
-        category: "security",
+        notificationId: generateNotificationId("profile"),
+        category: "profile",
         actionType: "ADMIN_DELETED",
         senderId: req.admin.uid,
         title: "Administrator Removed",
@@ -80,7 +81,8 @@ export const createAdmin = async (req, res) => {
     await notifyAdmins(
       { role: "super_admin" },
       {
-        category: "security",
+        notificationId: generateNotificationId("profile"),
+        category: "profile",
         actionType: "NEW_ADMIN_CREATED",
         title: "New Admin Added",
         message: `${req.admin.firstname} created a new admin account: ${newAdmin.firstname}.`,
@@ -92,7 +94,8 @@ export const createAdmin = async (req, res) => {
     await notifyAdmins(
       { uids: [newAdmin.uid] },
       {
-        category: "auth",
+        notificationId: generateNotificationId("profile"),
+        category: "profile",
         actionType: "WELCOME_ADMIN",
         title: "Welcome to iCampus Admin",
         message: `Your administrator account has been created by ${req.admin.firstname}.`,
@@ -124,8 +127,9 @@ export const updateAdmin = async (req, res) => {
     await notifyAdmins(
       { uids: [uid] },
       {
+        notificationId: generateNotificationId("profile"),
         category: "profile",
-        actionType: "PROFILE_UPDATED",
+        actionType: "ADMIN_PROFILE_UPDATED",
         title: "Account Updated",
         message: `Your administrator account profile has been updated by ${req.admin.firstname}.`,
         senderId: req.admin.uid,
@@ -138,7 +142,8 @@ export const updateAdmin = async (req, res) => {
       await notifyAdmins(
         { role: "super_admin" },
         {
-          category: "security",
+          notificationId: generateNotificationId("profile"),
+          category: "profile",
           actionType: "ADMIN_PERMISSIONS_CHANGED",
           title: "Permissions Modified",
           message: `Admin ${updated.firstname} role was changed to ${req.body.adminType} by ${req.admin.firstname}.`,
@@ -429,11 +434,14 @@ export const deleteInstitution = async (req, res) => {
     await notifyAdmins(
       { role: "super_admin" },
       {
+        notificationId: generateNotificationId("social"),
+        category: "social",
         actionType: "ADMIN_INSTITUTION_DELETED",
         title: "Institution Deleted",
         message: `Institution ${result.schoolName} was deleted by admin ${req.user.uid}.`,
         payload: { schoolName: result.schoolName },
       },
+      false,
     );
 
     res.json({ success: true, message: "Institution deleted successfully." });
@@ -460,11 +468,14 @@ export const deleteDropOffStation = async (req, res) => {
     await notifyAdmins(
       { role: "super_admin" },
       {
+        notificationId: generateNotificationId("store"),
+        category: "store",
         actionType: "STATION_DELETION_ADMIN",
         title: "Station Deletion Audit",
         message: `Station "${station.name}" ( by Agent: ${station.agentId}) was deleted.`,
         payload: { stationName: station.name, agentId: station.agentId },
       },
+      false,
     );
 
     res.json({ success: true, message: "Station deleted successfully." });
@@ -513,11 +524,14 @@ export const createInstitution = async (req, res) => {
     await notifyAdmins(
       { role: "super_admin" },
       {
+        notificationId: generateNotificationId("social"),
+        category: "social",
         actionType: "ADMIN_INSTITUTION_CREATED",
         title: "New Institution Joined",
         message: `${schoolName} has officially joined iCampus.`,
         payload: { schoolId, schoolName },
       },
+      false,
     );
     const newPostId = generatePostId();
     const welcomePost = await Posts.create({
@@ -578,11 +592,14 @@ export const updateInstitution = async (req, res) => {
     await notifyAdmins(
       { role: "super_admin" },
       {
+        notificationId: generateNotificationId("social"),
+        category: "social",
         actionType: "ADMIN_INSTITUTION_UPDATED",
         title: "Institution Updated",
         message: `Settings for "${updateData.name}" have been modified.`,
         payload: { schoolId: id, schoolName: updateData.name },
       },
+      false,
     );
 
     res.status(200).json({ success: true, data: updatedSchool });
@@ -621,11 +638,14 @@ export const createStation = async (req, res) => {
     await notifyAdmins(
       { role: "super_admin" },
       {
+        notificationId: generateNotificationId("store"),
+        category: "store",
         actionType: "STATION_CREATED_ADMIN",
         title: "Station Creation Audit",
         message: `Station "${name}" was created for Agent: ${agentId}.`,
         payload: { stationId, stationName: name, agentId },
       },
+      false,
     );
     res.status(201).json({ success: true, station: newStation });
   } catch (error) {
@@ -666,11 +686,14 @@ export const updateStation = async (req, res) => {
     await notifyAdmins(
       { role: "super_admin" },
       {
+        notificationId: generateNotificationId("store"),
+        category: "store",
         actionType: "STATION_UPDATED_ADMIN",
         title: "Station Update Audit",
         message: `Station "${updatedStation.name}" (ID: ${id}) was updated.`,
         payload: { stationId: id, agentId: updatedStation.agentId },
       },
+      false,
     );
 
     res.status(200).json({ success: true, station: updatedStation });

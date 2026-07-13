@@ -632,6 +632,7 @@ export const notificationSchema = new mongoose.Schema(
         "signup",
         "subscription",
         "account_upgrade",
+        "admin_notification",
       ],
       required: true,
     },

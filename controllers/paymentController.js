@@ -105,12 +105,12 @@ export const initializeBuy = async (req, res) => {
 
   if (!country) {
     logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Country information is required to calculate exchange rates.",
-        );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Country information is required to calculate exchange rates.",
+    );
     return res.status(400).json({
       status: "error",
       message: "Country information is required to calculate exchange rates.",
@@ -118,12 +118,12 @@ export const initializeBuy = async (req, res) => {
   }
   if (!amount || !paymentToken) {
     logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing payment details"
-        );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Missing payment details",
+    );
     return res
       .status(400)
       .json({ status: "error", message: "Missing payment details" });
@@ -141,24 +141,25 @@ export const initializeBuy = async (req, res) => {
       notifyAdmins(
         { role: ["super_admin", "finance"] },
         {
+          notificationId: generateNotificationId("admin_notification"),
           actionType: "FINANCIAL_SECURITY_ALERT",
           payload: {
             userId: userId,
             attemptedAmount: iCashAmount,
             expectedAmount: expectedICash,
-            ipAddress: req.ip
+            ipAddress: req.ip,
           },
-          senderId: "system"
+          senderId: "system",
         },
-        true 
+        true,
       ).catch(console.error);
       logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Transaction integrity check failed. Please try again.",
-        );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Transaction integrity check failed. Please try again.",
+      );
       return res.status(400).json({
         status: "error",
         message: "Transaction integrity check failed. Please try again.",
@@ -192,12 +193,7 @@ export const initializeBuy = async (req, res) => {
     );
     const result = response.data;
     if (result.status === "success") {
-      logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "success",
-        );
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         status: "success",
         message: "Charge initiated",
@@ -206,12 +202,12 @@ export const initializeBuy = async (req, res) => {
       });
     } else {
       logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          result.message
-        );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        result.message,
+      );
       return res.status(400).json({ status: "error", message: result.message });
     }
   } catch (error) {
@@ -220,12 +216,12 @@ export const initializeBuy = async (req, res) => {
       error.response?.data || error.message,
     );
     logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          error.response?.data || error.message
-        );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.response?.data || error.message,
+    );
     res.status(500).json({
       status: "error",
       message: error.response?.data?.message || "Internal Server Error",
@@ -239,36 +235,35 @@ export const initializeWithdraw = async (req, res) => {
   const userId = req.user.uid;
   const { iCashAmount, amountToReceive, fee, currency, bankDetails } = req.body;
   const idempotencyKey = `wd-${userId}-${Date.now().toString().substring(0, 10)}`;
-  const transactionId = generateTransactionId('withdraw');
+  const transactionId = generateTransactionId("withdraw");
   const title = `${iCashAmount} iCash Withdrawal`;
   const user = await User.findOne({ uid: userId });
   const isFlagged = await checkAndFlagWithdrawals(userId);
   if (isFlagged) {
     logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Too many withdrawal requests. Please contact support." 
-        );
-    return res.status(403).json({ 
-      message: "Too many withdrawal requests. Please contact support." 
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Too many withdrawal requests. Please contact support.",
+    );
+    return res.status(403).json({
+      message: "Too many withdrawal requests. Please contact support.",
     });
   }
   if (user.iCashBalance < iCashAmount) {
     logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Insufficient iCash balance."
-        );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Insufficient iCash balance.",
+    );
     return res.status(403).json({ message: "Insufficient iCash balance." });
   }
   user.iCashBalance -= iCashAmount;
   try {
-    const userName =
-      user.firstname || "iCampus User";
+    const userName = user.firstname || "iCampus User";
     const newWithdrawal = await Transactions.create({
       transactionId,
       userId,
@@ -286,19 +281,22 @@ export const initializeWithdraw = async (req, res) => {
     });
     await user.save();
     const response = await executeTransferWithRetry({
-    account_bank: bankDetails.bankCode,
-    account_number: bankDetails.accountNumber,
-    amount: amountToReceive,
-    currency: currency,
-    narration: "iCampus iCash Withdrawal",
-    reference: idempotencyKey, 
-    callback_url: `${process.env.BACKEND_URL}/hooks/flutterwave`,
-    debit_currency: "NGN",
-  });
+      account_bank: bankDetails.bankCode,
+      account_number: bankDetails.accountNumber,
+      amount: amountToReceive,
+      currency: currency,
+      narration: "iCampus iCash Withdrawal",
+      reference: idempotencyKey,
+      callback_url: `${process.env.BACKEND_URL}/hooks/flutterwave`,
+      debit_currency: "NGN",
+    });
     if (response.data.status === "success") {
-      await Transactions.findOneAndUpdate({ transactionId }, { status: "success" });
+      await Transactions.findOneAndUpdate(
+        { transactionId },
+        { status: "success" },
+      );
       createNotification({
-        notificationId: generateNotificationId('finance'),
+        notificationId: generateNotificationId("finance"),
         recipientId: userId,
         recipientEmail: user.email,
         category: "finance",
@@ -318,20 +316,16 @@ export const initializeWithdraw = async (req, res) => {
         saveToDb: true,
       });
       await notifyAdmins(
-    { role: ["finance", "super_admin"] },
-    {
-      actionType: "WITHDRAWAL_SUCCESS_AUDIT",
-      payload: { userId, amount: amountToReceive, currency, transactionId },
-      senderId: "system"
-    },
-    false
-  ).catch(console.error);
-  logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "success",
-        );
+        { role: ["finance", "super_admin"] },
+        {
+          notificationId: generateNotificationId("admin_notification"),
+          actionType: "WITHDRAWAL_SUCCESS_AUDIT",
+          payload: { userId, amount: amountToReceive, currency, transactionId },
+          senderId: "system",
+        },
+        false,
+      ).catch(console.error);
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         status: "success",
         message: "Transfer initiated successfully",
@@ -340,47 +334,54 @@ export const initializeWithdraw = async (req, res) => {
     } else {
       user.iCashBalance += iCashAmount;
       await user.save();
-      await Transactions.findOneAndUpdate({ transactionId }, { status: "failed" });
+      await Transactions.findOneAndUpdate(
+        { transactionId },
+        { status: "failed" },
+      );
 
       logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          response.data.message || "Flutterwave declined the transfer." 
-        );
-      return res.status(400).json({ 
-        status: "error", 
-        message: response.data.message || "Flutterwave declined the transfer." 
+        controllerName,
+        action,
+        startTime,
+        "error",
+        response.data.message || "Flutterwave declined the transfer.",
+      );
+      return res.status(400).json({
+        status: "error",
+        message: response.data.message || "Flutterwave declined the transfer.",
       });
     }
   } catch (error) {
     console.error("Withdrawal Error:", error.response?.data || error.message);
     logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          response.data.message || error.message
-        );
+      controllerName,
+      action,
+      startTime,
+      "error",
+      response.data.message || error.message,
+    );
     if (error.response || error.request) {
       const user = await User.findOne({ uid: userId });
       user.iCashBalance += iCashAmount;
       await user.save();
-      await Transactions.findOneAndUpdate({ transactionId }, { status: "failed" });
+      await Transactions.findOneAndUpdate(
+        { transactionId },
+        { status: "failed" },
+      );
     }
     if (error.code === 11000) {
       return res.status(409).json({ message: "Request already in progress." });
     }
-     await notifyAdmins(
-    { role: ["finance", "super_admin"] },
-    {
-      actionType: "WITHDRAWAL_FAILED_AUDIT",
-      payload: { userId, amount: amountToReceive, currency, transactionId },
-      senderId: "system"
-    },
-    false
-  ).catch(console.error);
+    await notifyAdmins(
+      { role: ["finance", "super_admin"] },
+      {
+        notificationId: generateNotificationId("admin_notification"),
+        actionType: "WITHDRAWAL_FAILED_AUDIT",
+        payload: { userId, amount: amountToReceive, currency, transactionId },
+        senderId: "system",
+      },
+      false,
+    ).catch(console.error);
     res.status(500).json({
       status: "error",
       message: error.response?.data?.message || "Internal Server Error",
@@ -391,299 +392,312 @@ export const handleP2pTransfers = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "handleP2pTransfersController";
   const action = "handleP2pTransfers";
-    const session = await mongoose.startSession();
-    session.startTransaction();
+  const session = await mongoose.startSession();
+  session.startTransaction();
 
-    try {
-      const { recipientId, amount, description, recipientiTagName } = req.body;
-      const senderId = req.user.id;
-      if (amount <= 0) {
-        logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              "Invalid amount"
-            );
-        throw new Error("Invalid amount");
-      }
-      if (senderId === recipientId) {
-        logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              "Cannot send to yourself"
-            );
-          throw new Error("Cannot send to yourself");
-      }
-
-      const sender = await User.findOne({ uid: senderId }).session(session);
-      const recipient = await User.findOne({
-        uid: recipientId,
-        itagusername: recipientiTagName,
-      }).session(session);
-
-      if (!recipient) {
-        logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              'Recipient not found'
-            );
-        throw new Error("Recipient not found");
-      }
-      if (sender.pointsBalance < amount) {
-        logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              "Insufficient iCash balance"
-            );
-        throw new Error("Insufficient iCash balance");
-      }
-
-      const transactionRef = `P2P-${uuidv4().substring(0, 8).toUpperCase()}`;
-
-      sender.pointsBalance -= amount;
-      recipient.pointsBalance += amount;
-      await checkAndFlagHeavyActivity(senderId, session);
-      await sender.save({ session });
-      await recipient.save({ session });
-      const senderTransactionId = generateTransactionId("p2p_sent");
-      const senderTx = new Transactions({
-        transactionId: senderTransactionId,
-        userId: senderId,
-        type: "p2p_sent",
-        amountICash: amount,
-        status: "success",
-        payType: "out",
-        title: "iCash Sent",
-        reference: transactionRef,
-        metadata: { 
-          recipientId, 
-          note: description,
-          recipientItag: recipient.itagusername
-        },
-      });
-      const receipientTransactionId = generateTransactionId("p2p_received");
-      const recipientTx = new Transactions({
-        transactionId: receipientTransactionId,
-        userId: recipientId,
-        type: "p2p_received",
-        amountICash: amount,
-        status: "success",
-        payType: "in",
-        title: "iCash Received",
-        reference: `${transactionRef}-REC`, 
-        metadata: { 
-          senderId: senderId, 
-          note: description,
-          senderItag: sender.itagusername
-        },
-      });
-      await senderTx.save({ session });
-      await recipientTx.save({ session });
-      await session.commitTransaction();
-      session.endSession();
-      const senderNotificationId = generateNotificationId("finance");
-      const receipientNotificationId = generateNotificationId("finance");
-      createNotification({
-        notificationId: senderNotificationId,
-        recipientId: senderUid,
-        category: "financial",
-        actionType: "ICASH_WITHDRAWAL",
-        title: "iCash Sent Successfully",
-        message: `You sent ${amount.toLocaleString()} iCash to ${recipient.username}.`,
-        payload: {
-          userName: sender.firstname,
-          amountICash: amount,
-          amountLocal: 0,
-          currency: "iCash",
-          transactionId: senderTransactionId,
-        },
-        sendSocket: true,
-        sendPush: true,
-      });
-      createNotification({
-        notificationId: receipientNotificationId,
-        recipientId: recipientId,
-        category: "financial",
-        actionType: "ICASH_PURCHASE",
-        title: "iCash Received!",
-        message: `You received ${amount.toLocaleString()} iCash from ${sender.username}.`,
-        payload: {
-          userName: recipient.firstname,
-          amountICash: amount,
-          transactionId: receipientTransactionId,
-        },
-        sendSocket: true,
-        sendPush: true,
-      });
-      await notifyAdmins(
-  { role: ["finance", "super_admin"] },
-  {
-    actionType: "P2P_TRANSFER_AUDIT",
-    payload: {
-      senderId: senderId,
-      recipientId: recipientId,
-      amount: amount,
-      transactionRef: transactionRef
-    },
-    senderId: "system"
-  },
-  false 
-).catch(console.error);
-logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "success"
-            );
-      res.status(200).json({ message: "Transfer successful", transactionRef });
-    } catch (error) {
-      await session.abortTransaction();
-      session.endSession();
+  try {
+    const { recipientId, amount, description, recipientiTagName } = req.body;
+    const senderId = req.user.id;
+    if (amount <= 0) {
       logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              error.message
-            );
-      res
-        .status(500)
-        .json({ message: error.message || "Internal Server Error" });
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid amount",
+      );
+      throw new Error("Invalid amount");
     }
+    if (senderId === recipientId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Cannot send to yourself",
+      );
+      throw new Error("Cannot send to yourself");
+    }
+
+    const sender = await User.findOne({ uid: senderId }).session(session);
+    const recipient = await User.findOne({
+      uid: recipientId,
+      itagusername: recipientiTagName,
+    }).session(session);
+
+    if (!recipient) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Recipient not found",
+      );
+      throw new Error("Recipient not found");
+    }
+    if (sender.pointsBalance < amount) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Insufficient iCash balance",
+      );
+      throw new Error("Insufficient iCash balance");
+    }
+
+    const transactionRef = `P2P-${uuidv4().substring(0, 8).toUpperCase()}`;
+
+    sender.pointsBalance -= amount;
+    recipient.pointsBalance += amount;
+    await checkAndFlagHeavyActivity(senderId, session);
+    await sender.save({ session });
+    await recipient.save({ session });
+    const senderTransactionId = generateTransactionId("p2p_sent");
+    const senderTx = new Transactions({
+      transactionId: senderTransactionId,
+      userId: senderId,
+      type: "p2p_sent",
+      amountICash: amount,
+      status: "success",
+      payType: "out",
+      title: "iCash Sent",
+      reference: transactionRef,
+      metadata: {
+        recipientId,
+        note: description,
+        recipientItag: recipient.itagusername,
+      },
+    });
+    const receipientTransactionId = generateTransactionId("p2p_received");
+    const recipientTx = new Transactions({
+      transactionId: receipientTransactionId,
+      userId: recipientId,
+      type: "p2p_received",
+      amountICash: amount,
+      status: "success",
+      payType: "in",
+      title: "iCash Received",
+      reference: `${transactionRef}-REC`,
+      metadata: {
+        senderId: senderId,
+        note: description,
+        senderItag: sender.itagusername,
+      },
+    });
+    await senderTx.save({ session });
+    await recipientTx.save({ session });
+    await session.commitTransaction();
+    session.endSession();
+    const senderNotificationId = generateNotificationId("finance");
+    const receipientNotificationId = generateNotificationId("finance");
+    createNotification({
+      notificationId: senderNotificationId,
+      recipientId: senderUid,
+      category: "financial",
+      actionType: "ICASH_WITHDRAWAL",
+      title: "iCash Sent Successfully",
+      message: `You sent ${amount.toLocaleString()} iCash to ${recipient.username}.`,
+      payload: {
+        userName: sender.firstname,
+        amountICash: amount,
+        amountLocal: 0,
+        currency: "iCash",
+        transactionId: senderTransactionId,
+      },
+      sendSocket: true,
+      sendPush: true,
+    });
+    createNotification({
+      notificationId: receipientNotificationId,
+      recipientId: recipientId,
+      category: "financial",
+      actionType: "ICASH_PURCHASE",
+      title: "iCash Received!",
+      message: `You received ${amount.toLocaleString()} iCash from ${sender.username}.`,
+      payload: {
+        userName: recipient.firstname,
+        amountICash: amount,
+        transactionId: receipientTransactionId,
+      },
+      sendSocket: true,
+      sendPush: true,
+    });
+    await notifyAdmins(
+      { role: ["finance", "super_admin"] },
+      {
+        notificationId: generateNotificationId("admin_notification"),
+        actionType: "P2P_TRANSFER_AUDIT",
+        payload: {
+          senderId: senderId,
+          recipientId: recipientId,
+          amount: amount,
+          transactionRef: transactionRef,
+        },
+        senderId: "system",
+      },
+      false,
+    ).catch(console.error);
+    logControllerPerformance(controllerName, action, startTime, "success");
+    res.status(200).json({ message: "Transfer successful", transactionRef });
+  } catch (error) {
+    await session.abortTransaction();
+    session.endSession();
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    res.status(500).json({ message: error.message || "Internal Server Error" });
+  }
 };
 export const verifySubscriptionFlwPayment = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "verifySubscriptionFlwPaymentController";
   const action = "verifySubscriptionFlwPayment";
-    const { transactionId, tier, currentExchangeRate } = req.body;
-    const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
-    if (!transactionId) {
+  const { transactionId, tier, currentExchangeRate } = req.body;
+  const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
+  if (!transactionId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Transactions ID is required",
+    );
+    return res
+      .status(400)
+      .json({ status: "error", message: "Transactions ID is required" });
+  }
+  try {
+    const response = await axios.get(
+      `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`,
+      {
+        headers: {
+          Authorization: `Bearer ${SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+      },
+    );
+    const { status, currency, id, amount, customer } = response.data.data;
+    if (status !== "successful") {
       logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              "Transactions ID is required"
-            );
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Transactions not successful",
+      );
       return res
         .status(400)
-        .json({ status: "error", message: "Transactions ID is required" });
+        .json({ status: "error", message: "Transactions not successful" });
     }
-    try {
-      const response = await axios.get(
-        `https://api.flutterwave.com/v3/transactions/${transactionId}/verify`,
-        {
-          headers: {
-            Authorization: `Bearer ${SECRET_KEY}`,
-            "Content-Type": "application/json",
-          },
-        },
+    const baseUsdPrice = USD_SUBSCRIPTION_PRICES[tier];
+    if (baseUsdPrice === undefined) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid tier selected",
       );
-      const { status, currency, id, amount, customer } = response.data.data;
-      if (status !== "successful") {
-        logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              "Transactions not successful"
-            );
-        return res
-          .status(400)
-          .json({ status: "error", message: "Transactions not successful" });
-      }
-      const baseUsdPrice = USD_SUBSCRIPTION_PRICES[tier];
-      if (baseUsdPrice === undefined) {
-        logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              "Invalid tier selected"
-            );
-        return res.status(400).json({ message: "Invalid tier selected" });
-      }
-      const expectedLocalPrice = baseUsdPrice * currentExchangeRate;
-      const margin = 1;
-      if (amount < expectedLocalPrice - margin) {
-        logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              `Insufficient payment. Expected approx ${expectedLocalPrice} ${currency}`,
-            );
-        return res.status(400).json({
-          message: `Insufficient payment. Expected approx ${expectedLocalPrice} ${currency}`,
-        });
-      }
-      const updatedUser = await User.findOneAndUpdate(
-        { uid: req.user.uid },
-        {
-          $set: {
-            tier: tier,
-            isSubscribed: true,
-            subscriptionDate: new Date(),
-            lastTransactionId: id,
-          },
-        },
-        { new: true },
+      return res.status(400).json({ message: "Invalid tier selected" });
+    }
+    const expectedLocalPrice = baseUsdPrice * currentExchangeRate;
+    const margin = 1;
+    if (amount < expectedLocalPrice - margin) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        `Insufficient payment. Expected approx ${expectedLocalPrice} ${currency}`,
       );
-      const userName = updatedUser && updatedUser.usertype === 'enterprise' ? updatedUser.organizationName : updatedUser.firstname;
-      await createNotification({
-        notificationId: generateNotificationId('subscription'),
-        recipientId: updatedUser.uid,
-        category: "finance",
-        actionType: "SUBSCRIPTION_UPGRADED",
-        title: "Subscription Successful",
-        message: `Your account has been upgraded to the ${tier} plan.`,
-        recipientEmail: updatedUser.email,
-        sendEmail: true,
+      return res.status(400).json({
+        message: `Insufficient payment. Expected approx ${expectedLocalPrice} ${currency}`,
+      });
+    }
+    const updatedUser = await User.findOneAndUpdate(
+      { uid: req.user.uid },
+      {
+        $set: {
+          tier: tier,
+          isSubscribed: true,
+          subscriptionDate: new Date(),
+          lastTransactionId: id,
+        },
+      },
+      { new: true },
+    );
+    const userName =
+      updatedUser && updatedUser.usertype === "enterprise"
+        ? updatedUser.organizationName
+        : updatedUser.firstname;
+    await createNotification({
+      notificationId: generateNotificationId("subscription"),
+      recipientId: updatedUser.uid,
+      category: "finance",
+      actionType: "SUBSCRIPTION_UPGRADED",
+      title: "Subscription Successful",
+      message: `Your account has been upgraded to the ${tier} plan.`,
+      recipientEmail: updatedUser.email,
+      sendEmail: true,
+      payload: {
+        userName: updatedUser.firstname,
+        tier: tier,
+        amount: amount,
+        currency: currency,
+        transactionId: id,
+      },
+    });
+
+    await notifyAdmins(
+      { role: ["super_admin", "finance"] },
+      {
+        notificationId: generateNotificationId("subscription"),
+        category: "subscription",
+        actionType: "ADMIN_SUBSCRIPTION_UPGRADED",
         payload: {
-          userName,
+          userEmail: updatedUser.email,
+          userName: updatedUser.firstname,
           tier: tier,
           amount: amount,
           currency: currency,
           transactionId: id,
         },
-      });
-      logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "success"
-            );
-      return res.status(200).json({
-        status: "success",
-        message: "Subscription verified and activated",
-        data: { transactionId: id },
-        tier: updatedUser.tier,
-      });
-    } catch (error) {
-      console.error(
-        "FLW Verification Error:",
-        error.response?.data || error.message,
-      );
-      logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              error.response?.data || error.message,
-            );
-      return res.status(500).json({
-        status: "error",
-        message: "Internal server error during verification",
-      });
-    }
-  };
+        senderId: "system",
+      },
+      false,
+    ).catch((err) =>
+      console.error("Admin subscription notification failed:", err),
+    );
+    logControllerPerformance(controllerName, action, startTime, "success");
+    return res.status(200).json({
+      status: "success",
+      message: "Subscription verified and activated",
+      data: { transactionId: id },
+      tier: updatedUser.tier,
+    });
+  } catch (error) {
+    console.error(
+      "FLW Verification Error:",
+      error.response?.data || error.message,
+    );
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.response?.data || error.message,
+    );
+    return res.status(500).json({
+      status: "error",
+      message: "Internal server error during verification",
+    });
+  }
+};
 export const generateTransactionHistory = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "generateTransactionHistoryController";

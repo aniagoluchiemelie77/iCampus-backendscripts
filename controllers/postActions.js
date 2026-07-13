@@ -31,6 +31,7 @@ export const moderateContent = async (postId, content, media) => {
           await notifyAdmins(
             { role: ["moderator", "super_admin"] },
             {
+              notificationId: generateNotificationId("admin_notification"),
               actionType: "MODERATION_ALERT_NUDITY",
               payload: {
                 postId: postId,
@@ -39,7 +40,7 @@ export const moderateContent = async (postId, content, media) => {
               },
               senderId: "system",
             },
-            true,
+            false,
           );
         }
       })

@@ -65,11 +65,14 @@ export const personaVerifyConfirmation = async (req, res) => {
           await notifyAdmins(
             { role: ["super_admin", "support"] },
             {
+              notificationId: generateNotificationId("admin_notification"),
+              category: "admin_notification",
               actionType: "USER_VERIFICATION_AUDIT",
               title: "User Identity Verified",
               message: `User ${updatedUser.firstname} (${referenceId}) has completed ID verification.`,
               payload: { referenceId, inquiryId },
             },
+            false,
           );
           logControllerPerformance(
             controllerName,
@@ -157,6 +160,8 @@ export const handleFlutterwaveWebhook = async (req, res) => {
           await notifyAdmins(
             { role: ["finance", "super_admin"] },
             {
+              notificationId: generateNotificationId("admin_notification"),
+              category: "admin_notification",
               actionType: "ICASH_PURCHASE_ADMIN",
               title: "Finance Audit: New Purchase",
               message: `User ${userId} purchased ${iCashToCredit} iCash.`,
@@ -166,6 +171,7 @@ export const handleFlutterwaveWebhook = async (req, res) => {
                 txRef: data.tx_ref,
               },
             },
+            false,
           );
           logControllerPerformance(
             controllerName,

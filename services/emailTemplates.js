@@ -922,3 +922,119 @@ export const supportTicketReplyTemplate = (
   `;
   return emailWrapper(body);
 };
+export const suspiciousPasswordChangeTemplate = (payload, isSuspicious) => {
+  const alertColor = isSuspicious ? theme.colors.danger : theme.colors.warning;
+  const alertTitle = isSuspicious
+    ? "Critical Security Alert"
+    : "Password Change Audit";
+
+  const body = `
+    <h2 style="color: ${alertColor}; margin-top: 0;">${alertTitle}</h2>
+    <p style="color: ${theme.colors.text}; font-size: 14px;">
+      Attention Admin, a password change has been recorded for the following user:
+    </p>
+
+    <div style="background: ${isSuspicious ? "#fff5f5" : "#fffcf0"}; border-left: 4px solid ${alertColor}; padding: 15px; margin: 20px 0;">
+      <strong style="color: ${theme.colors.text};">Account Details:</strong><br>
+      <ul style="list-style: none; padding: 0; margin: 10px 0;">
+        <li style="margin: 5px 0;"><strong>User Email:</strong> ${payload.userEmail}</li>
+        <li style="margin: 5px 0;"><strong>User UID:</strong> ${payload.userUid}</li>
+      </ul>
+      
+      <strong style="color: ${theme.colors.text};">Location Tracking:</strong><br>
+      <ul style="list-style: none; padding: 0; margin: 10px 0;">
+        <li style="margin: 5px 0;"><strong>Current:</strong> ${payload.currentLocation}</li>
+        <li style="margin: 5px 0;"><strong>Previous:</strong> ${payload.previousLocation}</li>
+      </ul>
+    </div>
+
+    <div style="background: ${theme.colors.background}; padding: 15px; border-radius: 4px; margin: 20px 0; font-size: 14px; border: 1px solid #eee;">
+      <p style="margin: 0;">
+        <strong>Action Required:</strong> Please review this activity in the admin dashboard. 
+        If this change was unauthorized, consider resetting the user's sessions immediately.
+      </p>
+    </div>
+  `;
+
+  return emailWrapper(body);
+};
+export const financialSecurityAlertTemplate = (payload) => {
+  const isHighRisk = payload.attemptedAmount !== payload.expectedAmount;
+
+  const body = `
+    <h2 style="color: ${theme.colors.danger}; margin-top: 0;">Financial Security Alert</h2>
+    <p style="color: ${theme.colors.text}; font-size: 14px;">
+      A discrepancy has been detected in a financial transaction requiring immediate administrative review.
+    </p>
+
+    <div style="background: #fff5f5; border-left: 4px solid ${theme.colors.danger}; padding: 15px; margin: 20px 0;">
+      <strong style="color: ${theme.colors.text};">Transaction Discrepancy:</strong>
+      <table style="width: 100%; margin-top: 10px; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 5px 0; color: #555;">User ID:</td>
+          <td style="padding: 5px 0;"><strong>${payload.userId}</strong></td>
+        </tr>
+        <tr>
+          <td style="padding: 5px 0; color: #555;">Attempted Amount:</td>
+          <td style="padding: 5px 0; color: ${theme.colors.danger};"><strong>${payload.attemptedAmount}</strong></td>
+        </tr>
+        <tr>
+          <td style="padding: 5px 0; color: #555;">Expected Amount:</td>
+          <td style="padding: 5px 0;"><strong>${payload.expectedAmount}</strong></td>
+        </tr>
+        <tr>
+          <td style="padding: 5px 0; color: #555;">IP Address:</td>
+          <td style="padding: 5px 0;"><code>${payload.ipAddress}</code></td>
+        </tr>
+      </table>
+    </div>
+
+    <div style="background: ${theme.colors.background}; padding: 15px; border-radius: 4px; margin: 20px 0; font-size: 14px;">
+      <p style="margin: 0;">
+        <strong>Required Action:</strong> Please verify this transaction against the system logs. 
+        If this is an indication of fraudulent activity, please take necessary action to lock the account or flag the transaction.
+      </p>
+    </div>
+  `;
+
+  return emailWrapper(body);
+};
+export const newStationRegistrationTemplate = (name, userId, payload) => {
+  const body = `
+    <h2 style="color: ${theme.colors.primary}; margin-top: 0;">New Station Request</h2>
+    <p style="color: ${theme.colors.text}; font-size: 14px;">
+      A new drop-off station has been submitted for review. Please verify the registration details below.
+    </p>
+
+    <div style="background: #f0f7ff; border-left: 4px solid ${theme.colors.primary}; padding: 15px; margin: 20px 0;">
+      <strong style="color: ${theme.colors.text};">Registration Summary:</strong>
+      <table style="width: 100%; margin-top: 10px; border-collapse: collapse;">
+        <tr>
+          <td style="padding: 5px 0; color: #555;">Station Name:</td>
+          <td style="padding: 5px 0;"><strong>${name}</strong></td>
+        </tr>
+        <tr>
+          <td style="padding: 5px 0; color: #555;">Submitted By:</td>
+          <td style="padding: 5px 0;">${userId}</td>
+        </tr>
+        <tr>
+          <td style="padding: 5px 0; color: #555;">Request ID:</td>
+          <td style="padding: 5px 0;"><code>${payload.requestId}</code></td>
+        </tr>
+        <tr>
+          <td style="padding: 5px 0; color: #555;">Ticket Ref:</td>
+          <td style="padding: 5px 0;"><code>${payload.ticketRefId}</code></td>
+        </tr>
+      </table>
+    </div>
+
+    <div style="background: ${theme.colors.background}; padding: 15px; border-radius: 4px; margin: 20px 0; font-size: 14px;">
+      <p style="margin: 0;">
+        <strong>Next Step:</strong> Navigate to the <strong>Station Moderation Dashboard</strong> 
+        to approve or deny this request using the Request ID provided above.
+      </p>
+    </div>
+  `;
+
+  return emailWrapper(body);
+};

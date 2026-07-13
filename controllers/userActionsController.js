@@ -418,6 +418,9 @@ export const deleteAccount = async (req, res) => {
     await notifyAdmins(
       { role: ["super_admin", "support"] },
       {
+        notificationId: generateNotificationId("admin_notification"),
+        category: "admin_notification",
+        message: `User ${userUid} has permanently deleted their account. Reason provided: ${reason || "None"}.`,
         actionType: "ACCOUNT_DELETION_ADMIN_ALERT",
         title: "User Account Deletion",
         payload: {
@@ -426,6 +429,7 @@ export const deleteAccount = async (req, res) => {
         },
         senderId: "system",
       },
+      false,
     );
     logControllerPerformance(controllerName, action, startTime, "success");
     res
@@ -925,11 +929,13 @@ export const verifyIcashPin = async (req, res) => {
       await notifyAdmins(
         { role: ["moderator", "super_admin"] },
         {
+          notificationId: generateNotificationId("admin_notification"),
+          category: "admin_notification",
           actionType: "ACCOUNT_SUSPENDED_SECURITY",
           payload: { userId, reason: "Excessive failed iCash PIN attempts" },
           senderId: "system",
         },
-        true,
+        false,
       );
       logControllerPerformance(
         controllerName,
@@ -1089,6 +1095,7 @@ export const resetIcashPin = async (req, res) => {
   await notifyAdmins(
     { role: ["super_admin", "support"] },
     {
+      notificationId: generateNotificationId("admin_notification"),
       actionType: "ICASH_PIN_RESET_AUDIT",
       payload: {
         userUid: user.uid,
@@ -1096,7 +1103,7 @@ export const resetIcashPin = async (req, res) => {
       },
       senderId: "system",
     },
-    false, // Typically don't email admins for every PIN reset unless required
+    false,
   ).catch((err) => console.error("Admin audit notification failed:", err));
   logControllerPerformance(controllerName, action, startTime, "success");
   res.status(200).json({ success: true, message: "PIN updated successfully." });
@@ -2042,6 +2049,7 @@ If no escalation is needed, just provide your response as plain text.
       await notifyAdmins(
         { role: ["support", "super_admin"] },
         {
+          notificationId: generateNotificationId("admin_notification"),
           actionType: "AI_SUPPORT_ESCALATION",
           payload: {
             ticketId: ticket.ticketRefId,
@@ -2289,12 +2297,13 @@ export const registerDropOffStation = async (req, res) => {
     await notifyAdmins(
       { role: ["super_admin", "moderator"] },
       {
+        notificationId: generateNotificationId("admin_notification"),
         actionType: "NEW_STATION_REGISTRATION",
         title: "New Station Request",
         message: `New drop-off station "${name}" submitted by user ${userId}.`,
-        payload: { ticketRefId, requestId: stationId },
+        payload: { ticketRefId, requestId: stationId, name, userId },
       },
-      true, // sendEmailFlag
+      true,
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
