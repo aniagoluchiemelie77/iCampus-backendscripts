@@ -15,6 +15,7 @@ import {
   UserDownloads,
   SupportTicket,
   Lectures,
+  DropOffStation,
 } from "../tableDeclarations.js";
 import { icashPinResetTemplate } from "../services/emailTemplates.js";
 import { sendEmail } from "../services/emailService.js";
@@ -28,6 +29,7 @@ import {
   generateNotificationId,
   generateTokens,
   generateTicketId,
+  generateStationId,
 } from "../utils/idGenerator.js";
 import mongoose from "mongoose";
 import axiosRetry from "axios-retry";
@@ -417,6 +419,7 @@ export const deleteAccount = async (req, res) => {
       { role: ["super_admin", "support"] },
       {
         actionType: "ACCOUNT_DELETION_ADMIN_ALERT",
+        title: "User Account Deletion",
         payload: {
           userUid: userUid,
           reason: reason,
@@ -2236,5 +2239,76 @@ export const createQuickMeeting = async (req, res) => {
       error.message,
     );
     res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+export const registerDropOffStation = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "registerDropOffStationController";
+  const action = "registerDropOffStation";
+  const { name, address, images, latitude, longitude } = req.body;
+  const userId = req.user.id;
+
+  try {
+    const stationId = generateStationId();
+    const newRequest = await DropOffStation.create({
+      id: stationId,
+      userId,
+      name,
+      address,
+      images,
+      latitude,
+      longitude,
+      status: "pending",
+    });
+    await createNotification({
+      notificationId: generateNotificationId("store"),
+      recipientId: userId,
+      category: "store",
+      actionType: "STATION_REQUEST_RECEIVED",
+      title: "Drop-off Station Registeration Request Received",
+      message:
+        "Your drop-off station request has been received and is under review. Expect a reply within 5 days.",
+      payload: {
+        requestId: stationId,
+        address: newRequest.address,
+      },
+    });
+
+    const ticketRefId = generateTicketId(userId);
+    await SupportTicket.create({
+      userId,
+      ticketRefId,
+      source: "in-app",
+      category: "technical",
+      summary: `New Station Registration: ${name}`,
+      originalMessage: `User ${userId} requests to register drop-off station ${name} at ${address} with coordinates: ${latitude} ${longitude}.`,
+      severity: "high",
+      status: "open",
+    });
+
+    await notifyAdmins(
+      { role: ["super_admin", "moderator"] },
+      {
+        actionType: "NEW_STATION_REGISTRATION",
+        title: "New Station Request",
+        message: `New drop-off station "${name}" submitted by user ${userId}.`,
+        payload: { ticketRefId, requestId: stationId },
+      },
+      true, // sendEmailFlag
+    );
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+    return res
+      .status(201)
+      .json({ success: true, message: "Request submitted successfully" });
+  } catch (error) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };

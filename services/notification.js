@@ -345,6 +345,14 @@ export const createNotification = async ({
           message ||
           "Congratulations! Your account has been officially upgraded to Alumni status. You now have access to exclusive alumni features on iCampus.";
         break;
+      case "STATION_REQUEST_RECEIVED":
+        category = "system";
+        subject = "Station Registration: Request Under Review";
+        title = title || "Registration Received";
+        message =
+          message ||
+          "Your drop-off station request has been received and is under review. Our team will verify your details; please expect a reply within 5 days.";
+        break;
 
       //navigate to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId
       case "LECTURER_REVIEW_REQUEST":
@@ -837,6 +845,23 @@ export const createNotification = async ({
         subject = "Audit: Drop-off Station Modification";
         title = "Drop-off Station Edit Audit";
         message = `Audit: Drop-off Station ${payload.stationId} (Agent: ${payload.agentId}) was updated.`;
+        break;
+      case "NEW_STATION_REGISTRATION":
+        category = "admin_action";
+        subject = "Action Required: New Station Registration";
+        title = title || "New Station Pending Review";
+        message =
+          message ||
+          `A new drop-off station registration has been submitted and requires admin review. Ticket Ref: ${data?.ticketRefId || "N/A"}`;
+        break;
+
+      case "STATION_APPROVAL_UPDATE":
+        category = "system";
+        subject = "Station Registration: Status Update";
+        title = title || "Update on your Station Request";
+        message =
+          message ||
+          "There has been an update regarding your station registration request. Please check the support ticket for details.";
         break;
 
       default:

@@ -52,6 +52,7 @@ import {
   refreshUserDetails,
   aiChat,
   createQuickMeeting,
+  registerDropOffStation,
 } from "../controllers/userActionsController.js";
 import {
   signUp,
@@ -158,6 +159,7 @@ router.put("/preferences/toggleTheme", protect, toggleTheme);
 router.get("/refresh-user-details", protect, refreshUserDetails);
 router.post("/courses/manual-create", protect, uploadCourseDetailsManually);
 router.post("/online-classes/create", protect, createQuickMeeting);
+router.post("/stations/register", protect, registerDropOffStation);
 
 export default router;
 //Mongod summon: mongod --dbpath D:\MongoDB\data

@@ -461,6 +461,11 @@ export const dropOffStation = new mongoose.Schema({
   latitude: { type: Number },
   longitude: { type: Number },
   createdAt: { type: Date, required: true },
+  status: {
+    type: String,
+    enum: ["pending", "confirmed"],
+    required: true,
+  },
 });
 export const impressionLogSchema = new mongoose.Schema({
   userId: String,
