@@ -146,18 +146,12 @@ export const courseSchema = new mongoose.Schema(
     semester: { type: String },
     session: { type: String },
     credits: { type: Number },
-
-    // Arrays
     lecturerIds: [{ type: String, ref: "User" }],
     studentsEnrolled: [{ type: String, ref: "User" }],
     courseContents: [String],
     resources: [String],
     assignments: [assignmentSchema],
     tests: [assessmentSchema],
-
-    // Nested Sub-documents
-    Lectures: [lectureSchema],
-    // Marketplace / UI Fields
     price: { type: Number, default: 0 },
     thumbnailUrl: String,
     rating: { type: Number, default: 0 },

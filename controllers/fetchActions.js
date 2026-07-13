@@ -1457,8 +1457,11 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
   try {
-    const { semester, session } = req.query;
+    const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user.uid;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
     const query = {
       studentsEnrolled: userId,
@@ -1469,9 +1472,9 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
     if (session && session !== "All") query.session = session;
 
     const courses = await Course.find(query)
-      .select("-Lectures")
       .sort({ createdAt: -1 })
-      .limit(25)
+      .skip(skip)
+      .limit(limitNum)
       .lean();
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -1492,17 +1495,20 @@ export const fetchLecturerEnrolledCourses = async (req, res) => {
   const controllerName = "fetchLecturerEnrolledCoursesController";
   const action = "fetchLecturerEnrolledCourses";
   try {
-    const { semester, session } = req.query;
+    const { semester, session, page = 1, limit = 10 } = req.query;
     const lecturerId = req.user.uid;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
 
-    const query = { lecturerIds: lecturerId };
+    const query = { lecturerIds: lecturerId, isActive: true };
     if (semester && semester !== "All") query.semester = semester;
     if (session && session !== "All") query.session = session;
 
     const courses = await Course.find(query)
-      .select("-Lectures")
       .sort({ createdAt: -1 })
-      .limit(25)
+      .skip(skip)
+      .limit(limitNum)
       .lean();
     const results = courses.map((course) => ({
       ...course,
