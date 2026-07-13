@@ -590,6 +590,7 @@ export const createAssessment = async (req, res) => {
       scheduledStart,
       dueDate,
       assessmentType = "Test",
+      endTime,
     } = req.body;
 
     let assessment;
@@ -623,8 +624,9 @@ export const createAssessment = async (req, res) => {
           totalMarks,
           isPublished,
           status,
-          scheduledStart: scheduledStart ? new Date(scheduledStart) : undefined,
+          scheduledStart,
           dueDate,
+          endTime,
           updatedAt: new Date(),
         },
         { new: true },
@@ -644,8 +646,9 @@ export const createAssessment = async (req, res) => {
         totalMarks,
         isPublished,
         status,
-        scheduledStart: scheduledStart ? new Date(scheduledStart) : undefined,
+        scheduledStart,
         dueDate,
+        endTime,
         createdAt: new Date(),
       });
 

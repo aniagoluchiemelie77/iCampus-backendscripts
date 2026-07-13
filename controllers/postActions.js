@@ -54,7 +54,14 @@ export const createPost = async (req, res) => {
   const controllerName = "createPostController";
   const action = "createPost";
   try {
-    const { content, media, poll, isSubscriptionContent } = req.body;
+    const {
+      content,
+      media,
+      poll,
+      isSubscriptionContentpostType,
+      jobMetadata,
+      eventMetadata,
+    } = req.body;
     const userId = req.user.uid;
 
     let processedMedia = media;
@@ -97,6 +104,9 @@ export const createPost = async (req, res) => {
               poll.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           }
         : null,
+      postType: postType || (poll ? "poll" : "media"),
+      jobMetadata: postType === "job" ? jobMetadata : null,
+      eventMetadata: postType === "event" ? eventMetadata : null,
     });
 
     await newPost.save();
@@ -177,7 +187,14 @@ export const updatePost = async (req, res) => {
   const action = "updatePost";
   try {
     const { postId } = req.params;
-    const { content, media, poll, isSubscriptionContent } = req.body;
+    const {
+      content,
+      media,
+      poll,
+      isSubscriptionContent,
+      jobMetadata,
+      eventMetadata,
+    } = req.body;
     const userId = req.user.uid;
     const post = await Posts.findOne({ postId, originalAuthor: userId });
 
@@ -203,6 +220,9 @@ export const updatePost = async (req, res) => {
     post.isSubscriptionContent =
       isSubscriptionContent ?? post.isSubscriptionContent;
 
+    post.jobMetadata = jobMetadata || post.jobMetadata;
+    post.eventMetadata = eventMetadata || post.eventMetadata;
+
     if (poll && post.poll) {
       post.poll.options = poll.options.map((opt, index) => {
         const existingOpt = post.poll.options.find((o) => o.text === opt.text);
@@ -218,6 +238,13 @@ export const updatePost = async (req, res) => {
         (sum, o) => sum + o.votes.length,
         0,
       );
+    }
+    if (post.postType === "job" && jobMetadata) {
+      post.jobMetadata = { ...post.jobMetadata, ...jobMetadata };
+    }
+
+    if (post.postType === "event" && eventMetadata) {
+      post.eventMetadata = { ...post.eventMetadata, ...eventMetadata };
     }
 
     await post.save();
