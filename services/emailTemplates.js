@@ -24,21 +24,36 @@ export const emailWrapper = (content) => `
 `;
 export const welcomeEmailTemplate = (userName) => {
   const body = `
-    <h1 style="color: ${colors.primary}; margin-top: 0;">Welcome to iCampus</h1>
-    <p style="color: ${colors.text}; margin: 5px 0;">Hi ${userName},</p>
-    <p style="color: ${colors.text};">We're thrilled to have you join our community. iCampus is designed to make your academic journey seamless, social, and rewarding.</p>
-    
-    <div style="background: #f9f9f9; border-radius: 8px; padding: 20px; margin: 20px 0; border: 1px solid #eee;">
-      <h3 style="margin-top: 0; font-size: 16px;">What's Next?</h3>
-      <ul style="padding-left: 20px; color: ${colors.text};">
-        <li>Complete your profile to connect with peers.</li>
-        <li>Check your <strong>iTag</strong> to view your digital ID.</li>
-        <li>Explore course materials and upcoming lectures.</li>
+    <p style="font-size: 16px; color: ${colors.text}; line-height: 1.5;">Hello ${userName},</p>
+    <p style="font-size: 16px; color: ${colors.text}; line-height: 1.5;">
+      We are delighted to welcome you to the iCampus ecosystem. You now have everything you need to manage your academic life, from live-streaming lectures to secure financial transactions via <strong>iCash</strong>.
+    </p>
+    <div style="text-align: center; margin: 30px 0;">
+      <a href=${branding.appDashboardUrl}
+         style="background-color: ${colors.primary}; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
+         Access Your Dashboard
+      </a>
+    </div>
+    <div style="border-radius: 8px; padding: 25px; margin: 20px 0;">
+      <h3 style="margin-top: 0; color: ${colors.primary}; border-bottom: 2px solid ${colors.primary}; display: inline-block; padding-bottom: 5px;">Your Academic Toolkit</h3>
+      <ul style="padding-left: 20px; color: ${colors.text}; line-height: 1.8;">
+        <li><strong>iCash Wallet:</strong> Manage fees and payments securely.</li>
+        <li><strong>Live Lectures:</strong> Real-time streaming and archived sessions.</li>
+        <li><strong>Digital ID (iTag):</strong> Your official academic verification.</li>
+        <li><strong>Proctoring:</strong> Secure, fair, and automated test environments.</li>
       </ul>
     </div>
-
-    <p style="color: ${colors.secondary}; margin-bottom: 5px;">If you have any questions, simply reply to this email. We're here to help!</p>
-    <p style="color: ${colors.secondary};">Happy Learning,<br>The iCampus Team</p>
+    <div style="padding-top: 5px; margin-top: 30px;">
+      <p style="font-size: 14px; color: ${colors.textTint};">
+        <strong>Security Tip:</strong> Never share your login credentials or iCash transaction PINs with anyone. iCampus staff will never ask for your password.
+      </p>
+      <p style="font-size: 14px; color: ${colors.textTint};">
+        Need assistance? Our support team is ready to help at <a href="mailto:${branding.supportEmailMain}">support@icampus.com</a>.
+      </p>
+      <p style="font-size: 14px; color: ${colors.secondary}; margin-top: 20px;">
+        Best regards,<br><strong>The iCampus Development Team</strong>
+      </p>
+    </div>
   `;
   return emailWrapper(body);
 };
@@ -50,27 +65,41 @@ export const loginAlertTemplate = (
   time,
 ) => {
   const body = `
-    <h2 style="color: ${colors.danger}; margin-top: 0;">Security Alert</h2>
-    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hello ${userName},</p>
-    <p style="color: ${colors.text}; font-size: 13px">A new login was detected on your account from an unrecognized IP address.</p>
-    <div style="background: #fff5f5; border-left: 4px solid ${colors.danger}; padding: 15px; margin: 20px 0;">
-      <strong>Details:</strong><br>
-      IP: ${ipAddress}<br>
-      Location: ${location}
-      Date: ${date}
-      Time: ${time}
+    <p style="color: ${colors.text}; font-size: 16px; line-height: 1.5;">Hello ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 16px; line-height: 1.5;">
+      We detected a sign-in to your <strong>iCampus</strong> account from an unrecognized device or location.
+    </p>
+    <div style="border: 1px solid ${colors.danger}; border-radius: 6px; padding: 20px; margin: 20px 0;">
+      <h3 style="margin-top: 0; color: ${colors.danger}; font-size: 16px; margin-bottom: 15px;">Login Details</h3>
+      <table style="width: 100%; color: ${colors.text}; font-size: 14px;">
+        <tr><td style="padding: 5px 0;"><strong>Date:</strong></td><td>${date}</td></tr>
+        <tr><td style="padding: 5px 0;"><strong>Time:</strong></td><td>${time}</td></tr>
+        <tr><td style="padding: 5px 0;"><strong>Location:</strong></td><td>${location}</td></tr>
+        <tr><td style="padding: 5px 0;"><strong>IP Address:</strong></td><td>${ipAddress}</td></tr>
+      </table>
     </div>
-    <div style="background: ${theme.colors.background}; padding: 15px; border-radius: 4px; margin: 20px 0; font-size: 14px;">
-      If you did not make this change, please contact our support team immediately at <a href="mailto:ticket+${userId}${theme.branding.supportEmail}" style="color: ${theme.colors.primary};">${theme.branding.supportEmail}</a>.
+    <div style="background: ${theme.colors.background}; padding: 20px; border-radius: 6px; margin-bottom: 20px;">
+      <p style="margin-top: 0; font-weight: bold; color: ${colors.text};">Was this you?</p>
+      <p style="font-size: 14px; color: ${colors.text}; margin-bottom: 20px;">
+        If you recognize this activity, you can safely ignore this email. If this was not you, your account may be at risk.
+      </p>
+      <p style="margin-top: 20px; font-size: 13px; color: #666;">
+        Contact our support team at 
+        <a href="mailto:ticket+${userId}${theme.branding.supportEmail}" style="color: ${theme.colors.primary};">
+          ${theme.branding.supportEmail}
+        </a>
+      </p>
     </div>
   `;
   return emailWrapper(body);
 };
+
+//Continue from here
 export const passwordResetSuccessTemplate = (userName, date, time, userId) => {
   const body = `
     <h2 style="color: ${theme.colors.primary}; margin-top: 0;">Password Changed Successfully</h2>
-    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hello ${userName},</p>
-    <p style="color: ${colors.text}; font-size: 13px">This is a confirmation that the password for your iCampus account was recently changed on <strong>${date} ${time}</strong>.</p>
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 14px">Hello ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 14px">This is a confirmation that the password for your iCampus account was recently changed on <strong>${date} ${time}</strong>.</p>
     <div style="background: ${theme.colors.background}; padding: 15px; border-radius: 4px; margin: 20px 0; font-size: 14px;">
       If you did not make this change, please contact our support team immediately at <a href="mailto:ticket+${userId}${theme.branding.supportEmail}" style="color: ${theme.colors.primary};">${theme.branding.supportEmail}</a>.
     </div>
@@ -87,14 +116,14 @@ export const testCreatedTemplate = (
 ) => {
   const body = `
     <h2 style="color: ${theme.colors.primary};">New Assessment Created</h2>
-    <p style="color: ${colors.text}; font-size: 13px; margin: 5px 0">Hi ${userName},</p>
-    <p style="color: ${colors.text}; font-size: 13px">A new assessment (test) has been created for your <strong>${courseTitle}</strong>.</p>
+    <p style="color: ${colors.text}; font-size: 14px; margin: 5px 0">Hi ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 14px">A new assessment (test) has been created for your <strong>${courseTitle}</strong>.</p>
     
     <div style="background: ${theme.colors.background}; padding: 20px; border-radius: 8px; margin: 20px 0;">
       <h3 style="margin: 0;">${testTitle}</h3>
       <p style="color: ${theme.colors.danger}; font-weight: bold;">Due: ${dueDate}</p>
     </div>
-    <p style="color: ${colors.secondary}; margin: 5px 0; font-size: 13px;"><strong>Test Creation Date:</strong> ${date} | ${time}</p>
+    <p style="color: ${colors.secondary}; margin: 5px 0; font-size: 14px;"><strong>Test Creation Date:</strong> ${date} | ${time}</p>
   `;
   return emailWrapper(body);
 };
@@ -128,9 +157,9 @@ export const lectureScheduledTemplate = (
   const isOnline = type === "Online";
   const body = `
     <h2 style="color: ${theme.colors.primary};">Lecture Scheduled</h2>
-    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hi ${userName}, a new ${type} lecture has been set for <strong>${topic}</strong>.</p>
-    <p style="color: ${colors.text}; margin-bottom: 5px; font-size: 13px"><strong>Time:</strong> ${time}</p>
-    <p style="color: ${colors.text}; margin-bottom: 5px; font-size: 13px"><strong>Date:</strong> ${date}</p>
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 14px">Hi ${userName}, a new ${type} lecture has been set for <strong>${topic}</strong>.</p>
+    <p style="color: ${colors.text}; margin-bottom: 5px; font-size: 14px"><strong>Time:</strong> ${time}</p>
+    <p style="color: ${colors.text}; margin-bottom: 5px; font-size: 14px"><strong>Date:</strong> ${date}</p>
     
     ${
       isOnline
@@ -141,7 +170,7 @@ export const lectureScheduledTemplate = (
       </div>
     `
         : `
-      <p style="color: ${colors.text}; font-size: 13px"><strong>Location:</strong> ${location}</p>
+      <p style="color: ${colors.text}; font-size: 14px"><strong>Location:</strong> ${location}</p>
     `
     }
   `;
@@ -151,7 +180,7 @@ export const passwordResetTemplate = (userName, code, expiryTime) => {
   const body = `
     <div style="text-align: center;">
       <h2 style="color: ${theme.colors.primary};">Password Reset Request</h2>
-      <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hi ${userName}, use the code below to reset your iCampus account password:</p>
+      <p style="color: ${colors.text}; margin: 5px 0; font-size: 14px">Hi ${userName}, use the code below to reset your iCampus account password:</p>
       
       <div style="background: #f4f4f4; padding: 20px; margin: 20px 0; border-radius: 8px;">
         <span style="font-size: 32px; font-weight: bold; letter-spacing: 5px; color: ${theme.colors.primary};">
@@ -159,7 +188,7 @@ export const passwordResetTemplate = (userName, code, expiryTime) => {
         </span>
       </div>
 
-      <p style="font-size: 13px; color: ${theme.colors.secondary};">
+      <p style="font-size: 14px; color: ${theme.colors.secondary};">
         This code is valid for <strong>${expiryTime}</strong>. If you did not request this, please ignore.
       </p>
     </div>
@@ -189,7 +218,7 @@ export const icashPinResetTemplate = (userName, code) => {
       </div>
 
       <div style="text-align: left; background: #f8fafc; padding: 15px; border-radius: 8px; border-left: 4px solid #ef4444;">
-        <p style="font-size: 13px; color: ${colors.text}; margin: 0;">
+        <p style="font-size: 14px; color: ${colors.text}; margin: 0;">
           <strong>Security Alert:</strong> This code will expire in <strong>10 minutes</strong>. 
           If you did not initiate this request, your iCash funds may be at risk. 
           Please change your iCampus password immediately or contact support.
@@ -241,7 +270,7 @@ export const iCashPurchaseTemplate = (
         </table>
       </div>
 
-      <p style="font-size: 13px; color: ${colors.secondary}; margin-top: 25px;">
+      <p style="font-size: 14px; color: ${colors.secondary}; margin-top: 25px;">
         Your new balance is now updated in your iCash Dashboard. <br/>
         Thank you for choosing <strong>iCampus</strong>.
       </p>
@@ -291,7 +320,7 @@ export const iCashWithdrawalTemplate = (
         </table>
       </div>
 
-      <p style="font-size: 13px; color: ${colors.secondary}; margin-top: 25px;">
+      <p style="font-size: 14px; color: ${colors.secondary}; margin-top: 25px;">
         The funds should reflect in your bank account shortly depending on your bank's processing time. <br/>
         Keep building with <strong>iCampus</strong>.
       </p>
@@ -303,17 +332,17 @@ export const iCashSuccessfulPinResetTemplate = (userName, time) => {
   const body = `
     <div style="text-align: center; font-family: sans-serif; max-width: 500px; margin: auto;">
       <h2 style="color: ${colors.primary}; margin-bottom: 5px;">PIN Successfully Reset</h2>
-      <p style="color: ${colors.text}; font-size: 13px;">Hello ${userName}, your <strong>iCash PIN</strong> was changed on ${time}.</p>
+      <p style="color: ${colors.text}; font-size: 14px;">Hello ${userName}, your <strong>iCash PIN</strong> was changed on ${time}.</p>
 
       <div style="background: #fff7ed; border: 1px solid #ffedd5; padding: 20px; margin: 25px 0; border-radius: 12px; text-align: left;">
-        <p style="margin: 0; font-size: 13px; color: ${colors.text};">
+        <p style="margin: 0; font-size: 14px; color: ${colors.text};">
           <strong>Didn't make this change?</strong><br/>
-          If you did not authorize this PIN reset, please contact <a href=${branding.supportEmail} style="color: ${colors.primary}; text-decoration: underline; font-weight: bold; font-size: 13px;">
+          If you did not authorize this PIN reset, please contact <a href=${branding.supportEmail} style="color: ${colors.primary}; text-decoration: underline; font-weight: bold; font-size: 14px;">
           iCampus Support
         </a> immediately .
         </p>
       </div>
-      <p style="font-size: 13px; color: ${colors.secondary}; margin-top: 25px;">
+      <p style="font-size: 14px; color: ${colors.secondary}; margin-top: 25px;">
         Secure transactions are our priority. <br/>
         Thank you for keeping your account safe with <strong>iCampus</strong>.
       </p>
@@ -344,7 +373,7 @@ export const subscriptionUpgradeTemplate = (
         <div style="font-size: 36px; font-weight: 800; color: ${colors.primary};">
           ${tier} Plan
         </div>
-        <div style="font-size: 13px; color: ${colors.secondary}; margin-top: 5px; font-weight: 500;">
+        <div style="font-size: 14px; color: ${colors.secondary}; margin-top: 5px; font-weight: 500;">
           Full access granted
         </div>
       </div>
@@ -370,7 +399,7 @@ export const subscriptionUpgradeTemplate = (
         </table>
       </div>
 
-      <p style="font-size: 13px; color: ${colors.secondary}; margin-top: 25px;">
+      <p style="font-size: 14px; color: ${colors.secondary}; margin-top: 25px;">
         You now have unlimited access to premium courses and exclusive campus features. <br/>
         Thank you for being part of the <strong>iCampus</strong> community.
       </p>
@@ -424,7 +453,7 @@ export const newOrderTemplate = (
         <hr style="border: 0; border-top: 1px solid #eee;" />
         ${instructionBlock}
       </div>
-      <p style="color: ${colors.secondary}; margin-bottom: 5px; font-size: 13px;"><strong>Order Creation Date:</strong> ${date} | ${time}</p>
+      <p style="color: ${colors.secondary}; margin-bottom: 5px; font-size: 14px;"><strong>Order Creation Date:</strong> ${date} | ${time}</p>
 
       <p>Thank you for using iCampus!</p>
     </div>
@@ -484,8 +513,8 @@ export const marketplacePurchaseTemplate = (
 
     ${instructions}
 
-    <p style="font-size: 13px; color:${colors.secondary};">View your full receipt and order status in the <strong>Orders</strong> tab of your profile.</p>
-    <p style="color: ${colors.secondary}; margin: 5px 0; font-size: 13px;"><strong>Debit Date:</strong> ${date} | ${time}</p>
+    <p style="font-size: 14px; color:${colors.secondary};">View your full receipt and order status in the <strong>Orders</strong> tab of your profile.</p>
+    <p style="color: ${colors.secondary}; margin: 5px 0; font-size: 14px;"><strong>Debit Date:</strong> ${date} | ${time}</p>
   `;
   return emailWrapper(body);
 };
@@ -514,12 +543,12 @@ export const orderCompletedTemplate = (
 
     <div style="background: #e7f3ff; border: 1px solid #d1e7ff; padding: 15px; border-radius: 5px; margin: 15px 0;">
       <p style="margin: 0; font-weight: bold; color: ${colors.secondary};">Transaction Finalized</p>
-      <p style="font-size: 13px; margin: 5px 0; color: ${colors.text};">
+      <p style="font-size: 14px; margin: 5px 0; color: ${colors.text};">
         The funds are now available for withdrawal to your iCash wallet.
       </p>
     </div>
 
-    <p style="font-size: 13px; color:${colors.secondary};">You can view the breakdown of this transaction in your <strong>Wallet History</strong>.</p>
+    <p style="font-size: 14px; color:${colors.secondary};">You can view the breakdown of this transaction in your <strong>Wallet History</strong>.</p>
   `;
 
   return emailWrapper(body);
@@ -550,7 +579,7 @@ export const orderReviewTemplate = (
          Rate Product & Seller
       </a>
     </div>
-    <p style="font-size: 13px; color:${colors.secondary};">What did you think of the purchase process? Open the app to rate the app's delivery method too!</p>
+    <p style="font-size: 14px; color:${colors.secondary};">What did you think of the purchase process? Open the app to rate the app's delivery method too!</p>
   `;
 
   return emailWrapper(body);
@@ -581,9 +610,9 @@ export const orderCancelledEmailTemplate = (
         <strong>Inventory Update:</strong> The item has been automatically added back to your stock and is visible in the marketplace again.
       </p>
     </div>
-    <p style="color: ${colors.secondary}; margin: 5px 0; font-size: 13px;"><strong>Order Cancellation Date:</strong> ${date} | ${time}</p>
+    <p style="color: ${colors.secondary}; margin: 5px 0; font-size: 14px;"><strong>Order Cancellation Date:</strong> ${date} | ${time}</p>
 
-    <p style="color: ${colors.secondary}; font-size: 13px;">
+    <p style="color: ${colors.secondary}; font-size: 14px;">
       No further action is required on your part. If you have already dispatched this item, please contact support immediately.
     </p>
   `;
@@ -646,20 +675,20 @@ export const salesPayoutTemplate = (
       
       <div style="height: 1px; background: #eee; margin: 10px 0;"></div>
       
-      <p style="color: ${colors.text}; margin: 0; font-size: 13px;"><strong>Transaction ID:</strong> #${transactionId}</p>
+      <p style="color: ${colors.text}; margin: 0; font-size: 14px;"><strong>Transaction ID:</strong> #${transactionId}</p>
     </div>
 
     <div style="background: #fff9e6; border: 1px solid #ffeeba; padding: 15px; border-radius: 5px; margin: 15px 0;">
       <p style="margin: 0; font-weight: bold; color: ${colors.text};">What can you do now?</p>
-      <ul style="font-size: 13px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
+      <ul style="font-size: 14px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
         <li>Purchase course materials or items on the Marketplace.</li>
         <li>Send iCash to other users on iCampus.</li>
         <li>Withdraw funds to your linked bank account or card.</li>
       </ul>
     </div>
-    <p style="color: ${colors.secondary}; margin: 0; font-size: 13px;"><strong>Payout Date:</strong> ${date} | ${time}</p>
+    <p style="color: ${colors.secondary}; margin: 0; font-size: 14px;"><strong>Payout Date:</strong> ${date} | ${time}</p>
 
-    <p style="font-size: 13px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
+    <p style="font-size: 14px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
       Thank you for being a part of the <strong>iCampus</strong> sales ecosystem!
     </p>
   `;
@@ -686,20 +715,20 @@ export const productCreationTemplate = (
       
       <div style="height: 1px; background: #eee; margin: 10px 0;"></div>
       
-      <p style="color: ${colors.text}; margin: 0; font-size: 13px;"><strong>Product ID:</strong> #${productId}</p>
+      <p style="color: ${colors.text}; margin: 0; font-size: 14px;"><strong>Product ID:</strong> #${productId}</p>
     </div>
 
     <div style="background: #e8f4fd; border: 1px solid ${colors.secondary}; padding: 15px; border-radius: 5px; margin: 15px 0;">
       <p style="margin: 0; font-weight: bold; color: ${colors.text};">What happens next?</p>
-      <ul style="font-size: 13px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
+      <ul style="font-size: 14px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
         <li>Track your views and sales directly from your seller dashboard.</li>
         <li>Once a student purchases this item, earnings will move to your sales wallet.</li>
         <li>Ensure your item description remains accurate to avoid listing reports.</li>
       </ul>
     </div>
-    <p style="color: ${colors.secondary}; margin: 0; font-size: 13px;"><strong>Product Creation Date:</strong> ${date} | ${time}</p>
+    <p style="color: ${colors.secondary}; margin: 0; font-size: 14px;"><strong>Product Creation Date:</strong> ${date} | ${time}</p>
 
-    <p style="font-size: 13px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
+    <p style="font-size: 14px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
       Thank you for powering the <strong>iCampus</strong> digital marketplace!
     </p>
   `;
@@ -726,20 +755,20 @@ export const productUpdateTemplate = (
       
       <div style="height: 1px; background: #eee; margin: 10px 0;"></div>
       
-      <p style="color: ${colors.text}; margin: 0; font-size: 13px;"><strong>Product ID:</strong> #${productId}</p>
+      <p style="color: ${colors.text}; margin: 0; font-size: 14px;"><strong>Product ID:</strong> #${productId}</p>
     </div>
 
     <div style="background: #eafaf1; border: 1px solid ${colors.secondary}; padding: 15px; border-radius: 5px; margin: 15px 0;">
       <p style="margin: 0; font-weight: bold; color: ${colors.text};">What should you check?</p>
-      <ul style="font-size: 13px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
+      <ul style="font-size: 14px; margin: 5px 0; padding-left: 20px; color: ${colors.text};">
         <li>Review your product page in the app to ensure formatting looks correct.</li>
         <li>If you updated stock amounts or addresses, double-check your dashboard metrics.</li>
         <li>Active carts containing this item have been automatically updated with your new price.</li>
       </ul>
     </div>
-    <p style="color: ${colors.secondary}; margin: 0; font-size: 13px;"><strong>Product Update Date:</strong> ${date} | ${time}</p>
+    <p style="color: ${colors.secondary}; margin: 0; font-size: 14px;"><strong>Product Update Date:</strong> ${date} | ${time}</p>
 
-    <p style="font-size: 13px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
+    <p style="font-size: 14px; color:${colors.secondary}; text-align: center; margin-top: 25px;">
       Thank you for maintaining an active presence in the <strong>iCampus</strong> digital marketplace!
     </p>
   `;
@@ -764,8 +793,8 @@ export const productDeletionTemplate = (
       
       <div style="height: 1px; background: #eee; margin: 10px 0;"></div>
       
-      <p style="color: ${colors.text}; margin: 0; font-size: 13px;"><strong>Product ID:</strong> #${productId}</p>
-      <p style="color: ${colors.secondary}; margin: 0; font-size: 13px;"><strong>Product Deletion Date:</strong> ${date} | ${time}</p>
+      <p style="color: ${colors.text}; margin: 0; font-size: 14px;"><strong>Product ID:</strong> #${productId}</p>
+      <p style="color: ${colors.secondary}; margin: 0; font-size: 14px;"><strong>Product Deletion Date:</strong> ${date} | ${time}</p>
     </div>
 
     `;
@@ -786,12 +815,12 @@ export const orderDroppedOffEmailTemplate = (
     
     <div style="background: ${colors.background}; padding: 15px; border-radius: 8px; margin: 20px 0; border-left: 4px solid ${colors.primary};">
       <p style="margin: 0 0 5px 0; color: ${colors.text}"><strong>Collection Station:</strong> ${stationName}</p>
-      <p style="margin: 0; font-size: 13px; color: ${colors.text};">${stationAddress}</p>
+      <p style="margin: 0; font-size: 14px; color: ${colors.text};">${stationAddress}</p>
     </div>
 
     <div style="padding: 15px; border-radius: 5px; margin: 20px 0;">
       <p style="margin: 0; font-weight: bold; color: ${colors.text}">Next Step:</p>
-      <p style="font-size: 13px; margin: 5px 0; color: ${colors.text}">
+      <p style="font-size: 14px; margin: 5px 0; color: ${colors.text}">
         Go to the station and present your order's <strong>QR Code</strong> to the agent. Once scanned, your item will be released and finalized.
       </p>
     </div>
@@ -818,7 +847,7 @@ export const agentAwaitingPickupEmailTemplate = (
     </div>
 
     <p style="color: ${colors.secondary}"><strong>Action Required:</strong> Safe-keep this package. When the buyer arrives to pick it up, scan their mobile app tracking QR code to confirm checkout and release your delivery split commission.</p>
-    <p style="color: ${colors.secondary}; margin-top: 5px; font-size: 13px;"><strong>Product Drop-off Date:</strong> ${date} | ${time}</p>
+    <p style="color: ${colors.secondary}; margin-top: 5px; font-size: 14px;"><strong>Product Drop-off Date:</strong> ${date} | ${time}</p>
   `;
   return emailWrapper(body);
 };
@@ -827,7 +856,7 @@ export const newAdminWelcomeTemplate = (adminName, creatorName) => {
     <h2 style="color: ${colors.primary};">Welcome to iCampus Admin</h2>
     <p style="color: ${colors.text}; margin: 5px 0;">Hi <strong>${adminName}</strong>,</p>
     <p style="color: ${colors.text};">Your iCampus administrator account has been successfully created by <strong>${creatorName}</strong>.</p>
-    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">You can now log in to the admin dashboard to begin managing iCampus operations.</p>
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 14px">You can now log in to the admin dashboard to begin managing iCampus operations.</p>
     <div style="background: #f4f4f4; padding: 10px; border-left: 4px solid ${colors.primary};">
       <p style="margin: 0; color: ${colors.text};"><strong>Stay Secure:</strong> Always ensure you are accessing the dashboard through the official iCampus admin portal.</p>
     </div>
@@ -842,8 +871,8 @@ export const supportTicketReceivedTemplate = (
 ) => {
   const body = `
     <h2 style="color: ${theme.colors.primary}; margin-top: 0;">Support Request Received</h2>
-    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hello ${userName},</p>
-    <p style="color: ${colors.text}; font-size: 13px">
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 14px">Hello ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 14px">
       We have successfully received your support request. Our team is currently reviewing the details and will get back to you shortly.
     </p>
     
@@ -852,12 +881,12 @@ export const supportTicketReceivedTemplate = (
       <strong>Received:</strong> ${date} at ${time}
     </div>
 
-    <p style="color: ${colors.text}; font-size: 13px">
+    <p style="color: ${colors.text}; font-size: 14px">
       We aim to respond to all inquiries within <strong>24 hours</strong>. You can reply directly to this email if you have any additional information to add.
     </p>
     
-    <p style="color: ${colors.text}; font-size: 13px; margin: 5px 0;">Thank you for your patience.</p>
-    <p style="color: ${colors.text}; font-size: 13px">Best regards,<br><strong>iCampus Support Team</strong></p>
+    <p style="color: ${colors.text}; font-size: 14px; margin: 5px 0;">Thank you for your patience.</p>
+    <p style="color: ${colors.text}; font-size: 14px">Best regards,<br><strong>iCampus Support Team</strong></p>
   `;
   return emailWrapper(body);
 };
@@ -869,8 +898,8 @@ export const supportTicketResolvedTemplate = (
 ) => {
   const body = `
     <h2 style="color: ${theme.colors.primary}; margin-top: 0;">Support Ticket Resolved</h2>
-    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hello ${userName},</p>
-    <p style="color: ${colors.text}; font-size: 13px">
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 14px">Hello ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 14px">
       Good news! We have successfully resolved your support request. 
     </p>
     
@@ -879,12 +908,12 @@ export const supportTicketResolvedTemplate = (
       <strong>Resolved On:</strong> ${date} at ${time}
     </div>
 
-    <p style="color: ${colors.text}; font-size: 13px">
+    <p style="color: ${colors.text}; font-size: 14px">
       If you are still experiencing issues or need further assistance regarding this matter, please feel free to reach out and open a new ticket or reply directly to this email. We are always here to help.
     </p>
     
-    <p style="color: ${colors.text}; font-size: 13px; margin: 5px 0;">Thank you for your patience and for being part of our community.</p>
-    <p style="color: ${colors.text}; font-size: 13px">Best regards,<br><strong>iCampus Support Team</strong></p>
+    <p style="color: ${colors.text}; font-size: 14px; margin: 5px 0;">Thank you for your patience and for being part of our community.</p>
+    <p style="color: ${colors.text}; font-size: 14px">Best regards,<br><strong>iCampus Support Team</strong></p>
   `;
   return emailWrapper(body);
 };
@@ -897,8 +926,8 @@ export const supportTicketReplyTemplate = (
 ) => {
   const body = `
     <h2 style="color: ${theme.colors.primary}; margin-top: 0;">New Support Response</h2>
-    <p style="color: ${colors.text}; margin: 5px 0; font-size: 13px">Hello ${userName},</p>
-    <p style="color: ${colors.text}; font-size: 13px">
+    <p style="color: ${colors.text}; margin: 5px 0; font-size: 14px">Hello ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 14px">
       Our support team has reviewed your inquiry and posted an update regarding your open ticket.
     </p>
     
@@ -908,17 +937,17 @@ export const supportTicketReplyTemplate = (
       </p>
     </div>
 
-    <div style="background: ${theme.colors.background}; padding: 12px 15px; border-radius: 4px; margin: 20px 0; font-size: 13px;">
+    <div style="background: ${theme.colors.background}; padding: 12px 15px; border-radius: 4px; margin: 20px 0; font-size: 14px;">
       <strong>Ticket Reference ID:</strong> <span style="color: ${theme.colors.primary}; font-weight: bold;">${ticketRefId}</span><br>
       <strong>Updated:</strong> ${date} at ${time}
     </div>
 
-    <p style="color: ${colors.text}; font-size: 13px">
+    <p style="color: ${colors.text}; font-size: 14px">
       If this resolves your issue, no further action is required. If you need clarification or additional help, simply reply directly to this email to update the support thread.
     </p>
     
-    <p style="color: ${colors.text}; font-size: 13px; margin: 5px 0;">Best regards,</p>
-    <p style="color: ${colors.text}; font-size: 13px"><strong>iCampus Support Team</strong></p>
+    <p style="color: ${colors.text}; font-size: 14px; margin: 5px 0;">Best regards,</p>
+    <p style="color: ${colors.text}; font-size: 14px"><strong>iCampus Support Team</strong></p>
   `;
   return emailWrapper(body);
 };
