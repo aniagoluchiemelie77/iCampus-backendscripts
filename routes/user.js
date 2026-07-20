@@ -168,13 +168,4 @@ export default router;
 //password: icampusUser01
 //On powershell as admin: Start-Service RabbitMQ
 /*
-Open this link: https://services.gradle.org/distributions/gradle-8.10.2-bin.zip
-
-Once the download finishes, do not unzip it.
-
-Place the .zip file in the following directory:
-C:\Users\User\.gradle\wrapper\dists\gradle-8.10.2-bin\YOUR_HASH_FOLDER
-(Note: If you don't know the exact hash folder name, run .\gradlew wrapper once, let it fail, and it will create the folder path for you. Then place the zip file inside that folder.)
-
-Once the zip file is there, run your build command again (.\gradlew clean followed by npx react-native run-android). Gradle will see the file already exists and will skip the download.
 */
