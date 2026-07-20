@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 
+
 const reposterSchema = new mongoose.Schema({
   uid: { type: String, required: true },
   firstname: { type: String, default: null },
@@ -682,37 +683,6 @@ export const userDownloadsSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
-export const eventSchema = new mongoose.Schema({
-  createdBy: { type: String, required: true },
-  creatorType: {
-    type: String,
-    enum: ["student", "lecturer"],
-    required: true,
-  },
-  title: { type: String, required: true },
-  description: { type: String },
-  courseTitle: { type: String },
-  startDate: { type: String },
-  endDate: { type: String },
-  eventStartTime: { type: String },
-  eventEndTime: { type: String },
-  eventType: { type: String },
-  lectureType: { type: String },
-  visibility: {
-    type: String,
-    enum: ["public", "department", "private"],
-    required: true,
-  },
-  restriction: { type: String, default: "none" },
-  department: { type: String },
-  isRecurring: { type: Boolean },
-  recurrenceRule: { type: String },
-  level: { type: String },
-  userId: { type: String },
-  location: { type: String },
-  tags: { type: [String] },
-  createdAt: { type: Date, default: () => new Date().toISOString() },
-});
 export const EmailVerificationSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   code: {
@@ -1031,12 +1001,6 @@ export const iTagSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
-export const floatSchema = new mongoose.Schema({
-  totalCirculation: Number,
-  actualBankBalance: Number,
-  accruedInterest: Number,
-  lastUpdated: { type: Date, default: Date.now },
-});
 export const messageSchema = new mongoose.Schema({
   id: { type: String, required: true },
   senderId: { type: String, required: true },
@@ -1215,3 +1179,5 @@ postSchema.index(
     name: "icampus_post_text_search_index",
   },
 );
+
+//Go to your Firestore Database > Data tab, click on your emailVerifications collection, and select Set TTL field. Choose your expiresAt timestamp field. Firestore will automatically delete documents after that time passes.

@@ -43,12 +43,13 @@ export const deleteAdmin = async (req, res) => {
     if (requester.uid === uid) {
       return res.status(400).json({ error: "You cannot remove yourself." });
     }
-
-    const deletedAdmin = await Admin.findOneAndDelete({ uid });
-
-    if (!deletedAdmin) {
+    const adminRef = Admin.doc(uid);
+    const adminDoc = await adminRef.get();
+    if (!adminDoc.exists) {
       return res.status(404).json({ error: "Admin not found." });
     }
+    const adminData = adminDoc.data();
+    await adminRef.delete();
     await notifyAdmins(
       { role: "super_admin" },
       {
@@ -76,8 +77,15 @@ export const createAdmin = async (req, res) => {
     return res.status(403).json({ error: "Unauthorized" });
 
   try {
-    const newAdmin = new Admin(req.body);
-    await newAdmin.save();
+    const adminData = {
+      ...req.body,
+      createdAt: new Date(),
+    };
+    const adminRef = adminData.uid ? Admin.doc(adminData.uid) : Admin.doc();
+    if (!adminData.uid) {
+      adminData.uid = adminRef.id;
+    }
+    await adminRef.set(adminData);
     await notifyAdmins(
       { role: "super_admin" },
       {
@@ -119,11 +127,21 @@ export const updateAdmin = async (req, res) => {
 
   try {
     const { uid } = req.params;
-    const updated = await Admin.findOneAndUpdate({ uid }, req.body, {
-      new: true,
-    });
+    const adminRef = Admin.doc(uid);
+    const adminDoc = await adminRef.get();
+    if (!adminDoc.exists) {
+      return res.status(404).json({ error: "Admin not found." });
+    }
 
-    if (!updated) return res.status(404).json({ error: "Admin not found." });
+    const currentData = adminDoc.data();
+    const updateData = {
+      ...req.body,
+      updatedAt: new Date(),
+    };
+
+    await adminRef.set(updateData, { merge: true });
+    const updatedDoc = await adminRef.get();
+    const updated = updatedDoc.data();
     await notifyAdmins(
       { uids: [uid] },
       {
@@ -170,40 +188,55 @@ export const adminSendTicketNotification = async (req, res) => {
         message: "Message and recipientId are required.",
       });
     }
-    const ticket = await SupportTicket.findOne({ ticketRefId });
+    const ticketQuery = await SupportTicket.where(
+      "ticketRefId",
+      "==",
+      ticketRefId,
+    )
+      .limit(1)
+      .get();
 
-    if (!ticket) {
+    if (ticketQuery.empty) {
       return res.status(404).json({
         success: false,
         message: "Ticket not found.",
       });
     }
-    const user = await User.findOne({ uid: recipientId }).select("email");
+    const ticketDoc = ticketQuery.docs[0];
+    const ticketRef = ticketDoc.ref;
+    const ticketData = ticketDoc.data();
+    const userDoc = await User.doc(recipientId).get();
+    const userData = userDoc.exists ? userDoc.data() : null;
 
     const notification = await createNotification({
       notificationId: generateNotificationId("system"),
       recipientId: recipientId,
-      recipientEmail: user?.email,
+      recipientEmail: userData?.email,
       category: category || "system",
       actionType: "SUPPORT_TICKET_REPLY",
       title: title || `Update on Ticket #${ticketRefId}`,
       message: message,
       sendEmail: true,
       payload: {
-        userName: user?.firstname || "User",
+        userName: userData?.firstname || "User",
         ticketRefId,
         adminMessage: message,
         date: formattedDate,
         time: formattedTime,
       },
     });
-    ticket.status = "pending";
-    await ticket.save();
+    const updatedTicketData = {
+      ...ticketData,
+      status: "pending",
+      updatedAt: new Date(),
+    };
+
+    await ticketRef.set(updatedTicketData, { merge: true });
     return res.status(200).json({
       success: true,
       message: "Notification sent and ticket status updated to pending.",
       notification,
-      ticket,
+      ticket: updatedTicketData,
     });
   } catch (error) {
     console.error("adminSendTicketNotification Error:", error);
@@ -253,18 +286,22 @@ export const updateUserController = async (req, res) => {
   });
 
   try {
-    const updatedUser = await User.findOneAndUpdate(
-      { uid: uid },
-      { $set: filteredData },
-      { new: true, runValidators: true },
-    );
+    const userRef = User.doc(uid);
+    const userDoc = await userRef.get();
 
-    if (!updatedUser) {
+    if (!userDoc.exists) {
       return res.status(404).json({
         success: false,
         message: "User not found.",
       });
     }
+    const finalUpdatePayload = {
+      ...filteredData,
+      updatedAt: new Date(),
+    };
+    await userRef.set(finalUpdatePayload, { merge: true });
+    const updatedUserDoc = await userRef.get();
+    const updatedUser = { uid, ...updatedUserDoc.data() };
     return res.status(200).json({
       success: true,
       user: updatedUser,
@@ -281,108 +318,131 @@ export const updateUserController = async (req, res) => {
 export const getAdminMetrics = async (req, res) => {
   try {
     const [
-      userMetrics,
-      liquidityTrendData,
-      payoutStats,
-      pendingTickets,
-      recentSchools,
-      recentStations,
-      latencyData,
+      usersSnapshot,
+      transactionsSnapshot,
+      payoutsSnapshot,
+      pendingTicketsCount,
+      recentSchoolsSnapshot,
+      totalSchoolsCount,
+      recentStationsSnapshot,
+      totalStationsCount,
+      latencySnapshot,
     ] = await Promise.all([
-      User.aggregate([
-        { $match: { isSuspended: false } },
-        {
-          $facet: {
-            platformTotals: [
-              {
-                $group: {
-                  _id: null,
-                  totalLiquidity: { $sum: "$pointsBalance" },
-                  totalUsers: { $sum: 1 },
-                },
-              },
-            ],
-            locationStats: [
-              { $unwind: "$sessions" },
-              { $group: { _id: "$sessions.location", count: { $sum: 1 } } },
-              { $sort: { count: -1 } },
-              { $limit: 10 },
-            ],
-          },
-        },
-      ]),
-      // Inside your controller
-      Transactions.aggregate([
-        {
-          $match: {
-            status: "success",
-            createdAt: {
-              $gte: new Date(new Date().setDate(new Date().getDate() - 7)),
-            },
-          },
-        },
-        {
-          $group: {
-            _id: { $dateToString: { format: "%m-%d", date: "$createdAt" } },
-            inFlow: {
-              $sum: { $cond: [{ $eq: ["$payType", "in"] }, "$amountLocal", 0] },
-            },
-            outFlow: {
-              $sum: {
-                $cond: [{ $eq: ["$payType", "out"] }, "$amountLocal", 0],
-              },
-            },
-          },
-        },
-        { $sort: { _id: 1 } },
-        {
-          $group: {
-            _id: null,
-            labels: { $push: "$_id" },
-            inFlow: { $push: "$inFlow" },
-            outFlow: { $push: "$outFlow" },
-          },
-        },
-      ]),
-      Payout.aggregate([
-        {
-          $group: {
-            _id: "$status",
-            totalAmount: { $sum: "$amount" },
-            count: { $sum: 1 },
-          },
-        },
-      ]),
-      SupportTicket.countDocuments({ status: { $in: ["open", "pending"] } }),
-      OperationalInstitutions.find().sort({ createdAt: -1 }).limit(10),
-
-      DropOffStation.find().sort({ createdAt: -1 }).limit(10),
-      ControllerLog.aggregate([
-        { $group: { _id: null, avgLatency: { $avg: "$latency" } } },
-      ]),
+      User.where("isSuspended", "==", false).get(),
+      Transactions.where("status", "==", "success").get(),
+      Payout.get(),
+      SupportTicket.where("status", "in", ["open", "pending"])
+        .get()
+        .then((snap) => snap.size),
+      OperationalInstitutions.orderBy("createdAt", "desc").limit(10).get(),
+      OperationalInstitutions.get().then((snap) => snap.size),
+      DropOffStation.orderBy("createdAt", "desc").limit(10).get(),
+      DropOffStation.get().then((snap) => snap.size),
+      ControllerLog.get(),
     ]);
-    const userFacet = userMetrics[0];
-    const locationStats = userFacet?.locationStats || [];
+    let totalLiquidity = 0;
+    let totalUsers = 0;
+    const locationCounts = {};
 
+    usersSnapshot.forEach((doc) => {
+      const user = doc.data();
+      totalUsers += 1;
+      totalLiquidity += user.pointsBalance || 0;
+      if (Array.isArray(user.sessions)) {
+        user.sessions.forEach((session) => {
+          const loc = session.location;
+          if (loc) {
+            locationCounts[loc] = (locationCounts[loc] || 0) + 1;
+          }
+        });
+      }
+    });
+
+    const locationStats = Object.keys(locationCounts)
+      .map((loc) => ({ _id: loc, count: locationCounts[loc] }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10);
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+    const trendMap = {};
+    transactionsSnapshot.forEach((doc) => {
+      const tx = doc.data();
+      const txDate = tx.createdAt?.toDate
+        ? tx.createdAt.toDate()
+        : new Date(tx.createdAt);
+
+      if (txDate >= sevenDaysAgo) {
+        const month = String(txDate.getMonth() + 1).padStart(2, "0");
+        const day = String(txDate.getDate()).padStart(2, "0");
+        const dateKey = `${month}-${day}`;
+
+        if (!trendMap[dateKey]) {
+          trendMap[dateKey] = { inFlow: 0, outFlow: 0 };
+        }
+
+        const amount = tx.amountLocal || 0;
+        if (tx.payType === "in") {
+          trendMap[dateKey].inFlow += amount;
+        } else if (tx.payType === "out") {
+          trendMap[dateKey].outFlow += amount;
+        }
+      }
+    });
+
+    const sortedDates = Object.keys(trendMap).sort();
+    const liquidityTrend = {
+      labels: sortedDates,
+      inFlow: sortedDates.map((date) => trendMap[date].inFlow),
+      outFlow: sortedDates.map((date) => trendMap[date].outFlow),
+    };
+    const payoutMap = {};
+    payoutsSnapshot.forEach((doc) => {
+      const payout = doc.data();
+      const status = payout.status || "unknown";
+      if (!payoutMap[status]) {
+        payoutMap[status] = { _id: status, totalAmount: 0, count: 0 };
+      }
+      payoutMap[status].totalAmount += payout.amount || 0;
+      payoutMap[status].count += 1;
+    });
+    const payoutStats = Object.values(payoutMap);
+    let totalLatency = 0;
+    let latencyCount = 0;
+    latencySnapshot.forEach((doc) => {
+      const log = doc.data();
+      if (typeof log.latency === "number") {
+        totalLatency += log.latency;
+        latencyCount += 1;
+      }
+    });
+    const avgLatency = latencyCount > 0 ? totalLatency / latencyCount : 0;
+    const recentSchools = recentSchoolsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+    const recentStations = recentStationsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
     res.json({
-      activeUsers: userFacet?.platformTotals[0]?.totalUsers || 0,
-      platformLiquidity: userFacet?.platformTotals[0]?.totalLiquidity || 0,
+      activeUsers: totalUsers,
+      platformLiquidity: totalLiquidity,
       payoutStats,
-      pendingTickets,
+      pendingTickets: pendingTicketsCount,
       recentSchools: {
         items: recentSchools,
-        total: await OperationalInstitutions.countDocuments(),
+        total: totalSchoolsCount,
       },
       recentStations: {
         items: recentStations,
-        total: await DropOffStation.countDocuments(),
+        total: totalStationsCount,
       },
-      latencyData: latencyData[0]?.avgLatency || 0,
-      liquidityTrend: liquidityTrendData[0] || {
-        labels: [],
-        inFlow: [],
-        outFlow: [],
-      },
+      latencyData: avgLatency,
+      liquidityTrend:
+        liquidityTrend.labels.length > 0
+          ? liquidityTrend
+          : { labels: [], inFlow: [], outFlow: [] },
       locationStats: locationStats,
     });
   } catch (error) {
@@ -392,15 +452,22 @@ export const getAdminMetrics = async (req, res) => {
 };
 export const getInstitutions = async (req, res) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
+    const [snapshot, totalCountSnapshot] = await Promise.all([
+      OperationalInstitutions.orderBy("createdAt", "desc").get(),
+      OperationalInstitutions.get(),
+    ]);
+    const totalDocs = totalCountSnapshot.size;
+    const allInstitutions = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
 
-    const institutions = await OperationalInstitutions.find()
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(parseInt(limit));
+    const paginatedInstitutions = allInstitutions.slice(skip, skip + limit);
 
-    res.json(institutions);
+    res.json(paginatedInstitutions);
   } catch (error) {
     console.error("Get Institutions Error:", error);
     res.status(500).json({ message: "Failed to retrieve institutions" });
@@ -408,16 +475,23 @@ export const getInstitutions = async (req, res) => {
 };
 export const getDropOffStations = async (req, res) => {
   try {
-    const { page = 1, limit = 20 } = req.query;
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 20;
+    const skip = (page - 1) * limit;
 
-    const stations = await DropOffStation.find()
-      .sort({ createdAt: -1 })
-      .skip((pageNum - 1) * limitNum)
-      .limit(limitNum);
+    const [snapshot, totalCountSnapshot] = await Promise.all([
+      DropOffStation.orderBy("createdAt", "desc").get(),
+      DropOffStation.get(),
+    ]);
+    const totalDocs = totalCountSnapshot.size;
+    const allStations = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
 
-    res.json(stations);
+    const paginatedStations = allStations.slice(skip, skip + limit);
+
+    res.json(paginatedStations);
   } catch (error) {
     console.error("Get Drop-Off Stations Error:", error);
     res.status(500).json({ message: "Failed to retrieve drop-off stations" });
@@ -425,11 +499,19 @@ export const getDropOffStations = async (req, res) => {
 };
 export const deleteInstitution = async (req, res) => {
   try {
-    const { id } = req.params;
-    const result = await OperationalInstitutions.findOneAndDelete({ id: id });
+    if (req.admin.adminType !== "super_admin")
+      return res.status(403).json({ error: "Unauthorized" });
 
-    if (!result)
+    const { id } = req.params;
+    const snapshot = await OperationalInstitutions.where("id", "==", id)
+      .limit(1)
+      .get();
+    if (snapshot.empty) {
       return res.status(404).json({ message: "Institution not found." });
+    }
+    const docRef = snapshot.docs[0].ref;
+    const result = snapshot.docs[0].data();
+    await docRef.delete();
 
     await notifyAdmins(
       { role: "super_admin" },
@@ -451,11 +533,17 @@ export const deleteInstitution = async (req, res) => {
 };
 export const deleteDropOffStation = async (req, res) => {
   try {
-    const { id } = req.params;
-    const station = await DropOffStation.findOneAndDelete({ id: id });
+    if (req.admin.adminType !== "super_admin")
+      return res.status(403).json({ error: "Unauthorized" });
 
-    if (!station)
+    const { id } = req.params;
+    const snapshot = await DropOffStation.where("id", "==", id).limit(1).get();
+
+    if (snapshot.empty)
       return res.status(404).json({ message: "Drop-off station not found." });
+    const stationDocRef = snapshot.docs[0].ref;
+    const station = snapshot.docs[0].data();
+    await stationDocRef.delete();
 
     await createNotification({
       recipientId: station.agentId,
@@ -501,16 +589,17 @@ export const createInstitution = async (req, res) => {
 
     const adminUserId = process.env.APP_USERID;
     const schoolId = generateSchoolId(schoolName);
-
-    const newInstitution = await OperationalInstitutions.create({
+    const institutionData = {
       id: schoolId,
       schoolName,
       contactEmail,
       schoolCode: schoolId,
       logo,
-    });
+      createdAt: new Date(),
+    };
+    await OperationalInstitutions.doc(schoolId).set(institutionData);
 
-    await SchoolConfiguration.create({
+    const configData = {
       schoolId,
       name: schoolName,
       countryCode,
@@ -519,7 +608,9 @@ export const createInstitution = async (req, res) => {
       verificationMethod,
       externalApiConfig,
       ssoConfig,
-    });
+      createdAt: new Date(),
+    };
+    await SchoolConfiguration.doc(schoolId).set(configData);
 
     await notifyAdmins(
       { role: "super_admin" },
@@ -534,7 +625,7 @@ export const createInstitution = async (req, res) => {
       false,
     );
     const newPostId = generatePostId();
-    const welcomePost = await Posts.create({
+    const welcomePostData = {
       postId: newPostId,
       originalAuthor: adminUserId,
       priorityScore: 10,
@@ -544,13 +635,15 @@ export const createInstitution = async (req, res) => {
       },
       content: `Welcome to iCampus, ${schoolName}! Students and lecturers from this institution can now sign up and join our community.`,
       postType: "media",
-    });
+      createdAt: new Date(),
+    };
+    await Posts.doc(newPostId).set(welcomePostData);
 
     if (req.io) {
-      req.io.emit("new_post", welcomePost);
+      req.io.emit("new_post", welcomePostData);
     }
 
-    res.status(201).json({ success: true, institution: newInstitution });
+    res.status(201).json({ success: true, institution: institutionData });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -563,32 +656,39 @@ export const updateInstitution = async (req, res) => {
     if (req.admin.adminType !== "super_admin")
       return res.status(403).json({ error: "Unauthorized" });
 
-    const updatedSchool = await OperationalInstitutions.findOneAndUpdate(
-      { id: id },
-      {
-        schoolName: updateData.name,
-        contactEmail: updateData.contactEmail,
-        logo: updateData.logo,
-      },
-      { new: true },
-    );
-    const updatedConfig = await SchoolConfiguration.findOneAndUpdate(
-      { schoolId: id },
-      {
-        name: updateData.name,
-        countryCode: updateData.countryCode,
-        domainWhitelist: updateData.domainWhitelist,
-        isOperational: updateData.isOperational,
-        verificationMethod: updateData.verificationMethod,
-        ssoConfig: updateData.ssoConfig,
-        externalApiConfig: updateData.externalApiConfig,
-      },
-      { new: true },
-    );
+    const instSnapshot = await OperationalInstitutions.where("id", "==", id)
+      .limit(1)
+      .get();
+    const configSnapshot = await SchoolConfiguration.where("schoolId", "==", id)
+      .limit(1)
+      .get();
 
-    if (!updatedSchool || !updatedConfig) {
+    if (instSnapshot.empty || configSnapshot.empty) {
       return res.status(404).json({ message: "Institution not found." });
     }
+    const instRef = instSnapshot.docs[0].ref;
+    const configRef = configSnapshot.docs[0].ref;
+    const updatedSchoolData = {
+      schoolName: updateData.name,
+      contactEmail: updateData.contactEmail,
+      logo: updateData.logo,
+      updatedAt: new Date(),
+    };
+
+    const updatedConfigData = {
+      name: updateData.name,
+      countryCode: updateData.countryCode,
+      domainWhitelist: updateData.domainWhitelist,
+      isOperational: updateData.isOperational,
+      verificationMethod: updateData.verificationMethod,
+      ssoConfig: updateData.ssoConfig,
+      externalApiConfig: updateData.externalApiConfig,
+      updatedAt: new Date(),
+    };
+    await Promise.all([
+      instRef.set(updatedSchoolData, { merge: true }),
+      configRef.set(updatedConfigData, { merge: true }),
+    ]);
     await notifyAdmins(
       { role: "super_admin" },
       {
@@ -602,7 +702,7 @@ export const updateInstitution = async (req, res) => {
       false,
     );
 
-    res.status(200).json({ success: true, data: updatedSchool });
+    res.status(200).json({ success: true, data: updatedSchoolData });
   } catch (error) {
     console.error("Update Error:", error);
     res.status(500).json({ message: "Failed to update institution." });
@@ -617,7 +717,7 @@ export const createStation = async (req, res) => {
       return res.status(403).json({ error: "Unauthorized" });
 
     const stationId = generateStationId();
-    const newStation = await DropOffStation.create({
+    const stationData = {
       id: stationId,
       name,
       address,
@@ -626,7 +726,9 @@ export const createStation = async (req, res) => {
       longitude,
       agentId,
       images,
-    });
+      createdAt: new Date(),
+    };
+    await DropOffStation.doc(stationId).set(stationData);
     await createNotification({
       recipientId: agentId,
       category: "system",
@@ -647,7 +749,7 @@ export const createStation = async (req, res) => {
       },
       false,
     );
-    res.status(201).json({ success: true, station: newStation });
+    res.status(201).json({ success: true, station: stationData });
   } catch (error) {
     console.error("Station Creation Error:", error);
     res
@@ -663,17 +765,23 @@ export const updateStation = async (req, res) => {
     if (req.admin.adminType !== "super_admin")
       return res.status(403).json({ error: "Unauthorized" });
 
-    const updatedStation = await DropOffStation.findOneAndUpdate(
-      { id: id },
-      { $set: updateData },
-      { new: true },
-    );
+    const snapshot = await DropOffStation.where("id", "==", id).limit(1).get();
 
-    if (!updatedStation) {
+    if (snapshot.empty) {
       return res
         .status(404)
         .json({ success: false, message: "Station not found." });
     }
+
+    const stationDocRef = snapshot.docs[0].ref;
+    const existingStationData = snapshot.docs[0].data();
+    const finalUpdatePayload = {
+      ...updateData,
+      updatedAt: new Date(),
+    };
+    await stationDocRef.set(finalUpdatePayload, { merge: true });
+    const updatedSnapshot = await stationDocRef.get();
+    const updatedStation = { id, ...updatedSnapshot.data() };
 
     await createNotification({
       recipientId: updatedStation.agentId,
@@ -704,46 +812,67 @@ export const updateStation = async (req, res) => {
 };
 export const getInstitutionDetails = async (req, res) => {
   const { schoolId } = req.params;
+  const [studentsSnapshot, lecturersSnapshot, schoolSnapshot] =
+    await Promise.all([
+      User.where("schoolCode", "==", schoolId)
+        .where("role", "==", "student")
+        .get(),
+      User.where("schoolCode", "==", schoolId)
+        .where("role", "==", "lecturer")
+        .get(),
+      OperationalInstitutions.where("schoolCode", "==", schoolId)
+        .limit(1)
+        .get(),
+    ]);
 
-  const studentCount = await User.countDocuments({
-    schoolCode: schoolId,
-    role: "student",
-  });
-  const lecturerCount = await User.countDocuments({
-    schoolCode: schoolId,
-    role: "lecturer",
-  });
-  const school = await OperationalInstitutions.findOne({
-    schoolCode: schoolId,
-  });
+  if (schoolSnapshot.empty) {
+    return res
+      .status(404)
+      .json({ success: false, message: "Institution not found." });
+  }
+
+  const schoolData = schoolSnapshot.docs[0].data();
 
   res.json({
-    schoolName: school.schoolName,
-    contactEmail: school.contactEmail,
-    logo: school.logo,
-    studentCount,
-    lecturerCount,
+    schoolName: schoolData.schoolName,
+    contactEmail: schoolData.contactEmail,
+    logo: schoolData.logo,
+    studentCount: studentsSnapshot.size,
+    lecturerCount: lecturersSnapshot.size,
   });
 };
 export const getStationDetails = async (req, res) => {
   const { stationId } = req.params;
 
   try {
-    const station = await DropOffStation.findOne({ id: stationId });
-    if (!station) return res.status(404).json({ message: "Station not found" });
-    const agent = await User.findOne({ id: station.agentId });
+    const stationSnapshot = await DropOffStation.where("id", "==", stationId)
+      .limit(1)
+      .get();
+
+    if (stationSnapshot.empty) {
+      return res.status(404).json({ message: "Station not found" });
+    }
+
+    const station = stationSnapshot.docs[0].data();
+    let agentData = null;
+    if (station.agentId) {
+      const agentDoc = await User.doc(station.agentId).get();
+      if (agentDoc.exists) {
+        agentData = agentDoc.data();
+      }
+    }
     res.json({
       stationName: station.name,
       address: station.address,
-      agent: agent
+      agent: agentData
         ? {
-            firstname: agent.firstName,
-            lastname: agent.lastName,
-            username: agent.username,
-            profilePic: agent.profilePic,
-            tier: agent.tier,
-            isVerified: agent.isVerified,
-            organizationName: agent.organizationName,
+            firstname: agentData.firstname || agentData.firstName,
+            lastname: agentData.lastname || agentData.lastName,
+            username: agentData.username,
+            profilePic: agentData.profilePic,
+            tier: agentData.tier,
+            isVerified: agentData.isVerified,
+            organizationName: agentData.organizationName,
           }
         : null,
     });

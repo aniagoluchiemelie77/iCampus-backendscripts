@@ -33,10 +33,6 @@ app.use((req, res, next) => {
   next();
 });
 
-redisClient.on("error", (err) => {
-  console.error("Redis Client Error:", err);
-});
-
 (async () => {
   try {
     const studentVerifyModule = await import(
