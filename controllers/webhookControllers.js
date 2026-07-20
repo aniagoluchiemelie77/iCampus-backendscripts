@@ -273,3 +273,26 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
     res.status(500).send("Internal Server Error");
   }
 };
+export const handleQstashInboundEmailJobs = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "qstashInboundEmailJobsController";
+  const action = "qstashInboundEmailJobs";
+  try {
+    const jobData = req.body;
+    await createNotification(jobData);
+    logControllerPerformance(controllerName, action, startTime, "success");
+    return res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Error processing email job from QStash:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+export default router;

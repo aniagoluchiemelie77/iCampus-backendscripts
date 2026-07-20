@@ -1,15 +1,18 @@
-import amqp from "amqplib";
-import { createNotification } from "../services/notification.js";
+import { Client } from "@upstash/qstash";
 
-export async function startWorker() {
-  const connection = await amqp.connect("amqp://localhost:5672");
-  const channel = await connection.createChannel();
-  await channel.assertQueue("emailQueue");
-  console.log("📨 Email worker started...");
-  channel.consume("emailQueue", async (msg) => {
-    if (!msg) return;
-    const job = JSON.parse(msg.content.toString());
-    await createNotification(job);
-    channel.ack(msg);
-  });
+const qstash = new Client({
+  token: process.env.QSTASH_TOKEN,
+});
+
+export async function queueEmailJob(emailData) {
+  try {
+    const res = await qstash.publishJSON({
+      url: `${process.env.BACKEND_URL}/webhooks/qstash/webhook/send-notifications`,
+      body: emailData,
+    });
+    console.log("Email job queued in QStash:", res.messageId);
+  } catch (error) {
+    console.error("Failed to queue email with QStash:", error);
+    throw error;
+  }
 }

@@ -1,35 +1,24 @@
 import express from "express";
 import { createServer } from "http";
-import "./workers/reditFile.js";
 import cors from "cors";
-import mongoose from "mongoose";
 import dotenv from "dotenv";
-import nodemailer from "nodemailer";
-import { init } from "./controllers/socket.js";
-import { connectQueue } from "./rabbitmq.js";
-import { client } from "./workers/reditFile.js";
-import { initEmailQueue } from "./controllers/emailProducers.js";
-import { startWorker } from "./workers/emailWorker.js";
-import { init as initSocket } from "./controllers/socket.js";
 import { pathToFileURL } from "url";
 import path from "path";
 import { fileURLToPath } from "url";
+import { db } from "./config/firebaseAdmin.js";
+import { client as redisClient } from "./workers/reditFile.js";
+import { init as initSocket } from "./controllers/socket.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 dotenv.config();
 
-(async () => {
-  await initEmailQueue();
-  startWorker();
-})();
-
 const app = express();
 const httpServer = createServer(app);
-const io = init(httpServer);
-init(httpServer);
+const io = initSocket(httpServer);
 
 app.use(cors());
+
 app.use((req, res, next) => {
   if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
     express.json()(req, res, next);
@@ -44,16 +33,12 @@ app.use((req, res, next) => {
   next();
 });
 
-const MONGO_URI = "mongodb://127.0.0.1:27017/iCampus";
-client.on("error", (err) => {
+redisClient.on("error", (err) => {
   console.error("Redis Client Error:", err);
 });
 
-connectQueue();
-
-mongoose
-  .connect(MONGO_URI)
-  .then(async () => {
+(async () => {
+  try {
     const studentVerifyModule = await import(
       pathToFileURL(path.join(__dirname, "routes/verify/students.js")).href
     );
@@ -96,55 +81,33 @@ mongoose
     const lecturerVerifyModule = await import(
       pathToFileURL(path.join(__dirname, "routes/verify/lecturers.js")).href
     );
-    const routePath = path.join(__dirname, "routes/user.js");
-    const userModule = await import(pathToFileURL(routePath).href);
+    const userModule = await import(
+      pathToFileURL(path.join(__dirname, "routes/user.js")).href
+    );
 
-    const userRoutes = userModule.default;
-    const lecturerVerifyRoutes = lecturerVerifyModule.default;
-    const userVerifyRoutes = userVerifyModule.default;
-    const postRoutes = postModule.default;
-    const studentVerifyRoutes = studentVerifyModule.default;
-    const reviewsRoutes = reviewsModule.default;
-    const ticketingRoutes = ticketingModule.default;
-    const webhooksRoutes = webhooksModule.default;
-    const appAuthRoutes = appAuthModule.default;
-    const messageRoutes = messageModule.default;
-    const adminRoutes = adminModule.default;
-    const userAccountDetailsRoute = userAccountDetailsModule.default;
-    const studentClassDetails = studentClassModule.default;
-    const lecturerClassDetails = lecturerClassModule.default;
-    const storeRoutes = storeModule.default;
+    app.use("/users", userModule.default);
+    app.use("/reviews", reviewsModule.default);
+    app.use("/webhooks", webhooksModule.default);
+    app.use("/admins", adminModule.default);
+    app.use("/v1/auth", appAuthModule.default);
+    app.use("/users/messages", messageModule.default);
+    app.use("/support/tickets", ticketingModule.default);
+    app.use("/user", userAccountDetailsModule.default);
+    app.use("/users/student/class", studentClassModule.default);
+    app.use("/users/lecturers/class", lecturerClassModule.default);
+    app.use("/posts", postModule.default);
+    app.use("/store", storeModule.default);
+    app.use("/verifyStudent", studentVerifyModule.default);
+    app.use("/verifyInstructor", lecturerVerifyModule.default);
+    app.use("/verifyUser", userVerifyModule.default);
 
-    app.use("/users", userRoutes);
-    app.use("/reviews", reviewsRoutes);
-    app.use("/webhooks", webhooksRoutes);
-    app.use("/admins", adminRoutes);
-    app.use("/v1/auth", appAuthRoutes);
-    app.use("/users/messages", messageRoutes);
-    app.use("/support/tickets", ticketingRoutes);
-    app.use("/user", userAccountDetailsRoute);
-    app.use("/users/student/class", studentClassDetails);
-    app.use("/users/lecturers/class", lecturerClassDetails);
-    app.use("/posts", postRoutes);
-    app.use("/store", storeRoutes);
-    app.use("/verifyStudent", studentVerifyRoutes);
-    app.use("/verifyInstructor", lecturerVerifyRoutes);
-    app.use("/verifyUser", userVerifyRoutes);
+    console.log("✅ All routes successfully loaded");
+  } catch (error) {
+    console.error("❌ Error loading routes:", error);
+  }
+})();
 
-    console.log("✅ MongoDB connected");
-    httpServer.listen(5000, "0.0.0.0", () => {
-      console.log("🚀 Backend & Socket.io running on port 5000");
-    });
-  })
-  .catch((err) => {
-    console.error("❌ MongoDB connection error:", err);
-  });
-
-export const transporter = nodemailer.createTransport({
-  host: "smtp.postmarkapp.com",
-  port: 2525,
-  auth: {
-    user: process.env.TRANSPORTER_AUTH_USER,
-    pass: process.env.TRANSPORTER_AUTH_PASS,
-  },
+const PORT = process.env.PORT || 5000;
+httpServer.listen(PORT, "0.0.0.0", () => {
+  console.log(`🚀 Backend & Socket.io running on port ${PORT}`);
 });

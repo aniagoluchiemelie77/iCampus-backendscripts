@@ -19,6 +19,7 @@ if (!admin.apps.length) {
       credential: admin.credential.cert(serviceAccount),
       storageBucket: process.env.FIREBASE_STORAGE_BUCKET,
     });
+    const db = admin.firestore();
 
     console.log("Firebase Admin Initialized Successfully");
   } catch (error) {
@@ -27,4 +28,4 @@ if (!admin.apps.length) {
 }
 
 const storage = admin.storage();
-export { admin, storage };
+export { admin, storage, db };
