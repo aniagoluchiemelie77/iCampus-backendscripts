@@ -11,19 +11,25 @@ export const createTicket = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "createTicketController";
   const action = "createTicket";
+
   try {
     const { message, category } = req.body;
     const userId = req.user.uid;
 
-    const newTicket = await SupportTicket.create({
+    const ticketRefId = generateTicketRefId("technical");
+
+    const newTicketData = {
+      ticketRefId,
       userId,
-      ticketRefId: generateTicketRefId("technical"),
       source: "in-app",
       originalMessage: message,
       severity: "high",
       category,
-      thread: [{ sender: userId, message }],
-    });
+      thread: [{ sender: userId, message, timestamp: new Date() }],
+      createdAt: new Date(),
+    };
+    await SupportTicket.doc(ticketRefId).set(newTicketData);
+
     await createNotification({
       recipientId: userId,
       category: "system",
@@ -32,14 +38,14 @@ export const createTicket = async (req, res) => {
       recipientEmail: req.user.email,
       payload: {
         userName: req.user.name,
-        ticketRefId: newTicket.ticketRefId,
+        ticketRefId,
         date: new Date().toLocaleDateString(),
         time: new Date().toLocaleTimeString(),
       },
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(201).json(newTicket);
+    res.status(201).json(newTicketData);
   } catch (error) {
     logControllerPerformance(
       controllerName,
@@ -62,20 +68,38 @@ export const adminUpdateTicketStatus = async (req, res) => {
         .json({ message: "Status is required", success: false });
     }
 
-    const ticket = await SupportTicket.findOne({ ticketRefId });
-    if (!ticket) {
+    const ticketSnapshot = await SupportTicket.where(
+      "ticketRefId",
+      "==",
+      ticketRefId,
+    )
+      .limit(1)
+      .get();
+
+    if (ticketSnapshot.empty) {
       return res
         .status(404)
         .json({ message: "Ticket not found", success: false });
     }
 
-    ticket.status = status;
-    await ticket.save();
+    const ticketDocRef = ticketSnapshot.docs[0].ref;
+    const ticketData = ticketSnapshot.docs[0].data();
+    const updatePayload = {
+      status,
+      updatedAt: new Date(),
+    };
+    await ticketDocRef.set(updatePayload, { merge: true });
+
+    const updatedTicket = { ...ticketData, ...updatePayload };
 
     if (status === "resolved") {
-      const user = await User.findOne({ uid: ticket.userId }).select(
-        "firstname email",
-      );
+      let userData = null;
+      if (ticketData.userId) {
+        const userDoc = await User.doc(ticketData.userId).get();
+        if (userDoc.exists) {
+          userData = userDoc.data();
+        }
+      }
 
       const now = new Date();
       const dateString = now.toLocaleDateString();
@@ -83,14 +107,14 @@ export const adminUpdateTicketStatus = async (req, res) => {
       await Promise.all([
         createNotification({
           notificationId: generateNotificationId("system"),
-          recipientId: ticket.userId,
-          recipientEmail: user?.email,
+          recipientId: ticketData.userId,
+          recipientEmail: userData?.email,
           category: "system",
           actionType: "SUPPORT_TICKET_RESOLVED",
           sendEmail: true,
           payload: {
-            userName: user?.firstname || "User",
-            ticketRefId: ticket.ticketRefId,
+            userName: userData?.firstname || "User",
+            ticketRefId: ticketData.ticketRefId,
             date: dateString,
             time: timeString,
           },
@@ -103,8 +127,8 @@ export const adminUpdateTicketStatus = async (req, res) => {
             sendEmailFlag: false,
             senderId: req.admin.uid,
             payload: {
-              ticketRefId: ticket.ticketRefId,
-              userId: ticket.userId,
+              ticketRefId: ticketData.ticketRefId,
+              userId: ticketData.userId,
               adminId: req.admin.uid,
             },
           },
@@ -115,7 +139,7 @@ export const adminUpdateTicketStatus = async (req, res) => {
     res.status(200).json({
       success: true,
       message: `Ticket marked as ${status}`,
-      ticket,
+      ticket: updatedTicket,
     });
   } catch (error) {
     console.error("Error updating ticket status:", error);

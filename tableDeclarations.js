@@ -9,6 +9,7 @@ export const Course = db.collection("courses");
 export const CourseAssignments = db.collection("courseassignments");
 export const UserBankOrCardDetails = db.collection("usercardorbankdetails");
 export const EmailVerification = db.collection("emailverify");
+//school name is in lowercase, in frontend capitalize
 export const OperationalInstitutions = db.collection("operationalinstitutions");
 export const Exceptions = db.collection("exeeptions");
 export const Lectures = db.collection("lectures");

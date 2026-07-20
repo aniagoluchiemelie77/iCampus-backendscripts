@@ -1,4 +1,5 @@
 import { Message, Notification } from "../tableDeclarations.js";
+import { db } from "../config/firebaseAdmin.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 
 export const registerPrivateChatHandlers = (io, socket) => {
@@ -61,24 +62,28 @@ export const registerPrivateChatHandlers = (io, socket) => {
         });
       }
       const roomId = [senderId, recipientId].sort().join("_");
+      const messageId = id || `msg_${Date.now()}`;
+
       const dbMessagePayload = {
-        messageId: id || `msg_${Date.now()}`,
+        messageId,
         senderId,
         recipientId,
-        text: text?.trim(),
+        text: text?.trim() || "",
         attachments: attachments || [],
         status: "sent",
         timestamp: new Date(),
       };
-      Message.create(dbMessagePayload).catch((dbErr) => {
-        console.error(
-          `[CHAT_DB_ERROR] Message writing failed for ${dbMessagePayload.messageId}:`,
-          dbErr.message,
-        );
-      });
+      Message.doc(messageId)
+        .set(dbMessagePayload)
+        .catch((dbErr) => {
+          console.error(
+            `[CHAT_DB_ERROR] Message writing failed for ${messageId}:`,
+            dbErr.message,
+          );
+        });
       logControllerPerformance(controllerName, action, startTime, "success");
       io.to(roomId).emit("receive_message", {
-        id: dbMessagePayload.messageId,
+        id: messageId,
         text: dbMessagePayload.text,
         senderId: dbMessagePayload.senderId,
         recipientId: dbMessagePayload.recipientId,
@@ -112,9 +117,21 @@ export const registerPrivateChatHandlers = (io, socket) => {
       const { messageId, senderId } = payload;
       if (!messageId || !senderId) return;
       const roomId = [socket.handshake.query.userId, senderId].sort().join("_");
-      Message.updateOne({ messageId }, { $set: { status: "delivered" } }).catch(
-        () => {},
-      );
+      const messageQuery = await Message.where("messageId", "==", messageId)
+        .limit(1)
+        .get();
+      if (!messageQuery.empty) {
+        const messageDocRef = messageQuery.docs[0].ref;
+        messageDocRef
+          .set(
+            {
+              status: "delivered",
+              updatedAt: new Date(),
+            },
+            { merge: true },
+          )
+          .catch(() => {});
+      }
       logControllerPerformance(controllerName, action, startTime, "success");
       io.to(roomId).emit("status_update", {
         messageId,
@@ -142,10 +159,26 @@ export const registerPrivateChatHandlers = (io, socket) => {
       const { readerId, senderId } = payload;
       if (!readerId || !senderId) return;
       const roomId = [readerId, senderId].sort().join("_");
-      Message.updateMany(
-        { senderId: senderId, recipientId: readerId, status: { $ne: "seen" } },
-        { $set: { status: "seen" } },
-      ).catch((dbErr) => {
+      (async () => {
+        const unseenSnapshot = await Message.where("senderId", "==", senderId)
+          .where("recipientId", "==", readerId)
+          .where("status", "!=", "seen")
+          .get();
+
+        if (!unseenSnapshot.empty) {
+          const batch = db.batch();
+          const now = new Date();
+
+          unseenSnapshot.docs.forEach((doc) => {
+            batch.update(doc.ref, {
+              status: "seen",
+              updatedAt: now,
+            });
+          });
+
+          await batch.commit();
+        }
+      })().catch((dbErr) => {
         console.error(
           "[CHAT_DB_ERROR] Massive read state flag execution failure:",
           dbErr.message,
@@ -174,7 +207,6 @@ export const registerPrivateChatHandlers = (io, socket) => {
       );
     }
   });
-
   socket.on("edit_message", ({ messageId, newText, recipientId }) => {
     const roomId = [socket.userId, recipientId].sort().join("_");
 
@@ -183,7 +215,6 @@ export const registerPrivateChatHandlers = (io, socket) => {
       newText,
     });
   });
-
   socket.on("delete_message", ({ messageId, recipientId }) => {
     const roomId = [socket.userId, recipientId].sort().join("_");
 
@@ -198,10 +229,22 @@ export const markAllMessagesAsRead = async (req, res) => {
   const action = "markAllMessagesAsRead";
   try {
     const userId = req.user.id;
-    await Message.updateMany(
-      { recipientId: userId, status: { $ne: "seen" } },
-      { $set: { status: "seen" } },
-    );
+    const unseenSnapshot = await Message.where("recipientId", "==", userId)
+      .where("status", "!=", "seen")
+      .get();
+    if (!unseenSnapshot.empty) {
+      const batch = db.batch();
+      const now = new Date();
+
+      unseenSnapshot.docs.forEach((doc) => {
+        batch.update(doc.ref, {
+          status: "seen",
+          updatedAt: now,
+        });
+      });
+
+      await batch.commit();
+    }
     logControllerPerformance(controllerName, action, startTime, "success");
     res.json({ success: true });
   } catch (err) {
@@ -224,13 +267,12 @@ export const editMessage = async (req, res) => {
     const { text } = req.body;
     const senderId = req.user.uid;
 
-    const message = await Message.findOneAndUpdate(
-      { id: messageId, senderId: senderId },
-      { text: text, isEdited: true },
-      { new: true },
-    );
+    const snapshot = await Message.where("messageId", "==", messageId)
+      .where("senderId", "==", senderId)
+      .limit(1)
+      .get();
 
-    if (!message) {
+    if (snapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -242,9 +284,22 @@ export const editMessage = async (req, res) => {
         .status(404)
         .json({ message: "Message not found or unauthorized" });
     }
+
+    const messageDocRef = snapshot.docs[0].ref;
+    const existingData = snapshot.docs[0].data();
+    const updatePayload = {
+      text: text?.trim(),
+      isEdited: true,
+      updatedAt: new Date(),
+    };
+    await messageDocRef.set(updatePayload, { merge: true });
+    const updatedMessage = {
+      ...existingData,
+      ...updatePayload,
+    };
     logControllerPerformance(controllerName, action, startTime, "success");
 
-    res.status(200).json({ success: true, message });
+    res.status(200).json({ success: true, message: updatedMessage });
   } catch (error) {
     logControllerPerformance(
       controllerName,
@@ -256,19 +311,17 @@ export const editMessage = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
-
 export const deleteMessage = async (req, res) => {
   try {
     const { messageId } = req.params;
     const senderId = req.user.uid;
 
-    const message = await Message.findOneAndUpdate(
-      { id: messageId, senderId: senderId },
-      { status: "deleted", text: "This message was deleted" },
-      { new: true },
-    );
+    const snapshot = await Message.where("messageId", "==", messageId)
+      .where("senderId", "==", senderId)
+      .limit(1)
+      .get();
 
-    if (!message) {
+    if (snapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -280,6 +333,16 @@ export const deleteMessage = async (req, res) => {
         .status(404)
         .json({ message: "Message not found or unauthorized" });
     }
+
+    const messageDocRef = snapshot.docs[0].ref;
+    await messageDocRef.set(
+      {
+        status: "deleted",
+        text: "This message was deleted",
+        updatedAt: new Date(),
+      },
+      { merge: true },
+    );
 
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ success: true });

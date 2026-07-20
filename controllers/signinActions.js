@@ -6,8 +6,9 @@ import {
   SchoolConfiguration,
   userPrefs,
   Admin,
+  UserSessions,
 } from "../tableDeclarations.js";
-import { getChannel } from "../rabbitmq.js";
+import { db } from "../config/firebaseAdmin.js";
 import crypto from "crypto";
 import geoip from "geoip-lite";
 import {
@@ -49,6 +50,7 @@ export const signUp = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "signUpController";
   const action = "signUp";
+
   const {
     usertype,
     email,
@@ -62,14 +64,25 @@ export const signUp = async (req, res) => {
     deviceName,
     providerId,
   } = req.body;
-  try {
-    const existingUser = await User.findOne({
-      usertype,
-      ...(usertype === "student" && { matriculation_number, department }),
-      ...(usertype === "lecturer" && { staff_id, department }),
-    }).lean();
 
-    if (existingUser) {
+  try {
+    let existingUserQuery = User.where("usertype", "==", usertype);
+
+    if (usertype === "student" && matriculation_number && department) {
+      existingUserQuery = existingUserQuery
+        .where("matriculation_number", "==", matriculation_number)
+        .where("department", "==", department);
+    } else if (usertype === "lecturer" && staff_id && department) {
+      existingUserQuery = existingUserQuery
+        .where("staff_id", "==", staff_id)
+        .where("department", "==", department);
+    } else {
+      existingUserQuery = User.where("email", "==", email);
+    }
+
+    const existingUserSnapshot = await existingUserQuery.limit(1).get();
+
+    if (!existingUserSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -81,48 +94,62 @@ export const signUp = async (req, res) => {
         .status(409)
         .json({ message: "User already exists.", success: false });
     }
+
     const uid = generateUserUID();
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
       .split(",")[0]
       .trim();
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+
     let hashedPassword = null;
     if (password && password !== "SOCIAL_AUTH") {
       hashedPassword = await bcrypt.hash(password, 10);
     }
+
     const itagusername = generateItagUsername(firstname, 5);
-    const newUser = new User({
+    const referralCode = await generateUniqueReferralCode(req.body);
+    const isVerified =
+      usertype === "student" || usertype === "lecturer" || providerId
+        ? true
+        : false;
+
+    const newUserObj = {
       uid,
       ...req.body,
       itagusername,
-      referralCode: await generateUniqueReferralCode(req.body),
+      referralCode,
       password: hashedPassword,
-      isVerified:
-        usertype === "student" || usertype === "lecturer" || providerId
-          ? true
-          : false,
+      isVerified,
       providerId: providerId || "",
-      sessions: [],
-    });
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    delete newUserObj.passwordConfirm;
+    await User.doc(uid).set(newUserObj);
+
     const iSCardEligible =
       usertype === "student" ||
       usertype === "lecturer" ||
       usertype === "otherUser";
+
     if (iSCardEligible) {
       const newCardNumber = await generateUniqueCardNumber();
       const expiryDate = await generateExpiryDate();
-      const newITag = new ITag({
+      const itagId = `itag_${uid}`;
+
+      const newITagData = {
         userId: uid,
         username: itagusername,
         cardHolderName: `${firstname} ${lastname}`,
         cardNumber: newCardNumber,
         tier: "free",
         expiryDate,
-      });
-      await newITag.save();
+        createdAt: new Date(),
+      };
+      await ITag.doc(itagId).set(newITagData);
     }
-    const defaultPreferences = new userPrefs({
+    const defaultPreferencesData = {
       userId: uid,
       theme: "light",
       notifications: {
@@ -141,28 +168,45 @@ export const signUp = async (req, res) => {
       },
       language: "en",
       quietHours: { enabled: false },
+      updatedAt: new Date(),
+    };
+    await userPrefs.doc(uid).set(defaultPreferencesData);
+
+    const { accessToken, refreshToken } = await generateTokens({
+      uid,
+      usertype,
+      email,
+      ...newUserObj,
     });
-    await defaultPreferences.save();
-    const { accessToken, refreshToken } = await generateTokens(newUser);
+
+    const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const initialSession = {
+      sessionId,
+      userId: uid,
       deviceId,
       deviceName,
       ipAddress: ip,
       location,
       refreshToken,
       lastUsed: new Date(),
+      createdAt: new Date(),
     };
-    newUser.sessions.push(initialSession);
-    await newUser.save();
-    const {
-      password: passwordToIgnore,
-      iCashPin: pinToIgnore,
-      ...safeUser
-    } = newUser.toObject();
-    safeUser.theme = defaultPreferences.theme;
+
+    await UserSessions.doc(sessionId).set(initialSession);
+    const safeUser = { ...newUserObj };
+    delete safeUser.password;
+    delete safeUser.iCashPin;
+
+    safeUser.theme = defaultPreferencesData.theme;
+    const sessionsSnapshot = await UserSessions.where(
+      "userId",
+      "==",
+      uid,
+    ).get();
+    safeUser.sessions = sessionsSnapshot.docs.map((doc) => doc.data());
     await createNotification({
       notificationId: generateNotificationId("signup"),
-      recipientId: newUser.uid,
+      recipientId: uid,
       category: "signup",
       actionType: "WELCOME_USER",
       title: "Welcome to iCampus!",
@@ -175,6 +219,7 @@ export const signUp = async (req, res) => {
       sendPush: true,
       saveToDb: true,
     });
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(201).json({
       message: "User created successfully",
@@ -193,12 +238,6 @@ export const signUp = async (req, res) => {
       error.message,
     );
 
-    if (error.code === 11000) {
-      return res.status(409).json({
-        message: "Duplicate entry: User already exists.",
-        success: false,
-      });
-    }
     return res.status(500).json({
       message: error.message || "Failed to save user",
       success: false,
@@ -209,6 +248,7 @@ export const Login = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "LoginController";
   const action = "Login";
+
   const {
     identifier,
     password,
@@ -217,9 +257,13 @@ export const Login = async (req, res) => {
     socialProvider,
     idToken,
   } = req.body.credentials || req.body;
+
   try {
-    const user = await User.findOne({ email: identifier });
-    if (!user) {
+    const userSnapshot = await User.where("email", "==", identifier)
+      .limit(1)
+      .get();
+
+    if (userSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -231,6 +275,14 @@ export const Login = async (req, res) => {
         .status(404)
         .json({ error: "Account not found. Please sign up first." });
     }
+
+    const userDocRef = userSnapshot.docs[0].ref;
+    const user = {
+      id: userSnapshot.docs[0].id,
+      ...userSnapshot.docs[0].data(),
+    };
+
+    // 2. Validate Authentication Tokens or Password
     if (socialProvider === "google") {
       const isValid = await verifyGoogleToken(idToken, identifier);
       if (!isValid) {
@@ -256,7 +308,7 @@ export const Login = async (req, res) => {
         return res.status(401).json({ error: "Invalid GitHub token" });
       }
     } else {
-      const isMatch = await bcrypt.compare(password, user.password);
+      const isMatch = await bcrypt.compare(password, user.password || "");
       if (!isMatch) {
         logControllerPerformance(
           controllerName,
@@ -268,6 +320,7 @@ export const Login = async (req, res) => {
         return res.status(401).json({ error: "Invalid password" });
       }
     }
+
     if (socialProvider && user.providerId !== socialProvider) {
       logControllerPerformance(
         controllerName,
@@ -280,6 +333,7 @@ export const Login = async (req, res) => {
         error: `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
       });
     }
+
     const { accessToken, refreshToken } = await generateTokens(user);
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
       .split(",")[0]
@@ -287,21 +341,40 @@ export const Login = async (req, res) => {
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 
+    // 3. Handle Separated Session Logic
     const sessionData = {
+      userId: user.uid,
       deviceId,
       deviceName,
       ipAddress: ip,
       location,
       refreshToken,
       lastUsed: new Date(),
+      updatedAt: new Date(),
     };
-    const existingSessionIndex = user.sessions.findIndex(
-      (s) => s.deviceId === deviceId,
-    );
-    if (existingSessionIndex > -1) {
-      user.sessions[existingSessionIndex] = sessionData;
+    const existingSessionQuery = await UserSessions.where(
+      "userId",
+      "==",
+      user.uid,
+    )
+      .where("deviceId", "==", deviceId)
+      .limit(1)
+      .get();
+
+    if (!existingSessionQuery.empty) {
+      const sessionDocRef = existingSessionQuery.docs[0].ref;
+      await sessionDocRef.set(sessionData, { merge: true });
     } else {
-      user.sessions.push(sessionData);
+      const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      sessionData.sessionId = sessionId;
+      sessionData.createdAt = new Date();
+
+      await UserSessions.doc(sessionId).set(sessionData);
+
+      const now = new Date();
+      const formattedDate = now.toLocaleDateString();
+      const formattedTime = now.toLocaleTimeString();
+
       await createNotification({
         notificationId: generateNotificationId("security"),
         recipientId: user.uid,
@@ -311,7 +384,7 @@ export const Login = async (req, res) => {
         actionType: "NEW_LOGIN",
         title: "Security Alert: New Login",
         payload: {
-          userName: user.firstname,
+          userName: user.firstname || user.firstName,
           ipAddress: ip,
           location: location,
           date: formattedDate,
@@ -322,22 +395,30 @@ export const Login = async (req, res) => {
         sendEmail: true,
         saveToDb: true,
       });
+
       await addFlag(user.uid, "UNRECOGNIZED_LOCATION");
     }
-    await user.save();
+
     await verifyAndNotifyLogin(user, req, "USER_LOGIN_AUDIT");
-    const preferences = await userPrefs
-      .findOne({
-        userId: user.uid,
-      })
-      .lean();
-    const {
-      password: passwordToIgnore,
-      iCashPin: pinToIgnore,
-      userAccountDetails: detailsToIgnore,
-      ...safeUser
-    } = user.toObject();
+    const preferencesDoc = await userPrefs.doc(user.uid).get();
+    const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
+
+    const allSessionsSnapshot = await UserSessions.where(
+      "userId",
+      "==",
+      user.uid,
+    ).get();
+    const activeSessions = allSessionsSnapshot.docs.map((doc) => doc.data());
+
+    // 5. Construct Safe User Response Payload
+    const safeUser = { ...user };
+    delete safeUser.password;
+    delete safeUser.iCashPin;
+    delete safeUser.userAccountDetails;
+
     safeUser.theme = preferences ? preferences.theme : "light";
+    safeUser.sessions = activeSessions;
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       message: "Login successful",
@@ -361,44 +442,81 @@ export const AdminLogin = async (req, res) => {
   const { identifier, password, deviceId, deviceName } = req.body;
 
   try {
-    const admin = await Admin.findOne({ email: identifier });
-    if (!admin)
-      return res.status(404).json({ error: "Admin credentials invalid." });
+    const adminSnapshot = await Admin.where("email", "==", identifier)
+      .limit(1)
+      .get();
 
-    const isMatch = await bcrypt.compare(password, admin.password);
-    if (!isMatch) return res.status(401).json({ error: "Invalid credentials" });
+    if (adminSnapshot.empty) {
+      return res.status(404).json({ error: "Admin credentials invalid." });
+    }
+
+    const adminDocRef = adminSnapshot.docs[0].ref;
+    const admin = {
+      id: adminSnapshot.docs[0].id,
+      ...adminSnapshot.docs[0].data(),
+    };
+    const isMatch = await bcrypt.compare(password, admin.password || "");
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
 
     const { accessToken, refreshToken } = await generateTokens(admin);
-
-    // 4. Handle Session
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
       .split(",")[0]
       .trim();
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 
+    const adminUid = admin.uid || admin.id;
+
     const sessionData = {
+      adminId: adminUid,
       deviceId,
       deviceName,
       ipAddress: ip,
       location,
       refreshToken,
       lastUsed: new Date(),
+      updatedAt: new Date(),
     };
-    const existingSessionIndex = admin.sessions.findIndex(
-      (s) => s.deviceId === deviceId,
+    const existingSessionQuery = await UserSessions.where(
+      "userId",
+      "==",
+      adminUid,
+    )
+      .where("deviceId", "==", deviceId)
+      .limit(1)
+      .get();
+
+    if (!existingSessionQuery.empty) {
+      const sessionDocRef = existingSessionQuery.docs[0].ref;
+      await sessionDocRef.set(sessionData, { merge: true });
+    } else {
+      const sessionId = `admsess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      sessionData.sessionId = sessionId;
+      sessionData.createdAt = new Date();
+
+      await UserSessions.doc(sessionId).set(sessionData);
+    }
+    await adminDocRef.set(
+      {
+        lastAccessed: new Date(),
+        updatedAt: new Date(),
+      },
+      { merge: true },
     );
 
-    if (existingSessionIndex > -1) {
-      admin.sessions[existingSessionIndex] = sessionData;
-    } else {
-      admin.sessions.push(sessionData);
-    }
-
-    admin.lastAccessed = new Date();
-    await admin.save();
     await verifyAndNotifyLogin(admin, req, "ADMIN_LOGIN_AUDIT");
-    const { password: passwordToIgnore, ...safeAdmin } = admin.toObject();
+
+    const allSessionsSnapshot = await UserSessions.where(
+      "userId",
+      "==",
+      adminUid,
+    ).get();
+    const activeSessions = allSessionsSnapshot.docs.map((doc) => doc.data());
+    const safeAdmin = { ...admin };
+    delete safeAdmin.password;
+    safeAdmin.sessions = activeSessions;
 
     res.status(200).json({
       message: "Admin login successful",
@@ -417,10 +535,27 @@ export const refreshToken = async (req, res) => {
     return res.status(401).json({ message: "Refresh Token Required" });
 
   try {
-    const user = await User.findOne({ refreshTokens: refreshToken });
-    if (!user)
+    const sessionSnapshot = await UserSessions.where(
+      "refreshToken",
+      "==",
+      refreshToken,
+    )
+      .limit(1)
+      .get();
+
+    if (sessionSnapshot.empty)
       return res.status(403).json({ message: "Invalid Refresh Token" });
 
+    const sessionData = sessionSnapshot.docs[0].data();
+    const userId = sessionData.userId;
+
+    const userDoc = await User.doc(userId).get();
+    if (!userDoc.exists)
+      return res
+        .status(403)
+        .json({ message: "User not found for this session" });
+
+    const user = userDoc.data();
     jwt.verify(
       refreshToken,
       process.env.REFRESH_TOKEN_SECRET,
@@ -428,7 +563,7 @@ export const refreshToken = async (req, res) => {
         if (err) return res.status(403).json({ message: "Token Expired" });
 
         const newAccessToken = jwt.sign(
-          { id: user.uid, email: user.email },
+          { id: user.uid || userId, email: user.email },
           process.env.JWT_SECRET,
           { expiresIn: "15m" },
         );
@@ -437,6 +572,7 @@ export const refreshToken = async (req, res) => {
       },
     );
   } catch (e) {
+    console.error("Refresh Token Error:", e.message);
     res.status(500).json({ message: "Server Error" });
   }
 };
@@ -444,6 +580,7 @@ export const fetchInstitutionByCountry = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchInstitutionByCountryController";
   const action = "fetchInstitutionByCountry";
+
   try {
     const { country } = req.query;
 
@@ -477,6 +614,7 @@ export const fetchInstitutionByCountry = async (req, res) => {
         err.message,
       );
     }
+
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=universities+in+${encodeURIComponent(normalizedCountry)}&key=${apiKey}`;
     const response = await axios.get(url);
@@ -494,6 +632,7 @@ export const fetchInstitutionByCountry = async (req, res) => {
       );
       throw new Error(`Google API Error: ${response.data.status}`);
     }
+
     const institutions = response.data.results.map((item) => ({
       name: item.name,
       address: item.formatted_address,
@@ -504,11 +643,13 @@ export const fetchInstitutionByCountry = async (req, res) => {
       photos: item.photos ? item.photos[0].photo_reference : null,
       types: item.types,
     }));
+
     const responsePayload = {
       count: institutions.length,
       source: "google_places",
       institutions,
     };
+
     await client.setEx(cacheKey, 3600, JSON.stringify(responsePayload));
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.json(responsePayload);
@@ -528,8 +669,10 @@ export const validateInstitution = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "validateInstitutionController";
   const action = "validateInstitution";
+
   try {
     const { schoolName } = req.body;
+
     if (!schoolName) {
       logControllerPerformance(
         controllerName,
@@ -540,9 +683,22 @@ export const validateInstitution = async (req, res) => {
       );
       return res.status(400).json({ message: "School name required" });
     }
-    const institution = await OperationalInstitutions.findOne({
-      schoolName: { $regex: new RegExp(`^${schoolName.trim()}$`, "i") },
-    }).lean();
+
+    const trimmedSchoolName = schoolName.trim();
+    const targetNormalized = trimmedSchoolName.toLowerCase();
+    const snapshot = await OperationalInstitutions.get();
+
+    let institution = null;
+    snapshot.docs.forEach((doc) => {
+      const data = doc.data();
+      if (
+        data.schoolName &&
+        data.schoolName.trim().toLowerCase() === targetNormalized
+      ) {
+        institution = { id: doc.id, ...data };
+      }
+    });
+
     if (!institution) {
       logControllerPerformance(
         controllerName,
@@ -557,6 +713,7 @@ export const validateInstitution = async (req, res) => {
           "iCampus not yet operational in this institution. Student/Lecturer verification is unavailable.",
       });
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Institution verified",
@@ -580,6 +737,7 @@ export const validateEmail = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "validateEmailController";
   const action = "validateEmail";
+
   try {
     const { email } = req.body;
     if (!email) {
@@ -596,13 +754,29 @@ export const validateEmail = async (req, res) => {
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    await EmailVerification.findOneAndUpdate(
-      { email },
-      { code: hashedCode, expiresAt },
-      { upsert: true, new: true },
-    );
-    const channel = getChannel();
-    await channel.assertQueue("emailQueue");
+
+    const snapshot = await EmailVerification.where("email", "==", email)
+      .limit(1)
+      .get();
+
+    const verificationPayload = {
+      email,
+      code: hashedCode,
+      expiresAt,
+      updatedAt: new Date(),
+    };
+
+    if (!snapshot.empty) {
+      // Update existing document
+      const docRef = snapshot.docs[0].ref;
+      await docRef.set(verificationPayload, { merge: true });
+    } else {
+      // Create a new document with an auto-generated or email-hashed ID
+      const docId = `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      verificationPayload.createdAt = new Date();
+      await EmailVerification.doc(docId).set(verificationPayload);
+    }
+
     const notificationJob = {
       notificationId: generateNotificationId("auth"),
       recipientEmail: email,
@@ -615,10 +789,9 @@ export const validateEmail = async (req, res) => {
       sendPush: false,
       saveToDb: false,
     };
-    channel.sendToQueue(
-      "emailQueue",
-      Buffer.from(JSON.stringify(notificationJob)),
-    );
+
+    await createNotification(notificationJob);
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Verification code sent",
@@ -640,6 +813,7 @@ export const verifyEmailUsingCode = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "verifyEmailUsingCodeController";
   const action = "verifyEmailUsingCode";
+
   try {
     const { email, code } = req.body;
     if (!email || !code) {
@@ -652,13 +826,16 @@ export const verifyEmailUsingCode = async (req, res) => {
       );
       return res.status(400).json({ message: "Email and code are required" });
     }
+
     const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
-    const record = await EmailVerification.findOneAndDelete({
-      email,
-      code: hashedCode,
-      expiresAt: { $gt: new Date() },
-    });
-    if (!record) {
+    const now = new Date();
+
+    const snapshot = await EmailVerification.where("email", "==", email)
+      .where("code", "==", hashedCode)
+      .limit(1)
+      .get();
+
+    if (snapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -670,19 +847,17 @@ export const verifyEmailUsingCode = async (req, res) => {
         .status(404)
         .json({ message: "No verification request found", verified: false });
     }
-    if (record.code !== hashedCode) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid verification code",
-      );
-      return res
-        .status(400)
-        .json({ message: "Invalid verification code", verified: false });
-    }
-    if (record.expiresAt < new Date()) {
+
+    const docRef = snapshot.docs[0].ref;
+    const record = snapshot.docs[0].data();
+
+    const expiresAt = record.expiresAt.toDate
+      ? record.expiresAt.toDate()
+      : new Date(record.expiresAt);
+
+    if (expiresAt < now) {
+      await docRef.delete();
+
       logControllerPerformance(
         controllerName,
         action,
@@ -694,6 +869,8 @@ export const verifyEmailUsingCode = async (req, res) => {
         .status(400)
         .json({ message: "Verification code has expired", verified: false });
     }
+    await docRef.delete();
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Email verified successfully",
@@ -716,10 +893,11 @@ export const forgotPassword = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "forgotPasswordController";
   const action = "forgotPassword";
+
   try {
     const { email } = req.body;
-    const user = await User.findOne({ email });
-    if (!user) {
+    const userSnapshot = await User.where("email", "==", email).limit(1).get();
+    if (userSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -729,9 +907,27 @@ export const forgotPassword = async (req, res) => {
       );
       return res.status(404).json({ message: "User not found" });
     }
-    const existingRecord = await EmailVerification.findOne({ email });
-    if (existingRecord) {
-      const timeSinceLastSent = Date.now() - (existingRecord.updatedAt || 0);
+
+    const userDoc = userSnapshot.docs[0];
+    const user = { id: userDoc.id, ...userDoc.data() };
+
+    const existingRecordSnapshot = await EmailVerification.where(
+      "email",
+      "==",
+      email,
+    )
+      .limit(1)
+      .get();
+
+    if (!existingRecordSnapshot.empty) {
+      const existingRecord = existingRecordSnapshot.docs[0].data();
+      const updatedAtValue = existingRecord.updatedAt
+        ? existingRecord.updatedAt.toDate
+          ? existingRecord.updatedAt.toDate().getTime()
+          : new Date(existingRecord.updatedAt).getTime()
+        : 0;
+
+      const timeSinceLastSent = Date.now() - updatedAtValue;
       if (timeSinceLastSent < 60000) {
         logControllerPerformance(
           controllerName,
@@ -745,6 +941,7 @@ export const forgotPassword = async (req, res) => {
         });
       }
     }
+
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
     const durationMs = 15 * 60 * 1000;
@@ -757,14 +954,25 @@ export const forgotPassword = async (req, res) => {
       minute: "2-digit",
       hour12: true,
     });
-    await EmailVerification.findOneAndUpdate(
-      { email },
-      { code: hashedCode, expiresAt },
-      { upsert: true, new: true },
-    );
+
+    const verificationPayload = {
+      email,
+      code: hashedCode,
+      expiresAt,
+      updatedAt: new Date(),
+    };
+
+    if (!existingRecordSnapshot.empty) {
+      const docRef = existingRecordSnapshot.docs[0].ref;
+      await docRef.set(verificationPayload, { merge: true });
+    } else {
+      const docId = `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      verificationPayload.createdAt = new Date();
+      await EmailVerification.doc(docId).set(verificationPayload);
+    }
     await createNotification({
       notificationId: generateNotificationId("security"),
-      recipientId: user.uid,
+      recipientId: user.uid || user.id,
       recipientEmail: email,
       category: "security",
       actionType: "PASSWORD_RESET_CODE",
@@ -772,7 +980,7 @@ export const forgotPassword = async (req, res) => {
       message: `Your 6-digit verification code is ${code}. It expires in ${readableExpires}.`,
       payload: {
         code: code,
-        userName: user.firstName || "User",
+        userName: user.firstname || "User",
         expiryTime: readableExpires,
       },
       sendEmail: true,
@@ -780,6 +988,7 @@ export const forgotPassword = async (req, res) => {
       sendSocket: true,
       saveToDb: false,
     });
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       message: "Verification code sent, check your email",
@@ -802,7 +1011,18 @@ export const changePassword = async (req, res) => {
   const controllerName = "changePasswordController";
   const action = "changePassword";
   const { email, password, confirmPassword } = req.body;
-  const record = verificationCodes[email];
+
+  const verificationSnapshot = await EmailVerification.where(
+    "email",
+    "==",
+    email,
+  )
+    .limit(1)
+    .get();
+  const record = !verificationSnapshot.empty
+    ? verificationSnapshot.docs[0].data()
+    : null;
+
   if (!record || !record.verified) {
     logControllerPerformance(
       controllerName,
@@ -830,11 +1050,14 @@ export const changePassword = async (req, res) => {
   }
 
   try {
-    const ip = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const rawIp =
+      req.headers["x-forwarded-for"] || req.socket.remoteAddress || "";
+    const ip = rawIp.split(",")[0].trim();
     const geo = geoip.lookup(ip);
     const currentCountry = geo ? geo.country : "Unknown";
-    const user = await User.findOne({ email });
-    if (!user) {
+
+    const userSnapshot = await User.where("email", "==", email).limit(1).get();
+    if (userSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -844,32 +1067,78 @@ export const changePassword = async (req, res) => {
       );
       return res.status(404).json({ message: "User not found" });
     }
-    const sortedSessions = user.sessions.sort(
-      (a, b) => b.lastUsed - a.lastUsed,
-    );
+
+    const userDocRef = userSnapshot.docs[0].ref;
+    const userData = userSnapshot.docs[0].data();
+    const userId = userData.uid || userSnapshot.docs[0].id;
+    const sessionsSnapshot = await UserSessions.where(
+      "userId",
+      "==",
+      userId,
+    ).get();
+    const sessions = sessionsSnapshot.docs.map((doc) => doc.data());
+
+    const sortedSessions = sessions.sort((a, b) => {
+      const timeA = a.lastUsed?.toDate
+        ? a.lastUsed.toDate().getTime()
+        : new Date(a.lastUsed || 0).getTime();
+      const timeB = b.lastUsed?.toDate
+        ? b.lastUsed.toDate().getTime()
+        : new Date(b.lastUsed || 0).getTime();
+      return timeB - timeA;
+    });
+
     const lastKnownLocation =
       sortedSessions.length > 0 ? sortedSessions[0].location : null;
     const isSuspicious =
       lastKnownLocation && !lastKnownLocation.includes(currentCountry);
+
     const hashedPassword = await bcrypt.hash(password, 10);
-    user.password = hashedPassword;
-    user.refreshTokens = [];
-    await user.save();
+
+    await userDocRef.set(
+      {
+        password: hashedPassword,
+        updatedAt: new Date(),
+      },
+      { merge: true },
+    );
+
+    const batch = UserSessions.firestore.batch();
+    sessionsSnapshot.docs.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+    await batch.commit();
+
+    if (!verificationSnapshot.empty) {
+      await verificationSnapshot.docs[0].ref.delete();
+    }
+
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+    const formattedTime = now.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
 
     await createNotification({
       notificationId: generateNotificationId("security"),
-      recipientId: user.uid,
-      recipientEmail: user.email,
-      recoveryEmails: user.recoveryEmails,
+      recipientId: userId,
+      recipientEmail: userData.email,
+      recoveryEmails: userData.recoveryEmails,
       category: "auth",
       actionType: "PASSWORD_CHANGED",
       title: "Password Changed",
       message: `Your password was successfully updated on ${formattedTime}.`,
       payload: {
-        userName: user.firstname || "User",
+        userName: userData.firstname || userData.firstName || "User",
         date: formattedDate,
         time: formattedTime,
-        userId: user.uid,
+        userId: userId,
       },
       sendEmailFlag: true,
       sendEmail: true,
@@ -877,7 +1146,7 @@ export const changePassword = async (req, res) => {
       sendSocket: true,
       saveToDb: true,
     });
-    delete verificationCodes[email];
+
     notifyAdmins(
       { role: ["super_admin", "support"] },
       {
@@ -886,8 +1155,8 @@ export const changePassword = async (req, res) => {
           ? "SUSPICIOUS_PASSWORD_CHANGE"
           : "PASSWORD_CHANGE_AUDIT",
         payload: {
-          userEmail: user.email,
-          userUid: user.uid,
+          userEmail: userData.email,
+          userUid: userId,
           previousLocation: lastKnownLocation || "None",
           currentLocation: `${geo?.city || "Unknown"}, ${currentCountry}`,
           severity: isSuspicious ? "HIGH" : "LOW",
@@ -896,6 +1165,7 @@ export const changePassword = async (req, res) => {
       },
       isSuspicious,
     ).catch((err) => console.error("Admin audit failed:", err));
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ message: "Password changed successfully" });
   } catch (error) {
@@ -917,10 +1187,30 @@ export const verifyStudent = async (req, res) => {
   const { school_id, matriculation_number } = req.body;
 
   try {
-    const schoolConfig = await SchoolConfiguration.findOne({
-      schoolId: school_id,
-    });
-    if (!schoolConfig || !schoolConfig.isOperational) {
+    const schoolConfigSnapshot = await SchoolConfiguration.where(
+      "schoolId",
+      "==",
+      school_id,
+    )
+      .limit(1)
+      .get();
+
+    if (schoolConfigSnapshot.empty) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "iCampus is not active at this institution.",
+      );
+      return res
+        .status(400)
+        .json({ message: "iCampus is not active at this institution." });
+    }
+
+    const schoolConfig = schoolConfigSnapshot.docs[0].data();
+
+    if (!schoolConfig.isOperational) {
       logControllerPerformance(
         controllerName,
         action,
@@ -959,8 +1249,10 @@ export const verifyStudent = async (req, res) => {
         .status(404)
         .json({ message: "Student record not found in school directory." });
     }
+
     const schoolStudent = await schoolApiResponse.json();
     logControllerPerformance(controllerName, action, startTime, "success");
+
     return res.json({
       firstname: schoolStudent.first_name,
       lastname: schoolStudent.last_name,
@@ -990,6 +1282,7 @@ export const verifyLecturer = async (req, res) => {
   const controllerName = "verifyLecturerController";
   const action = "verifyLecturer";
   const { school_id, staff_id: incomingStaffId } = req.body;
+
   if (!school_id || !incomingStaffId) {
     logControllerPerformance(
       controllerName,
@@ -1004,11 +1297,15 @@ export const verifyLecturer = async (req, res) => {
   }
 
   try {
-    const schoolConfig = await SchoolConfiguration.findOne({
-      schoolId: school_id,
-    });
+    const schoolConfigSnapshot = await SchoolConfiguration.where(
+      "schoolId",
+      "==",
+      school_id,
+    )
+      .limit(1)
+      .get();
 
-    if (!schoolConfig || !schoolConfig.isOperational) {
+    if (schoolConfigSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1022,7 +1319,21 @@ export const verifyLecturer = async (req, res) => {
       });
     }
 
-    let lecturerData;
+    const schoolConfig = schoolConfigSnapshot.docs[0].data();
+
+    if (!schoolConfig.isOperational) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "iCampus is not operational or active at this institution.",
+      );
+      return res.status(400).json({
+        message: "iCampus is not operational or active at this institution.",
+        verified: false,
+      });
+    }
     const portalResponse = await fetch(
       schoolConfig.externalApiConfig.endpoint,
       {
@@ -1046,15 +1357,13 @@ export const verifyLecturer = async (req, res) => {
         "error",
         "Instructor credentials not found in school records",
       );
-      return res
-        .status(404)
-        .json({
-          message: "Instructor credentials not found in school records",
-        });
+      return res.status(404).json({
+        message: "Instructor credentials not found in school records",
+      });
     }
 
     const externalLecturer = await portalResponse.json();
-    lecturerData = {
+    const lecturerData = {
       firstname: externalLecturer.first_name,
       lastname: externalLecturer.last_name,
       department: externalLecturer.department,

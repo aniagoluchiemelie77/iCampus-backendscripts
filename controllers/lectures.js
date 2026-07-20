@@ -12,6 +12,7 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "uploadAndVerifyLessonVideoController";
   const action = "uploadAndVerifyLessonVideo";
+  
   try {
     if (!req.file) {
       logControllerPerformance(
@@ -27,12 +28,30 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
     }
 
     const localFilePath = req.file.path;
-    const creatorId = req.user.id;
+    const creatorId = req.user.id || req.user.uid;
+    const userDoc = await User.doc(creatorId).get();
 
-    const creatorProfile = await User.findOne({ uid: creatorId });
+    if (!userDoc.exists) {
+      if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath);
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Creator profile not found.",
+      );
+      return res
+        .status(404)
+        .json({ success: false, message: "Creator profile not found." });
+    }
+
+    const creatorProfile = userDoc.data();
+    const createdAtValue = creatorProfile.createdAt?.toDate
+      ? creatorProfile.createdAt.toDate()
+      : creatorProfile.createdAt || Date.now();
+
     const accountAgeDays =
-      (Date.now() - new Date(creatorProfile.createdAt).getTime()) /
-      (1000 * 60 * 60 * 24);
+      (Date.now() - new Date(createdAtValue).getTime()) / (1000 * 60 * 60 * 24);
     const isNewCreator = accountAgeDays < 4;
 
     ffmpeg.ffprobe(localFilePath, async (err, metadata) => {
@@ -49,6 +68,7 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
           .status(500)
           .json({ success: false, message: "File format parsing error." });
       }
+
       const { duration, size } = metadata.format;
       const dataDensityRatio = size / duration;
       const videoStream = metadata.streams.find(
@@ -58,10 +78,12 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
       const hasOrganicMetadata = !!(
         tags["com.apple.quicktime.make"] ||
         tags["com.android.version"] ||
-        videoStream.codec_time_base
+        (videoStream && videoStream.codec_time_base)
       );
+
       let verificationVerdict = "Approved";
       let escalationReason = "";
+
       if (duration > 30 && dataDensityRatio < 15000) {
         verificationVerdict = "Pending Review";
         escalationReason =
@@ -76,6 +98,7 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
         escalationReason =
           "Account verification requirements for new profile listings.";
       }
+
       if (verificationVerdict === "Pending Review") {
         try {
           const deepfakeScore = await checkDeepfakeDetectionAPI(localFilePath);
@@ -92,14 +115,16 @@ export const uploadAndVerifyLessonVideo = async (req, res) => {
           );
         }
       }
+
       let cloudStorageUrl = "";
       if (verificationVerdict !== "Flagged/Rejected") {
         cloudStorageUrl = await pushToCloudStorage(
           localFilePath,
-          creatorProfile.uid,
+          creatorId,
           req.file.originalname,
         );
       }
+
       if (fs.existsSync(localFilePath)) fs.unlinkSync(localFilePath);
 
       logControllerPerformance(controllerName, action, startTime, "success");
