@@ -1,0 +1,20 @@
+runtime: nodejs
+env: flexible
+
+# Optional: Adjust instance class based on your resource needs
+resources:
+  cpu: 1
+  memory_gb: 2
+  disk_size_gb: 10
+
+# Automatic scaling configuration
+automatic_scaling:
+  min_num_instances: 1
+  max_num_instances: 5
+  cool_down_period_sec: 120
+  cpu_utilization:
+    target_utilization: 0.6
+
+# Environment variables (Sensitive secrets should ideally be kept in Google Secret Manager)
+env_variables:
+  NODE_ENV: "production"

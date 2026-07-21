@@ -11,7 +11,7 @@ export const UserBankOrCardDetails = db.collection("usercardorbankdetails");
 export const EmailVerification = db.collection("emailverify");
 //school name is in lowercase, in frontend capitalize
 export const OperationalInstitutions = db.collection("operationalinstitutions");
-export const Exceptions = db.collection("exeeptions");
+export const Exceptions = db.collection("exceptions");
 export const Lectures = db.collection("lectures");
 export const Assessment = db.collection("assessments");
 export const AssessmentQuestions = db.collection("assessmentquestions");
