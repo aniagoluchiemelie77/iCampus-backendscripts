@@ -1,5 +1,5 @@
 import jwt from "jsonwebtoken";
-import { admin } from "../config/firebaseAdmin.js";
+import admin from "firebase-admin";
 import { User, Admin } from "../tableDeclarations.js";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
@@ -17,21 +17,31 @@ export const protect = async (req, res, next) => {
   }
   try {
     let decoded;
+    let uid;
     if (token.length > 500) {
       decoded = await admin.auth().verifyIdToken(token);
-      var uid = decoded.uid;
+      uid = decoded.uid;
     } else {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
-      var uid = decoded.id || decoded.uid;
+      uid = decoded.id || decoded.uid;
     }
-    const user = await User.findOne({ uid: uid });
-    if (!user) {
+    const querySnapshot = await User.where("uid", "==", uid).limit(1).get();
+
+    if (querySnapshot.empty) {
       return res
         .status(401)
         .json({ message: "User not found in iCampus records" });
     }
+
+    const userDoc = querySnapshot.docs[0];
+    const user = {
+      id: userDoc.data().uid || uid,
+      docId: userDoc.id,
+      ...userDoc.data(),
+    };
+
     req.user = user;
-    req.user.id = user.uid;
+    req.user.id = user.uid || uid;
     next();
   } catch (error) {
     console.error("Auth Error:", error.message);
@@ -39,7 +49,7 @@ export const protect = async (req, res, next) => {
   }
 };
 export const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 5,
   message: {
     error:
@@ -48,28 +58,6 @@ export const authLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
 });
-
-export const addUserRecord = async (userId, type, status, message) => {
-  const now = new Date();
-  const refDate = now.toISOString().split("T")[0]; // YYYY-MM-DD
-  const refTime = now.toTimeString().split(" ")[0]; // HH:MM:SS
-
-  await UserRecords.updateOne(
-    { userId },
-    {
-      $push: {
-        records: {
-          type,
-          status,
-          message,
-          refDate,
-          refTime,
-        },
-      },
-    },
-    { upsert: true },
-  );
-};
 
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -93,16 +81,25 @@ export const verifyAdmin = async (req, res, next) => {
     if (!req.user || !req.user.uid) {
       return res.status(401).json({ error: "Authentication required" });
     }
-    const admin = await Admin.findOne({ uid: req.user.uid });
+    const querySnapshot = await Admin.where("uid", "==", req.user.uid)
+      .limit(1)
+      .get();
 
-    if (!admin) {
+    if (querySnapshot.empty) {
       return res.status(403).json({
         error: "Access denied. Administrative privileges required.",
       });
     }
-    req.admin = admin;
+
+    const adminDoc = querySnapshot.docs[0];
+    req.admin = {
+      id: adminDoc.id,
+      ...adminDoc.data(),
+    };
+
     next();
   } catch (err) {
+    console.error("Admin verification error:", err);
     res.status(500).json({ error: "Server error during authorization" });
   }
 };

@@ -5,12 +5,13 @@ export const logControllerPerformance = async (controllerName, action, startTime
   const latency = endTime - startTime;
   
   try {
-    await ControllerLog.create({
+    await ControllerLog.add({
       controllerName,
       action,
       status,
       cause,
-      latency
+      latency,
+      createdAt: new Date(),
     });
   } catch (err) {
     console.error("Logger failed to save:", err);

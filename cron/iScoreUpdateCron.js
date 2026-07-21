@@ -4,49 +4,63 @@ import {
   calculateUnifiedIScore,
   updateInstitutionScores,
 } from "../controllers/iScoreController.js";
+import { db } from "../config/firebaseAdmin.js";
 
 cron.schedule("0 0 1 * *", async () => {
   console.log("Starting Monthly iScore Refresh...");
 
   try {
-    const users = await User.find({
-      usertype: { $in: ["student", "lecturer", "otherUser"] },
-    });
+    const querySnapshot = await User.where("usertype", "in", [
+      "student",
+      "lecturer",
+      "otherUser",
+    ]).get();
 
-    const bulkOps = [];
+    if (querySnapshot.empty) {
+      console.log("No eligible users found for iScore refresh.");
+      return;
+    }
 
-    for (let user of users) {
+    let batch = db.batch();
+    let operationCount = 0;
+
+    for (const userDoc of querySnapshot.docs) {
+      const userDocRef = userDoc.ref;
+      const user = userDoc.data();
+
       try {
         const newScore = await calculateUnifiedIScore(user);
 
-        bulkOps.push({
-          updateOne: {
-            filter: { uid: user.uid },
-            update: {
-              $set: {
-                previousIScore: user.currentIScore || 0, // Shift current to previous
-                currentIScore: newScore,
-                monthlyStats: {
-                  minutesActive: 0,
-                  libraryUsageSessions: 0,
-                  booksFound: 0,
-                  aiQueries: 0,
-                  avgReview: 0,
-                  avgTestScore: 0,
-                  lastLibraryAccess: user.monthlyStats.lastLibraryAccess,
-                },
-              },
-            },
+        const updateData = {
+          previousIScore: user.currentIScore || 0,
+          currentIScore: newScore,
+          monthlyStats: {
+            minutesActive: 0,
+            libraryUsageSessions: 0,
+            booksFound: 0,
+            aiQueries: 0,
+            avgReview: 0,
+            avgTestScore: 0,
+            lastLibraryAccess: user.monthlyStats?.lastLibraryAccess || null,
           },
-        });
+          updatedAt: new Date(),
+        };
+
+        batch.update(userDocRef, updateData);
+        operationCount++;
+        if (operationCount >= 500) {
+          await batch.commit();
+          batch = db.batch();
+          operationCount = 0;
+        }
       } catch (err) {
-        console.error(`Error calculating for ${user.uid}:`, err);
+        console.error(`Error calculating for ${user.uid || userDoc.id}:`, err);
       }
     }
-
-    if (bulkOps.length > 0) {
-      await User.bulkWrite(bulkOps);
+    if (operationCount > 0) {
+      await batch.commit();
     }
+
     await updateInstitutionScores();
     console.log("Monthly iScore Refresh Complete.");
   } catch (globalErr) {

@@ -190,19 +190,21 @@ export const generateUniqueCardNumber = async () => {
   let cardNumber = "";
 
   while (!isUnique) {
-    // 1. Generate 16 random digits
     const digits = Math.floor(
       Math.random() * 900000000000000 + 100000000000000,
     ).toString();
     const formatted = `7${digits.match(/.{1,4}/g).join(" ")}`;
-    // 3. Check database to ensure it's unique
-    const existingCard = await ITag.findOne({ cardNumber: formatted });
 
-    if (!existingCard) {
+    const querySnapshot = await ITag
+      .where("cardNumber", "==", formatted)
+      .limit(1)
+      .get();
+    if (querySnapshot.empty) {
       cardNumber = formatted;
       isUnique = true;
     }
   }
+  
   return cardNumber;
 };
 export const generateUserUID = () => {

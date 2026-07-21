@@ -5,6 +5,7 @@ import {
   PaymentMethods,
   SupportTicket,
 } from "../tableDeclarations.js";
+import admin from "firebase-admin";
 import {
   generateTransactionId,
   generateNotificationId,
@@ -47,17 +48,23 @@ export const personaVerifyConfirmation = async (req, res) => {
         data.attributes.payload.data.attributes["reference-id"];
 
       if (referenceId) {
-        const updatedUser = await User.findOneAndUpdate(
-          { uid: referenceId },
-          { isVerified: true, personaInquiryId: inquiryId },
-          { new: true },
-        );
+        const querySnapshot = await User.where("uid", "==", referenceId)
+          .limit(1)
+          .get();
 
-        if (updatedUser) {
+        if (!querySnapshot.empty) {
+          const userDocSnap = querySnapshot.docs[0];
+          const userDocRef = userDocSnap.ref;
+          const userData = userDocSnap.data();
+          await userDocRef.update({
+            isVerified: true,
+            personaInquiryId: inquiryId,
+            updatedAt: new Date(),
+          });
           await createNotification({
-            notificationId: generateNotificationId("system"),
+            notificationId: generateNotificationId("profile"),
             recipientId: referenceId,
-            category: "system",
+            category: "profile",
             actionType: "VERIFICATION_SUCCESS",
             title: "Identity Verified",
             message: "Your identity has been successfully verified!",
@@ -65,15 +72,16 @@ export const personaVerifyConfirmation = async (req, res) => {
           await notifyAdmins(
             { role: ["super_admin", "support"] },
             {
-              notificationId: generateNotificationId("admin_notification"),
-              category: "admin_notification",
+              notificationId: generateNotificationId("profile"),
+              category: "profile",
               actionType: "USER_VERIFICATION_AUDIT",
               title: "User Identity Verified",
-              message: `User ${updatedUser.firstname} (${referenceId}) has completed ID verification.`,
+              message: `User ${userData.firstname || "Unknown"} (${referenceId}) has completed ID verification.`,
               payload: { referenceId, inquiryId },
             },
             false,
           );
+
           logControllerPerformance(
             controllerName,
             action,
@@ -100,6 +108,7 @@ export const handleFlutterwaveWebhook = async (req, res) => {
   const action = "handleFlutterwaveWebhook";
   const secretHash = process.env.FLW_WEBHOOK_HASH;
   const signature = req.headers["verif-hash"];
+
   if (!signature || signature !== secretHash) {
     logControllerPerformance(
       controllerName,
@@ -113,20 +122,27 @@ export const handleFlutterwaveWebhook = async (req, res) => {
   res.status(200).end();
   try {
     const { event, data } = req.body;
+
     if (event === "charge.completed" && data.status === "successful") {
       const { userId, type, methodType, iCashAmount } = data.meta;
 
       if (type === "icash_purchase") {
         const iCashToCredit = Math.floor(iCashAmount);
-        const updatedUser = await User.findOneAndUpdate(
-          { uid: userId },
-          { $inc: { pointsBalance: iCashToCredit } },
-          { new: true },
-        );
+        const querySnapshot = await User.where("uid", "==", userId)
+          .limit(1)
+          .get();
+        if (!querySnapshot.empty) {
+          const userDocSnap = querySnapshot.docs[0];
+          const userDocRef = userDocSnap.ref;
+          const userData = userDocSnap.data();
 
-        if (updatedUser) {
+          await userDocRef.update({
+            pointsBalance: admin.firestore.FieldValue.increment(iCashToCredit),
+            updatedAt: new Date(),
+          });
+
           const transactionId = generateTransactionId("buy");
-          await Transactions.create({
+          await Transactions.doc(transactionId).set({
             transactionId,
             userId,
             type: "buy",
@@ -139,16 +155,17 @@ export const handleFlutterwaveWebhook = async (req, res) => {
             reference: data.tx_ref,
             createdAt: new Date(),
           });
+
           await createNotification({
             notificationId: generateNotificationId("finance"),
             recipientId: userId,
-            recipientEmail: updatedUser.email,
+            recipientEmail: userData.email,
             category: "finance",
             actionType: "ICASH_PURCHASE",
             title: "iCash Purchase Successful",
             message: `${methodType} payment made for ${iCashToCredit} iCash is successful.`,
             payload: {
-              userName: updatedUser.firstname,
+              userName: userData.firstname,
               amountLocal: data.amount,
               amountICash: iCashToCredit,
               currency: data.currency,
@@ -157,11 +174,12 @@ export const handleFlutterwaveWebhook = async (req, res) => {
             sendEmail: true,
             sendPush: true,
           });
+
           await notifyAdmins(
             { role: ["finance", "super_admin"] },
             {
-              notificationId: generateNotificationId("admin_notification"),
-              category: "admin_notification",
+              notificationId: generateNotificationId("finance"),
+              category: "finance",
               actionType: "ICASH_PURCHASE_ADMIN",
               title: "Finance Audit: New Purchase",
               message: `User ${userId} purchased ${iCashToCredit} iCash.`,
@@ -173,6 +191,7 @@ export const handleFlutterwaveWebhook = async (req, res) => {
             },
             false,
           );
+
           logControllerPerformance(
             controllerName,
             action,
@@ -183,9 +202,16 @@ export const handleFlutterwaveWebhook = async (req, res) => {
       }
       const paymentToken = data.card?.token || data.account?.token;
       if (paymentToken) {
-        const existingMethod = await PaymentMethods.findOne({ paymentToken });
-        if (!existingMethod) {
-          await PaymentMethods.create({
+        const methodQuerySnapshot = await PaymentMethods.where(
+          "paymentToken",
+          "==",
+          paymentToken,
+        )
+          .limit(1)
+          .get();
+
+        if (methodQuerySnapshot.empty) {
+          await PaymentMethods.add({
             userId: data.meta.userId,
             method: data.payment_type === "card" ? "card" : "bank",
             paymentToken,
@@ -203,7 +229,9 @@ export const handleFlutterwaveWebhook = async (req, res) => {
                   zip: data.meta.zip,
                 }
               : undefined,
+            createdAt: new Date(),
           });
+
           logControllerPerformance(
             controllerName,
             action,
@@ -225,26 +253,53 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
     const { ToFull, From, Subject, TextBody, MessageID } = req.body;
     const recipient = ToFull[0].Email;
     const userId = recipient.split("+")[1].split("@")[0];
+    const querySnapshot = await SupportTicket.where("userId", "==", userId)
+      .where("status", "!=", "closed")
+      .orderBy("status")
+      .orderBy("createdAt", "desc")
+      .limit(1)
+      .get();
 
-    let ticket = await SupportTicket.findOne({
-      userId,
-      status: { $ne: "closed" },
-    }).sort({ createdAt: -1 });
+    let ticketData;
+    let ticketRefId;
 
-    if (ticket) {
-      ticket.thread.push({ sender: From, message: TextBody });
-      await ticket.save();
+    if (!querySnapshot.empty) {
+      const ticketDocSnap = querySnapshot.docs[0];
+      const ticketDocRef = ticketDocSnap.ref;
+      ticketData = ticketDocSnap.data();
+      ticketRefId = ticketData.ticketRefId;
+
+      await ticketDocRef.update({
+        thread: admin.firestore.FieldValue.arrayUnion({
+          sender: From,
+          message: TextBody,
+          timestamp: new Date(),
+        }),
+        updatedAt: new Date(),
+      });
     } else {
-      ticket = await SupportTicket.create({
+      ticketRefId = generateTicketRefId("technical");
+      ticketData = {
         userId,
-        ticketRefId: generateTicketRefId("technical"),
+        ticketRefId,
         source: "email",
         severity: "high",
+        status: "open",
         originalMessage: TextBody,
         summary: Subject,
-        thread: [{ sender: From, message: TextBody }],
-      });
+        thread: [
+          {
+            sender: From,
+            message: TextBody,
+            timestamp: new Date(),
+          },
+        ],
+        createdAt: new Date(),
+      };
+
+      await SupportTicket.doc(ticketRefId).set(ticketData);
     }
+
     await createNotification({
       recipientId: userId,
       category: "system",
@@ -253,7 +308,7 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
       recipientEmail: From,
       payload: {
         userName: "User",
-        ticketRefId: ticket.ticketRefId,
+        ticketRefId: ticketRefId,
         date: new Date().toLocaleDateString(),
         time: new Date().toLocaleTimeString(),
       },

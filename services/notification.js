@@ -1,4 +1,3 @@
-// services/notificationService.js
 import { Notification, userPrefs } from "../tableDeclarations.js";
 import { getIO } from "../controllers/socket.js";
 import { sendEmail } from "./emailService.js";
@@ -55,7 +54,14 @@ export const createNotification = async ({
   saveToDb = true,
 }) => {
   try {
-    const prefs = await userPrefs.findOne({ userId: recipientId });
+    const querySnapshot = await userPrefs
+      .where("userId", "==", recipientId)
+      .limit(1)
+      .get();
+    let prefs = null;
+    if (!querySnapshot.empty) {
+      prefs = querySnapshot.docs[0].data();
+    }
     const isCritical = [
       "NEW_LOGIN",
       "ICASH_WITHDRAWAL",
@@ -897,18 +903,20 @@ export const createNotification = async ({
 
     let notificationRecord = null;
     if (saveToDb) {
-      notificationRecord = new Notification({
-        notificationId,
-        recipientId,
-        category,
-        actionType,
-        title,
-        message,
-        relatedEntity: { entityId, entityType },
-        payload,
-      });
-      await notificationRecord.save();
-    }
+  notificationRecord = {
+    notificationId,
+    recipientId,
+    category,
+    actionType,
+    title,
+    message,
+    relatedEntity: { entityId, entityType },
+    payload,
+    createdAt: new Date(),
+  };
+
+  await Notification.doc(notificationId).set(notificationRecord);
+}
     if (canSendSocket) {
       const io = getIO();
       io.to(recipientId).emit(
