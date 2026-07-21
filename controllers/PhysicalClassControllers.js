@@ -27,10 +27,26 @@ export const registerAttendanceHandlers = (io, socket) => {
       console.log(
         `[ATTENDANCE_ENGINE] Lecturer ${lecturerId} started session room: ${attendanceRoomId}`,
       );
-      await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        { $set: { attendanceOpen: true } },
-      );
+
+      const lectureQuery = await Lectures.where("id", "==", lectureId)
+        .limit(1)
+        .get();
+      if (!lectureQuery.empty) {
+        await lectureQuery.docs[0].ref.update({
+          attendanceOpen: true,
+          updatedAt: new Date(),
+        });
+      } else {
+        const lectureDocRef = Lectures.doc(lectureId);
+        const lectureDoc = await lectureDocRef.get();
+        if (lectureDoc.exists) {
+          await lectureDocRef.update({
+            attendanceOpen: true,
+            updatedAt: new Date(),
+          });
+        }
+      }
+
       logControllerPerformance(controllerName, action, startTime, "success");
       io.to(attendanceRoomId).emit("attendance_session_started", {
         lectureId,
@@ -83,10 +99,26 @@ export const registerAttendanceHandlers = (io, socket) => {
       console.log(
         `[ATTENDANCE_ENGINE] Closing session room: ${attendanceRoomId}`,
       );
-      await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        { $set: { attendanceOpen: false } },
-      );
+
+      const lectureQuery = await Lectures.where("id", "==", lectureId)
+        .limit(1)
+        .get();
+      if (!lectureQuery.empty) {
+        await lectureQuery.docs[0].ref.update({
+          attendanceOpen: false,
+          updatedAt: new Date(),
+        });
+      } else {
+        const lectureDocRef = Lectures.doc(lectureId);
+        const lectureDoc = await lectureDocRef.get();
+        if (lectureDoc.exists) {
+          await lectureDocRef.update({
+            attendanceOpen: false,
+            updatedAt: new Date(),
+          });
+        }
+      }
+
       logControllerPerformance(controllerName, action, startTime, "success");
       io.to(attendanceRoomId).emit("attendance_session_ended", {
         lectureId,
@@ -138,16 +170,27 @@ export const registerAttendanceHandlers = (io, socket) => {
         );
         return socket.emit("error", "Attendance session is no longer active.");
       }
-      const existingRecord = await Attendance.findOne({ studentId, lectureId });
-      if (existingRecord) {
+      const existingRecordQuery = await Attendance.where(
+        "studentId",
+        "==",
+        studentId,
+      )
+        .where("lectureId", "==", lectureId)
+        .limit(1)
+        .get();
+
+      if (!existingRecordQuery.empty) {
         return socket.emit("attendance_success", {
           message: "Already marked present!",
         });
       }
-      const [student, lecture] = await Promise.all([
-        User.findOne({ uid: studentId }),
-        Lectures.findOne({ id: lectureId }),
+      const [studentQuery, lectureQuery] = await Promise.all([
+        User.where("uid", "==", studentId).limit(1).get(),
+        Lectures.where("id", "==", lectureId).limit(1).get(),
       ]);
+
+      const student = !studentQuery.empty ? studentQuery.docs[0].data() : null;
+      const lecture = !lectureQuery.empty ? lectureQuery.docs[0].data() : null;
 
       if (!student) {
         logControllerPerformance(
@@ -162,13 +205,18 @@ export const registerAttendanceHandlers = (io, socket) => {
           "Student profile record could not be resolved.",
         );
       }
-      await Attendance.create({
+
+      const attendanceId = Math.random().toString(36).slice(2, 11);
+      await Attendance.doc(attendanceId).set({
+        attendanceId,
         studentId,
         lectureId,
         courseId: lecture?.courseId || null,
         status: "Present",
         timestamp: timestamp ? new Date(timestamp) : new Date(),
+        createdAt: new Date(),
       });
+
       const attendanceRoomId = `lecture_attendance_${lectureId}`;
 
       io.to(attendanceRoomId).emit("student_checked_in", {

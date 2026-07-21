@@ -751,19 +751,7 @@ export const postSchema = new mongoose.Schema(
     },
     likes: [{ type: String }],
     bookmarks: [{ type: String }],
-    comments: [
-      {
-        commentId: { type: String, required: true },
-        userId: {
-          type: String,
-          required: true,
-        },
-        comment: { type: String, required: true },
-        parentId: { type: String, default: null },
-        likes: [{ type: String, ref: "User" }],
-        createdAt: { type: Date, default: Date.now },
-      },
-    ],
+    comments: [commentSchema],
     impressions: { type: Number, default: 0 },
     shares: [{ type: String, ref: "User" }],
     isRepost: { type: Boolean, default: false },

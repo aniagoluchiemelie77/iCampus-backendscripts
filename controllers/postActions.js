@@ -1,11 +1,17 @@
 import { createNotification } from "../services/notification.js";
-import { Follow, User, Posts } from "../tableDeclarations.js";
+import {
+  Follow,
+  User,
+  Posts,
+  Comments,
+  PostReposters,
+} from "../tableDeclarations.js";
 import {
   generateNotificationId,
   generatePostId,
 } from "../utils/idGenerator.js";
 import { extractMentions } from "../utils/postMentionsRegex.js";
-import { storage } from "../config/firebaseAdmin.js";
+import { storage, db } from "../config/firebaseAdmin.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { scan } from "../services/visionAi.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
@@ -24,19 +30,26 @@ export const moderateContent = async (postId, content, media) => {
     scan(media.url, content)
       .then(async (result) => {
         if (result?.isViolation) {
-          await Posts.findOneAndUpdate(
-            { postId: postId },
-            { $set: { status: "hidden" } },
-          );
+          const postQuery = await Posts.where("postId", "==", postId)
+            .limit(1)
+            .get();
+          if (!postQuery.empty) {
+            const postDocRef = postQuery.docs[0].ref;
+            await postDocRef.update({
+              status: "hidden",
+              updatedAt: new Date(),
+            });
+          }
+
           await notifyAdmins(
             { role: ["moderator", "super_admin"] },
             {
-              notificationId: generateNotificationId("admin_notification"),
+              notificationId: generateNotificationId("social"),
               actionType: "MODERATION_ALERT_NUDITY",
               payload: {
                 postId: postId,
-                reason: moderationResult.flaggedCategory,
-                confidence: moderationResult.confidence,
+                reason: result.flaggedCategory,
+                confidence: result.confidence,
               },
               senderId: "system",
             },
@@ -58,21 +71,22 @@ export const createPost = async (req, res) => {
       content,
       media,
       poll,
-      isSubscriptionContentpostType,
+      isSubscriptionContent,
+      postType,
       jobMetadata,
       eventMetadata,
     } = req.body;
-    const userId = req.user.uid;
+    const userId = req.user.id || req.user.uid;
 
-    let processedMedia = media;
-    if (media?.mediaType === "video" && Array.isArray(media.url)) {
-      processedMedia.url = [media.url[0]];
+    let processedMedia = media ? { ...media } : null;
+    if (
+      processedMedia?.mediaType === "video" &&
+      Array.isArray(processedMedia.url)
+    ) {
+      processedMedia.url = [processedMedia.url[0]];
     }
-
-    const author = await User.findOne({ uid: userId }).select(
-      "firstname lastname username profilePic",
-    );
-    if (!author) {
+    const authorQuery = await User.where("uid", "==", userId).limit(1).get();
+    if (authorQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -82,16 +96,21 @@ export const createPost = async (req, res) => {
       );
       return res.status(404).json({ message: "Author not found" });
     }
-    const authorName = `${author.firstname} ${author.lastname}`;
-    const newPostId = generatePostId();
 
-    const newPost = new Posts({
+    const authorDoc = authorQuery.docs[0];
+    const author = authorDoc.data();
+    const authorName =
+      `${author.firstname || ""} ${author.lastname || ""}`.trim();
+    const newPostId = generatePostId();
+    const resolvedPostType = postType || (poll ? "poll" : "media");
+
+    const newPostData = {
       postId: newPostId,
       originalAuthor: userId,
-      content,
+      content: content || "",
       isSubscriptionContent: isSubscriptionContent || false,
       media: processedMedia,
-      postType: poll ? "poll" : "media",
+      postType: resolvedPostType,
       poll: poll
         ? {
             options: poll.options.map((opt, index) => ({
@@ -104,71 +123,102 @@ export const createPost = async (req, res) => {
               poll.expiresAt || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
           }
         : null,
-      postType: postType || (poll ? "poll" : "media"),
-      jobMetadata: postType === "job" ? jobMetadata : null,
-      eventMetadata: postType === "event" ? eventMetadata : null,
-    });
+      jobMetadata: resolvedPostType === "job" ? jobMetadata || null : null,
+      eventMetadata:
+        resolvedPostType === "event" ? eventMetadata || null : null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-    await newPost.save();
-    moderateContent(newPostId, content, newPost.media).catch((err) =>
+    const postDocRef = Posts.doc(newPostId);
+    await postDocRef.set(newPostData);
+
+    moderateContent(newPostId, content, newPostData.media).catch((err) =>
       console.error("Moderation trigger failed:", err),
     );
 
-    const mentionedUsernames = extractMentions(content);
+    const mentionedUsernames = extractMentions(content || "");
     let notifiedUids = new Set();
+
     if (mentionedUsernames.length > 0) {
-      const mentionedUsers = await User.find({
-        username: { $in: mentionedUsernames },
-      }).select("uid");
-      mentionedUsers.forEach((user) => {
-        notifiedUids.add(user.uid);
-        createNotification({
-          notificationId: generateNotificationId("social"),
-          recipientId: user.uid,
-          category: "social",
-          actionType: "POST_MENTION",
-          title: "You were mentioned",
-          message: `${authorName} mentioned you in a post.`,
-          payload: { postId: newPost.postId, authorId: userId },
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-        });
-      });
-    }
-    const followers = await Follow.find({ followingId: userId }).select(
-      "followerId",
-    );
-    followers.forEach((follow) => {
-      if (
-        !notifiedUids.has(follow.followerId) &&
-        follow.followerId !== userId
-      ) {
-        createNotification({
-          notificationId: generateNotificationId("social"),
-          recipientId: follow.followerId,
-          category: "social",
-          actionType: "NEW_POST",
-          title: `New Posts from ${authorName}`,
-          message: `${authorName} just shared a new update.`,
-          payload: { postId: newPost.postId, authorId: userId },
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
+      const chunks = [];
+      for (let i = 0; i < mentionedUsernames.length; i += 10) {
+        chunks.push(mentionedUsernames.slice(i, i + 10));
+      }
+
+      for (const chunk of chunks) {
+        const mentionedQuery = await User.where("username", "in", chunk).get();
+        mentionedQuery.forEach((doc) => {
+          const user = doc.data();
+          if (user.uid) {
+            notifiedUids.add(user.uid);
+            createNotification({
+              notificationId: generateNotificationId("social"),
+              recipientId: user.uid,
+              recipientEmail: user.email,
+              category: "social",
+              actionType: "POST_MENTION",
+              title: "You were mentioned",
+              message: `${authorName} mentioned you in a post.`,
+              payload: { postId: newPostData.postId, authorId: userId },
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            });
+          }
         });
       }
-    });
-    if (req.user.usertype !== "enterprise") {
-      await User.updateOne(
-        { uid: req.user.uid },
-        { $inc: { "monthlyStats.libraryUsageSessions": 1 } },
-      );
     }
+    const followsQuery = await Follow.where("followingId", "==", userId).get();
+    followsQuery.forEach((doc) => {
+      const follow = doc.data();
+      const followerId = follow.followerId;
+      if (
+        followerId &&
+        !notifiedUids.has(followerId) &&
+        followerId !== userId
+      ) {
+        notifiedUids.add(followerId);
+        User.where("uid", "==", followerId)
+          .limit(1)
+          .get()
+          .then((followerQuerySnap) => {
+            const followerUser = !followerQuerySnap.empty
+              ? followerQuerySnap.docs[0].data()
+              : null;
+            createNotification({
+              notificationId: generateNotificationId("social"),
+              recipientId: followerId,
+              recipientEmail: followerUser?.email,
+              category: "social",
+              actionType: "NEW_POST",
+              title: `New Posts from ${authorName}`,
+              message: `${authorName} just shared a new update.`,
+              payload: { postId: newPostData.postId, authorId: userId },
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            }).catch((err) =>
+              console.error("Follower notification failure:", err),
+            );
+          })
+          .catch((err) => console.error("Follower lookup failure:", err));
+      }
+    });
+
+    if (req.user.usertype !== "enterprise") {
+      await authorDoc.ref.update({
+        "monthlyStats.libraryUsageSessions":
+          (author.monthlyStats?.libraryUsageSessions || 0) + 1,
+        updatedAt: new Date(),
+      });
+    }
+
     logControllerPerformance(controllerName, action, startTime, "success");
 
     res
       .status(201)
-      .json({ message: "Posts created successfully", data: newPost });
+      .json({ message: "Posts created successfully", data: newPostData });
   } catch (error) {
     console.error("Create Posts Error:", error.message);
     logControllerPerformance(
@@ -195,10 +245,13 @@ export const updatePost = async (req, res) => {
       jobMetadata,
       eventMetadata,
     } = req.body;
-    const userId = req.user.uid;
-    const post = await Posts.findOne({ postId, originalAuthor: userId });
+    const userId = req.user.id || req.user.uid;
+    const postQuery = await Posts.where("postId", "==", postId)
+      .where("originalAuthor", "==", userId)
+      .limit(1)
+      .get();
 
-    if (!post) {
+    if (postQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -211,20 +264,42 @@ export const updatePost = async (req, res) => {
         .json({ message: "Posts not found or unauthorized to edit." });
     }
 
-    let processedMedia = media;
-    if (media?.mediaType === "video" && Array.isArray(media.url)) {
-      processedMedia.url = [media.url[0]];
+    const postDocRef = postQuery.docs[0].ref;
+    const post = postQuery.docs[0].data();
+
+    let processedMedia = media ? { ...media } : post.media;
+    if (
+      processedMedia?.mediaType === "video" &&
+      Array.isArray(processedMedia.url)
+    ) {
+      processedMedia.url = [processedMedia.url[0]];
     }
-    post.content = content;
-    post.media = processedMedia;
-    post.isSubscriptionContent =
-      isSubscriptionContent ?? post.isSubscriptionContent;
 
-    post.jobMetadata = jobMetadata || post.jobMetadata;
-    post.eventMetadata = eventMetadata || post.eventMetadata;
+    const updatedContent = content !== undefined ? content : post.content;
+    const updatedIsSubscriptionContent =
+      isSubscriptionContent !== undefined
+        ? isSubscriptionContent
+        : post.isSubscriptionContent;
 
+    let updatedJobMetadata = post.jobMetadata;
+    if (jobMetadata) {
+      updatedJobMetadata =
+        post.postType === "job"
+          ? { ...post.jobMetadata, ...jobMetadata }
+          : jobMetadata;
+    }
+
+    let updatedEventMetadata = post.eventMetadata;
+    if (eventMetadata) {
+      updatedEventMetadata =
+        post.postType === "event"
+          ? { ...post.eventMetadata, ...eventMetadata }
+          : eventMetadata;
+    }
+
+    let updatedPoll = post.poll;
     if (poll && post.poll) {
-      post.poll.options = poll.options.map((opt, index) => {
+      const updatedOptions = poll.options.map((opt, index) => {
         const existingOpt = post.poll.options.find((o) => o.text === opt.text);
         return {
           optionId: existingOpt
@@ -234,51 +309,68 @@ export const updatePost = async (req, res) => {
           votes: existingOpt ? existingOpt.votes : [],
         };
       });
-      post.poll.totalVotes = post.poll.options.reduce(
-        (sum, o) => sum + o.votes.length,
+      const totalVotes = updatedOptions.reduce(
+        (sum, o) => sum + (o.votes ? o.votes.length : 0),
         0,
       );
-    }
-    if (post.postType === "job" && jobMetadata) {
-      post.jobMetadata = { ...post.jobMetadata, ...jobMetadata };
-    }
-
-    if (post.postType === "event" && eventMetadata) {
-      post.eventMetadata = { ...post.eventMetadata, ...eventMetadata };
+      updatedPoll = {
+        ...post.poll,
+        options: updatedOptions,
+        totalVotes: totalVotes,
+      };
     }
 
-    await post.save();
+    const updatePayload = {
+      content: updatedContent,
+      media: processedMedia,
+      isSubscriptionContent: updatedIsSubscriptionContent,
+      jobMetadata: updatedJobMetadata,
+      eventMetadata: updatedEventMetadata,
+      poll: updatedPoll,
+      updatedAt: new Date(),
+    };
 
-    const author = await User.findOne({ uid: userId }).select(
-      "firstname lastname",
-    );
+    await postDocRef.update(updatePayload);
+    const authorQuery = await User.where("uid", "==", userId).limit(1).get();
+    const author = !authorQuery.empty ? authorQuery.docs[0].data() : null;
     const authorName = author
-      ? `${author.firstname} ${author.lastname}`
+      ? `${author.firstname || ""} ${author.lastname || ""}`.trim()
       : "Someone";
-    const explicitUsernames = extractMentions(content);
+
+    const explicitUsernames = extractMentions(updatedContent || "");
     if (explicitUsernames.length > 0) {
-      const usersToTag = await User.find({
-        username: { $in: explicitUsernames },
-      }).select("uid");
-      for (const targetUser of usersToTag) {
-        if (targetUser.uid === userId) continue;
-        createNotification({
-          notificationId: generateNotificationId("social"),
-          recipientId: targetUser.uid,
-          category: "social",
-          actionType: "POST_MENTION",
-          title: "You were mentioned",
-          message: `${authorName} mentioned you in an updated post.`,
-          payload: { postId: post.postId, authorId: userId },
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
+      const chunks = [];
+      for (let i = 0; i < explicitUsernames.length; i += 10) {
+        chunks.push(explicitUsernames.slice(i, i + 10));
+      }
+
+      for (const chunk of chunks) {
+        const usersToTagQuery = await User.where("username", "in", chunk).get();
+        usersToTagQuery.forEach((doc) => {
+          const targetUser = doc.data();
+          if (targetUser.uid && targetUser.uid !== userId) {
+            createNotification({
+              notificationId: generateNotificationId("social"),
+              recipientId: targetUser.uid,
+              recipientEmail: targetUser.email,
+              category: "social",
+              actionType: "POST_MENTION",
+              title: "You were mentioned",
+              message: `${authorName} mentioned you in an updated post.`,
+              payload: { postId: post.postId, authorId: userId },
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            });
+          }
         });
       }
     }
+
     createNotification({
       notificationId: generateNotificationId("social"),
       recipientId: userId,
+      recipientEmail: author?.email,
       category: "social",
       actionType: "POST_UPDATED",
       title: "Posts Updated",
@@ -288,9 +380,13 @@ export const updatePost = async (req, res) => {
       sendSocket: true,
       saveToDb: true,
     });
+
     logControllerPerformance(controllerName, action, startTime, "success");
 
-    res.status(200).json({ message: "Posts updated successfully", post });
+    res.status(200).json({
+      message: "Posts updated successfully",
+      post: { ...post, ...updatePayload },
+    });
   } catch (error) {
     console.error("Update Posts Error:", error.message);
     logControllerPerformance(
@@ -308,8 +404,9 @@ export const deletePost = async (req, res) => {
   const controllerName = "deletePostController";
   const action = "deletePost";
   try {
-    const userUid = req.user.uid;
+    const userUid = req.user.id || req.user.uid;
     const { postId } = req.params;
+
     if (!postId) {
       logControllerPerformance(
         controllerName,
@@ -323,25 +420,44 @@ export const deletePost = async (req, res) => {
         message: "Missing required post identification parameter.",
       });
     }
-    const post = await Posts.findOneAndDelete({
-      postId: postId,
-      originalAuthor: userUid,
+
+    const result = await db.runTransaction(async (transaction) => {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .where("originalAuthor", "==", userUid)
+        .limit(1)
+        .get();
+
+      if (postQuery.empty) {
+        throw new Error(
+          "Posts record not found or unauthorized deletion access.",
+        );
+      }
+
+      const postDoc = postQuery.docs[0];
+      const postData = postDoc.data();
+
+      transaction.delete(postDoc.ref);
+
+      return postData;
     });
-    if (!post) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Posts record not found or unauthorized deletion access.",
-      );
-      return res.status(404).json({
-        success: false,
-        message: "Posts record not found or unauthorized deletion access.",
+
+    if (result.media) {
+      const mediaList = Array.isArray(result.media)
+        ? result.media
+        : [result.media];
+      const mediaUrls = [];
+
+      mediaList.forEach((m) => {
+        if (typeof m === "string") {
+          mediaUrls.push(m);
+        } else if (m && typeof m === "object") {
+          if (Array.isArray(m.url)) {
+            mediaUrls.push(...m.url);
+          } else if (typeof m.url === "string") {
+            mediaUrls.push(m.url);
+          }
+        }
       });
-    }
-    if (post.media) {
-      const mediaUrls = Array.isArray(post.media) ? post.media : [post.media];
 
       const bucket = storage().bucket();
 
@@ -377,12 +493,16 @@ export const deletePost = async (req, res) => {
         }
       });
     }
-    const author = await User.findOne({ uid: userUid }).lean();
+
+    const authorQuery = await User.where("uid", "==", userUid).limit(1).get();
+    const author = !authorQuery.empty ? authorQuery.docs[0].data() : null;
     const authorEmail = author ? author.email : req.user.email;
     const authorName = author ? author.firstname : req.user.firstname;
+
     await createNotification({
       notificationId: generateNotificationId("social"),
       recipientId: userUid,
+      recipientEmail: authorEmail,
       category: "social",
       actionType: "POST_DELETION",
       title: "Posts Removed",
@@ -396,6 +516,7 @@ export const deletePost = async (req, res) => {
     }).catch((err) =>
       console.error("Non-blocking post deletion log emission failure:", err),
     );
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
@@ -414,9 +535,13 @@ export const deletePost = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({
+    const statusCode = error.message.includes("not found") ? 404 : 500;
+    return res.status(statusCode).json({
       success: false,
-      message: "Internal application routing anomaly.",
+      message:
+        statusCode === 404
+          ? error.message
+          : "Internal application routing anomaly.",
     });
   }
 };
@@ -425,56 +550,99 @@ export const toggleLike = async (req, res) => {
   const controllerName = "toggleLikeController";
   const action = "toggleLike";
   const { postId } = req.params;
-  const userId = req.user.id;
+  const userId = req.user.id || req.user.uid;
 
   try {
-    const post = await Posts.findOne({ postId });
-    if (!post) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Post not found",
-      );
-      return res.status(404).send("Post not found");
-    }
-    const isLiked = post.likes.includes(userId);
-    const postUpdate = isLiked
-      ? { $pull: { likes: userId } }
-      : { $push: { likes: userId } };
-    const userUpdate = isLiked
-      ? { $pull: { likes: postId } }
-      : { $push: { likes: postId } };
-    const message = isLiked ? "You unliked a post." : "You liked a post.";
-    const [updatedPost] = await Promise.all([
-      Posts.findOneAndUpdate({ postId }, postUpdate, { new: true }),
-      User.updateOne({ uid: userId }, userUpdate),
-    ]);
-    if (!isLiked && post.userId.uid !== userId) {
-      const liker = await User.findOne({ uid: userId }).select(
-        "firstname lastname",
-      );
-      createNotification({
-        notificationId: generateNotificationId("social"),
-        recipientId: post.userId.uid,
-        category: "social",
-        actionType: "POST_LIKED",
-        title: "New Like",
-        message: `${liker.firstname} liked your post.`,
-        payload: { postId: post.postId, userId },
-        sendPush: true,
-        saveToDb: true,
+    const result = await db.runTransaction(async (transaction) => {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .limit(1)
+        .get();
+      if (postQuery.empty) {
+        throw new Error("Post not found");
+      }
+
+      const postDoc = postQuery.docs[0];
+      const post = postDoc.data();
+      const likes = post.likes || [];
+
+      const isLiked = likes.includes(userId);
+      const updatedLikes = isLiked
+        ? likes.filter((id) => id !== userId)
+        : [...likes, userId];
+
+      transaction.update(postDoc.ref, {
+        likes: updatedLikes,
+        updatedAt: new Date(),
       });
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      if (!userQuery.empty) {
+        const userDoc = userQuery.docs[0];
+        const userData = userDoc.data();
+        const userLikes = userData.likes || [];
+
+        const updatedUserLikes = isLiked
+          ? userLikes.filter((id) => id !== postId)
+          : [...userLikes, postId];
+
+        transaction.update(userDoc.ref, {
+          likes: updatedUserLikes,
+          updatedAt: new Date(),
+        });
+      }
+
+      return {
+        post: { ...post, likes: updatedLikes },
+        isLiked,
+      };
+    });
+
+    const updatedPost = result.post;
+    const isLiked = result.isLiked;
+    const message = isLiked ? "You unliked a post." : "You liked a post.";
+
+    const postOwnerId = updatedPost.originalAuthor || updatedPost.userId;
+    if (!isLiked && postOwnerId && postOwnerId !== userId) {
+      User.where("uid", "==", userId)
+        .limit(1)
+        .get()
+        .then(async (likerQuery) => {
+          const liker = !likerQuery.empty ? likerQuery.docs[0].data() : null;
+          const ownerQuery = await Users.where("uid", "==", postOwnerId)
+            .limit(1)
+            .get();
+          const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
+
+          if (liker && owner) {
+            createNotification({
+              notificationId: generateNotificationId("social"),
+              recipientId: postOwnerId,
+              recipientEmail: owner.email,
+              category: "social",
+              actionType: "POST_LIKED",
+              title: "New Like",
+              message: `${liker.firstname || "Someone"} liked your post.`,
+              payload: { postId: updatedPost.postId, userId },
+              sendPush: true,
+              saveToDb: true,
+            }).catch((err) =>
+              console.error("Notification emission failure:", err),
+            );
+          }
+        })
+        .catch((err) => console.error("Liker lookup failure:", err));
     }
 
     const io = req.app.get("socketio");
     if (io) {
       io.emit("post_stats_updated", {
         postId: updatedPost.postId,
-        stats: getPostStats(updatedPost),
+        stats:
+          typeof getPostStats === "function"
+            ? getPostStats(updatedPost)
+            : updatedPost,
       });
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.json({ updatedPost, message });
   } catch (err) {
@@ -485,6 +653,10 @@ export const toggleLike = async (req, res) => {
       "error",
       err.message,
     );
+    const statusCode = err.message === "Post not found" ? 404 : 500;
+    if (statusCode === 404) {
+      return res.status(404).send("Post not found");
+    }
     res.status(500).json({ message: err.message });
   }
 };
@@ -493,39 +665,66 @@ export const toggleBookmark = async (req, res) => {
   const controllerName = "toggleBookmarkController";
   const action = "toggleBookmark";
   const { postId } = req.params;
-  const userId = req.user.id;
+  const userId = req.user.id || req.user.uid;
+
   try {
-    const post = await Posts.findOne({ postId });
-    if (!post) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Post not found",
-      );
-      return res.status(404).json({ message: "Post not found" });
-    }
-    const isBookmarked = (post.bookmarks ?? []).includes(userId);
-    const postUpdate = isBookmarked
-      ? { $pull: { bookmarks: userId } }
-      : { $push: { bookmarks: userId } };
+    const result = await db.runTransaction(async (transaction) => {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .limit(1)
+        .get();
+      if (postQuery.empty) {
+        throw new Error("Post not found");
+      }
 
-    const userUpdate = isBookmarked
-      ? { $pull: { bookmarks: postId } }
-      : { $push: { bookmarks: postId } };
+      const postDoc = postQuery.docs[0];
+      const post = postDoc.data();
+      const bookmarks = post.bookmarks || [];
 
-    const [updatedPost] = await Promise.all([
-      Posts.findOneAndUpdate({ postId }, postUpdate, { new: true }),
-      User.updateOne({ uid: userId }, userUpdate),
-    ]);
+      const isBookmarked = bookmarks.includes(userId);
+      const updatedBookmarks = isBookmarked
+        ? bookmarks.filter((id) => id !== userId)
+        : [...bookmarks, userId];
+
+      transaction.update(postDoc.ref, {
+        bookmarks: updatedBookmarks,
+        updatedAt: new Date(),
+      });
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      if (!userQuery.empty) {
+        const userDoc = userQuery.docs[0];
+        const userData = userDoc.data();
+        const userBookmarks = userData.bookmarks || [];
+
+        const updatedUserBookmarks = isBookmarked
+          ? userBookmarks.filter((id) => id !== postId)
+          : [...userBookmarks, postId];
+
+        transaction.update(userDoc.ref, {
+          bookmarks: updatedUserBookmarks,
+          updatedAt: new Date(),
+        });
+      }
+
+      return {
+        post: { ...post, bookmarks: updatedBookmarks },
+        isBookmarked,
+      };
+    });
+
+    const updatedPost = result.post;
+    const isBookmarked = result.isBookmarked;
+
     const io = req.app.get("socketio");
     if (io && updatedPost) {
       io.emit("post_stats_updated", {
         postId: updatedPost.postId,
-        stats: getPostStats(updatedPost),
+        stats:
+          typeof getPostStats === "function"
+            ? getPostStats(updatedPost)
+            : updatedPost,
       });
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       isBookmarked: !isBookmarked,
@@ -542,7 +741,8 @@ export const toggleBookmark = async (req, res) => {
       "error",
       err.message,
     );
-    res.status(500).json({ message: err.message });
+    const statusCode = err.message === "Post not found" ? 404 : 500;
+    res.status(statusCode).json({ message: err.message });
   }
 };
 export const addComment = async (req, res) => {
@@ -551,46 +751,68 @@ export const addComment = async (req, res) => {
   const action = "addComment";
   const { postId } = req.params;
   const { comment, parentId } = req.body;
-  const userId = req.user.id;
-  try {
-    const tempCommentId = Math.random().toString(36).slice(2, 11);
+  const userId = req.user.id || req.user.uid;
 
-    const newCommentData = {
-      commentId: tempCommentId,
-      userId,
-      comment,
-      parentId: parentId || "",
-      likes: [],
-      createdAt: new Date().toISOString(),
+  try {
+    const commentId = Math.random().toString(36).slice(2, 11);
+    const createdAt = new Date();
+
+    const result = await db.runTransaction(async (transaction) => {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .limit(1)
+        .get();
+      if (postQuery.empty) {
+        throw new Error("Post not found");
+      }
+
+      const postDoc = postQuery.docs[0];
+      const postData = postDoc.data();
+      const currentCommentsCount = postData.commentsCount || 0;
+
+      const newCommentData = {
+        commentId,
+        postId,
+        userId,
+        comment,
+        parentId: parentId || "",
+        likes: [],
+        createdAt: createdAt.toISOString(),
+        updatedAt: createdAt.toISOString(),
+      };
+
+      const commentDocRef = Comments.doc(commentId);
+      transaction.set(commentDocRef, newCommentData);
+      transaction.update(postDoc.ref, {
+        commentsCount: currentCommentsCount + 1,
+        updatedAt: createdAt,
+      });
+
+      return {
+        postData,
+        newCommentData,
+      };
+    });
+
+    const { postData, newCommentData } = result;
+    const commenterQuery = await User.where("uid", "==", userId).limit(1).get();
+    const commenter = !commenterQuery.empty
+      ? commenterQuery.docs[0].data()
+      : null;
+
+    const populatedComment = {
+      ...newCommentData,
+      userId: commenter
+        ? {
+            uid: commenter.uid,
+            firstname: commenter.firstname,
+            lastname: commenter.lastname,
+            profilePic: commenter.profilePic,
+            username: commenter.username,
+          }
+        : { uid: userId },
     };
 
-    const updatedPost = await Posts.findOneAndUpdate(
-      { postId },
-      {
-        $push: { comments: newCommentData },
-        $inc: { commentsCount: 1 },
-      },
-      { new: true },
-    ).populate("comments.userId", "firstname lastname profilePic username");
-
-    if (!updatedPost) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Post not found",
-      );
-      return res.status(404).json({ error: "Post not found" });
-    }
-
-    const populatedComment = updatedPost.comments.find(
-      (c) => c.commentId === tempCommentId,
-    );
-    const commenter = await User.findOne({ uid: userId }).select(
-      "firstname lastname",
-    );
-    const postAuthorId = updatedPost.userId.uid;
+    const postAuthorId = postData.originalAuthor || postData.userId;
 
     const io = req.app.get("socketio");
     if (io) {
@@ -599,23 +821,37 @@ export const addComment = async (req, res) => {
         comment: populatedComment,
       });
       io.emit("post_stats_updated", {
-        postId: updatedPost.postId,
-        stats: getPostStats(updatedPost),
+        postId: postData.postId,
+        stats:
+          typeof getPostStats === "function"
+            ? getPostStats({
+                ...postData,
+                commentsCount: (postData.commentsCount || 0) + 1,
+              })
+            : postData,
       });
     }
-    if (postAuthorId !== userId) {
+
+    if (postAuthorId && postAuthorId !== userId) {
+      const ownerQuery = await User.where("uid", "==", postAuthorId)
+        .limit(1)
+        .get();
+      const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
+
       createNotification({
         notificationId: generateNotificationId("social"),
         recipientId: postAuthorId,
+        recipientEmail: owner?.email,
         category: "social",
         actionType: "POST_COMMENTED",
         title: "New Comment",
-        message: `${commenter.firstname} commented on your post: "${comment.substring(0, 30)}..."`,
-        payload: { postId, commentId: tempCommentId },
+        message: `${commenter?.firstname || "Someone"} commented on your post: "${comment.substring(0, 30)}..."`,
+        payload: { postId, commentId },
         sendPush: true,
         saveToDb: true,
-      });
+      }).catch((err) => console.error("Notification emission failure:", err));
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(201).json(populatedComment);
   } catch (err) {
@@ -626,87 +862,121 @@ export const addComment = async (req, res) => {
       "error",
       err.message,
     );
-    res.status(500).json({ error: err.message });
+    const statusCode = err.message === "Post not found" ? 404 : 500;
+    res.status(statusCode).json({ error: err.message });
   }
 };
 export const pollVote = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "pollVoteController";
   const action = "pollVote";
-  const { postId, optionId, userId } = req.body;
+  const { postId, optionId } = req.body;
+  const userId = req.body.userId || req.user?.id || req.user?.uid;
+
   try {
-    const post = await Posts.findOne({ postId });
-    if (!post || !post.poll) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Poll not found",
-      );
-      return res.status(404).json({ error: "Poll not found" });
-    }
+    const result = await db.runTransaction(async (transaction) => {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .limit(1)
+        .get();
+      if (postQuery.empty) {
+        throw new Error("Poll not found");
+      }
 
-    if (post.poll.expiresAt && new Date() > new Date(post.poll.expiresAt)) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Poll has expired",
-      );
-      return res.status(400).json({ error: "Poll has expired" });
-    }
+      const postDoc = postQuery.docs[0];
+      const post = postDoc.data();
 
-    const hasVoted = post.poll.options.some((opt) =>
-      opt.votes.includes(userId),
-    );
-    if (hasVoted) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Already voted",
+      if (!post.poll || !Array.isArray(post.poll.options)) {
+        throw new Error("Poll not found");
+      }
+      if (post.poll.expiresAt && new Date() > new Date(post.poll.expiresAt)) {
+        throw new Error("Poll has expired");
+      }
+      const hasVoted = post.poll.options.some(
+        (opt) => Array.isArray(opt.votes) && opt.votes.includes(userId),
       );
-      return res.status(400).json({ error: "Already voted" });
-    }
 
-    const updatedPost = await Posts.findOneAndUpdate(
-      { postId: postId, "poll.options.optionId": optionId },
-      {
-        $push: { "poll.options.$.votes": userId },
-        $inc: { "poll.totalVotes": 1 },
-      },
-      { new: true },
-    );
+      if (hasVoted) {
+        throw new Error("Already voted");
+      }
+      const optionIndex = post.poll.options.findIndex(
+        (opt) => opt.optionId === optionId,
+      );
+      if (optionIndex === -1) {
+        throw new Error("Poll option not found");
+      }
+      const updatedOptions = post.poll.options.map((opt, index) => {
+        if (index === optionIndex) {
+          return {
+            ...opt,
+            votes: [...(opt.votes || []), userId],
+          };
+        }
+        return opt;
+      });
+
+      const newTotalVotes = (post.poll.totalVotes || 0) + 1;
+
+      const updatedPoll = {
+        ...post.poll,
+        options: updatedOptions,
+        totalVotes: newTotalVotes,
+      };
+
+      transaction.update(postDoc.ref, {
+        poll: updatedPoll,
+        updatedAt: new Date(),
+      });
+
+      return {
+        ...post,
+        poll: updatedPoll,
+      };
+    });
+
+    const updatedPost = result;
 
     // --- SOCKET EMISSION ---
     const io = req.app.get("socketio");
     if (io) {
       io.emit("post_stats_updated", {
         postId: updatedPost.postId,
-        stats: getPostStats(updatedPost), // Uses the standardized helper
+        stats:
+          typeof getPostStats === "function"
+            ? getPostStats(updatedPost)
+            : updatedPost,
       });
     }
 
     // --- NOTIFICATION LOGIC ---
+    const postOwnerId = updatedPost.originalAuthor || updatedPost.userId;
     if (
       updatedPost.poll.totalVotes % 10 === 0 &&
-      updatedPost.userId.uid !== userId
+      postOwnerId &&
+      postOwnerId !== userId
     ) {
-      createNotification({
-        notificationId: generateNotificationId("social"),
-        recipientId: updatedPost.userId.uid,
-        category: "social",
-        actionType: "POLL_MILESTONE",
-        title: "Poll Update",
-        message: `${updatedPost.poll.totalVotes} people have now voted in your poll!`,
-        payload: { postId: updatedPost.postId },
-        sendPush: true,
-        saveToDb: true,
-      });
+      User.where("uid", "==", postOwnerId)
+        .limit(1)
+        .get()
+        .then((ownerQuery) => {
+          const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
+          createNotification({
+            notificationId: generateNotificationId("social"),
+            recipientId: postOwnerId,
+            recipientEmail: owner?.email,
+            category: "social",
+            actionType: "POLL_MILESTONE",
+            title: "Poll Update",
+            message: `${updatedPost.poll.totalVotes} people have now voted in your poll!`,
+            payload: { postId: updatedPost.postId },
+            sendPush: true,
+            saveToDb: true,
+          }).catch((err) =>
+            console.error("Notification emission failure:", err),
+          );
+        })
+        .catch((err) => console.error("Owner lookup failure:", err));
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(updatedPost);
   } catch (error) {
@@ -717,7 +987,19 @@ export const pollVote = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ error: error.message });
+    const clientErrors = [
+      "Poll not found",
+      "Poll has expired",
+      "Already voted",
+      "Poll option not found",
+    ];
+    const statusCode = clientErrors.includes(error.message)
+      ? error.message === "Poll not found" ||
+        error.message === "Poll option not found"
+        ? 404
+        : 400
+      : 500;
+    res.status(statusCode).json({ error: error.message });
   }
 };
 export const incrementImpressions = async (req, res) => {
@@ -726,40 +1008,61 @@ export const incrementImpressions = async (req, res) => {
   const action = "incrementImpressions";
   try {
     const { postId } = req.params;
-    const updatedPost = await Posts.findOneAndUpdate(
-      { postId: postId },
-      { $inc: { impressions: 1 } },
-      { new: true },
-    );
 
-    if (!updatedPost) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Post not found",
-      );
-      return res.status(404).send("Post not found");
+    const result = await db.runTransaction(async (transaction) => {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .limit(1)
+        .get();
+      if (postQuery.empty) {
+        throw new Error("Post not found");
+      }
+
+      const postDoc = postQuery.docs[0];
+      const postData = postDoc.data();
+      const newImpressions = (postData.impressions || 0) + 1;
+
+      transaction.update(postDoc.ref, {
+        impressions: newImpressions,
+        updatedAt: new Date(),
+      });
+
+      return {
+        ...postData,
+        impressions: newImpressions,
+      };
+    });
+
+    const updatedPost = result;
+
+    const authorId = updatedPost.originalAuthor || updatedPost.userId;
+    if (authorId) {
+      const authorQuery = await User.where("uid", "==", authorId)
+        .limit(1)
+        .get();
+      if (!authorQuery.empty) {
+        const authorDoc = authorQuery.docs[0];
+        const author = authorDoc.data();
+        if (author && author.usertype !== "enterprise") {
+          const currentMinutes = author.monthlyStats?.minutesActive || 0;
+          await authorDoc.ref.update({
+            "monthlyStats.minutesActive": currentMinutes + 0.5,
+            updatedAt: new Date(),
+          });
+        }
+      }
     }
-    const author = await User.findOne({ uid: updatedPost.userId.uid });
-    if (author && author.usertype !== "enterprise") {
-      await User.updateOne(
-        { uid: author.uid },
-        {
-          $inc: {
-            "monthlyStats.minutesActive": 0.5,
-          },
-        },
-      );
-    }
+
     const io = req.app.get("socketio");
     if (io) {
       io.emit("post_stats_updated", {
         postId: updatedPost.postId,
-        stats: getPostStats(updatedPost),
+        stats:
+          typeof getPostStats === "function"
+            ? getPostStats(updatedPost)
+            : updatedPost,
       });
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
@@ -774,6 +1077,10 @@ export const incrementImpressions = async (req, res) => {
       "error",
       err.message,
     );
+    const statusCode = err.message === "Post not found" ? 404 : 500;
+    if (statusCode === 404) {
+      return res.status(404).send("Post not found");
+    }
     res.status(500).send(err.message);
   }
 };
@@ -781,128 +1088,206 @@ export const repost = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "repostController";
   const action = "repost";
-  const { originalPostId, isRepost } = req.body;
-  const userId = req.user.id;
-  try {
-    const existingRepost = await Posts.findOne({
-      "repostersDetails.uid": userId,
-      originalPostId,
-      isRepost,
-    });
-    const io = req.app.get("socketio");
+  const { originalPostId } = req.body;
+  const userId = req.user.id || req.user.uid;
 
-    if (existingRepost) {
-      const updatedOriginal = await Posts.findOneAndUpdate(
-        { postId: originalPostId },
-        { $pull: { repostersDetails: { uid: userId } } },
-        { new: true },
+  try {
+    const io = req.app.get("socketio");
+    const postQuery = await Posts.where("postId", "==", originalPostId)
+      .limit(1)
+      .get();
+    if (postQuery.empty) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Original post details not found.",
       );
+      return res
+        .status(404)
+        .json({ message: "Original post details not found." });
+    }
+
+    const postDoc = postQuery.docs[0];
+    const originalPost = postDoc.data();
+
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+    if (userQuery.empty) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Original post details not found.",
+      );
+      return res
+        .status(404)
+        .json({ message: "Original post details not found." });
+    }
+    const repostAuthor = userQuery.docs[0].data();
+    const existingRepostQuery = await PostReposters.where("uid", "==", userId)
+      .where("postId", "==", originalPostId)
+      .limit(1)
+      .get();
+
+    const isExisting = !existingRepostQuery.empty;
+
+    if (isExisting) {
+      const repostDocRef = existingRepostQuery.docs[0].ref;
+
+      await db.runTransaction(async (transaction) => {
+        const latestPostSnap = await transaction.get(postDoc.ref);
+        const latestPostData = latestPostSnap.data();
+        const currentCount = latestPostData.repostsCount || 0;
+
+        transaction.delete(repostDocRef);
+        transaction.update(postDoc.ref, {
+          repostsCount: Math.max(0, currentCount - 1),
+          updatedAt: new Date(),
+        });
+      });
+      const updatedPostSnap = await postDoc.ref.get();
+      const updatedOriginal = updatedPostSnap.data();
+
       if (io && updatedOriginal) {
         io.emit("post_stats_updated", {
           postId: originalPostId,
-          stats: getPostStats(updatedOriginal),
+          stats:
+            typeof getPostStats === "function"
+              ? getPostStats(updatedOriginal)
+              : updatedOriginal,
         });
       }
+
       logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         message: "You undid a repost action",
-        repostsCount: updatedOriginal.repostersDetails.length,
+        repostsCount: updatedOriginal.repostsCount || 0,
       });
     } else {
-      const repostAuthor = await User.findOne({ uid: userId })
-        .select(
-          "firstname lastname profilePic tier organizationName username usertype",
-        )
-        .lean();
-      const originalPost = await Posts.findOne({
-        postId: originalPostId,
-      }).select("-postId -isRepost");
-      if (!repostAuthor || !originalPost) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Original post details not found.",
-        );
-        return res
-          .status(404)
-          .json({ message: "Original post details not found." });
-      }
+      const repostId = Math.random().toString(36).slice(2, 11);
+      const repostedAt = new Date();
 
       const reposterData = {
+        repostId,
+        postId: originalPostId,
         uid: repostAuthor.uid || userId,
-        firstname: repostAuthor.firstname,
-        lastname: repostAuthor.lastname,
-        tier: repostAuthor.tier,
-        username: repostAuthor.username,
-        organizationName: repostAuthor.organizationName,
-        profilePic: repostAuthor.profilePic,
-        repostedAt: new Date(),
+        firstname: repostAuthor.firstname || null,
+        lastname: repostAuthor.lastname || null,
+        username: repostAuthor.username || null,
+        tier: repostAuthor.tier || "",
+        organizationName: repostAuthor.organizationName || null,
+        profilePic: repostAuthor.profilePic || [],
+        repostedAt,
       };
-      const updatedOriginal = await Posts.findOneAndUpdate(
-        { postId: originalPostId },
-        { $push: { repostersDetails: reposterData } },
-        { new: true },
-      );
+
+      const repostDocRef = PostReposters.doc(repostId);
+
+      await db.runTransaction(async (transaction) => {
+        const latestPostSnap = await transaction.get(postDoc.ref);
+        const latestPostData = latestPostSnap.data();
+        const currentCount = latestPostData.repostsCount || 0;
+
+        transaction.set(repostDocRef, reposterData);
+        transaction.update(postDoc.ref, {
+          repostsCount: currentCount + 1,
+          updatedAt: new Date(),
+        });
+      });
+
+      const updatedPostSnap = await postDoc.ref.get();
+      const updatedOriginal = updatedPostSnap.data();
 
       if (io) {
-        io.emit("new_post", repost);
+        io.emit("new_post", {
+          ...originalPost,
+          ...reposterData,
+          isRepost: true,
+        });
         io.emit("post_stats_updated", {
           postId: originalPostId,
-          stats: getPostStats(updatedOriginal),
+          stats:
+            typeof getPostStats === "function"
+              ? getPostStats(updatedOriginal)
+              : updatedOriginal,
         });
       }
+
       // --- NOTIFICATION LOGIC ---
       let notifiedUids = new Set();
       const reposterName =
         repostAuthor && repostAuthor.usertype === "enterprise"
           ? repostAuthor.organizationName
           : repostAuthor.firstname;
-      if (updatedOriginal && updatedOriginal.userId.uid !== userId) {
-        notifiedUids.add(updatedOriginal.userId.uid);
+
+      const postOwnerId = originalPost.originalAuthor || originalPost.userId;
+      if (postOwnerId && postOwnerId !== userId) {
+        notifiedUids.add(postOwnerId);
+        const ownerQuery = await User.where("uid", "==", postOwnerId)
+          .limit(1)
+          .get();
+        const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
+
         createNotification({
           notificationId: generateNotificationId("social"),
-          recipientId: updatedOriginal.originalAuthor,
+          recipientId: postOwnerId,
+          recipientEmail: owner?.email,
           category: "social",
           actionType: "POST_REPOSTED",
           title: "Posts Reposted",
-          message: `${reposterName} reshared your post.`,
-          payload: { postId: repost.postId, originalPostId },
+          message: `${reposterName || "Someone"} reshared your post.`,
+          payload: { postId: originalPostId, originalPostId },
           sendPush: true,
           sendSocket: true,
           saveToDb: true,
-        });
+        }).catch((err) => console.error("Notification emission failure:", err));
       }
-
-      // 5. Notify Followers
-      const followers = await Follow.find({ followingId: userId }).select(
-        "followerId",
-      );
-
-      followers.forEach((follow) => {
+      const followersQuery = await Follow.where(
+        "followingId",
+        "==",
+        userId,
+      ).get();
+      followersQuery.forEach(async (doc) => {
+        const follow = doc.data();
+        const followerId = follow.followerId;
         if (
-          !notifiedUids.has(follow.followerId) &&
-          follow.followerId !== userId
+          followerId &&
+          !notifiedUids.has(followerId) &&
+          followerId !== userId
         ) {
-          createNotification({
-            notificationId: generateNotificationId("social"),
-            recipientId: follow.followerId,
-            category: "social",
-            actionType: "NEW_POST",
-            title: `New Repost from ${reposterName}`,
-            message: `${reposterName} reshared a post.`,
-            payload: { postId: repost.postId, authorId: userId },
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          });
+          notifiedUids.add(followerId);
+          Users.where("uid", "==", followerId)
+            .limit(1)
+            .get()
+            .then((followerSnap) => {
+              const followerUser = !followerSnap.empty
+                ? followerSnap.docs[0].data()
+                : null;
+              createNotification({
+                notificationId: generateNotificationId("social"),
+                recipientId: followerId,
+                recipientEmail: followerUser?.email,
+                category: "social",
+                actionType: "NEW_POST",
+                title: `New Repost from ${reposterName || "Someone"}`,
+                message: `${reposterName || "Someone"} reshared a post.`,
+                payload: { postId: originalPostId, authorId: userId },
+                sendPush: true,
+                sendSocket: true,
+                saveToDb: true,
+              }).catch((err) =>
+                console.error("Follower notification failure:", err),
+              );
+            })
+            .catch((err) => console.error("Follower lookup failure:", err));
         }
       });
+
       logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(201).json({
         message: "Posts repost action completed successfully.",
-        repostsCount: updatedOriginal.repostersDetails.length,
+        repostsCount: updatedOriginal.repostsCount || 0,
       });
     }
   } catch (err) {
@@ -920,17 +1305,72 @@ export const toggleCommentLike = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "toggleCommentLikeController";
   const action = "toggleCommentLike";
-  const { postId, commentId } = req.params;
-  const userId = req.user.id;
+  const { commentId } = req.params;
+  const userId = req.user.id || req.user.uid;
+
   try {
-    const post = await Posts.findOne({ postId });
-    const comment = post.comments.find((c) => c.commentId === commentId);
-    const isLiked = comment.likes.includes(userId);
-    const operator = isLiked ? "$pull" : "$push";
-    await Posts.updateOne(
-      { postId, "comments.commentId": commentId },
-      { [operator]: { "comments.$.likes": userId } },
-    );
+    const commentRef = Comments.doc(commentId);
+
+    const result = await db.runTransaction(async (transaction) => {
+      const commentDoc = await transaction.get(commentRef);
+      if (!commentDoc.exists) {
+        throw new Error("Comment not found");
+      }
+
+      const commentData = commentDoc.data();
+      const likes = commentData.likes || [];
+
+      const isLiked = likes.includes(userId);
+      const updatedLikes = isLiked
+        ? likes.filter((id) => id !== userId)
+        : [...likes, userId];
+
+      transaction.update(commentRef, {
+        likes: updatedLikes,
+        updatedAt: new Date(),
+      });
+
+      return {
+        commentData,
+        isLiked,
+        updatedLikes,
+      };
+    });
+
+    const { commentData, isLiked, updatedLikes } = result;
+    const commentAuthorId = commentData.userId;
+
+    if (!isLiked && commentAuthorId && commentAuthorId !== userId) {
+      User.where("uid", "==", userId)
+        .limit(1)
+        .get()
+        .then(async (likerQuery) => {
+          const liker = !likerQuery.empty ? likerQuery.docs[0].data() : null;
+          const ownerQuery = await Users.where("uid", "==", commentAuthorId)
+            .limit(1)
+            .get();
+          const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
+
+          if (liker && owner) {
+            createNotification({
+              notificationId: generateNotificationId("social"),
+              recipientId: commentAuthorId,
+              recipientEmail: owner.email,
+              category: "social",
+              actionType: "COMMENT_LIKED",
+              title: "New Like",
+              message: `${liker.firstname || "Someone"} liked your comment.`,
+              payload: { commentId, postId: commentData.postId, userId },
+              sendPush: true,
+              saveToDb: true,
+            }).catch((err) =>
+              console.error("Notification emission failure:", err),
+            );
+          }
+        })
+        .catch((err) => console.error("Liker lookup failure:", err));
+    }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.sendStatus(200);
   } catch (err) {
@@ -941,6 +1381,10 @@ export const toggleCommentLike = async (req, res) => {
       "error",
       err.message,
     );
+    const statusCode = err.message === "Comment not found" ? 404 : 500;
+    if (statusCode === 404) {
+      return res.status(404).send("Comment not found");
+    }
     res.status(500).send(err.message);
   }
 };
@@ -948,40 +1392,12 @@ export const fetchPostUsingPostId = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchPostUsingPostIdController";
   const action = "fetchPostUsingPostId";
+  const userId = req.user?.id || req.user?.uid;
+
   try {
     const { postId } = req.params;
-    const postAggregation = await Posts.aggregate([
-      {
-        $match: {
-          postId: postId,
-          status: { $ne: "hidden" },
-        },
-      },
-      {
-        $lookup: {
-          from: "users",
-          localField: "userId.uid",
-          foreignField: "uid",
-          as: "authorDetails",
-        },
-      },
-      { $unwind: "$authorDetails" },
-      {
-        $project: {
-          postId: 1,
-          content: 1,
-          createdAt: 1,
-          userId: 1,
-          "authorDetails.firstname": 1,
-          "authorDetails.lastname": 1,
-          "authorDetails.username": 1,
-          "authorDetails.tier": 1,
-          "authorDetails.organizationName": 1,
-        },
-      },
-    ]);
-
-    if (!postAggregation || postAggregation.length === 0) {
+    const postQuery = await Posts.where("postId", "==", postId).limit(1).get();
+    if (postQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -992,15 +1408,84 @@ export const fetchPostUsingPostId = async (req, res) => {
       return res.status(404).json({ error: "Post not found" });
     }
 
-    const post = postAggregation[0];
-    const featuredReposter = await getPriorityReposter(
-      post.repostersDetails || [],
-      userId,
-    );
+    const postDoc = postQuery.docs[0];
+    const post = postDoc.data();
+
+    if (post.status === "hidden") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Post not found",
+      );
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    const authorId = post.originalAuthor || post.userId?.uid || post.userId;
+    let authorDetails = null;
+    if (authorId) {
+      const userQuery = await User.where("uid", "==", authorId).limit(1).get();
+      if (!userQuery.empty) {
+        const uData = userQuery.docs[0].data();
+        authorDetails = {
+          firstname: uData.firstname || null,
+          lastname: uData.lastname || null,
+          username: uData.username || null,
+          tier: uData.tier || null,
+          organizationName: uData.organizationName || null,
+        };
+      }
+    }
+    const commentsSnapshot = await Comments.where("postId", "==", postId).get();
+    const comments = [];
+    for (const doc of commentsSnapshot.docs) {
+      const commentData = doc.data();
+      let commentUser = null;
+      if (commentData.userId) {
+        const commentUserQuery = await Users.where(
+          "uid",
+          "==",
+          commentData.userId,
+        )
+          .limit(1)
+          .get();
+        if (!commentUserQuery.empty) {
+          const cuData = commentUserQuery.docs[0].data();
+          commentUser = {
+            uid: cuData.uid,
+            firstname: cuData.firstname,
+            lastname: cuData.lastname,
+            username: cuData.username,
+            profilePic: cuData.profilePic,
+          };
+        }
+      }
+      comments.push({
+        ...commentData,
+        userId: commentUser || commentData.userId,
+      });
+    }
+
+    const repostersSnapshot = await PostReposters.where(
+      "postId",
+      "==",
+      postId,
+    ).get();
+    const repostersDetails = repostersSnapshot.docs.map((doc) => doc.data());
+
+    const featuredReposter =
+      typeof getPriorityReposter === "function"
+        ? await getPriorityReposter(repostersDetails, userId)
+        : null;
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.json({
       ...post,
-      featuredReposter: featuredReposter,
+      authorDetails,
+      comments,
+      repostersDetails,
+      featuredReposter,
     });
   } catch (err) {
     console.error("Fetch single post error:", err.message);

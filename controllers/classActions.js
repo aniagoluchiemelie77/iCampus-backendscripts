@@ -1,4 +1,4 @@
-import { storage } from "../config/firebaseAdmin.js";
+import { storage, db } from "../config/firebaseAdmin.js";
 import {
   Certificate,
   User,
@@ -56,12 +56,16 @@ const checkContentAuthorization = async (userId, course, lectureId = null) => {
     return true;
   }
   if (lectureId) {
-    const lecture = await Lectures.findOne({
-      id: lectureId,
-      courseId: course.courseId,
-    });
-    if (lecture && lecture.hostId === userId) {
-      return true;
+    const lectureQuery = await Lectures.where("id", "==", lectureId)
+      .where("courseId", "==", course.courseId)
+      .limit(1)
+      .get();
+
+    if (!lectureQuery.empty) {
+      const lecture = lectureQuery.docs[0].data();
+      if (lecture.hostId === userId) {
+        return true;
+      }
     }
   }
   return false;
@@ -72,28 +76,66 @@ export const handleGenerateCertificate = async (req, res) => {
   const action = "handleGenerateCertificate";
 
   const { productId } = req.body;
-  const { uid, email } = req.user;
+  const uid = req.user?.uid || req.user?.id;
+  const email = req.user?.email;
 
   try {
-    const student = await User.findOne({ uid });
-    const course = await Product.findOne({ productId });
-    const lecturers = await User.find({
-      uid: { $in: course.courseDetails.lecturerIds },
-    });
+    const studentQuery = await User.where("uid", "==", uid).limit(1).get();
+    if (studentQuery.empty) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Student not found",
+      );
+      return res
+        .status(404)
+        .json({ success: false, message: "Student not found" });
+    }
+    const student = studentQuery.docs[0].data();
+    const courseQuery = await Product.where("productId", "==", productId)
+      .limit(1)
+      .get();
+    if (courseQuery.empty) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Course product not found",
+      );
+      return res
+        .status(404)
+        .json({ success: false, message: "Course not found" });
+    }
+    const course = courseQuery.docs[0].data();
+    const lecturerIds = course.courseDetails?.lecturerIds || [];
+    let lecturers = [];
+    if (lecturerIds.length > 0) {
+      const lecturersQuery = await User.where("uid", "in", lecturerIds).get();
+      lecturersQuery.forEach((doc) => {
+        lecturers.push(doc.data());
+      });
+    }
 
-    const studentFullName = `${student.firstname} ${student.lastname}`;
+    const studentFullName =
+      `${student.firstname || ""} ${student.lastname || ""}`.trim();
     const certId = `CERT-${productId.slice(-5)}-${uid.slice(-5)}`.toUpperCase();
 
     const composition = {
       certificateId: certId,
       studentName: studentFullName,
       courseTitle: course.title,
-      lecturers: lecturers.map((l) => `${l.firstname} ${l.lastname}`),
+      lecturers: lecturers.map((l) =>
+        `${l.firstname || ""} ${l.lastname || ""}`.trim(),
+      ),
       institution: "iCampus",
       logoUrl:
         "https://res.cloudinary.com/dbdw3zftx/image/upload/v1759354003/Black_And_White_King_Logo_ydy68f.png",
       issueDate: new Date().toLocaleDateString("en-NG"),
     };
+
     const pdfBuffer = await generateCertificatePDF(composition);
     const bucket = storage.bucket();
     const file = bucket.file(`certificates/${uid}/${certId}.pdf`);
@@ -102,25 +144,33 @@ export const handleGenerateCertificate = async (req, res) => {
       metadata: { contentType: "application/pdf" },
       public: true,
     });
+
     const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
-    const newCert = new Certificate({
+    const now = new Date();
+
+    const certData = {
       ...composition,
       uid,
       productId,
       pdfUrl: firebaseUrl,
-    });
-    await newCert.save();
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await Certificate.doc(certId).set(certData);
+
     await createNotification({
       notificationId: generateNotificationId("classroom"),
       recipientId: uid,
       category: "classroom",
       actionType: "COURSE_COMPLETED",
       title: "Course Completed!",
-      message: `Congratulations ${student.firstname}! You've officially completed ${course.title}. Download your certificate now.`,
+      message: `Congratulations ${student.firstname || "Student"}! You've officially completed ${course.title}. Download your certificate now.`,
       entityId: productId,
       entityType: "course",
-      recipientEmail: email,
+      recipientEmail: email || student.email,
       sendEmail: true,
+      saveToDb: true,
       payload: {
         userName: student.firstname,
         productName: course.title,
@@ -128,8 +178,9 @@ export const handleGenerateCertificate = async (req, res) => {
         productId: productId,
       },
     });
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       pdfUrl: firebaseUrl,
       certificateId: certId,
@@ -144,21 +195,21 @@ export const handleGenerateCertificate = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: "Internal Server Error" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal Server Error" });
   }
 };
 export const submitLectureException = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "submitLectureExceptionController";
   const action = "submitLectureException";
-  try {
-    const { courseId, lectureId, reason, reasonCategory, courseInfo } =
-      req.body;
-    const studentId = req.user.id;
 
-    const user = await User.findOne({ uid: studentId });
-    const lecture = await Lectures.findOne({ id: lectureId });
-    if (!user) {
+  try {
+    const { courseId, lectureId, reason, reasonCategory, courseInfo } = req.body;
+    const studentId = req.user?.uid || req.user?.id;
+    const userQuery = await User.where("uid", "==", studentId).limit(1).get();
+    if (userQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -168,94 +219,121 @@ export const submitLectureException = async (req, res) => {
       );
       return res.status(404).json({ message: "User not found" });
     }
+
+    const userDocRef = userQuery.docs[0].ref;
+    const user = userQuery.docs[0].data();
+    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    let lectureTopic = "Lecture";
+    if (!lectureQuery.empty) {
+      const lectureData = lectureQuery.docs[0].data();
+      lectureTopic = lectureData.topicName || lectureData.title || "Lecture";
+    }
+
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    const monthlyCount = await Exceptions.countDocuments({
-      studentId,
-      createdAt: { $gte: startOfMonth },
-    });
+    const monthlyExceptionsQuery = await Exceptions
+      .where("studentId", "==", studentId)
+      .where("createdAt", ">=", startOfMonth)
+      .get();
+
+    const monthlyCount = monthlyExceptionsQuery.size;
     const userLimit = EXCEPTION_ACCOUNT_LIMITS[user.tier] || 1;
     const isPaidRequest = monthlyCount >= userLimit;
     let chargedAmount = 0;
-    if (isPaidRequest) {
-      if ((user.pointsBalance || 0) < EXCEPTION_COST_IN_ICASH) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          `Monthly free limit (${userLimit}) reached. This exception costs ${EXCEPTION_COST_IN_ICASH} iCash, and your balance is insufficient.`,
-        );
-        return res.status(402).json({
-          message: `Monthly free limit (${userLimit}) reached. This exception costs ${EXCEPTION_COST_IN_ICASH} iCash, and your balance is insufficient.`,
+
+    const currentBalance = user.iCashBalance ?? user.pointsBalance ?? 0;
+    const now = new Date();
+
+    await db.runTransaction(async (t) => {
+      if (isPaidRequest) {
+        if (currentBalance < EXCEPTION_COST_IN_ICASH) {
+          throw new Error(
+            `Monthly free limit (${userLimit}) reached. This exception costs ${EXCEPTION_COST_IN_ICASH} iCash, and your balance is insufficient.`
+          );
+        }
+
+        const newBalance = currentBalance - EXCEPTION_COST_IN_ICASH;
+        chargedAmount = EXCEPTION_COST_IN_ICASH;
+
+        t.update(userDocRef, {
+          iCashBalance: newBalance,
+          pointsBalance: newBalance,
+          updatedAt: now,
+        });
+        const senderTransactionId = generateTransactionId("payment");
+        const txRef = Transactions.doc(senderTransactionId);
+        t.set(txRef, {
+          transactionId: senderTransactionId,
+          userId: user.uid,
+          type: "payment",
+          amountICash: EXCEPTION_COST_IN_ICASH,
+          status: "success",
+          payType: "out",
+          title: "Lectures Exception Purchase (Over Tier Limit)",
+          reference: `EXC-REF-${senderTransactionId}`,
+          createdAt: now,
+          updatedAt: now,
         });
       }
-      user.pointsBalance -= EXCEPTION_COST_IN_ICASH;
-      chargedAmount = EXCEPTION_COST_IN_ICASH;
 
-      const senderTransactionId = generateTransactionId("payment");
-      await Transactions.create({
-        transactionId: senderTransactionId,
-        userId: user.uid,
-        type: "payment",
-        amountICash: EXCEPTION_COST_IN_ICASH,
-        status: "success",
-        payType: "out",
-        title: "Lectures Exception Purchase (Over Tier Limit)",
-        reference: `EXC-REF-${senderTransactionId}`,
+      const studentName = `${user.firstname || ""} ${user.lastname || ""}`.trim();
+      const studentMatric = user.matricNumber || "N/A";
+      const exceptionId = generateExceptionId(courseId, lectureId);
+
+      const exceptionRef = Exceptions.doc(exceptionId);
+      t.set(exceptionRef, {
+        id: exceptionId,
+        studentId,
+        studentInfo: {
+          fullname: studentName,
+          matricNumber: studentMatric,
+        },
+        courseInfo,
+        courseId,
+        lectureId,
+        reason,
+        reasonCategory,
+        status: "pending",
+        date: now.toISOString(),
+        createdAt: now,
+        updatedAt: now,
       });
-    }
-    const studentName = `${user.firstname} ${user.lastname}`;
-    const studentMatric = user.matricNumber || "N/A";
-
-    const exception = new Exceptions({
-      id: generateExceptionId(courseId, lectureId),
-      studentId,
-      studentInfo: {
-        fullname: studentName,
-        matricNumber: studentMatric,
-      },
-      courseInfo,
-      courseId,
-      lectureId,
-      reason,
-      reasonCategory,
-      status: "pending",
-      date: new Date().toISOString(),
     });
 
-    await user.save();
-    await exception.save();
+    const updatedBalance = isPaidRequest
+      ? currentBalance - EXCEPTION_COST_IN_ICASH
+      : currentBalance;
 
     const notificationMessage = isPaidRequest
       ? `Your exception for ${courseInfo.courseTitle} was received. ${EXCEPTION_COST_IN_ICASH} iCash has been deducted.`
       : `Your free exception for ${courseInfo.courseTitle} was successfully submitted.`;
 
-    createNotification({
+    await createNotification({
       notificationId: generateNotificationId("classroom"),
       recipientId: user.uid,
       category: "finance",
       actionType: "EXCEPTION_SUBMITTED",
       title: "Exception Submitted",
       message: notificationMessage,
+      saveToDb: true,
       payload: {
-        exceptionId: exception.id,
-        newBalance: user.pointsBalance,
+        exceptionId: generateExceptionId(courseId, lectureId),
+        newBalance: updatedBalance,
         courseTitle: courseInfo.courseTitle,
-        lectureTitle: lecture.topicName,
+        lectureTitle: lectureTopic,
       },
       sendEmail: false,
       sendPush: true,
       sendSocket: true,
-      saveToDb: true,
     });
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
       message: "Exception submitted successfully",
-      newBalance: user.pointsBalance,
+      newBalance: updatedBalance,
       charged: chargedAmount > 0,
     });
   } catch (error) {
@@ -266,7 +344,8 @@ export const submitLectureException = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: error.message });
+    const statusCode = error.message.includes("insufficient") || error.message.includes("limit") ? 402 : 500;
+    return res.status(statusCode).json({ message: error.message });
   }
 };
 export const checkTestStatus = async (req, res) => {
@@ -275,11 +354,13 @@ export const checkTestStatus = async (req, res) => {
   const action = "checkTestStatus";
   try {
     const { assessmentId } = req.params;
-    const studentId = req.user.uid;
-    const test = await Assessment.findOne({
-      $or: [{ id: assessmentId }],
-    });
-    if (!test) {
+    const studentId = req.user?.uid || req.user?.id;
+    const assessmentQuery = await Assessment
+      .where("id", "==", assessmentId)
+      .limit(1)
+      .get();
+
+    if (assessmentQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -289,13 +370,20 @@ export const checkTestStatus = async (req, res) => {
       );
       return res.status(404).json({ message: "Assessment not found" });
     }
-    const submission = await TestSubmission.findOne({
-      testId: assessmentId,
-      studentId: studentId,
-    });
+
+    const testDoc = assessmentQuery.docs[0];
+    const test = { id: testDoc.id, ...testDoc.data() };
+    const submissionQuery = await TestSubmission
+      .where("testId", "==", assessmentId)
+      .where("studentId", "==", studentId)
+      .limit(1)
+      .get();
+
+    const hasSubmitted = !submissionQuery.empty;
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
-      hasSubmitted: !!submission,
+    return res.status(200).json({
+      hasSubmitted: hasSubmitted,
       test: test,
     });
   } catch (error) {
@@ -307,7 +395,7 @@ export const checkTestStatus = async (req, res) => {
       "error",
       error.message,
     );
-    res
+    return res
       .status(500)
       .json({ message: "Server error checking assessment status" });
   }
@@ -319,9 +407,9 @@ export const manageExceptions = async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;
-
-    const exception = await Exceptions.findOne({ id: id });
-    if (!exception) {
+    const currentLecturerUid = req.user?.uid || req.user?.id;
+    const exceptionQuery = await Exceptions.where("id", "==", id).limit(1).get();
+    if (exceptionQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -331,6 +419,9 @@ export const manageExceptions = async (req, res) => {
       );
       return res.status(404).json({ message: "Lecture Exception not found" });
     }
+
+    const exceptionDocRef = exceptionQuery.docs[0].ref;
+    const exception = exceptionQuery.docs[0].data();
 
     if (exception.status !== "pending") {
       logControllerPerformance(
@@ -345,68 +436,99 @@ export const manageExceptions = async (req, res) => {
         .json({ message: "This exception has already been processed" });
     }
 
-    let lecturer = null;
+    let lecturerNewBalance = undefined;
+    const now = new Date();
 
-    if (status === "approved") {
-      const paymentTransaction = await Transactions.findOne({
-        reference: `EXC-REF-${id}`,
-        status: "success",
-        type: "payment",
-      });
-      if (paymentTransaction) {
-        lecturer = await User.findOne({ uid: req.user.uid });
-        if (lecturer) {
-          lecturer.pointsBalance =
-            (lecturer.pointsBalance || 0) +
-            EXCEPTION_LECTURER_DIVIDEND_IN_ICASH;
-          await lecturer.save();
+    await db.runTransaction(async (t) => {
+      if (status === "approved") {
+        const txQuery = await Transactions
+          .where("reference", "==", `EXC-REF-${id}`)
+          .where("status", "==", "success")
+          .where("type", "==", "payment")
+          .limit(1)
+          .get();
 
-          const transactionId = generateTransactionId("exceptionsDividend");
-          await Transactions.create({
-            transactionId,
-            userId: lecturer.uid,
-            type: "exceptionsDividend",
-            amountICash: EXCEPTION_LECTURER_DIVIDEND_IN_ICASH,
-            status: "success",
-            payType: "in",
-            title: `Lectures Exception Dividend for ${exception.courseInfo?.courseTitle || "Course"}`,
-            reference: `EXC-REF-${id}`,
-            metadata: {
-              recipientId: lecturer.uid,
-            },
-          });
+        if (!txQuery.empty) {
+          const lecturerQuery = await User.where("uid", "==", currentLecturerUid).limit(1).get();
+          if (!lecturerQuery.empty) {
+            const lecturerDocRef = lecturerQuery.docs[0].ref;
+            const lecturerData = lecturerQuery.docs[0].data();
+
+            const currentPoints = lecturerData.iCashBalance ?? lecturerData.pointsBalance ?? 0;
+            lecturerNewBalance = currentPoints + EXCEPTION_LECTURER_DIVIDEND_IN_ICASH;
+
+            t.update(lecturerDocRef, {
+              iCashBalance: lecturerNewBalance,
+              pointsBalance: lecturerNewBalance,
+              updatedAt: now,
+            });
+            const transactionId = generateTransactionId("exceptionsDividend");
+            const divTxRef = Transactions.doc(transactionId);
+            t.set(divTxRef, {
+              transactionId,
+              userId: currentLecturerUid,
+              type: "exceptionsDividend",
+              amountICash: EXCEPTION_LECTURER_DIVIDEND_IN_ICASH,
+              status: "success",
+              payType: "in",
+              title: `Lectures Exception Dividend for ${exception.courseInfo?.courseTitle || "Course"}`,
+              reference: `EXC-REF-${id}`,
+              metadata: {
+                recipientId: currentLecturerUid,
+              },
+              createdAt: now,
+              updatedAt: now,
+            });
+          }
         }
       }
-    }
-
-    exception.status = status;
-    await exception.save();
-
-    const student = await User.findOne({ uid: exception.studentId });
-    const lecture = await Lectures.findOne({ id: exception.lectureId });
-    if (student) {
-      createNotification({
-        notificationId: generateNotificationId("classroom"),
-        recipientId: student.uid,
-        category: "classroom",
-        actionType: "EXCEPTION_UPDATED",
-        title: `Exception ${status === "approved" ? "Approved" : "Rejected"}`,
-        message: `Your lecture exception request for ${lecture.topicName || "your course"} has been ${status}.`,
-        payload: {
-          exceptionId: id,
-          status,
-          courseTitle: exception.courseInfo?.courseTitle,
-        },
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
+      t.update(exceptionDocRef, {
+        status: status,
+        updatedAt: now,
       });
+    });
+
+    const studentQuery = await User.where("uid", "==", exception.studentId).limit(1).get();
+    const lectureQuery = await Lectures.where("id", "==", exception.lectureId).limit(1).get();
+
+    let studentEmail = "";
+    let studentUid = exception.studentId;
+    if (!studentQuery.empty) {
+      const studentData = studentQuery.docs[0].data();
+      studentEmail = studentData.email;
+      studentUid = studentData.uid;
     }
+
+    let lectureTopicName = "your course";
+    if (!lectureQuery.empty) {
+      const lectureData = lectureQuery.docs[0].data();
+      lectureTopicName = lectureData.topicName || lectureData.title || "your course";
+    }
+
+    await createNotification({
+      notificationId: generateNotificationId("classroom"),
+      recipientId: studentUid,
+      category: "classroom",
+      actionType: "EXCEPTION_UPDATED",
+      title: `Exception ${status === "approved" ? "Approved" : "Rejected"}`,
+      message: `Your lecture exception request for ${lectureTopicName} has been ${status}.`,
+      recipientEmail: studentEmail,
+      sendEmail: !!studentEmail,
+      sendPush: true,
+      sendSocket: true,
+      saveToDb: true,
+      payload: {
+        exceptionId: id,
+        status,
+        courseTitle: exception.courseInfo?.courseTitle,
+      },
+    });
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: `Exception ${status} successfully.`,
-      newIcashBalance: lecturer ? lecturer.pointsBalance : undefined,
+      newIcashBalance: lecturerNewBalance,
     });
   } catch (error) {
     logControllerPerformance(
@@ -416,7 +538,7 @@ export const manageExceptions = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 export const createLectureSchedule = async (req, res) => {
@@ -436,13 +558,12 @@ export const createLectureSchedule = async (req, res) => {
       lectureType,
     } = preparedData;
 
-    const lecturerUid = req.user.uid;
+    const lecturerUid = req.user?.uid || req.user?.id;
     const finalPayload = req.body;
     const lecturesToCreate = [];
     const datesToCheck = [];
-
-    const courseDetails = await Course.findOne({ courseId });
-    if (!courseDetails) {
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -452,7 +573,11 @@ export const createLectureSchedule = async (req, res) => {
       );
       return res.status(404).json({ message: "Course not found" });
     }
-    if (!courseDetails.lecturerIds.includes(lecturerUid)) {
+
+    const courseDoc = courseQuery.docs[0];
+    const courseDetails = courseDoc.data();
+
+    if (!courseDetails.lecturerIds || !courseDetails.lecturerIds.includes(lecturerUid)) {
       logControllerPerformance(
         controllerName,
         action,
@@ -464,20 +589,29 @@ export const createLectureSchedule = async (req, res) => {
         message: "Unauthorized: You are not an instructor for this course.",
       });
     }
+
     for (let i = 0; i < (repeatWeeks || 1); i++) {
       const nextDate = new Date(date);
       nextDate.setDate(nextDate.getDate() + i * 7);
       datesToCheck.push(nextDate.toISOString().split("T")[0]);
     }
-    const conflict = await Lectures.findOne({
-      date: { $in: datesToCheck },
-      startTime: { $lt: endTime },
-      endTime: { $gt: lectureStartTime },
-      $or: [
-        { lectureType: "Physical", location: location },
-        { courseId: courseId },
-        { department: courseDetails.department, level: courseDetails.level },
-      ],
+
+    const existingLecturesQuery = await Lectures
+      .where("date", "in", datesToCheck)
+      .where("startTime", "<", endTime)
+      .where("endTime", ">", lectureStartTime)
+      .get();
+
+    let conflict = null;
+    existingLecturesQuery.forEach((doc) => {
+      const lec = doc.data();
+      const isPhysicalConflict = lectureType === "Physical" && location && lec.lectureType === "Physical" && lec.location === location;
+      const isCourseConflict = lec.courseId === courseId;
+      const isDepartmentConflict = lec.department === courseDetails.department && lec.level === courseDetails.level;
+
+      if (isPhysicalConflict || isCourseConflict || isDepartmentConflict) {
+        conflict = lec;
+      }
     });
 
     if (conflict) {
@@ -492,10 +626,17 @@ export const createLectureSchedule = async (req, res) => {
         message: `Conflict detected on ${conflict.date}! A lecture (${conflict.topicName || "Class"}) conflicts with this time slot.`,
       });
     }
+
+    const now = new Date();
+    const batch = db.batch();
+    const createdLecturesList = [];
+
     datesToCheck.forEach((d) => {
-      lecturesToCreate.push({
+      const lectureId = generateLectureId(courseId, lectureType);
+      const lectureRef = Lectures.doc(lectureId);
+      const newLectureData = {
         ...finalPayload,
-        id: generateLectureId(courseId, lectureType),
+        id: lectureId,
         date: d,
         department: courseDetails.department,
         level: courseDetails.level,
@@ -503,63 +644,77 @@ export const createLectureSchedule = async (req, res) => {
         status: "scheduled",
         isTaught: false,
         attendance: [],
-      });
+        createdAt: now,
+        updatedAt: now,
+      };
+      batch.set(lectureRef, newLectureData);
+      createdLecturesList.push(newLectureData);
     });
 
-    const result = await Lectures.insertMany(lecturesToCreate);
-    const students = await User.find({
-      usertype: "student",
-      department: courseDetails.department,
-      level: courseDetails.level,
-    }).select("uid firstname");
+    await batch.commit();
 
-    const notificationPromises = students.map((student) =>
-      createNotification({
-        notificationId: generateNotificationId("classroom"),
-        recipientId: student.uid,
-        category: "academic",
-        actionType: "LECTURE_SCHEDULED",
-        title: "New Lecture Scheduled",
-        message: `A new ${lectureType} session for ${topicName} has been set.`,
-        payload: {
-          userName: student.firstname,
-          topicName: topicName,
-          courseId: courseId,
-          lectureId: result[0].id,
-          lectureType: lectureType,
-          location: location,
-          time: startTime,
-          date:
-            datesToCheck.length > 1
-              ? `${datesToCheck[0]} (Repeats for ${repeatWeeks} weeks)`
-              : datesToCheck[0],
-        },
-        entityId: result[0].id,
-        entityType: "lecture",
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
-      }),
-    );
+    const studentsQuery = await User
+      .where("usertype", "==", "student")
+      .where("department", "==", courseDetails.department)
+      .where("level", "==", courseDetails.level)
+      .get();
+
+    const notificationPromises = [];
+    studentsQuery.forEach((doc) => {
+      const student = doc.data();
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "academic",
+          actionType: "LECTURE_SCHEDULED",
+          title: "New Lecture Scheduled",
+          message: `A new ${lectureType} session for ${topicName} has been set.`,
+          recipientEmail: student.email,
+          sendEmail: !!student.email,
+          payload: {
+            userName: student.firstname,
+            topicName: topicName,
+            courseId: courseId,
+            lectureId: createdLecturesList[0].id,
+            lectureType: lectureType,
+            location: location,
+            time: lectureStartTime,
+            date:
+              datesToCheck.length > 1
+                ? `${datesToCheck[0]} (Repeats for ${repeatWeeks} weeks)`
+                : datesToCheck[0],
+          },
+          entityId: createdLecturesList[0].id,
+          entityType: "lecture",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        })
+      );
+    });
 
     Promise.all(notificationPromises).catch((err) =>
       console.error("Notification Error:", err),
     );
+    const lecturerQuery = await User.where("uid", "==", lecturerUid).limit(1).get();
+    if (!lecturerQuery.empty) {
+      const lecturerDocRef = lecturerQuery.docs[0].ref;
+      const lecturerData = lecturerQuery.docs[0].data();
+      const currentStats = lecturerData.monthlyStats || {};
+      
+      await lecturerDocRef.update({
+        "monthlyStats.minutesActive": (currentStats.minutesActive || 0) + 15,
+        "monthlyStats.aiQueries": (currentStats.aiQueries || 0) + 2,
+        updatedAt: now,
+      });
+    }
 
-    await User.updateOne(
-      { uid: lecturerUid },
-      {
-        $inc: {
-          "monthlyStats.minutesActive": 15,
-          "monthlyStats.aiQueries": 2,
-        },
-      },
-    );
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(201).json({
+    return res.status(201).json({
       message: "Lectures scheduled successfully",
-      count: result.length,
-      lecture: result[0],
+      count: createdLecturesList.length,
+      lecture: createdLecturesList[0],
     });
   } catch (error) {
     console.error(error.message);
@@ -570,7 +725,7 @@ export const createLectureSchedule = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Internal Server Error" });
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const createAssessment = async (req, res) => {
@@ -593,11 +748,11 @@ export const createAssessment = async (req, res) => {
       endTime,
     } = req.body;
 
-    let assessment;
+    let assessmentData;
     let shouldNotify = false;
-
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+    const now = new Date();
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -608,37 +763,50 @@ export const createAssessment = async (req, res) => {
       return res.status(404).json({ message: "Course not found" });
     }
 
-    const existingAssessment = id ? await Assessment.findOne({ id }) : null;
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
+
+    let assessmentId = id;
+    let existingAssessment = null;
+
+    if (id) {
+      const assessmentQuery = await Assessment.where("id", "==", id).limit(1).get();
+      if (!assessmentQuery.empty) {
+        existingAssessment = {
+          id: assessmentQuery.docs[0].id,
+          ...assessmentQuery.docs[0].data(),
+        };
+      }
+    }
 
     if (existingAssessment) {
       if (!existingAssessment.isPublished && isPublished) {
         shouldNotify = true;
       }
 
-      assessment = await Assessment.findOneAndUpdate(
-        { id },
-        {
-          title,
-          questions,
-          duration,
-          totalMarks,
-          isPublished,
-          status,
-          scheduledStart,
-          dueDate,
-          endTime,
-          updatedAt: new Date(),
-        },
-        { new: true },
-      );
+      assessmentData = {
+        title,
+        questions,
+        duration,
+        totalMarks,
+        isPublished,
+        status,
+        scheduledStart,
+        dueDate,
+        endTime,
+        updatedAt: now,
+      };
+
+      await Assessment.doc(assessmentId).update(assessmentData);
+      assessmentData = { id: assessmentId, ...existingAssessment, ...assessmentData };
     } else {
-      const personalizedId = generateAssessmentId(
+      assessmentId = generateAssessmentId(
         course.courseId,
         assessmentType,
       );
 
-      assessment = new Assessment({
-        id: personalizedId,
+      assessmentData = {
+        id: assessmentId,
         courseId,
         title,
         questions,
@@ -649,54 +817,84 @@ export const createAssessment = async (req, res) => {
         scheduledStart,
         dueDate,
         endTime,
-        createdAt: new Date(),
-      });
+        createdAt: now,
+        updatedAt: now,
+      };
 
-      await assessment.save();
-      await Course.findOneAndUpdate(
-        { courseId },
-        { $addToSet: { tests: personalizedId } },
-      );
+      await Assessment.doc(assessmentId).set(assessmentData);
+      const existingTests = course.tests || [];
+      if (!existingTests.includes(assessmentId)) {
+        await courseDocRef.update({
+          tests: [...existingTests, assessmentId],
+          updatedAt: now,
+        });
+      }
 
       if (isPublished) shouldNotify = true;
     }
+
     if (
       shouldNotify &&
       course.studentsEnrolled &&
       course.studentsEnrolled.length > 0
     ) {
-      const enrolledStudentsList = await User.find({
-        uid: { $in: course.studentsEnrolled },
-        usertype: "student",
-      }).select("uid");
+      const enrolledUids = course.studentsEnrolled;
+      const studentChunks = [];
+      for (let i = 0; i < enrolledUids.length; i += 10) {
+        studentChunks.push(enrolledUids.slice(i, i + 10));
+      }
 
-      enrolledStudentsList.forEach((student) => {
+      const enrolledStudentsList = [];
+      for (const chunk of studentChunks) {
+        const studentsQuery = await User
+          .where("uid", "in", chunk)
+          .where("usertype", "==", "student")
+          .get();
+
+        studentsQuery.forEach((doc) => {
+          enrolledStudentsList.push(doc.data());
+        });
+      }
+
+      const formattedDate = scheduledStart ? new Date(scheduledStart).toLocaleDateString() : "";
+      const formattedTime = scheduledStart ? new Date(scheduledStart).toLocaleTimeString() : "";
+
+      const notificationPromises = enrolledStudentsList.map((student) =>
         createNotification({
           notificationId: generateNotificationId("classroom"),
           recipientId: student.uid,
           category: "classroom",
           actionType: "TEST_CREATED",
           title: "New Assessment Posted",
-          message: `A new test "${title}" has been posted for ${course.courseCode}.`,
+          message: `A new test "${title}" has been posted for ${course.courseCode || course.title}.`,
+          recipientEmail: student.email,
+          sendEmail: !!student.email,
           payload: {
             userName: student.firstname,
-            courseTitle: course.courseTitle,
-            testTitle: testTitle,
+            courseTitle: course.courseTitle || course.title,
+            testTitle: title,
             dueDate,
             date: formattedDate,
             time: formattedTime,
             course,
           },
+          entityId: assessmentId,
+          entityType: "assessment",
           sendPush: true,
           sendSocket: true,
           saveToDb: true,
-        });
-      });
+        })
+      );
+
+      Promise.all(notificationPromises).catch((err) =>
+        console.error("Assessment Notification Error:", err)
+      );
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(existingAssessment ? 200 : 201).json({
+    return res.status(existingAssessment ? 200 : 201).json({
       message: isPublished ? "Assessment Published" : "Draft Synced",
-      data: assessment,
+      data: assessmentData,
     });
   } catch (error) {
     console.error("Assessment Error:", error);
@@ -707,7 +905,7 @@ export const createAssessment = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
 export const deleteLecture = async (req, res) => {
@@ -716,8 +914,9 @@ export const deleteLecture = async (req, res) => {
   const action = "deleteLecture";
   try {
     const { lectureId } = req.params;
-    const lecture = await Lectures.findOne({ id: lectureId });
-    if (!lecture) {
+    const currentUserId = req.user?.uid || req.user?.id;
+    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    if (lectureQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -728,9 +927,12 @@ export const deleteLecture = async (req, res) => {
       return res.status(404).json({ message: "Lecture not found" });
     }
 
+    const lectureDocRef = lectureQuery.docs[0].ref;
+    const lecture = lectureQuery.docs[0].data();
+
     const { courseId, topicName, date, id, hostId } = lecture;
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -740,9 +942,12 @@ export const deleteLecture = async (req, res) => {
       );
       return res.status(404).json({ message: "Associated course not found" });
     }
+
+    const course = courseQuery.docs[0].data();
+
     const isCourseLecturer =
-      course.lecturerIds && course.lecturerIds.includes(req.user.uid);
-    const isLectureHost = hostId === req.user.uid;
+      course.lecturerIds && course.lecturerIds.includes(currentUserId);
+    const isLectureHost = hostId === currentUserId;
 
     if (!isCourseLecturer && !isLectureHost) {
       logControllerPerformance(
@@ -758,14 +963,28 @@ export const deleteLecture = async (req, res) => {
           "Access denied. You do not have permissions to cancel this specific lecture slot.",
       });
     }
-    await Lectures.findOneAndDelete({ id: lectureId });
-    if (course.studentsEnrolled && course.studentsEnrolled.length > 0) {
-      const students = await User.find({
-        uid: { $in: course.studentsEnrolled },
-        usertype: "student",
-      }).select("uid");
+    await lectureDocRef.delete();
 
-      const notificationPromises = students.map((student) =>
+    if (course.studentsEnrolled && course.studentsEnrolled.length > 0) {
+      const enrolledUids = course.studentsEnrolled;
+      const studentChunks = [];
+      for (let i = 0; i < enrolledUids.length; i += 10) {
+        studentChunks.push(enrolledUids.slice(i, i + 10));
+      }
+
+      const studentsList = [];
+      for (const chunk of studentChunks) {
+        const studentsQuery = await User
+          .where("uid", "in", chunk)
+          .where("usertype", "==", "student")
+          .get();
+
+        studentsQuery.forEach((doc) => {
+          studentsList.push(doc.data());
+        });
+      }
+
+      const notificationPromises = studentsList.map((student) =>
         createNotification({
           notificationId: generateNotificationId("classroom"),
           recipientId: student.uid,
@@ -773,6 +992,8 @@ export const deleteLecture = async (req, res) => {
           actionType: "LECTURE_CANCELLED",
           title: "Lecture Cancelled",
           message: `The lecture "${topicName}" scheduled for ${date} has been cancelled.`,
+          recipientEmail: student.email,
+          sendEmail: !!student.email,
           payload: {
             courseId: courseId,
             lectureId: id,
@@ -790,6 +1011,7 @@ export const deleteLecture = async (req, res) => {
         console.error("Delete Notification Error:", err),
       );
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
@@ -814,9 +1036,8 @@ export const fetchLectureAttendanceReport = async (req, res) => {
   try {
     const { lectureId } = req.params;
     const { exceptions = [] } = req.body;
-
-    const lecture = await Lectures.findOne({ id: lectureId });
-    if (!lecture) {
+    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    if (lectureQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -827,7 +1048,11 @@ export const fetchLectureAttendanceReport = async (req, res) => {
       return res.status(404).json({ message: "Lecture record not found." });
     }
 
-    const course = await Course.findOne({ courseId: lecture.courseId });
+    const lectureDocRef = lectureQuery.docs[0].ref;
+    const lecture = lectureQuery.docs[0].data();
+    const courseQuery = await Course.where("courseId", "==", lecture.courseId).limit(1).get();
+    const course = !courseQuery.empty ? courseQuery.docs[0].data() : null;
+
     const bucket = storage.bucket();
     const filePath = `attendance/${lecture.courseId}/Report-${lectureId}.pdf`;
     const file = bucket.file(filePath);
@@ -837,28 +1062,55 @@ export const fetchLectureAttendanceReport = async (req, res) => {
     if (exists) {
       firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
     } else {
-      const attendanceRecords = await Attendance.find({ lectureId });
-      const studentUids = attendanceRecords.map((r) => r.studentId);
-      const presentStudents = await User.find({
-        uid: { $in: studentUids },
-      }).select("firstname lastname matricNumber department uid");
+      const attendanceQuery = await Attendance.where("lectureId", "==", lectureId).get();
+      const studentUids = [];
+      attendanceQuery.forEach((doc) => {
+        const attData = doc.data();
+        if (attData.studentId) {
+          studentUids.push(attData.studentId);
+        }
+      });
+      const presentStudents = [];
+      if (studentUids.length > 0) {
+        const studentChunks = [];
+        for (let i = 0; i < studentUids.length; i += 10) {
+          studentChunks.push(studentUids.slice(i, i + 10));
+        }
+
+        for (const chunk of studentChunks) {
+          const usersQuery = await User.where("uid", "in", chunk).get();
+          usersQuery.forEach((doc) => {
+            const userData = doc.data();
+            presentStudents.push({
+              firstname: userData.firstname,
+              lastname: userData.lastname,
+              matricNumber: userData.matricNumber,
+              department: userData.department,
+              uid: userData.uid,
+            });
+          });
+        }
+      }
+
       const pdfBuffer = await generateAttendancePDF({
         course,
         lecture,
         presentStudents,
         exceptions,
       });
+
       await file.save(pdfBuffer, {
         metadata: { contentType: "application/pdf" },
         public: true,
       });
 
       firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
-      await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        { pdfUrl: firebaseUrl },
-      );
+      await lectureDocRef.update({
+        pdfUrl: firebaseUrl,
+        updatedAt: new Date(),
+      });
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
@@ -874,7 +1126,7 @@ export const fetchLectureAttendanceReport = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Internal server compilation error." });
+    return res.status(500).json({ message: "Internal server compilation error." });
   }
 };
 export const getCourseFinalAttendanceSummary = async (req, res) => {
@@ -883,8 +1135,8 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
   const action = "getCourseFinalAttendanceSummary";
   try {
     const { courseId } = req.params;
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -894,11 +1146,21 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
       );
       return res.status(404).json({ message: "Course context not found." });
     }
-    const totalLecturesCount = await Lectures.countDocuments({
-      courseId,
-      status: "completed",
-      lectureType: { $ne: "Recorded" },
+
+    const course = courseQuery.docs[0].data();
+    const lecturesQuery = await Lectures
+      .where("courseId", "==", courseId)
+      .where("status", "==", "completed")
+      .get();
+
+    let totalLecturesCount = 0;
+    lecturesQuery.forEach((doc) => {
+      const lec = doc.data();
+      if (lec.lectureType !== "Recorded") {
+        totalLecturesCount++;
+      }
     });
+
     if (totalLecturesCount === 0) {
       logControllerPerformance(
         controllerName,
@@ -911,66 +1173,65 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
         .status(200)
         .json({ message: "No live lectures recorded yet.", summary: [] });
     }
-    const attendanceSummary = await User.aggregate([
-      {
-        $match: { uid: { $in: course.studentsEnrolled } },
-      },
-      {
-        $lookup: {
-          from: "attendances",
-          let: { studentUid: "$uid" },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$studentId", "$$studentUid"] },
-                    { $eq: ["$courseId", courseId] },
-                    { $eq: ["$status", "Present"] },
-                  ],
-                },
-              },
-            },
-          ],
-          as: "presenceRecords",
-        },
-      },
-      {
-        // Project cleanly structured grading fields back to the client interface
-        $project: {
-          _id: 0,
-          uid: 1,
-          firstname: 1,
-          lastname: 1,
-          matricNumber: 1,
-          department: 1,
-          lecturesAttended: { $size: "$presenceRecords" },
-          totalLectures: { $literal: totalLecturesCount },
-          attendancePercentage: {
-            $round: [
-              {
-                $multiply: [
-                  {
-                    $divide: [
-                      { $size: "$presenceRecords" },
-                      totalLecturesCount,
-                    ],
-                  },
-                  100,
-                ],
-              },
-              1,
-            ],
-          },
-        },
-      },
-      { $sort: { matricNumber: 1 } },
-    ]);
+
+    const studentsEnrolled = course.studentsEnrolled || [];
+    let studentsList = [];
+
+    if (studentsEnrolled.length > 0) {
+      const studentChunks = [];
+      for (let i = 0; i < studentsEnrolled.length; i += 10) {
+        studentChunks.push(studentsEnrolled.slice(i, i + 10));
+      }
+
+      for (const chunk of studentChunks) {
+        const usersQuery = await Users.where("uid", "in", chunk).get();
+        usersQuery.forEach((doc) => {
+          studentsList.push(doc.data());
+        });
+      }
+    }
+    const attendanceQuery = await Attendance
+      .where("courseId", "==", courseId)
+      .where("status", "==", "Present")
+      .get();
+
+    const studentPresenceMap = {};
+    attendanceQuery.forEach((doc) => {
+      const att = doc.data();
+      const studentId = att.studentId;
+      if (studentId) {
+        studentPresenceMap[studentId] = (studentPresenceMap[studentId] || 0) + 1;
+      }
+    });
+    const attendanceSummary = studentsList.map((student) => {
+      const uid = student.uid;
+      const lecturesAttended = studentPresenceMap[uid] || 0;
+      const attendancePercentage = Number(
+        ((lecturesAttended / totalLecturesCount) * 100).toFixed(1)
+      );
+
+      return {
+        uid: student.uid,
+        firstname: student.firstname || "",
+        lastname: student.lastname || "",
+        matricNumber: student.matricNumber || "",
+        department: student.department || "",
+        lecturesAttended,
+        totalLectures: totalLecturesCount,
+        attendancePercentage,
+      };
+    });
+    attendanceSummary.sort((a, b) => {
+      if (a.matricNumber < b.matricNumber) return -1;
+      if (a.matricNumber > b.matricNumber) return 1;
+      return 0;
+    });
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       courseCode: course.courseCode,
-      courseTitle: course.courseTitle,
+      courseTitle: course.courseTitle || course.title,
       totalLecturesHeld: totalLecturesCount,
       data: attendanceSummary,
     });
@@ -986,7 +1247,7 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
       "error",
       error.message,
     );
-    res
+    return res
       .status(500)
       .json({ message: "Failed to generate course grading summary sheet." });
   }
@@ -997,12 +1258,28 @@ export const getCourseLecturePdfDirectory = async (req, res) => {
   const action = "getCourseLecturePdfDirectory";
   try {
     const { courseId } = req.params;
-    const lectureHistory = await Lectures.find({
-      courseId,
-      status: "completed",
-    })
-      .select("id topicName date startTime pdfUrl getAttendanceMode")
-      .sort({ date: -1 });
+    const lecturesQuery = await Lectures
+      .where("courseId", "==", courseId)
+      .where("status", "==", "completed")
+      .get();
+
+    let lectureHistory = [];
+    lecturesQuery.forEach((doc) => {
+      const data = doc.data();
+      lectureHistory.push({
+        id: data.id || doc.id,
+        topicName: data.topicName,
+        date: data.date,
+        startTime: data.startTime,
+        pdfUrl: data.pdfUrl,
+        getAttendanceMode: data.getAttendanceMode,
+      });
+    });
+    lectureHistory.sort((a, b) => {
+      if (a.date > b.date) return -1;
+      if (a.date < b.date) return 1;
+      return 0;
+    });
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -1018,7 +1295,7 @@ export const getCourseLecturePdfDirectory = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Internal server registry lookup error." });
+    return res.status(500).json({ message: "Internal server registry lookup error." });
   }
 };
 export const compareStudentFacesWithGemini = async (req, res) => {
@@ -1048,6 +1325,7 @@ export const compareStudentFacesWithGemini = async (req, res) => {
       responseImage.data,
       "binary",
     ).toString("base64");
+
     const textInstructions =
       "You are an automated biometric security system monitoring classroom attendance. " +
       "Compare Image 1 (live front-camera phone snapshot) and Image 2 (official institutional database headshot). " +
@@ -1093,6 +1371,7 @@ export const compareStudentFacesWithGemini = async (req, res) => {
         message: "AI Engine returned empty validation text.",
       });
     }
+
     const validationResult = JSON.parse(aiOutputText);
 
     if (validationResult.verified === true) {
@@ -1137,6 +1416,7 @@ export const uploadCourseMaterial = async (req, res) => {
   try {
     const { courseId } = req.params;
     const { materialUrl, title } = req.body;
+    const currentUserId = req.user?.uid || req.user?.id;
 
     if (!materialUrl) {
       logControllerPerformance(
@@ -1150,8 +1430,8 @@ export const uploadCourseMaterial = async (req, res) => {
         .status(400)
         .json({ message: "Missing material URL parameter." });
     }
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1161,8 +1441,12 @@ export const uploadCourseMaterial = async (req, res) => {
       );
       return res.status(404).json({ message: "Course context not found." });
     }
+
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
+
     const isAuthorized =
-      course.lecturerIds && course.lecturerIds.includes(req.user.uid);
+      course.lecturerIds && course.lecturerIds.includes(currentUserId);
     if (!isAuthorized) {
       logControllerPerformance(
         controllerName,
@@ -1175,46 +1459,68 @@ export const uploadCourseMaterial = async (req, res) => {
         message: "Unauthorized. You are not a lecturer for this course.",
       });
     }
-    course.resources = course.resources || [];
-    course.resources.push(materialUrl);
-    await course.save();
+
+    const existingResources = course.resources || [];
+    const updatedResources = [...existingResources, materialUrl];
+    const now = new Date();
+
+    await courseDocRef.update({
+      resources: updatedResources,
+      updatedAt: now,
+    });
 
     const fileName = title || materialUrl.split("/").pop() || "New Resource";
+    const studentsQuery = await User
+      .where("usertype", "==", "student")
+      .where("department", "==", course.department)
+      .where("level", "==", course.level)
+      .get();
 
-    User.find({
-      usertype: "student",
-      department: course.department,
-      level: course.level,
-    })
-      .select("uid")
-      .then((students) => {
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "MATERIAL_UPLOADED",
-            title: "New Study Material",
-            message: `A new resource file has been uploaded for ${course.courseTitle}.`,
-            payload: { course, fileName },
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-      })
-      .catch((err) =>
-        console.error("Notification dispatch routine failed: ", err),
+    const notificationPromises = [];
+    studentsQuery.forEach((doc) => {
+      const student = doc.data();
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "MATERIAL_UPLOADED",
+          title: "New Study Material",
+          message: `A new resource file has been uploaded for ${course.courseTitle || course.title}.`,
+          recipientEmail: student.email,
+          sendEmail: !!student.email,
+          payload: { 
+            userName: student.firstname,
+            courseTitle: course.courseTitle || course.title,
+            course, 
+            fileName,
+            materialUrl,
+          },
+          entityId: courseId,
+          entityType: "course",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        })
       );
-    await User.updateOne(
-      { uid: req.user.uid },
-      {
-        $inc: {
-          "monthlyStats.libraryUsageSessions": 1,
-          "monthlyStats.minutesActive": 10,
-        },
-      },
+    });
+
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Notification dispatch routine failed: ", err)
     );
+    const lecturerQuery = await User.where("uid", "==", currentUserId).limit(1).get();
+    if (!lecturerQuery.empty) {
+      const lecturerDocRef = lecturerQuery.docs[0].ref;
+      const lecturerData = lecturerQuery.docs[0].data();
+      const currentStats = lecturerData.monthlyStats || {};
+
+      await lecturerDocRef.update({
+        "monthlyStats.libraryUsageSessions": (currentStats.libraryUsageSessions || 0) + 1,
+        "monthlyStats.minutesActive": (currentStats.minutesActive || 0) + 10,
+        updatedAt: now,
+      });
+    }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Material added successfully",
@@ -1240,6 +1546,7 @@ export const deleteCourseMaterial = async (req, res) => {
   try {
     const { courseId } = req.params;
     const { materialUrl } = req.body;
+    const currentUserId = req.user?.uid || req.user?.id;
 
     if (!materialUrl) {
       logControllerPerformance(
@@ -1251,8 +1558,10 @@ export const deleteCourseMaterial = async (req, res) => {
       );
       return res.status(400).json({ message: "Missing reference target URL." });
     }
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+
+    // Fetch course from Firestore
+    const courseQuery = await Courses.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1264,8 +1573,12 @@ export const deleteCourseMaterial = async (req, res) => {
         .status(404)
         .json({ message: "Course context target not found." });
     }
+
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
+
     const isAuthorized =
-      course.lecturerIds && course.lecturerIds.includes(req.user.uid);
+      course.lecturerIds && course.lecturerIds.includes(currentUserId);
     if (!isAuthorized) {
       logControllerPerformance(
         controllerName,
@@ -1278,6 +1591,7 @@ export const deleteCourseMaterial = async (req, res) => {
         .status(403)
         .json({ message: "Action Denied. Access authorization mismatch." });
     }
+
     try {
       const encodedFilePath = materialUrl.split("/o/")[1]?.split("?")[0];
       if (encodedFilePath) {
@@ -1299,44 +1613,68 @@ export const deleteCourseMaterial = async (req, res) => {
         action,
         startTime,
         "error",
-        storageError,
+        storageError.message || storageError,
       );
     }
-    const updatedCourse = await Course.findOneAndUpdate(
-      { courseId },
-      { $pull: { resources: materialUrl } },
-      { new: true },
-    );
+
+    const existingResources = course.resources || [];
+    const updatedResources = existingResources.filter((resUrl) => resUrl !== materialUrl);
+    const now = new Date();
+
+    await courseDocRef.update({
+      resources: updatedResources,
+      updatedAt: now,
+    });
+
+    const updatedCourse = {
+      ...course,
+      resources: updatedResources,
+    };
+
     const fileName = materialUrl.split("/").pop() || "Resource Document";
 
-    User.find({
-      usertype: "student",
-      department: updatedCourse.department,
-      level: updatedCourse.level,
-    })
-      .select("uid")
-      .then((students) => {
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "MATERIAL_DELETED",
-            title: "Study Material Removed",
-            message: `A resource file has been removed from ${updatedCourse.courseTitle}.`,
-            payload: { course, fileName },
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-      })
-      .catch((err) =>
-        console.error(
-          "Notification push routine failed during deletion: ",
-          err,
-        ),
+    // Fetch students matching department and level to notify
+    const studentsQuery = await Users
+      .where("usertype", "==", "student")
+      .where("department", "==", updatedCourse.department)
+      .where("level", "==", updatedCourse.level)
+      .get();
+
+    const notificationPromises = [];
+    studentsQuery.forEach((doc) => {
+      const student = doc.data();
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "MATERIAL_DELETED",
+          title: "Study Material Removed",
+          message: `A resource file has been removed from ${updatedCourse.courseTitle || updatedCourse.title}.`,
+          recipientEmail: student.email,
+          sendEmail: !!student.email,
+          payload: { 
+            userName: student.firstname,
+            courseTitle: updatedCourse.courseTitle || updatedCourse.title,
+            course: updatedCourse, 
+            fileName, 
+          },
+          entityId: courseId,
+          entityType: "course",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        })
       );
+    });
+
+    Promise.all(notificationPromises).catch((err) =>
+      console.error(
+        "Notification push routine failed during deletion: ",
+        err,
+      ),
+    );
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Material permanently deleted",

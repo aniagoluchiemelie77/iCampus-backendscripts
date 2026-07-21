@@ -13,8 +13,7 @@ import {
 import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
 import { v4 as uuidv4 } from "uuid";
-import mongoose from "mongoose";
-import { storage } from "../config/firebaseAdmin.js";
+import { storage, db } from "../config/firebaseAdmin.js";
 import {
   generateNotificationId,
   generateTransactionId,
@@ -116,17 +115,31 @@ async function processNotificationFanOut(
 ) {
   if (isEditing) return;
   try {
-    const followers = await Follow.find({ followingId: sellerUid }).lean();
-    const sellerUser = await User.findOne({ uid: sellerUid })
-      .select("email")
-      .lean();
+    const followSnapshot = await Follow.where(
+      "followingId",
+      "==",
+      sellerUid,
+    ).get();
+    const followers = [];
+    followSnapshot.forEach((doc) => {
+      followers.push(doc.data());
+    });
+    const sellerQuery = await User.where("uid", "==", sellerUid).limit(1).get();
+    let sellerEmail = null;
+    if (!sellerQuery.empty) {
+      sellerEmail = sellerQuery.docs[0].data().email;
+    }
+
     const notificationPromises = [];
-    if (sellerUser && sellerUser.email) {
+    const formattedDate = new Date().toLocaleDateString();
+    const formattedTime = new Date().toLocaleTimeString();
+
+    if (sellerEmail) {
       notificationPromises.push(
         createNotification({
           notificationId: generateNotificationId("store"),
           recipientId: sellerUid,
-          recipientEmail: sellerUser.email,
+          recipientEmail: sellerEmail,
           category: "store",
           actionType: "PRODUCT_CREATION",
           title: "Product Published",
@@ -144,14 +157,24 @@ async function processNotificationFanOut(
         }),
       );
     }
-    if (followers && followers.length > 0) {
-      const followerIds = followers.map((f) => f.followerId);
-      const followerUsers = await User.find({ uid: { $in: followerIds } })
-        .select("uid email")
-        .lean();
-      const emailMap = new Map(followerUsers.map((u) => [u.uid, u.email]));
 
-      // Build out delivery tasks for every follower who has an email on file
+    if (followers.length > 0) {
+      const followerIds = followers.map((f) => f.followerId);
+      const emailMap = new Map();
+      const chunks = [];
+      for (let i = 0; i < followerIds.length; i += 30) {
+        chunks.push(followerIds.slice(i, i + 30));
+      }
+
+      for (const chunk of chunks) {
+        const userSnapshot = await User.where("uid", "in", chunk).get();
+        userSnapshot.forEach((doc) => {
+          const u = doc.data();
+          if (u.uid && u.email) {
+            emailMap.set(u.uid, u.email);
+          }
+        });
+      }
       followers.forEach((follower) => {
         const recipientEmail = emailMap.get(follower.followerId);
 
@@ -179,6 +202,7 @@ async function processNotificationFanOut(
         }
       });
     }
+
     if (notificationPromises.length > 0) {
       await Promise.all(notificationPromises);
     }
@@ -194,31 +218,67 @@ export const fetchStoreProducts = async (req, res) => {
   const controllerName = "fetchStoreProductsController";
   const action = "fetchStoreProducts";
   const { q, category, cursor, limit = 10 } = req.query;
+  const pageLimit = Number(limit);
+
   try {
-    let query = { isAvailable: true };
+    let queryRef = Product.where("isAvailable", "==", true);
+
     if (category && category !== "all" && category !== "popular") {
-      query.category = category;
+      queryRef = queryRef.where("category", "==", category);
     }
+    const isPopular = category === "popular";
+    const snapshot = await queryRef.get();
+    let products = [];
+
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      products.push({ id: doc.id, ...data });
+    });
     if (q) {
-      query.$or = [
-        { title: { $regex: q, $options: "i" } },
-        { description: { $regex: q, $options: "i" } },
-      ];
+      const searchTerm = q.toLowerCase().trim();
+      products = products.filter((p) => {
+        const title = (p.title || "").toLowerCase();
+        const description = (p.description || "").toLowerCase();
+        return title.includes(searchTerm) || description.includes(searchTerm);
+      });
     }
+    products.sort((a, b) => {
+      if (isPopular) {
+        const favA = a.favCount || 0;
+        const favB = b.favCount || 0;
+        if (favB !== favA) return favB - favA;
+
+        const ratingA = a.ratingsAverage || 0;
+        const ratingB = b.ratingsAverage || 0;
+        return ratingB - ratingA;
+      } else {
+        const timeA = a.createdAt?.toDate
+          ? a.createdAt.toDate().getTime()
+          : new Date(a.createdAt || 0).getTime();
+        const timeB = b.createdAt?.toDate
+          ? b.createdAt.toDate().getTime()
+          : new Date(b.createdAt || 0).getTime();
+        return timeB - timeA;
+      }
+    });
     if (cursor) {
-      query._id = { $lt: cursor };
+      const cursorIndex = products.findIndex(
+        (p) => (p.productId || p.id) === cursor,
+      );
+      if (cursorIndex !== -1) {
+        products = products.slice(cursorIndex + 1);
+      }
     }
-    let sort = { createdAt: -1 };
-    if (category === "popular") {
-      sort = { favCount: -1, ratingsAverage: -1 };
-    }
-    const products = await Product.find(query).sort(sort).limit(Number(limit));
+    const paginatedProducts = products.slice(0, pageLimit);
+
     const nextCursor =
-      products.length === Number(limit)
-        ? products[products.length - 1].productId
+      paginatedProducts.length === pageLimit
+        ? paginatedProducts[paginatedProducts.length - 1].productId ||
+          paginatedProducts[paginatedProducts.length - 1].id
         : null;
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.json({ products, nextCursor });
+    res.json({ products: paginatedProducts, nextCursor });
   } catch (err) {
     logControllerPerformance(
       controllerName,
@@ -246,11 +306,33 @@ export const fetchAllProducts = async (req, res) => {
         source: "cache",
       });
     }
-    const products = await Product.find({})
-      .select(
-        "title isAvailable priceInPoints mediaUrls productId courseDetails impressions sales category description ratings fileDetails type sellerId physicalDetails",
-      )
-      .lean();
+
+    const snapshot = await Product.get();
+    const products = [];
+
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      const projectedProduct = {
+        id: doc.id,
+        title: data.title,
+        isAvailable: data.isAvailable,
+        priceInPoints: data.priceInPoints,
+        mediaUrls: data.mediaUrls,
+        productId: data.productId,
+        courseDetails: data.courseDetails,
+        impressions: data.impressions,
+        sales: data.sales,
+        category: data.category,
+        description: data.description,
+        ratings: data.ratings,
+        fileDetails: data.fileDetails,
+        type: data.type,
+        sellerId: data.sellerId,
+        physicalDetails: data.physicalDetails,
+      };
+      products.push(projectedProduct);
+    });
+
     await redis.set(CACHE_KEY, JSON.stringify(products), {
       EX: 18000,
     });
@@ -278,15 +360,11 @@ export const clearUserCart = async (req, res) => {
   const controllerName = "clearUserCartController";
   const action = "clearUserCart";
   try {
-    const userId = req.user.id;
+    const userId = req.user.id || req.user.uid;
 
-    const updatedUser = await User.findOneAndUpdate(
-      { uid: userId },
-      { $set: { cart: [] } },
-      { new: true },
-    );
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
 
-    if (!updatedUser) {
+    if (userQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -300,11 +378,18 @@ export const clearUserCart = async (req, res) => {
       });
     }
 
+    const userDoc = userQuery.docs[0];
+
+    await userDoc.ref.update({
+      cart: [],
+      updatedAt: new Date(),
+    });
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       status: true,
       message: "Cart cleared successfully",
-      cart: updatedUser.cart,
+      cart: [],
     });
   } catch (error) {
     console.error("Clear Cart Error:", error.message);
@@ -326,195 +411,332 @@ export const bulkAddToCart = async (req, res) => {
   const controllerName = "bulkAddToCartController";
   const action = "bulkAddToCart";
   const { items } = req.body;
-  const userId = req.user.id;
-  const user = await User.findOne({ uid: userId });
-  const newCart = [...user.cart];
-  items.forEach((newItem) => {
-    if (!newCart.some((item) => item.productId === newItem.productId)) {
-      newCart.push(newItem);
+  const userId = req.user.id || req.user.uid;
+
+  try {
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+
+    if (userQuery.empty) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
+      return res.status(404).json({
+        status: false,
+        message: "User not found",
+      });
     }
-  });
-  user.cart = newCart;
-  await user.save();
-  logControllerPerformance(controllerName, action, startTime, "success");
-  res.status(200).json({
-    status: true,
-    cart: user.cart,
-    message: "Successfully moved all favorites to cart.",
-  });
+
+    const userDoc = userQuery.docs[0];
+    const userData = userDoc.data();
+    const currentCart = userData.cart || [];
+
+    const newCart = [...currentCart];
+    if (items && Array.isArray(items)) {
+      items.forEach((newItem) => {
+        if (!newCart.some((item) => item.productId === newItem.productId)) {
+          newCart.push(newItem);
+        }
+      });
+    }
+
+    await userDoc.ref.update({
+      cart: newCart,
+      updatedAt: new Date(),
+    });
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+    res.status(200).json({
+      status: true,
+      cart: newCart,
+      message: "Successfully moved all favorites to cart.",
+    });
+  } catch (error) {
+    console.error("Bulk Add To Cart Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    res.status(500).json({
+      status: false,
+      message: "An error occurred while adding items to cart",
+    });
+  }
 };
 export const clearFavorites = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "clearFavoritesController";
   const action = "clearFavorites";
-  const userId = req.user.id;
-  await User.findOneAndUpdate({ uid: userId }, { $set: { favorites: [] } });
-  logControllerPerformance(controllerName, action, startTime, "success");
-  res.status(200).json({ status: true });
+  const userId = req.user.id || req.user.uid;
+
+  try {
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+
+    if (userQuery.empty) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
+      return res.status(404).json({
+        status: false,
+        message: "User not found",
+      });
+    }
+
+    const userDoc = userQuery.docs[0];
+
+    await userDoc.ref.update({
+      favorites: [],
+      updatedAt: new Date(),
+    });
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+    res.status(200).json({ status: true });
+  } catch (error) {
+    console.error("Clear Favorites Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    res.status(500).json({
+      status: false,
+      message: "An error occurred while clearing favorites",
+    });
+  }
 };
 export const initializeCheckout = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "initializeCheckoutController";
   const action = "initializeCheckout";
   const { items, totals, shippingContact } = req.body;
-  const buyerId = req.user.id;
-  const session = await mongoose.startSession();
+  const buyerId = req.user.id || req.user.uid;
   const PAYOUT_FACTOR = 1 - TAX_RATE;
   try {
-    session.startTransaction();
-    const buyer = await User.findOne({ uid: buyerId }).session(session);
-    if (!buyer || buyer.pointsBalance < totals.grandTotal) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Insufficient iCash balance to complete purchase or user not found.",
-      );
-      throw new Error(
-        "Insufficient iCash balance to complete purchase or user not found.",
-      );
-    }
-    buyer.pointsBalance -= totals.grandTotal;
-    await buyer.save({ session });
-    const buyerTxId = generateTransactionId("payment");
-    const buyerTransaction = new Transactions({
-      transactionId: buyerTxId,
-      userId: buyerId,
-      type: "payment",
-      amountICash: totals.grandTotal,
-      status: "success",
-      payType: "out",
-      title: `Purchase of ${items.length} item(s)`,
-      reference: `REF-${buyerTxId}`,
-      createdAt: new Date(),
-    });
-    await buyerTransaction.save({ session });
-    const processedResults = [];
-    for (const item of items) {
-      const product = await Product.findOne({
-        productId: item.productId,
-      }).session(session);
-      const seller = await User.findOne({ uid: item.sellerId }).session(
-        session,
-      );
-      const tier = buyer.tier || "free";
-      if (!product || !seller) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Product or Seller info not found.",
+    const processedResults = await db.runTransaction(async (transaction) => {
+      const buyerQuery = await User.where("uid", "==", buyerId).limit(1).get();
+      if (buyerQuery.empty) {
+        throw new Error(
+          "Insufficient iCash balance to complete purchase or user not found.",
         );
-        throw new Error("Product or Seller info not found.");
       }
 
-      const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
-      let filePassword = null;
-      const isDropOff = item.deliveryMethod === "drop_off";
-      const stationAgentId =
-        isDropOff && item.selectedStation ? item.selectedStation.agentId : null;
-      const itemTotal = item.price * item.quantity;
-      if (product.type === "file" || product.type === "course") {
-        const netEarnings = itemTotal * PAYOUT_FACTOR;
-        seller.pendingSalesBalance += netEarnings;
-        const salesIncrement = item.quantity || 1;
-        await seller.save({ session });
-        await Product.findOneAndUpdate(
-          { productId: product.productId },
-          { $inc: { sales: salesIncrement } },
-          { session },
+      const buyerDoc = buyerQuery.docs[0];
+      const buyerData = buyerDoc.data();
+      const currentBalance = buyerData.pointsBalance || 0;
+
+      if (currentBalance < totals.grandTotal) {
+        throw new Error(
+          "Insufficient iCash balance to complete purchase or user not found.",
         );
-        await new ProductSales({
+      }
+      const newBuyerBalance = currentBalance - totals.grandTotal;
+      transaction.update(buyerDoc.ref, {
+        pointsBalance: newBuyerBalance,
+        updatedAt: new Date(),
+      });
+      const buyerTxId = generateTransactionId("payment");
+      const buyerTransactionRef = Transactions.doc(buyerTxId);
+      const buyerTransaction = {
+        transactionId: buyerTxId,
+        userId: buyerId,
+        type: "payment",
+        amountICash: totals.grandTotal,
+        status: "success",
+        payType: "out",
+        title: `Purchase of ${items.length} item(s)`,
+        reference: `REF-${buyerTxId}`,
+        createdAt: new Date(),
+      };
+      transaction.set(buyerTransactionRef, buyerTransaction);
+
+      const results = [];
+      for (const item of items) {
+        const productQuery = await Product.where(
+          "productId",
+          "==",
+          item.productId,
+        )
+          .limit(1)
+          .get();
+        if (productQuery.empty) {
+          throw new Error("Product or Seller info not found.");
+        }
+        const productDoc = productQuery.docs[0];
+        const productData = productDoc.data();
+        const sellerQuery = await User.where("uid", "==", item.sellerId)
+          .limit(1)
+          .get();
+        if (sellerQuery.empty) {
+          throw new Error("Product or Seller info not found.");
+        }
+        const sellerDoc = sellerQuery.docs[0];
+        const sellerData = sellerDoc.data();
+
+        const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
+        const isDropOff = item.deliveryMethod === "drop_off";
+        const stationAgentId =
+          isDropOff && item.selectedStation
+            ? item.selectedStation.agentId
+            : null;
+        const itemTotal = item.price * item.quantity;
+        if (productData.type === "file" || productData.type === "course") {
+          const netEarnings = itemTotal * PAYOUT_FACTOR;
+          const updatedPendingSales =
+            (sellerData.pendingSalesBalance || 0) + netEarnings;
+          const salesIncrement =
+            (productData.sales || 0) + (item.quantity || 1);
+
+          transaction.update(sellerDoc.ref, {
+            pendingSalesBalance: updatedPendingSales,
+            updatedAt: new Date(),
+          });
+
+          transaction.update(productDoc.ref, {
+            sales: salesIncrement,
+            updatedAt: new Date(),
+          });
+
+          const productSaleRef = ProductSales.doc();
+          transaction.set(productSaleRef, {
+            sellerId: item.sellerId,
+            productId: item.productId,
+            productType: productData.type,
+            quantity: item.quantity,
+            amountPaid: itemTotal,
+            buyerId,
+            netEarnings,
+            createdAt: new Date(),
+          });
+        }
+        if (productData.type === "course") {
+          const downloadQuery = await UserDownloads.where(
+            "userId",
+            "==",
+            buyerId,
+          )
+            .limit(1)
+            .get();
+          if (downloadQuery.empty) {
+            const newDownloadRef = UserDownloads.doc();
+            transaction.set(newDownloadRef, {
+              userId: buyerId,
+              ownedProducts: [productData.productId],
+              createdAt: new Date(),
+              updatedAt: new Date(),
+            });
+          } else {
+            const downloadDoc = downloadQuery.docs[0];
+            const ownedProducts = downloadDoc.data().ownedProducts || [];
+            if (!ownedProducts.includes(productData.productId)) {
+              ownedProducts.push(productData.productId);
+              transaction.update(downloadDoc.ref, {
+                ownedProducts,
+                updatedAt: new Date(),
+              });
+            }
+          }
+        } else if (productData.type === "physical") {
+          const currentStock = productData.amountInStock ?? 1;
+          if (currentStock < item.quantity) {
+            throw new Error(
+              `Insufficient stock for ${productData.title}. Available: ${currentStock}`,
+            );
+          }
+
+          const updatedStock = currentStock - item.quantity;
+          const productUpdates = {
+            amountInStock: updatedStock,
+            updatedAt: new Date(),
+          };
+          if (updatedStock === 0) {
+            productUpdates.isAvailable = false;
+          }
+          transaction.update(productDoc.ref, productUpdates);
+        }
+        const newOrderRef = ProductOrder.doc(orderId);
+        const newOrder = {
+          orderId,
+          buyerId,
           sellerId: item.sellerId,
           productId: item.productId,
-          productType: product.type,
-          quantity: item.quantity,
+          productName: productData.title,
           amountPaid: itemTotal,
-          buyerId,
-          netEarnings: netEarnings,
-        }).save({ session });
+          quantity: item.quantity,
+          status:
+            productData.type === "physical" ? "pending_delivery" : "completed",
+          fileUrl:
+            productData.type === "file"
+              ? productData.fileUrl || productData.fileDetails?.fileUrl
+              : null,
+          deliveryMethod: item.deliveryMethod,
+          verificationQrCode: orderId,
+          agentId: stationAgentId,
+          selectedStation: item.selectedStation || null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date(),
+        };
+        transaction.set(newOrderRef, newOrder);
+
+        results.push({
+          order: newOrder,
+          fileUrl: newOrder.fileUrl,
+          sellerEmail: sellerData.email,
+          sellerId: sellerData.uid,
+          product: productData,
+          buyerAddress: shippingContact.address,
+          buyerPhoneNumber: shippingContact.phone,
+          deliveryMethod: item.deliveryMethod,
+        });
       }
-      if (product.type === "course") {
-        await UserDownloads.findOneAndUpdate(
-          { userId: buyerId },
-          { $addToSet: { ownedProducts: product.productId } },
-          { upsert: true, session },
-        );
-      } else if (product.type === "physical") {
-        const currentStock = product?.amountInStock || 1;
-        if (currentStock < item.quantity) {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            `Insufficient stock for ${product.title}. Available: ${currentStock}`,
-          );
-          throw new Error(
-            `Insufficient stock for ${product.title}. Available: ${currentStock}`,
-          );
-        }
-        if (product.amountInStock !== undefined) {
-          product.amountInStock -= item.quantity;
-        }
-        if (product?.amountInStock === 0) {
-          product.isAvailable = false;
-        }
-      }
-      const newOrder = new ProductOrder({
-        orderId,
-        buyerId,
-        sellerId: item.sellerId,
-        productId: item.productId,
-        productName: product.title,
-        amountPaid: itemTotal,
-        quantity: item.quantity,
-        status: product.type === "physical" ? "pending_delivery" : "completed",
-        fileUrl: product.type === "file" ? product.fileUrl : null,
-        deliveryMethod: item.deliveryMethod,
-        verificationQrCode: orderId,
-        agentId: stationAgentId,
-        selectedStation: item.selectedStation || null,
-        selectedStation: item.selectedStation || null,
-        createdAt: new Date().toISOString(),
-      });
-      await newOrder.save({ session });
-      await seller.save({ session });
-      await product.save({ session });
-      processedResults.push({
-        order: newOrder,
-        fileUrl: product.fileUrl,
-        sellerEmail: seller.email,
-        sellerId: seller.uid,
-        product,
-        buyerAddress: shippingContact.address,
-        buyerPhoneNumber: shippingContact.phone,
-        deliveryMethod: item.deliveryMethod,
-      });
-    }
-    await session.commitTransaction();
-    session.endSession();
-    await sendOrderNotifications(buyer, processedResults, buyerTxId);
+
+      return { processedResults: results, buyerTxId };
+    });
+    const buyerQuery = await User.where("uid", "==", buyerId).limit(1).get();
+    const buyerData = !buyerQuery.empty
+      ? buyerQuery.docs[0].data()
+      : { uid: buyerId };
+
+    await sendOrderNotifications(
+      buyerData,
+      processedResults.processedResults,
+      processedResults.buyerTxId,
+    );
     await notifyAdmins(
       { role: ["super_admin", "finance"] },
       {
-        notificationId: generateNotificationId("admin_notification"),
+        notificationId: generateNotificationId("store"),
         actionType: "NEW_PURCHASE_ORDER",
         title: "New Purchase Order",
-        message: `Order set #${buyerTxId} created with ${items.length} items.`,
-        payload: { transactionId: buyerTxId, itemCount: items.length, buyerId },
+        message: `Order set #${processedResults.buyerTxId} created with ${items.length} items.`,
+        payload: {
+          transactionId: processedResults.buyerTxId,
+          itemCount: items.length,
+          buyerId,
+        },
       },
-      false
+      false,
     );
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res
       .status(200)
-      .json({ success: true, data: processedResults.map((r) => r.order) });
+      .json({
+        success: true,
+        data: processedResults.processedResults.map((r) => r.order),
+      });
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
     logControllerPerformance(
       controllerName,
       action,
@@ -530,190 +752,221 @@ export const completeOrderDelivery = async (req, res) => {
   const controllerName = "completeOrderDeliveryController";
   const action = "completeOrderDelivery";
   const { orderId } = req.body;
-  const scannerUid = req.user.id;
-  const session = await mongoose.startSession();
+  const scannerUid = req.user.id || req.user.uid;
+
   try {
-    session.startTransaction();
-    const order = await ProductOrder.findOne({ orderId }).session(session);
-    const salesIncrement = order.quantity || 1;
-    if (!order) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Product order not found.",
-      );
-      throw new Error("Product order not found.");
-    }
-    if (order.status !== "pending_delivery" && order.status !== "dropped_off") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Product order is already processed or cancelled.",
-      );
-      throw new Error("Product order is already processed or cancelled.");
-    }
-    const isSeller = order.sellerId === scannerUid;
-    const isAgent = order.agentId === scannerUid;
-    if (!isSeller && !isAgent) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "You are not authorized to verify this delivery.",
-      );
-      throw new Error("You are not authorized to verify this delivery.");
-    }
-    const product = await Product.findOneAndUpdate(
-      { productId: order.productId },
-      { $inc: { sales: salesIncrement } },
-      { session },
-    );
-    const seller = await User.findOne({ uid: order.sellerId }).session(session);
-    const buyer = await User.findOne({ uid: order.buyerId }).session(session);
-    if (!seller) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Seller account no longer exists.",
-      );
-      throw new Error("Seller account no longer exists.");
-    }
-    const buyerTier = buyer?.tier || "free";
-    const deliveryFeeRate =
-      DELIVERY_FEES[buyerTier]?.[order.deliveryMethod] || 0;
-    const deliveryFeeAmount = order.amountPaid * deliveryFeeRate;
-    const totalHeld = order.amountPaid;
-    const taxAmount = totalHeld * TAX_RATE;
-    const payableAmount = totalHeld - taxAmount;
-    let sellerEarnings = payableAmount;
-    let agentEarnings = 0;
-    let agent;
-    if (order.deliveryMethod === "drop_off" && order.agentId) {
-      agent = await User.findOne({ uid: order.agentId }).session(session);
-      if (!agent) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Drop-off agent not found.",
-        );
-        throw new Error("Drop-off agent not found.");
+    const result = await db.runTransaction(async (transaction) => {
+      const orderDocRef = ProductOrder.doc(orderId);
+      const orderDoc = await transaction.get(orderDocRef);
+
+      if (!orderDoc.exists) {
+        throw new Error("Product order not found.");
       }
-      agentEarnings = deliveryFeeAmount * 0.5;
-      const sellerDeliveryShare = deliveryFeeAmount * 0.5;
-      sellerEarnings += sellerDeliveryShare;
-      agent.pendingSalesBalance += agentEarnings;
-      await agent.save({ session });
-    } else if (order.deliveryMethod === "home_delivery") {
-      const sellerDeliveryShare = deliveryFeeAmount * 0.7;
-      sellerEarnings += sellerDeliveryShare;
-    }
-    seller.pendingSalesBalance += sellerEarnings;
-    await seller.save({ session });
 
-    order.status = "completed";
-    order.completedAt = new Date().toISOString();
-    await order.save({ session });
+      const order = orderDoc.data();
+      const salesIncrement = order.quantity || 1;
 
-    await new ProductSales({
-      sellerId: order.sellerId,
-      productId: order.productId,
-      orderId,
-      productType: "physical",
-      quantity: order.quantity || 1,
-      buyerId: order.buyerId,
-      amountPaid: order.amountPaid,
-      netEarnings: sellerEarnings,
-    }).save({ session });
-    await session.commitTransaction();
-    session.endSession();
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: order.buyerId,
-      category: "store",
-      actionType: "ORDER_REVIEW_REQUEST",
-      title: "Share your experience",
-      message: `How was your ${product.title}? Rate your experience to help the icampus community.`,
-      payload: {
-        orderId: order.orderId,
-        productName: product.title,
-        targetId: order.productId,
-        userName: buyer ? buyer.firstname : "Valued User",
-      },
+      if (
+        order.status !== "pending_delivery" &&
+        order.status !== "dropped_off"
+      ) {
+        throw new Error("Product order is already processed or cancelled.");
+      }
+
+      const isSeller = order.sellerId === scannerUid;
+      const isAgent = order.agentId === scannerUid;
+
+      if (!isSeller && !isAgent) {
+        throw new Error("You are not authorized to verify this delivery.");
+      }
+      const productQuery = await Product.where(
+        "productId",
+        "==",
+        order.productId,
+      )
+        .limit(1)
+        .get();
+      if (productQuery.empty) {
+        throw new Error("Product not found.");
+      }
+      const productDoc = productQuery.docs[0];
+      const productData = productDoc.data();
+
+      const sellerQuery = await User.where("uid", "==", order.sellerId)
+        .limit(1)
+        .get();
+      if (sellerQuery.empty) {
+        throw new Error("Seller account no longer exists.");
+      }
+      const sellerDoc = sellerQuery.docs[0];
+      const seller = sellerDoc.data();
+
+      const buyerQuery = await User.where("uid", "==", order.buyerId)
+        .limit(1)
+        .get();
+      const buyer = !buyerQuery.empty ? buyerQuery.docs[0].data() : null;
+
+      const buyerTier = buyer?.tier || "free";
+      const deliveryFeeRate =
+        DELIVERY_FEES?.[buyerTier]?.[order.deliveryMethod] || 0;
+      const deliveryFeeAmount = order.amountPaid * deliveryFeeRate;
+      const totalHeld = order.amountPaid;
+      const taxAmount = totalHeld * TAX_RATE;
+      const payableAmount = totalHeld - taxAmount;
+
+      let sellerEarnings = payableAmount;
+      let agentEarnings = 0;
+      let agentDoc = null;
+      let agentData = null;
+
+      if (order.deliveryMethod === "drop_off" && order.agentId) {
+        const agentQuery = await User.where("uid", "==", order.agentId)
+          .limit(1)
+          .get();
+        if (agentQuery.empty) {
+          throw new Error("Drop-off agent not found.");
+        }
+        agentDoc = agentQuery.docs[0];
+        agentData = agentDoc.data();
+
+        agentEarnings = deliveryFeeAmount * 0.5;
+        const sellerDeliveryShare = deliveryFeeAmount * 0.5;
+        sellerEarnings += sellerDeliveryShare;
+
+        const updatedAgentPending =
+          (agentData.pendingSalesBalance || 0) + agentEarnings;
+        transaction.update(agentDoc.ref, {
+          pendingSalesBalance: updatedAgentPending,
+          updatedAt: new Date(),
+        });
+      } else if (order.deliveryMethod === "home_delivery") {
+        const sellerDeliveryShare = deliveryFeeAmount * 0.7;
+        sellerEarnings += sellerDeliveryShare;
+      }
+
+      const updatedSellerPending =
+        (seller.pendingSalesBalance || 0) + sellerEarnings;
+      transaction.update(sellerDoc.ref, {
+        pendingSalesBalance: updatedSellerPending,
+        updatedAt: new Date(),
+      });
+      const currentSales = productData.sales || 0;
+      transaction.update(productDoc.ref, {
+        sales: currentSales + salesIncrement,
+        updatedAt: new Date(),
+      });
+      const completedAtTime = new Date().toISOString();
+      transaction.update(orderDocRef, {
+        status: "completed",
+        completedAt: completedAtTime,
+        updatedAt: new Date(),
+      });
+      const productSaleRef = ProductSales.doc();
+      transaction.set(productSaleRef, {
+        sellerId: order.sellerId,
+        productId: order.productId,
+        orderId,
+        productType: "physical",
+        quantity: order.quantity || 1,
+        buyerId: order.buyerId,
+        amountPaid: order.amountPaid,
+        netEarnings: sellerEarnings,
+        createdAt: new Date(),
+      });
+
+      return {
+        productTitle: productData.title,
+        buyer,
+        seller,
+        agent: agentData,
+        sellerEarnings,
+        agentEarnings,
+        isSeller,
+      };
     });
     await createNotification({
       notificationId: generateNotificationId("store"),
-      recipientId: seller.uid,
-      recipientEmail: seller.email,
+      recipientId: orderId.buyerId || result.buyer?.uid, // fallback safe handling
+      category: "store",
+      actionType: "ORDER_REVIEW_REQUEST",
+      title: "Share your experience",
+      message: `How was your ${result.productTitle}? Rate your experience to help the icampus community.`,
+      payload: {
+        orderId: orderId,
+        productName: result.productTitle,
+        targetId: orderId,
+        userName: result.buyer ? result.buyer.firstname : "Valued User",
+      },
+    });
+
+    await createNotification({
+      notificationId: generateNotificationId("store"),
+      recipientId: result.seller.uid,
+      recipientEmail: result.seller.email,
       category: "finance",
       actionType: "ORDER_COMPLETED",
       title: "Payment Received",
-      message: `Your sale for ${product.title} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
+      message: `Your sale for ${result.productTitle} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
       payload: {
-        amount: sellerEarnings,
-        userName: seller.firstname,
-        productName: product.title,
+        amount: result.sellerEarnings,
+        userName: result.seller.firstname,
+        productName: result.productTitle,
         orderId: orderId,
         role: "seller",
       },
       sendEmail: true,
     });
-    if (order.deliveryMethod === "drop_off" && order.agentId) {
+
+    if (result.agent) {
       await createNotification({
         notificationId: generateNotificationId("store"),
-        recipientId: agent.uid,
-        recipientEmail: agent.email,
+        recipientId: result.agent.uid,
+        recipientEmail: result.agent.email,
         category: "finance",
         actionType: "ORDER_COMPLETED",
         title: "Delivery Commission Earned",
-        message: `You earned ${agentEarnings} iCash for verifying order #${orderId}, proceed to payout to withdraw to your iCash wallet.`,
+        message: `You earned ${result.agentEarnings} iCash for verifying order #${orderId}, proceed to payout to withdraw to your iCash wallet.`,
         payload: {
-          amount: agentEarnings,
-          userName: agent.firstname,
-          productName: product.title,
+          amount: result.agentEarnings,
+          userName: result.agent.firstname,
+          productName: result.productTitle,
           orderId: orderId,
           role: "agent",
         },
         sendEmail: true,
       });
     }
+
     await notifyAdmins(
       { role: ["super_admin", "finance"] },
       {
-        notificationId: generateNotificationId("admin_notification"),
+        notificationId: generateNotificationId("store"),
         actionType: "PURCHASE_ORDER_COMPLETION",
         title: "Order Completed",
         message: `Order #${orderId} has been completed and funds settled.`,
         payload: {
           orderId,
-          sellerId: order.sellerId,
-          buyerId: order.buyerId,
-          agentId: order.agentId ? order.agentId : "",
+          sellerId: result.seller.uid,
+          buyerId: result.buyer?.uid || "",
+          agentId: result.agent ? result.agent.uid : "",
         },
       },
       false,
     );
+
     logControllerPerformance(controllerName, action, startTime, "success");
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       orderId,
-      settlementAmount: isSeller ? sellerEarnings : agentEarnings,
-      role: isSeller ? "seller" : "agent",
+      settlementAmount: result.isSeller
+        ? result.sellerEarnings
+        : result.agentEarnings,
+      role: result.isSeller ? "seller" : "agent",
       message: "Delivery verified and payments settled.",
-      productName: product.title,
+      productName: result.productTitle,
     });
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
     logControllerPerformance(
       controllerName,
       action,
@@ -721,7 +974,7 @@ export const completeOrderDelivery = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(400).json({ success: false, message: error.message });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 export const cancelOrder = async (req, res) => {
@@ -729,101 +982,137 @@ export const cancelOrder = async (req, res) => {
   const controllerName = "cancelOrderController";
   const action = "cancelOrder";
   const { orderId, reason } = req.body;
-  const userId = req.user.id;
-  const session = await mongoose.startSession();
+  const userId = req.user.id || req.user.uid;
 
   try {
-    session.startTransaction();
-    const order = await ProductOrder.findOne({
-      orderId: orderId,
-      buyerId: userId,
-    }).session(session);
-    if (!order || order.status !== "pending_delivery") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Order not found or you do not have permission to cancel it.",
-      );
-      throw new Error(
-        "Order not found or you do not have permission to cancel it.",
-      );
-    }
-    const buyer = await User.findOne({ uid: order.buyerId }).session(session);
-    const seller = await User.findOne({ uid: order.sellerId }).session(session);
-    const product = await Product.findOne({
-      productId: order.productId,
-    }).session(session);
+    const result = await db.runTransaction(async (transaction) => {
+      const orderDocRef = ProductOrder.doc(orderId);
+      const orderDoc = await transaction.get(orderDocRef);
 
-    if (!seller) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Seller not found.",
-      );
-      throw new Error("Seller not found.");
-    }
-    buyer.pointsBalance += order.amountPaid;
-    await buyer.save({ session });
-    if (product && product.type === "physical") {
-      product.amountInStock += order.quantity || 1;
-      product.isAvailable = true;
-      await product.save({ session });
-    }
-    order.status = "cancelled";
-    order.cancellationReason = reason;
-    await order.save({ session });
-    await new Transactions({
-      transactionId: generateTransactionId("refund"),
-      userId: buyer.uid,
-      type: "refund",
-      amountICash: order.amountPaid,
-      status: "success",
-      payType: "in",
-      title: `Refund of payment for ${product.title}`,
-      reference: `REF-${orderId}`,
-      createdAt: new Date(),
-    }).save({ session });
-    await session.commitTransaction();
+      if (!orderDoc.exists) {
+        throw new Error(
+          "Order not found or you do not have permission to cancel it.",
+        );
+      }
+
+      const order = orderDoc.data();
+
+      if (order.buyerId !== userId || order.status !== "pending_delivery") {
+        throw new Error(
+          "Order not found or you do not have permission to cancel it.",
+        );
+      }
+      const buyerQuery = await User.where("uid", "==", order.buyerId)
+        .limit(1)
+        .get();
+      if (buyerQuery.empty) {
+        throw new Error("User not found.");
+      }
+      const buyerDoc = buyerQuery.docs[0];
+      const buyer = buyerDoc.data();
+
+      const sellerQuery = await User.where("uid", "==", order.sellerId)
+        .limit(1)
+        .get();
+      if (sellerQuery.empty) {
+        throw new Error("Seller not found.");
+      }
+      const sellerDoc = sellerQuery.docs[0];
+      const seller = sellerDoc.data();
+
+      const productQuery = await Product.where(
+        "productId",
+        "==",
+        order.productId,
+      )
+        .limit(1)
+        .get();
+      const productDoc = !productQuery.empty ? productQuery.docs[0] : null;
+      const productData = productDoc ? productDoc.data() : null;
+      const productTitle = productData ? productData.title : "Product";
+      const newPointsBalance = (buyer.pointsBalance || 0) + order.amountPaid;
+      transaction.update(buyerDoc.ref, {
+        pointsBalance: newPointsBalance,
+        updatedAt: new Date(),
+      });
+      if (productDoc && productData && productData.type === "physical") {
+        const currentStock = productData.amountInStock || 0;
+        const refundQuantity = order.quantity || 1;
+        transaction.update(productDoc.ref, {
+          amountInStock: currentStock + refundQuantity,
+          isAvailable: true,
+          updatedAt: new Date(),
+        });
+      }
+      const nowIso = new Date().toISOString();
+      transaction.update(orderDocRef, {
+        status: "cancelled",
+        cancellationReason: reason,
+        updatedAt: new Date(),
+      });
+
+      const refundTxId = generateTransactionId("refund");
+      const refundTxRef = Transactions.doc(refundTxId);
+      transaction.set(refundTxRef, {
+        transactionId: refundTxId,
+        userId: buyer.uid,
+        type: "refund",
+        amountICash: order.amountPaid,
+        status: "success",
+        payType: "in",
+        title: `Refund of payment for ${productTitle}`,
+        reference: `REF-${orderId}`,
+        createdAt: new Date(),
+      });
+
+      return {
+        seller,
+        buyer,
+        productTitle,
+        refundTxId,
+      };
+    });
+    const currentDate = new Date();
+    const formattedDate = currentDate.toLocaleDateString();
+    const formattedTime = currentDate.toLocaleTimeString();
+
     await createNotification({
       notificationId: generateNotificationId("store"),
-      recipientId: seller.uid,
-      recipientEmail: seller.email,
+      recipientId: result.seller.uid,
+      recipientEmail: result.seller.email,
       category: "store",
       actionType: "ORDER_CANCELLED",
       title: "Order Cancelled by Buyer",
-      message: `The order for "${product.title}" (#${orderId}) was cancelled. Reason: ${reason}`,
+      message: `The order for "${result.productTitle}" (#${orderId}) was cancelled. Reason: ${reason}`,
       payload: {
         orderId: orderId,
-        productName: product.title,
+        productName: result.productTitle,
         reason: reason,
-        buyerName: buyer.firstname,
+        buyerName: result.buyer.firstname || "Buyer",
         date: formattedDate,
         time: formattedTime,
       },
       sendEmail: true,
     });
+
     await notifyAdmins(
       { role: ["super_admin", "finance"] },
       {
-        notificationId: generateNotificationId("admin_notification"),
+        notificationId: generateNotificationId("store"),
         actionType: "ORDER_CANCELLED_ADMIN",
         title: "Order Cancelled Audit",
-        message: `Order #${orderId} has been cancelled. Buyer ${buyer.uid} refunded.`,
-        payload: { orderId, sellerId: seller.uid, reason },
+        message: `Order #${orderId} has been cancelled. Buyer ${result.buyer.uid} refunded.`,
+        payload: { orderId, sellerId: result.seller.uid, reason },
       },
-      false
+      false,
     );
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Order cancelled, buyer refunded, and seller notified.",
     });
   } catch (error) {
-    await session.abortTransaction();
     logControllerPerformance(
       controllerName,
       action,
@@ -831,23 +1120,33 @@ export const cancelOrder = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(400).json({ success: false, message: error.message });
-  } finally {
-    session.endSession();
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 export const getPendingOrders = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getPendingOrdersController";
   const action = "getPendingOrders";
+
   try {
-    const userId = req.user.id;
-    const orders = await ProductOrder.find({
-      buyerId: userId,
-      status: { $in: ["pending_delivery", "dropped_off"] },
-    }).sort({ createdAt: -1 });
+    const userId = req.user.id || req.user.uid;
+
+    const snapshot = await ProductOrder.where("buyerId", "==", userId)
+      .where("status", "in", ["pending_delivery", "dropped_off"])
+      .get();
+
+    const orders = [];
+    snapshot.forEach((doc) => {
+      orders.push(doc.data());
+    });
+    orders.sort((a, b) => {
+      const timeA = new Date(a.createdAt || 0).getTime();
+      const timeB = new Date(b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ success: true, data: orders });
+    return res.status(200).json({ success: true, data: orders });
   } catch (error) {
     logControllerPerformance(
       controllerName,
@@ -856,7 +1155,7 @@ export const getPendingOrders = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 export const logProductImpression = async (req, res) => {
@@ -864,32 +1163,59 @@ export const logProductImpression = async (req, res) => {
   const controllerName = "logProductImpressionController";
   const action = "logProductImpression";
   const { productId } = req.body;
-  const userId = req.user.id;
+  const userId = req.user.id || req.user.uid;
   const currentMonthYear = new Date().toISOString().slice(0, 7);
+
   try {
-    const logExists = await ProductImpression.findOne({
-      userId,
-      productId,
-      monthYear: currentMonthYear,
-    });
-    if (!logExists) {
-      await ProductImpression.create({
+    const result = await db.runTransaction(async (transaction) => {
+      const impressionQuery = await ProductImpression.where(
+        "userId",
+        "==",
         userId,
-        productId,
-        monthYear: currentMonthYear,
-      });
-      await Product.findOneAndUpdate(
-        { productId },
-        { $inc: { impressions: 1 } },
-      );
-      return res
-        .status(200)
-        .json({ success: true, message: "Impression logged" });
-    }
+      )
+        .where("productId", "==", productId)
+        .where("monthYear", "==", currentMonthYear)
+        .limit(1)
+        .get();
+
+      const productQuery = await Product.where("productId", "==", productId)
+        .limit(1)
+        .get();
+      const productDoc = !productQuery.empty ? productQuery.docs[0] : null;
+
+      if (impressionQuery.empty) {
+        const newImpressionRef = ProductImpression.doc();
+        transaction.set(newImpressionRef, {
+          userId,
+          productId,
+          monthYear: currentMonthYear,
+          createdAt: new Date(),
+        });
+
+        if (productDoc) {
+          const currentImpressions = productDoc.data().impressions || 0;
+          transaction.update(productDoc.ref, {
+            impressions: currentImpressions + 1,
+            updatedAt: new Date(),
+          });
+        }
+
+        return {
+          newlyLogged: true,
+          message: "Impression logged",
+        };
+      }
+
+      return {
+        newlyLogged: false,
+        message: `${productId} impressions increment by ${userId} for ${currentMonthYear}`,
+      };
+    });
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
-      message: `${productId} impressions increment by ${userId} for ${currentMonthYear}`,
+      message: result.message,
     });
   } catch (error) {
     logControllerPerformance(
@@ -899,7 +1225,7 @@ export const logProductImpression = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 export const getSellerSalesHistory = async (req, res) => {
@@ -907,7 +1233,7 @@ export const getSellerSalesHistory = async (req, res) => {
   const controllerName = "getSellerSalesHistoryController";
   const action = "getSellerSalesHistory";
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.id || req.user.uid;
     if (!sellerId) {
       logControllerPerformance(
         controllerName,
@@ -921,9 +1247,22 @@ export const getSellerSalesHistory = async (req, res) => {
         message: "Unauthorized: Seller ID missing",
       });
     }
-    const sales = await ProductSales.find({ sellerId })
-      .sort({ createdAt: -1 })
-      .lean();
+
+    const snapshot = await ProductSales.where("sellerId", "==", sellerId).get();
+
+    const sales = [];
+    snapshot.forEach((doc) => {
+      sales.push({ id: doc.id, ...doc.data() });
+    });
+    sales.sort((a, b) => {
+      const timeA = a.createdAt?.toDate
+        ? a.createdAt.toDate().getTime()
+        : new Date(a.createdAt || 0).getTime();
+      const timeB = b.createdAt?.toDate
+        ? b.createdAt.toDate().getTime()
+        : new Date(b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
 
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
@@ -951,7 +1290,7 @@ export const getPayoutHistory = async (req, res) => {
   const controllerName = "getPayoutHistoryController";
   const action = "getPayoutHistory";
   try {
-    const userUid = req.user.id;
+    const userUid = req.user.id || req.user.uid;
     if (!userUid) {
       logControllerPerformance(
         controllerName,
@@ -965,9 +1304,24 @@ export const getPayoutHistory = async (req, res) => {
         message: "User identification missing.",
       });
     }
-    const history = await Payout.find({ sellerUid: userUid })
-      .sort({ createdAt: -1 })
-      .select("-__v");
+
+    const snapshot = await Payout.where("sellerUid", "==", userUid).get();
+
+    const history = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      const { __v, ...cleanData } = data;
+      history.push({ id: doc.id, ...cleanData });
+    });
+    history.sort((a, b) => {
+      const timeA = a.createdAt?.toDate
+        ? a.createdAt.toDate().getTime()
+        : new Date(a.createdAt || 0).getTime();
+      const timeB = b.createdAt?.toDate
+        ? b.createdAt.toDate().getTime()
+        : new Date(b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -996,68 +1350,75 @@ export const requestPayout = async (req, res) => {
   const controllerName = "requestPayoutController";
   const action = "requestPayout";
   const { amount } = req.body;
-  const userId = req.user.id;
-  const session = await mongoose.startSession();
-  session.startTransaction();
+  const userId = req.user.id || req.user.uid;
 
   try {
-    const user = await User.findOne({ uid: userId }).session(session);
+    const result = await db.runTransaction(async (transaction) => {
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      if (userQuery.empty) {
+        throw new Error("User not found.");
+      }
 
-    if (!user) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User not found.",
-      );
-      throw new Error("User not found.");
-    }
+      const userDoc = userQuery.docs[0];
+      const user = userDoc.data();
+      const currentPendingBalance = user.pendingSalesBalance || 0;
 
-    if (user.pendingSalesBalance < amount) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Insufficient pending balance.",
-      );
-      throw new Error("Insufficient pending balance.");
-    }
-    user.pendingSalesBalance -= amount;
-    user.pointsBalance += amount;
-    const payoutId = generatePayoutId(userId);
-    const transactionId = generateTransactionId("payment");
-    const newPayout = await Payout.create(
-      [
-        {
-          payoutId,
-          sellerUid: userId,
-          amount: amount,
-          status: "completed",
-          method: "Internal Transfer",
-          reference: `REF-${payoutId}`,
-          processedAt: new Date(),
-        },
-      ],
-      { session },
-    );
+      if (currentPendingBalance < amount) {
+        throw new Error("Insufficient pending balance.");
+      }
+      const newPendingBalance = currentPendingBalance - amount;
+      const newPointsBalance = (user.pointsBalance || 0) + amount;
+      const payoutHistory = user.payoutHistory || [];
 
-    user.payoutHistory.push(newPayout[0].payoutId);
-    await user.save({ session });
-    const transaction = new Transactions({
-      transactionId,
-      userId,
-      type: "payment",
-      amountICash: amount,
-      status: "success",
-      payType: "in",
-      title: `Sales Payout`,
-      reference: `REF-${payoutId}`,
-      createdAt: new Date(),
+      const payoutId = generatePayoutId(userId);
+      const transactionId = generateTransactionId("payment");
+
+      payoutHistory.push(payoutId);
+
+      transaction.update(userDoc.ref, {
+        pendingSalesBalance: newPendingBalance,
+        pointsBalance: newPointsBalance,
+        payoutHistory: payoutHistory,
+        updatedAt: new Date(),
+      });
+
+      const payoutRef = Payout.doc(payoutId);
+      const newPayoutData = {
+        payoutId,
+        sellerUid: userId,
+        amount: amount,
+        status: "completed",
+        method: "Internal Transfer",
+        reference: `REF-${payoutId}`,
+        processedAt: new Date(),
+        createdAt: new Date(),
+      };
+      transaction.set(payoutRef, newPayoutData);
+      const transactionRef = Transactions.doc(transactionId);
+      const newTransactionData = {
+        transactionId,
+        userId,
+        type: "payment",
+        amountICash: amount,
+        status: "success",
+        payType: "in",
+        title: `Sales Payout`,
+        reference: `REF-${payoutId}`,
+        createdAt: new Date(),
+      };
+      transaction.set(transactionRef, newTransactionData);
+
+      return {
+        user,
+        newPointsBalance,
+        payoutId,
+        transactionId,
+      };
     });
-    await transaction.save({ session });
-    await session.commitTransaction();
+    const currentDate = new Date();
+    const formattedDate = currentDate.toLocaleDateString();
+    const formattedTime = currentDate.toLocaleTimeString();
+
     await createNotification({
       notificationId: generateNotificationId("store"),
       recipientId: userId,
@@ -1065,37 +1426,43 @@ export const requestPayout = async (req, res) => {
       actionType: "SALES_PAYOUT_SUCCESS",
       title: "Sales Payout Credited",
       message: `${amount.toLocaleString()} iCash from your sales has been added to your wallet.`,
-      recipientEmail: user.email,
+      recipientEmail: result.user.email,
       sendEmail: true,
       sendPush: true,
       payload: {
-        username: user.firstname || user.lastname,
+        username: result.user.firstname || result.user.lastname || "User",
         amount: amount,
-        payoutId: payoutId,
-        transactionId: transactionId,
+        payoutId: result.payoutId,
+        transactionId: result.transactionId,
         date: formattedDate,
         time: formattedTime,
       },
     });
+
     await notifyAdmins(
       { role: ["finance", "super_admin"] },
       {
-        notificationId: generateNotificationId("admin_notification"),
+        notificationId: generateNotificationId("store"),
         actionType: "SALES_PAYOUT_ADMIN_ALERT",
         title: "New Sales Payout Processed",
-        message: `User ${user.uid} successfully withdrew ${amount} iCash to their wallet.`,
-        payload: { userId: user.uid, amount, payoutId, transactionId },
+        message: `User ${result.user.uid} successfully withdrew ${amount} iCash to their wallet.`,
+        payload: {
+          userId: result.user.uid,
+          amount,
+          payoutId: result.payoutId,
+          transactionId: result.transactionId,
+        },
       },
-      false
+      false,
     );
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    return {
+    return res.status(200).json({
       success: true,
-      newPointsBalance: user.pointsBalance,
-      transactionId: transactionId,
-    };
+      newPointsBalance: result.newPointsBalance,
+      transactionId: result.transactionId,
+    });
   } catch (error) {
-    await session.abortTransaction();
     console.error("Payout Error:", error.message);
     logControllerPerformance(
       controllerName,
@@ -1104,9 +1471,7 @@ export const requestPayout = async (req, res) => {
       "error",
       error.message,
     );
-    throw error;
-  } finally {
-    session.endSession();
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
 export const getDropOffStations = async (req, res) => {
@@ -1115,7 +1480,13 @@ export const getDropOffStations = async (req, res) => {
   const action = "getDropOffStations";
   try {
     const { lat, lng } = req.query;
-    const stations = await DropOffStation.find({}).lean();
+
+    const snapshot = await DropOffStation.get();
+    const stations = [];
+    snapshot.forEach((doc) => {
+      stations.push({ id: doc.id, ...doc.data() });
+    });
+
     if (!lat || !lng) {
       logControllerPerformance(
         controllerName,
@@ -1130,6 +1501,7 @@ export const getDropOffStations = async (req, res) => {
         data: stations,
       });
     }
+
     const userLat = parseFloat(lat);
     const userLng = parseFloat(lng);
     const stationsWithDistance = stations
@@ -1174,7 +1546,7 @@ export const saveProductController = async (req, res) => {
   const controllerName = "saveProductController";
   const action = "saveProduct";
   try {
-    const userUid = req.user.uid;
+    const userUid = req.user.id || req.user.uid;
     const { productId } = req.params;
     const isEditing = !!productId;
     const { title, description, productType, price, mediaUrls } = req.body;
@@ -1192,6 +1564,7 @@ export const saveProductController = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Missing required product fields." });
     }
+
     let productThumbnails = [];
     if (mediaUrls) {
       try {
@@ -1203,6 +1576,7 @@ export const saveProductController = async (req, res) => {
         productThumbnails = [mediaUrls];
       }
     }
+
     let courseDetails = null;
     let lessons = [];
     if (productType === "course") {
@@ -1216,24 +1590,27 @@ export const saveProductController = async (req, res) => {
           .filter(Boolean);
 
         if (inputNames.length > 0) {
-          const searchConditions = inputNames.flatMap((name) => [
-            { firstname: { $regex: new RegExp(`^${name}$`, "i") } },
-            { lastname: { $regex: new RegExp(`^${name}$`, "i") } },
-            { username: { $regex: new RegExp(`^${name}$`, "i") } },
-            {
-              $expr: {
-                $regexMatch: {
-                  input: { $concat: ["$firstname", " ", "$lastname"] },
-                  regex: name,
-                  options: "i",
-                },
-              },
-            },
-          ]);
-          const foundUsers = await User.find({ $or: searchConditions })
-            .select("uid")
-            .lean();
-          lecturerIds = [...new Set(foundUsers.map((u) => u.uid))];
+          const usersSnapshot = await User.get();
+          const foundUids = new Set();
+
+          usersSnapshot.forEach((doc) => {
+            const u = doc.data();
+            const fullName = `${u.firstname || ""} ${u.lastname || ""}`.trim();
+            const matches = inputNames.some((name) => {
+              const regex = new RegExp(`^${name}$`, "i");
+              const subRegex = new RegExp(name, "i");
+              return (
+                regex.test(u.firstname) ||
+                regex.test(u.lastname) ||
+                regex.test(u.username) ||
+                subRegex.test(fullName)
+              );
+            });
+            if (matches && u.uid) {
+              foundUids.add(u.uid);
+            }
+          });
+          lecturerIds = Array.from(foundUids);
         }
       }
       courseDetails = {
@@ -1242,11 +1619,13 @@ export const saveProductController = async (req, res) => {
       };
       lessons = req.body.lessons ? JSON.parse(req.body.lessons) : [];
     }
+
     let physicalDetails = null;
     if (productType === "physical") {
       physicalDetails = {
         weightKg: Number(req.body.weightKg) || 0,
         inStock: Number(req.body.inStock) || 0,
+        amountInStock: Number(req.body.inStock) || 0,
         colors: req.body.colors ? JSON.parse(req.body.colors) : [],
         sizes: req.body.sizes ? JSON.parse(req.body.sizes) : [],
         sellerGateways: req.body.sellerGateways
@@ -1257,15 +1636,18 @@ export const saveProductController = async (req, res) => {
           : [],
       };
     }
+
     let fileDetails = null;
+    let existingProductData = null;
+    let productDocRef = null;
 
     if (isEditing) {
-      const existingProduct = await Product.findOne({
-        productId,
-        sellerId: userUid,
-      });
+      const productQuery = await Product.where("productId", "==", productId)
+        .where("sellerId", "==", userUid)
+        .limit(1)
+        .get();
 
-      if (!existingProduct) {
+      if (productQuery.empty) {
         if (req.file) await fs.unlink(req.file.path).catch(() => {});
         logControllerPerformance(
           controllerName,
@@ -1279,11 +1661,15 @@ export const saveProductController = async (req, res) => {
           .json({ success: false, message: "Product not found." });
       }
 
+      const productDoc = productQuery.docs[0];
+      productDocRef = productDoc.ref;
+      existingProductData = productDoc.data();
+
       if (productType === "file") {
         if (req.file) {
-          if (existingProduct.fileDetails?.url) {
+          if (existingProductData.fileDetails?.url) {
             await fs
-              .unlink(existingProduct.fileDetails.url)
+              .unlink(existingProductData.fileDetails.url)
               .catch((err) =>
                 console.error("Failed to delete stale digital asset:", err),
               );
@@ -1294,7 +1680,7 @@ export const saveProductController = async (req, res) => {
             type: req.file.mimetype,
           };
         } else {
-          fileDetails = existingProduct.fileDetails;
+          fileDetails = existingProductData.fileDetails;
         }
       }
     } else {
@@ -1306,37 +1692,30 @@ export const saveProductController = async (req, res) => {
         };
       }
     }
-    let product;
+
+    let productData;
 
     if (isEditing) {
-      product = await Product.findOneAndUpdate(
-        { productId: productId, sellerId: userUid },
-        {
-          title,
-          description,
-          productType,
-          price,
-          physicalDetails,
-          courseDetails,
-          lessons,
-          fileDetails,
-          mediaUrls: productThumbnails,
-        },
-        { new: true },
-      );
-      if (!product) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Product record not found or unauthorized editing access.",
-        );
-        return res.status(404).json({
-          success: false,
-          message: "Product record not found or unauthorized editing access.",
-        });
-      }
+      productData = {
+        title,
+        description,
+        productType,
+        price: Number(price),
+        physicalDetails,
+        courseDetails,
+        lessons,
+        fileDetails,
+        mediaUrls: productThumbnails,
+        updatedAt: new Date(),
+      };
+
+      await productDocRef.update(productData);
+      productData = { productId, sellerId: userUid, ...productData };
+
+      const currentDate = new Date();
+      const formattedDate = currentDate.toLocaleDateString();
+      const formattedTime = currentDate.toLocaleTimeString();
+
       await createNotification({
         notificationId: generateNotificationId("store"),
         recipientId: userUid,
@@ -1344,15 +1723,15 @@ export const saveProductController = async (req, res) => {
         category: "store",
         actionType: "PRODUCT_UPDATE",
         title: "Product Updated Successfully",
-        message: `Your changes to "${product.title}" have been successfully saved.`,
-        entityId: product.productId,
+        message: `Your changes to "${title}" have been successfully saved.`,
+        entityId: productId,
         entityType: "product",
         sendEmail: true,
         payload: {
-          productId: product.productId,
-          productType: product.productType,
-          productName: product.title,
-          price: product.price,
+          productId: productId,
+          productType: productType,
+          productName: title,
+          price: Number(price),
           date: formattedDate,
           time: formattedTime,
         },
@@ -1364,42 +1743,52 @@ export const saveProductController = async (req, res) => {
       );
     } else {
       const newCustomId = generateProductId(userUid);
-      product = new Product({
+      productDocRef = Product.doc(newCustomId);
+      productData = {
         productId: newCustomId,
         sellerId: userUid,
         title,
         description,
         productType,
-        price,
+        price: Number(price),
         physicalDetails,
         courseDetails,
         lessons,
         fileDetails,
         mediaUrls: productThumbnails,
-      });
-      await product.save();
+        impressions: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+      await productDocRef.set(productData);
     }
-    const seller = await User.findOne({ uid: userUid }).lean();
+    const sellerQuery = await User.where("uid", "==", userUid).limit(1).get();
+    const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
     const sellerName = seller ? seller.firstname : "A creator you follow";
 
-    processNotificationFanOut(userUid, sellerName, product, isEditing).catch(
-      (err) =>
-        console.error("Background task pipeline error context captured:", err),
+    processNotificationFanOut(
+      userUid,
+      sellerName,
+      productData,
+      isEditing,
+    ).catch((err) =>
+      console.error("Background task pipeline error context captured:", err),
     );
+
     await notifyAdmins(
       { role: ["super_admin", "moderator"] },
       {
-        notificationId: generateNotificationId("admin_notification"),
+        notificationId: generateNotificationId("store"),
         actionType: isEditing ? "PRODUCT_UPDATE" : "PRODUCT_CREATION",
         title: isEditing ? "Product Updated" : "New Product Listed",
-        message: `Product "${product.title}" was ${isEditing ? "updated" : "listed"} by ${sellerName}.`,
+        message: `Product "${title}" was ${isEditing ? "updated" : "listed"} by ${sellerName}.`,
         payload: {
-          productId: product.productId,
-          productName: product.title,
+          productId: productData.productId,
+          productName: title,
           sellerId: userUid,
         },
       },
-      false
+      false,
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -1408,7 +1797,7 @@ export const saveProductController = async (req, res) => {
       message: isEditing
         ? "Product entry successfully patched."
         : "Product entry successfully saved.",
-      data: product,
+      data: productData,
     });
   } catch (error) {
     if (req.file) await fs.unlink(req.file.path).catch(() => {});
@@ -1433,10 +1822,9 @@ export const deleteProductController = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "deleteProductController";
   const action = "deleteProduct";
-  const session = await mongoose.startSession();
+
   try {
-    session.startTransaction();
-    const userUid = req.user.uid;
+    const userUid = req.user.id || req.user.uid;
     const { productId } = req.params;
 
     if (!productId) {
@@ -1447,40 +1835,47 @@ export const deleteProductController = async (req, res) => {
         "error",
         "Missing required product identification parameter.",
       );
-      throw new Error("Missing required product identification parameter.");
+      return res.status(400).json({
+        success: false,
+        message: "Missing required product identification parameter.",
+      });
     }
-    const product = await Product.findOneAndDelete({
-      productId: productId,
-      sellerId: userUid,
+
+    const result = await db.runTransaction(async (transaction) => {
+      const productQuery = await Product.where("productId", "==", productId)
+        .where("sellerId", "==", userUid)
+        .limit(1)
+        .get();
+
+      if (productQuery.empty) {
+        throw new Error("Product record not found or unauthorized access.");
+      }
+
+      const productDoc = productQuery.docs[0];
+      const productData = productDoc.data();
+      transaction.delete(productDoc.ref);
+
+      return productData;
     });
-    if (!product) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Product record not found or unauthorized access.",
-      );
-      throw new Error("Product record not found or unauthorized access.");
-    }
-    await session.commitTransaction();
-    if (product.productType === "file" && product.fileDetails?.fileUrl) {
-      fs.unlink(product.fileDetails.fileUrl).catch((err) =>
+    if (result.productType === "file" && result.fileDetails?.url) {
+      fs.unlink(result.fileDetails.url).catch((err) =>
         console.error(
-          `Failed to delete local file asset at ${product.fileDetails.fileUrl}:`,
+          `Failed to delete local file asset at ${result.fileDetails.url}:`,
           err,
         ),
       );
     }
-    if (product.thumbnails) {
-      const thumbnailUrls = Array.isArray(product.thumbnails)
-        ? product.thumbnails
-        : [product.thumbnails];
+
+    const mediaThumbnails = result.mediaUrls || result.thumbnails;
+    if (mediaThumbnails) {
+      const thumbnailUrls = Array.isArray(mediaThumbnails)
+        ? mediaThumbnails
+        : [mediaThumbnails];
 
       const bucket = storage().bucket();
 
       thumbnailUrls.forEach((url) => {
-        if (url.includes("firebasestorage.googleapis.com")) {
+        if (url && url.includes("firebasestorage.googleapis.com")) {
           try {
             const decodedUrl = decodeURIComponent(url);
             const pathStartIndex = decodedUrl.indexOf("/o/") + 3;
@@ -1509,9 +1904,16 @@ export const deleteProductController = async (req, res) => {
       });
     }
 
-    const seller = await User.findOne({ uid: userUid }).lean();
+    // Fetch seller info for notifications
+    const sellerQuery = await User.where("uid", "==", userUid).limit(1).get();
+    const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
     const sellerEmail = seller ? seller.email : req.user.email;
     const sellerName = seller ? seller.firstname : req.user.firstname;
+
+    const currentDate = new Date();
+    const formattedDate = currentDate.toLocaleDateString();
+    const formattedTime = currentDate.toLocaleTimeString();
+
     await createNotification({
       notificationId: generateNotificationId("store"),
       recipientId: userUid,
@@ -1519,31 +1921,33 @@ export const deleteProductController = async (req, res) => {
       category: "store",
       actionType: "PRODUCT_DELETION",
       title: "Product Listing Removed",
-      message: `Your marketplace item "${product.title}" has been successfully deleted.`,
+      message: `Your marketplace item "${result.title}" has been successfully deleted.`,
       entityId: productId,
       entityType: "product",
       sendEmail: false,
       payload: {
         username: sellerName,
         productId: productId,
-        productName: product.title,
+        productName: result.title,
         date: formattedDate,
         time: formattedTime,
       },
     }).catch((err) =>
       console.error("Non-blocking deletion log emission failure:", err),
     );
+
     await notifyAdmins(
       { role: ["super_admin", "moderator"] },
       {
-        notificationId: generateNotificationId("admin_notification"),
+        notificationId: generateNotificationId("store"),
         actionType: "PRODUCT_DELETION_ADMIN",
         title: "Product Deletion Audit",
-        message: `Product "${product.title}" was deleted by seller ${userUid}.`,
-        payload: { productId, productName: product.title, sellerId: userUid },
+        message: `Product "${result.title}" was deleted by seller ${userUid}.`,
+        payload: { productId, productName: result.title, sellerId: userUid },
       },
-      false
+      false,
     );
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
@@ -1562,9 +1966,10 @@ export const deleteProductController = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({
+    const statusCode = error.message.includes("not found") ? 404 : 500;
+    return res.status(statusCode).json({
       success: false,
-      message: "Internal application routing anomaly.",
+      message: error.message || "Internal application routing anomaly.",
     });
   }
 };
@@ -1573,27 +1978,46 @@ export const togglefavoriteActionController = async (req, res) => {
   const controllerName = "togglefavoriteActionController";
   const action = "togglefavoriteAction";
   const { productId } = req.body;
-  const userId = req.user.id;
+  const userId = req.user.id || req.user.uid;
+
   try {
-    const user = await User.findOne({ uid: userId });
-    if (!user) return res.status(404).json({ message: "User not found" });
-    const isFavorited = user.favorites.includes(productId);
+    const result = await db.runTransaction(async (transaction) => {
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      if (userQuery.empty) {
+        throw new Error("User not found");
+      }
 
-    const updateQuery = isFavorited
-      ? { $pull: { favorites: productId } }
-      : { $addToSet: { favorites: productId } };
+      const userDoc = userQuery.docs[0];
+      const userData = userDoc.data();
+      const favorites = userData.favorites || [];
 
-    const updatedUser = await User.findOneAndUpdate(
-      { uid: userId },
-      updateQuery,
-      { new: true },
-    ).select("favorites");
+      const isFavorited = favorites.includes(productId);
+      let updatedFavorites;
+
+      if (isFavorited) {
+        updatedFavorites = favorites.filter((id) => id !== productId);
+      } else {
+        updatedFavorites = [...favorites, productId];
+      }
+
+      transaction.update(userDoc.ref, {
+        favorites: updatedFavorites,
+        updatedAt: new Date(),
+      });
+
+      return {
+        isFavorited,
+        favorites: updatedFavorites,
+      };
+    });
+
     logControllerPerformance(controllerName, action, startTime, "success");
-
     res.status(200).json({
       success: true,
-      favorites: updatedUser.favorites,
-      message: isFavorited ? "Removed from favorites" : "Added to favorites",
+      favorites: result.favorites,
+      message: result.isFavorited
+        ? "Removed from favorites"
+        : "Added to favorites",
     });
   } catch (error) {
     logControllerPerformance(
@@ -1603,7 +2027,8 @@ export const togglefavoriteActionController = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: error.message });
+    const statusCode = error.message === "User not found" ? 404 : 500;
+    res.status(statusCode).json({ success: false, message: error.message });
   }
 };
 export const toggleCartActionController = async (req, res) => {
@@ -1617,48 +2042,67 @@ export const toggleCartActionController = async (req, res) => {
     selectedColor,
     quantity = 1,
   } = req.body;
-  const userId = req.user.id;
+  const userId = req.user.id || req.user.uid;
 
   try {
-    const user = await User.findOne({ uid: userId });
-    if (!user) {
-      logControllerPerformance(
-        controllerName,
-        controllerAction,
-        startTime,
-        "error",
-        "User not found",
-      );
-      return res.status(404).json({ message: "User not found" });
-    }
+    const result = await db.runTransaction(async (transaction) => {
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      if (userQuery.empty) {
+        throw new Error("User not found");
+      }
 
-    let updatedUser;
+      const userDoc = userQuery.docs[0];
+      const userData = userDoc.data();
+      const cart = userData.cart || [];
+      let updatedCart = [...cart];
 
-    if (action === "add") {
-      const cartItem = {
-        productId,
-        quantity,
-        selectedSize,
-        selectedColor,
-      };
-      updatedUser = await User.findOneAndUpdate(
-        { uid: userId },
-        { $addToSet: { cart: cartItem } },
-        { new: true },
-      ).select("cart");
-    } else if (action === "remove") {
-      updatedUser = await User.findOneAndUpdate(
-        { uid: userId },
-        { $pull: { cart: { productId: productId } } },
-        { new: true },
-      ).select("cart");
-    } else if (action === "update") {
-      updatedUser = await User.findOneAndUpdate(
-        { uid: userId, "cart.productId": productId },
-        { $set: { "cart.$.quantity": quantity } },
-        { new: true },
-      ).select("cart");
-    }
+      if (action === "add") {
+        const existingIndex = updatedCart.findIndex(
+          (item) =>
+            item.productId === productId &&
+            item.selectedSize === selectedSize &&
+            item.selectedColor === selectedColor,
+        );
+
+        if (existingIndex > -1) {
+          updatedCart[existingIndex] = {
+            ...updatedCart[existingIndex],
+            quantity:
+              (updatedCart[existingIndex].quantity || 1) + Number(quantity),
+          };
+        } else {
+          updatedCart.push({
+            productId,
+            quantity: Number(quantity),
+            selectedSize,
+            selectedColor,
+          });
+        }
+      } else if (action === "remove") {
+        updatedCart = updatedCart.filter(
+          (item) => item.productId !== productId,
+        );
+      } else if (action === "update") {
+        const existingIndex = updatedCart.findIndex(
+          (item) => item.productId === productId,
+        );
+
+        if (existingIndex > -1) {
+          updatedCart[existingIndex] = {
+            ...updatedCart[existingIndex],
+            quantity: Number(quantity),
+          };
+        }
+      }
+
+      transaction.update(userDoc.ref, {
+        cart: updatedCart,
+        updatedAt: new Date(),
+      });
+
+      return updatedCart;
+    });
+
     logControllerPerformance(
       controllerName,
       controllerAction,
@@ -1668,7 +2112,7 @@ export const toggleCartActionController = async (req, res) => {
 
     res.status(200).json({
       success: true,
-      cart: updatedUser.cart,
+      cart: result,
       message: `Cart updated successfully`,
     });
   } catch (error) {
@@ -1679,7 +2123,8 @@ export const toggleCartActionController = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: error.message });
+    const statusCode = error.message === "User not found" ? 404 : 500;
+    res.status(statusCode).json({ success: false, message: error.message });
   }
 };
 export const markOrderAsDroppedOff = async (req, res) => {
@@ -1687,92 +2132,104 @@ export const markOrderAsDroppedOff = async (req, res) => {
   const controllerName = "markOrderAsDroppedOffController";
   const action = "markOrderAsDroppedOff";
   const { orderId } = req.body;
-  const sellerId = req.user.id;
-  const session = await mongoose.startSession();
+  const sellerId = req.user.id || req.user.uid;
 
   try {
-    session.startTransaction();
+    const result = await db.runTransaction(async (transaction) => {
+      const orderQuery = await ProductOrder.where("orderId", "==", orderId)
+        .limit(1)
+        .get();
 
-    const order = await ProductOrder.findOne({ orderId }).session(session);
-    if (!order) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Order not found.",
-      );
-      throw new Error("Order not found.");
-    }
-    if (order.sellerId !== sellerId) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized action.",
-      );
-      throw new Error("Unauthorized action.");
-    }
-    if (order.deliveryMethod !== "drop_off") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "This action is only valid for station drop-offs.",
-      );
-      throw new Error("This action is only valid for station drop-offs.");
-    }
+      if (orderQuery.empty) {
+        throw new Error("Order not found.");
+      }
 
-    order.status = "dropped_off";
-    order.droppedOffAt = new Date().toISOString();
-    await order.save({ session });
-    const buyer = await User.findOne({ uid: order.buyerId }).session(session);
-    await session.commitTransaction();
-    session.endSession();
+      const orderDoc = orderQuery.docs[0];
+      const order = orderDoc.data();
+
+      if (order.sellerId !== sellerId) {
+        throw new Error("Unauthorized action.");
+      }
+      if (order.deliveryMethod !== "drop_off") {
+        throw new Error("This action is only valid for station drop-offs.");
+      }
+
+      const droppedOffAt = new Date().toISOString();
+      transaction.update(orderDoc.ref, {
+        status: "dropped_off",
+        droppedOffAt: droppedOffAt,
+        updatedAt: new Date(),
+      });
+      const buyerQuery = await User.where("uid", "==", order.buyerId)
+        .limit(1)
+        .get();
+      if (buyerQuery.empty) {
+        throw new Error("Buyer not found.");
+      }
+      const buyer = buyerQuery.docs[0].data();
+      let agent = null;
+      if (order.agentId) {
+        const agentQuery = await User.where("uid", "==", order.agentId)
+          .limit(1)
+          .get();
+        if (!agentQuery.empty) {
+          agent = agentQuery.docs[0].data();
+        }
+      }
+
+      return {
+        order,
+        buyer,
+        agent,
+      };
+    });
+
+    const currentDate = new Date();
+    const formattedDate = currentDate.toLocaleDateString();
+    const formattedTime = currentDate.toLocaleTimeString();
     await createNotification({
       notificationId: generateNotificationId("store"),
-      recipientId: order.buyerId,
-      recipientEmail: buyer.email,
+      recipientId: result.order.buyerId,
+      recipientEmail: result.buyer.email,
       category: "store",
       actionType: "ORDER_DROPPED_OFF",
       sendEmail: true,
       payload: {
-        userName: `${buyer.firstname} ${buyer.lastname}`,
-        productName: order.productName,
-        orderId: order.orderId,
-        stationName: order.selectedStation.name,
-        stationAddress: order.selectedStation.address,
+        userName:
+          `${result.buyer.firstname || ""} ${result.buyer.lastname || ""}`.trim(),
+        productName: result.order.productName,
+        orderId: result.order.orderId,
+        stationName: result.order.selectedStation?.name || "",
+        stationAddress: result.order.selectedStation?.address || "",
       },
     });
-    if (order.agentId) {
+
+    if (result.order.agentId && result.agent?.email) {
       await createNotification({
         notificationId: generateNotificationId("store"),
-        recipientId: order.agentId,
-        recipientEmail: agent.email,
+        recipientId: result.order.agentId,
+        recipientEmail: result.agent.email,
         category: "store",
         actionType: "AGENT_AWAITING_PICKUP",
         sendEmail: true,
         payload: {
-          agentName: agent.firstname,
-          productName: order.productName,
-          orderId: order.orderId,
-          stationName: order.selectedStation.name,
+          agentName: result.agent.firstname || "Agent",
+          productName: result.order.productName,
+          orderId: result.order.orderId,
+          stationName: result.order.selectedStation?.name || "",
           date: formattedDate,
           time: formattedTime,
         },
       });
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Order updated to dropped off. Buyer notified.",
       status: "dropped_off",
     });
   } catch (error) {
-    await session.abortTransaction();
-    session.endSession();
     logControllerPerformance(
       controllerName,
       action,
@@ -1780,6 +2237,15 @@ export const markOrderAsDroppedOff = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(400).json({ success: false, message: error.message });
+    const statusCode = [
+      "Order not found.",
+      "Unauthorized action.",
+      "This action is only valid for station drop-offs.",
+    ].includes(error.message)
+      ? 400
+      : 500;
+    return res
+      .status(statusCode)
+      .json({ success: false, message: error.message });
   }
 };
