@@ -2164,6 +2164,10 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
   const controllerName = "searchUserUsingUidOrNameQueryController";
   const action = "searchUserUsingUidOrNameQuery";
   const { q, uid, viewerRole, viewerTier } = req.query;
+
+  const isAdmin =
+    viewerRole === "admin";
+
   try {
     let users = [];
 
@@ -2182,11 +2186,31 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
         const lastname = (data.lastname || "").toLowerCase();
         const username = (data.username || "").toLowerCase();
 
-        if (
+        let isMatch =
           firstname.includes(searchTerm) ||
           lastname.includes(searchTerm) ||
-          username.includes(searchTerm)
-        ) {
+          username.includes(searchTerm);
+
+        if (isAdmin && !isMatch) {
+          const userUid = (data.uid || "").toLowerCase();
+          const itagusername = (data.itagusername || "").toLowerCase();
+          const schoolCode = (data.schoolCode || "").toLowerCase();
+          const email = (data.email || "").toLowerCase();
+          const department = (data.department || "").toLowerCase();
+          const matricNumber = (data.matricNumber || "").toLowerCase();
+          const staffId = (data.staffId || "").toLowerCase();
+
+          isMatch =
+            userUid.includes(searchTerm) ||
+            itagusername.includes(searchTerm) ||
+            schoolCode.includes(searchTerm) ||
+            email.includes(searchTerm) ||
+            department.includes(searchTerm) ||
+            matricNumber.includes(searchTerm) ||
+            staffId.includes(searchTerm);
+        }
+
+        if (isMatch) {
           users.push({ id: doc.id, ...data });
         }
       });
@@ -2235,7 +2259,7 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
     );
     res.status(500).json({ message: error.message, success: false });
   }
-};
+};;
 export const checkAccountState = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "checkAccountStateController";

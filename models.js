@@ -362,7 +362,6 @@ export const userSchema = new mongoose.Schema({
   country: String,
   current_level: String,
   schoolAvatarUrl: String,
-  phone_number: String,
   matricNumber: String,
   staffId: String,
   cart: [
