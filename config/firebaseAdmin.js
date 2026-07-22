@@ -8,12 +8,17 @@ const __dirname = dirname(__filename);
 
 if (!admin.apps.length) {
   try {
-    const serviceAccountPath = join(
-      __dirname,
-      "../secrets/serviceAccountKey.json",
-    );
-    const fileContent = readFileSync(serviceAccountPath, "utf8");
-    const serviceAccount = JSON.parse(fileContent);
+    let serviceAccount;
+    if (process.env.FIREBASE_SERVICE_ACCOUNT) {
+      serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+    } else {
+      const serviceAccountPath = join(
+        __dirname,
+        "../secrets/serviceAccountKey.json",
+      );
+      const fileContent = readFileSync(serviceAccountPath, "utf8");
+      serviceAccount = JSON.parse(fileContent);
+    }
 
     admin.initializeApp({
       credential: admin.credential.cert(serviceAccount),
