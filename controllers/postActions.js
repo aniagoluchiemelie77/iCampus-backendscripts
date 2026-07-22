@@ -17,12 +17,12 @@ import { scan } from "../services/visionAi.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 
-const getPostStats = (post) => ({
+const getPostStats = (post, repostersCount = 0, commentsCount = 0) => ({
   likes: post.likes || [],
   bookmarks: post.bookmarks || [],
   impressions: post.impressions || 0,
-  repostsCount: post.repostersDetails.length || 0,
-  commentsCount: post.commentsCount || 0,
+  repostsCount: repostersCount,
+  commentsCount: commentsCount,
   totalVotes: post.poll?.totalVotes || 0,
 });
 export const moderateContent = async (postId, content, media) => {
@@ -574,6 +574,7 @@ export const toggleLike = async (req, res) => {
         likes: updatedLikes,
         updatedAt: new Date(),
       });
+
       const userQuery = await User.where("uid", "==", userId).limit(1).get();
       if (!userQuery.empty) {
         const userDoc = userQuery.docs[0];
@@ -590,14 +591,32 @@ export const toggleLike = async (req, res) => {
         });
       }
 
+      const repostersSnapshot = await PostReposters.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const repostersCount = repostersSnapshot.size;
+
+      const commentsSnapshot = await Comments.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const commentsCount = commentsSnapshot.size;
+
       return {
-        post: { ...post, likes: updatedLikes },
+        post: { id: postDoc.id, ...post, likes: updatedLikes, commentsCount },
         isLiked,
+        repostersCount,
+        commentsCount,
       };
     });
 
     const updatedPost = result.post;
     const isLiked = result.isLiked;
+    const repostersCount = result.repostersCount;
+    const commentsCount = result.commentsCount;
     const message = isLiked ? "You unliked a post." : "You liked a post.";
 
     const postOwnerId = updatedPost.originalAuthor || updatedPost.userId;
@@ -607,7 +626,7 @@ export const toggleLike = async (req, res) => {
         .get()
         .then(async (likerQuery) => {
           const liker = !likerQuery.empty ? likerQuery.docs[0].data() : null;
-          const ownerQuery = await Users.where("uid", "==", postOwnerId)
+          const ownerQuery = await User.where("uid", "==", postOwnerId)
             .limit(1)
             .get();
           const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
@@ -638,7 +657,7 @@ export const toggleLike = async (req, res) => {
         postId: updatedPost.postId,
         stats:
           typeof getPostStats === "function"
-            ? getPostStats(updatedPost)
+            ? getPostStats(updatedPost, repostersCount, commentsCount)
             : updatedPost,
       });
     }
@@ -689,6 +708,7 @@ export const toggleBookmark = async (req, res) => {
         bookmarks: updatedBookmarks,
         updatedAt: new Date(),
       });
+
       const userQuery = await User.where("uid", "==", userId).limit(1).get();
       if (!userQuery.empty) {
         const userDoc = userQuery.docs[0];
@@ -705,14 +725,37 @@ export const toggleBookmark = async (req, res) => {
         });
       }
 
+      const repostersSnapshot = await PostReposters.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const repostersCount = repostersSnapshot.size;
+
+      const commentsSnapshot = await Comments.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const commentsCount = commentsSnapshot.size;
+
       return {
-        post: { ...post, bookmarks: updatedBookmarks },
+        post: {
+          id: postDoc.id,
+          ...post,
+          bookmarks: updatedBookmarks,
+          commentsCount,
+        },
         isBookmarked,
+        repostersCount,
+        commentsCount,
       };
     });
 
     const updatedPost = result.post;
     const isBookmarked = result.isBookmarked;
+    const repostersCount = result.repostersCount;
+    const commentsCount = result.commentsCount;
 
     const io = req.app.get("socketio");
     if (io && updatedPost) {
@@ -720,7 +763,7 @@ export const toggleBookmark = async (req, res) => {
         postId: updatedPost.postId,
         stats:
           typeof getPostStats === "function"
-            ? getPostStats(updatedPost)
+            ? getPostStats(updatedPost, repostersCount, commentsCount)
             : updatedPost,
       });
     }
@@ -750,7 +793,8 @@ export const addComment = async (req, res) => {
   const controllerName = "addCommentController";
   const action = "addComment";
   const { postId } = req.params;
-  const { comment, parentId } = req.body;
+  const { comment, text, parentId } = req.body;
+  const commentText = comment || text;
   const userId = req.user.id || req.user.uid;
 
   try {
@@ -769,15 +813,19 @@ export const addComment = async (req, res) => {
       const postData = postDoc.data();
       const currentCommentsCount = postData.commentsCount || 0;
 
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      const commenter = !userQuery.empty ? userQuery.docs[0].data() : null;
+
       const newCommentData = {
-        commentId,
+        id: commentId,
         postId,
         userId,
-        comment,
-        parentId: parentId || "",
-        likes: [],
-        createdAt: createdAt.toISOString(),
-        updatedAt: createdAt.toISOString(),
+        username: commenter?.username || commenter?.firstname || "Anonymous",
+        profilePic: commenter?.profilePic || "",
+        text: commentText,
+        parentId: parentId || null,
+        timestamp: createdAt,
+        likes: 0,
       };
 
       const commentDocRef = Comments.doc(commentId);
@@ -787,23 +835,28 @@ export const addComment = async (req, res) => {
         updatedAt: createdAt,
       });
 
+      const repostersSnapshot = await PostReposters.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const repostersCount = repostersSnapshot.size;
+
       return {
         postData,
         newCommentData,
+        commenter,
+        repostersCount,
       };
     });
 
-    const { postData, newCommentData } = result;
-    const commenterQuery = await User.where("uid", "==", userId).limit(1).get();
-    const commenter = !commenterQuery.empty
-      ? commenterQuery.docs[0].data()
-      : null;
+    const { postData, newCommentData, commenter, repostersCount } = result;
 
     const populatedComment = {
       ...newCommentData,
       userId: commenter
         ? {
-            uid: commenter.uid,
+            uid: commenter.uid || userId,
             firstname: commenter.firstname,
             lastname: commenter.lastname,
             profilePic: commenter.profilePic,
@@ -824,16 +877,21 @@ export const addComment = async (req, res) => {
         postId: postData.postId,
         stats:
           typeof getPostStats === "function"
-            ? getPostStats({
-                ...postData,
-                commentsCount: (postData.commentsCount || 0) + 1,
-              })
+            ? getPostStats(
+                {
+                  ...postData,
+                  commentsCount: (postData.commentsCount || 0) + 1,
+                },
+                repostersCount,
+              )
             : postData,
       });
     }
 
     if (postAuthorId && postAuthorId !== userId) {
-      const ownerQuery = await User.where("uid", "==", postAuthorId)
+      const ownerQuery = await db
+        .collection("users")
+        .where("uid", "==", postAuthorId)
         .limit(1)
         .get();
       const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
@@ -845,7 +903,7 @@ export const addComment = async (req, res) => {
         category: "social",
         actionType: "POST_COMMENTED",
         title: "New Comment",
-        message: `${commenter?.firstname || "Someone"} commented on your post: "${comment.substring(0, 30)}..."`,
+        message: `${commenter?.firstname || "Someone"} commented on your post: "${commentText.substring(0, 30)}..."`,
         payload: { postId, commentId },
         sendPush: true,
         saveToDb: true,
@@ -926,14 +984,30 @@ export const pollVote = async (req, res) => {
         poll: updatedPoll,
         updatedAt: new Date(),
       });
+      const repostersSnapshot = await PostReposters.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const repostersCount = repostersSnapshot.size;
+
+      const commentsSnapshot = await Comments.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const commentsCount = commentsSnapshot.size;
 
       return {
-        ...post,
-        poll: updatedPoll,
+        post: { id: postDoc.id, ...post, poll: updatedPoll },
+        repostersCount,
+        commentsCount,
       };
     });
 
-    const updatedPost = result;
+    const updatedPost = result.post;
+    const repostersCount = result.repostersCount;
+    const commentsCount = result.commentsCount;
 
     // --- SOCKET EMISSION ---
     const io = req.app.get("socketio");
@@ -942,7 +1016,7 @@ export const pollVote = async (req, res) => {
         postId: updatedPost.postId,
         stats:
           typeof getPostStats === "function"
-            ? getPostStats(updatedPost)
+            ? getPostStats(updatedPost, repostersCount, commentsCount)
             : updatedPost,
       });
     }
@@ -1025,14 +1099,30 @@ export const incrementImpressions = async (req, res) => {
         impressions: newImpressions,
         updatedAt: new Date(),
       });
+      const repostersSnapshot = await PostReposters.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const repostersCount = repostersSnapshot.size;
+
+      const commentsSnapshot = await Comments.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const commentsCount = commentsSnapshot.size;
 
       return {
-        ...postData,
-        impressions: newImpressions,
+        post: { id: postDoc.id, ...postData, impressions: newImpressions },
+        repostersCount,
+        commentsCount,
       };
     });
 
-    const updatedPost = result;
+    const updatedPost = result.post;
+    const repostersCount = result.repostersCount;
+    const commentsCount = result.commentsCount;
 
     const authorId = updatedPost.originalAuthor || updatedPost.userId;
     if (authorId) {
@@ -1058,7 +1148,7 @@ export const incrementImpressions = async (req, res) => {
         postId: updatedPost.postId,
         stats:
           typeof getPostStats === "function"
-            ? getPostStats(updatedPost)
+            ? getPostStats(updatedPost, repostersCount, commentsCount)
             : updatedPost,
       });
     }
@@ -1136,6 +1226,10 @@ export const repost = async (req, res) => {
     if (isExisting) {
       const repostDocRef = existingRepostQuery.docs[0].ref;
 
+      let updatedOriginal;
+      let repostersCount = 0;
+      let commentsCount = 0;
+
       await db.runTransaction(async (transaction) => {
         const latestPostSnap = await transaction.get(postDoc.ref);
         const latestPostData = latestPostSnap.data();
@@ -1147,15 +1241,30 @@ export const repost = async (req, res) => {
           updatedAt: new Date(),
         });
       });
+
       const updatedPostSnap = await postDoc.ref.get();
-      const updatedOriginal = updatedPostSnap.data();
+      updatedOriginal = updatedPostSnap.data();
+
+      const repostersSnapshot = await PostReposters.where(
+        "postId",
+        "==",
+        originalPostId,
+      ).get();
+      repostersCount = repostersSnapshot.size;
+
+      const commentsSnapshot = await Comments.where(
+        "postId",
+        "==",
+        originalPostId,
+      ).get();
+      commentsCount = commentsSnapshot.size;
 
       if (io && updatedOriginal) {
         io.emit("post_stats_updated", {
           postId: originalPostId,
           stats:
             typeof getPostStats === "function"
-              ? getPostStats(updatedOriginal)
+              ? getPostStats(updatedOriginal, repostersCount, commentsCount)
               : updatedOriginal,
         });
       }
@@ -1184,6 +1293,10 @@ export const repost = async (req, res) => {
 
       const repostDocRef = PostReposters.doc(repostId);
 
+      let updatedOriginal;
+      let repostersCount = 0;
+      let commentsCount = 0;
+
       await db.runTransaction(async (transaction) => {
         const latestPostSnap = await transaction.get(postDoc.ref);
         const latestPostData = latestPostSnap.data();
@@ -1197,7 +1310,21 @@ export const repost = async (req, res) => {
       });
 
       const updatedPostSnap = await postDoc.ref.get();
-      const updatedOriginal = updatedPostSnap.data();
+      updatedOriginal = updatedPostSnap.data();
+
+      const repostersSnapshot = await PostReposters.where(
+        "postId",
+        "==",
+        originalPostId,
+      ).get();
+      repostersCount = repostersSnapshot.size;
+
+      const commentsSnapshot = await Comments.where(
+        "postId",
+        "==",
+        originalPostId,
+      ).get();
+      commentsCount = commentsSnapshot.size;
 
       if (io) {
         io.emit("new_post", {
@@ -1209,7 +1336,7 @@ export const repost = async (req, res) => {
           postId: originalPostId,
           stats:
             typeof getPostStats === "function"
-              ? getPostStats(updatedOriginal)
+              ? getPostStats(updatedOriginal, repostersCount, commentsCount)
               : updatedOriginal,
         });
       }
@@ -1257,7 +1384,7 @@ export const repost = async (req, res) => {
           followerId !== userId
         ) {
           notifiedUids.add(followerId);
-          Users.where("uid", "==", followerId)
+          User.where("uid", "==", followerId)
             .limit(1)
             .get()
             .then((followerSnap) => {
@@ -1346,7 +1473,7 @@ export const toggleCommentLike = async (req, res) => {
         .get()
         .then(async (likerQuery) => {
           const liker = !likerQuery.empty ? likerQuery.docs[0].data() : null;
-          const ownerQuery = await Users.where("uid", "==", commentAuthorId)
+          const ownerQuery = await User.where("uid", "==", commentAuthorId)
             .limit(1)
             .get();
           const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
@@ -1372,7 +1499,10 @@ export const toggleCommentLike = async (req, res) => {
     }
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.sendStatus(200);
+    res.status(200).json({
+      isLiked: !isLiked,
+      likesCount: updatedLikes.length,
+    });
   } catch (err) {
     logControllerPerformance(
       controllerName,
@@ -1396,7 +1526,24 @@ export const fetchPostUsingPostId = async (req, res) => {
 
   try {
     const { postId } = req.params;
-    const postQuery = await Posts.where("postId", "==", postId).limit(1).get();
+
+    let postQuery = await Posts.where("postId", "==", postId).limit(1).get();
+    let isRepost = false;
+    let repostData = null;
+
+    if (postQuery.empty) {
+      const repostQuery = await PostReposters.where("postId", "==", postId)
+        .limit(1)
+        .get();
+      if (!repostQuery.empty) {
+        isRepost = true;
+        repostData = repostQuery.docs[0].data();
+        postQuery = await Posts.where("postId", "==", repostData.postId)
+          .limit(1)
+          .get();
+      }
+    }
+
     if (postQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -1437,7 +1584,14 @@ export const fetchPostUsingPostId = async (req, res) => {
         };
       }
     }
-    const commentsSnapshot = await Comments.where("postId", "==", postId).get();
+
+    const targetPostId = isRepost ? repostData.postId : postId;
+
+    const commentsSnapshot = await Comments.where(
+      "postId",
+      "==",
+      targetPostId,
+    ).get();
     const comments = [];
     for (const doc of commentsSnapshot.docs) {
       const commentData = doc.data();
@@ -1470,7 +1624,7 @@ export const fetchPostUsingPostId = async (req, res) => {
     const repostersSnapshot = await PostReposters.where(
       "postId",
       "==",
-      postId,
+      targetPostId,
     ).get();
     const repostersDetails = repostersSnapshot.docs.map((doc) => doc.data());
 
@@ -1482,6 +1636,8 @@ export const fetchPostUsingPostId = async (req, res) => {
     logControllerPerformance(controllerName, action, startTime, "success");
     res.json({
       ...post,
+      ...(isRepost ? repostData : {}),
+      isRepost,
       authorDetails,
       comments,
       repostersDetails,

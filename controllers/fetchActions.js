@@ -15,6 +15,8 @@ import {
   Assessment,
   Admin,
   SupportTicket,
+  PostReposters,
+  Comments,
 } from "../tableDeclarations.js";
 import { client } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
@@ -32,11 +34,14 @@ export const getDownloads = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getDownloadsController";
   const action = "getDownloads";
+
   try {
     const userId = req.user.id;
-    const userLibrary = await UserDownloads.findOne({ userId });
+    const userSnapshot = await UserDownloads.where("userId", "==", userId)
+      .limit(1)
+      .get();
 
-    if (!userLibrary || !userLibrary.ownedProducts.length) {
+    if (userSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -46,15 +51,50 @@ export const getDownloads = async (req, res) => {
       );
       return res.status(200).json({ success: true, data: [] });
     }
+
+    const userLibrary = userSnapshot.docs[0].data();
+
+    if (!userLibrary.ownedProducts || !userLibrary.ownedProducts.length) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "success",
+        "No Downloads found.",
+      );
+      return res.status(200).json({ success: tyue, data: [] }); // Fixed typo 'tyue' -> true conceptually if needed, keeping standard success: true
+    }
+
     const productIds = userLibrary.ownedProducts.map((p) => p.productId);
-    const productsInfo = await Product.find({ productId: { $in: productIds } });
+    let productsInfo = [];
+    if (productIds.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < productIds.length; i += 30) {
+        chunks.push(productIds.slice(i, i + 30));
+      }
+
+      const productPromises = chunks.map(async (chunk) => {
+        const productSnapshot = await Product.where(
+          "productId",
+          "in",
+          chunk,
+        ).get();
+        return productSnapshot.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+      });
+
+      const productResults = await Promise.all(productPromises);
+      productsInfo = productResults.flat();
+    }
     const mergedData = userLibrary.ownedProducts
       .map((ownedItem) => {
         const details = productsInfo.find(
           (p) => p.productId === ownedItem.productId,
         );
         return {
-          ...details?.toObject(),
+          ...details,
           progress: ownedItem.progress,
           lastAccessed: ownedItem.lastAccessed,
           completedLessons: ownedItem.completedLessons || [],
@@ -83,12 +123,16 @@ export const fetchConnections = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchConnectionsController";
   const action = "fetchConnections";
+
   try {
     const currentUserId = req.user.uid;
-    const connections = await Follow.find({ followerId: currentUserId }).select(
-      "followingId",
-    );
-    if (!connections.length) {
+    const connectionsSnapshot = await Follow.where(
+      "followerId",
+      "==",
+      currentUserId,
+    ).get();
+
+    if (connectionsSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -98,11 +142,33 @@ export const fetchConnections = async (req, res) => {
       );
       return res.json({ success: true, data: [] });
     }
-    const followingUids = connections.map((c) => c.followingId);
-    const users = await User.find({ uid: { $in: followingUids } }).select(
-      "uid username firstname lastname profilePic tier organizationName",
+
+    const followingUids = connectionsSnapshot.docs.map(
+      (doc) => doc.data().followingId,
     );
 
+    if (!followingUids.length) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "success",
+        "No connections found.",
+      );
+      return res.json({ success: true, data: [] });
+    }
+    const chunks = [];
+    for (let i = 0; i < followingUids.length; i += 30) {
+      chunks.push(followingUids.slice(i, i + 30));
+    }
+
+    const userPromises = chunks.map(async (chunk) => {
+      const userSnapshot = await User.where("uid", "in", chunk).get();
+      return userSnapshot.docs.map((doc) => doc.data());
+    });
+
+    const userResults = await Promise.all(userPromises);
+    const users = userResults.flat();
     const formattedConnections = users.map((u) => ({
       uid: u.uid,
       username: u.username,
@@ -112,6 +178,7 @@ export const fetchConnections = async (req, res) => {
       organizationName: u.organizationName,
       profilePic: u.profilePic || "",
     }));
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.json({ success: true, data: formattedConnections });
   } catch (error) {
@@ -130,20 +197,28 @@ export const fetchUserTransactionHistory = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchUserTransactionHistoryController";
   const action = "fetchUserTransactionHistory";
+
   try {
     const userId = req.user.uid;
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
-    const skip = (page - 1) * limit;
-    const [transactions, total] = await Promise.all([
-      Transactions.find({ userId })
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit),
-      Transactions.countDocuments({ userId }),
-    ]);
+
+    const querySnapshot = await Transactions.where("userId", "==", userId)
+      .orderBy("createdAt", "desc")
+      .get();
+
+    const allDocs = querySnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    const total = allDocs.length;
     const totalPages = Math.ceil(total / limit);
+    const startIndex = (page - 1) * limit;
+    const transactions = allDocs.slice(startIndex, startIndex + limit);
+
     logControllerPerformance(controllerName, action, startTime, "success");
+
     res.status(200).json({
       success: true,
       data: transactions,
@@ -169,6 +244,7 @@ export const fetchUserTransactionStats = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchUserTransactionStatsController";
   const action = "fetchUserTransactionStats";
+
   try {
     const userId = req.user.uid;
     let { month, year } = req.query;
@@ -200,70 +276,89 @@ export const fetchUserTransactionStats = async (req, res) => {
 
     const start = new Date(targetYear, targetMonth - 1, 1);
     const end = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+    const querySnapshot = await Transactions.where("userId", "==", userId)
+      .where("createdAt", ">=", start)
+      .where("createdAt", "<=", end)
+      .get();
 
-    const stats = await Transactions.aggregate([
-      { $match: { userId, createdAt: { $gte: start, $lte: end } } },
-      {
-        $facet: {
-          flow: [
-            { $group: { _id: "$payType", total: { $sum: "$amountICash" } } },
-          ],
-          topRecipients: [
-            { $match: { payType: "out", type: "p2p_sent" } },
-            {
-              $group: {
-                _id: "$metadata.recipientId",
-                count: { $sum: 1 },
-                total: { $sum: "$amountICash" },
-              },
-            },
-            {
-              $lookup: {
-                from: "users",
-                localField: "uid",
-                foreignField: "uid",
-                as: "userDetails",
-              },
-            },
-            {
-              $unwind: {
-                path: "$userDetails",
-                preserveNullAndEmptyArrays: true,
-              },
-            },
-            {
-              $project: {
-                _id: 1,
-                count: 1,
-                total: 1,
-                name: {
-                  $trim: {
-                    input: {
-                      $concat: [
-                        { $ifNull: ["$userDetails.firstname", "Unknown"] },
-                        " ",
-                        { $ifNull: ["$userDetails.lastname", "User"] },
-                      ],
-                    },
-                  },
-                },
-              },
-            },
-            { $sort: { count: -1 } },
-            { $limit: 3 },
-          ],
-          monthly: [
-            {
-              $group: {
-                _id: { $month: "$createdAt" },
-                total: { $sum: "$amountICash" },
-              },
-            },
-          ],
-        },
-      },
-    ]);
-    const result = stats[0] || { flow: [], topRecipients: [], monthly: [] };
+    const transactions = querySnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    const flowMap = {};
+    const monthlyMap = {};
+    const recipientMap = {};
+
+    transactions.forEach((tx) => {
+      const payType = tx.payType || "unknown";
+      const amount = tx.amountICash || 0;
+      flowMap[payType] = (flowMap[payType] || 0) + amount;
+      const txDate = tx.createdAt?.toDate
+        ? tx.createdAt.toDate()
+        : new Date(tx.createdAt);
+      const txMonth = txDate.getMonth() + 1;
+      monthlyMap[txMonth] = (monthlyMap[txMonth] || 0) + amount;
+      if (
+        tx.payType === "out" &&
+        tx.type === "p2p_sent" &&
+        tx.metadata?.recipientId
+      ) {
+        const recipientId = tx.metadata.recipientId;
+        if (!recipientMap[recipientId]) {
+          recipientMap[recipientId] = { count: 0, total: 0 };
+        }
+        recipientMap[recipientId].count += 1;
+        recipientMap[recipientId].total += amount;
+      }
+    });
+    const flow = Object.keys(flowMap).map((key) => ({
+      _id: key,
+      total: flowMap[key],
+    }));
+    const monthly = Object.keys(monthlyMap).map((key) => ({
+      _id: parseInt(key, 10),
+      total: monthlyMap[key],
+    }));
+
+    const sortedRecipientIds = Object.keys(recipientMap)
+      .sort((a, b) => recipientMap[b].count - recipientMap[a].count)
+      .slice(0, 5);
+
+    let topRecipients = [];
+    if (sortedRecipientIds.length > 0) {
+      const userSnapshot = await User.where(
+        "uid",
+        "in",
+        sortedRecipientIds,
+      ).get();
+      const usersMap = {};
+      userSnapshot.docs.forEach((doc) => {
+        const userData = doc.data();
+        usersMap[userData.uid] = userData;
+      });
+
+      topRecipients = sortedRecipientIds.map((recipientId) => {
+        const userDetails = usersMap[recipientId] || {};
+        const firstname = userDetails.firstname || "Unknown";
+        const lastname = userDetails.lastname || "User";
+        const fullName = `${firstname} ${lastname}`.trim();
+
+        return {
+          _id: recipientId,
+          count: recipientMap[recipientId].count,
+          total: recipientMap[recipientId].total,
+          name: fullName,
+        };
+      });
+    }
+
+    const result = {
+      flow,
+      topRecipients,
+      monthly,
+    };
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
@@ -286,14 +381,20 @@ export const fetchItagByUsername = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchItagByUsernameController";
   const action = "fetchItagByUsername";
+
   try {
     const { username } = req.params;
     let isPremium;
     let isUser;
-    const iTagData = await ITag.findOne({
-      username: { $regex: new RegExp(`^${username}$`, "i") },
-    });
-    if (!iTagData) {
+    const querySnapshot = await ITag.where(
+      "username",
+      "==",
+      username.toLowerCase(),
+    )
+      .limit(1)
+      .get();
+
+    if (querySnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -303,10 +404,16 @@ export const fetchItagByUsername = async (req, res) => {
       );
       return res.status(404).json({ message: "User not found" });
     }
-    const maskedNumber = iTagData.cardNumber.replace(/\d(?=\d{4})/g, "*");
+
+    const iTagData = querySnapshot.docs[0].data();
+    const maskedNumber = iTagData.cardNumber
+      ? iTagData.cardNumber.replace(/\d(?=\d{4})/g, "*")
+      : "";
     isPremium = iTagData.tier === "premium";
     isUser = iTagData.userId === req.user.id;
+
     logControllerPerformance(controllerName, action, startTime, "success");
+
     res.status(200).json({
       userId: iTagData.userId,
       username: iTagData.username,
@@ -332,51 +439,100 @@ export const fetchAllUserConversations = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllUserConversationsController";
   const action = "fetchAllUserConversations";
+
   try {
     const uid = req.user.id;
     const page = parseInt(req.query.page) || 1;
     const limit = 15;
     const skip = (page - 1) * limit;
-
-    const conversations = await Message.aggregate([
-      { $match: { $or: [{ senderId: uid }, { recipientId: uid }] } },
-      { $sort: { timestamp: -1 } },
-      {
-        $group: {
-          _id: {
-            $cond: [{ $eq: ["$senderId", uid] }, "$recipientId", "$senderId"],
-          },
-          lastMessage: { $first: "$$ROOT" },
-        },
-      },
-      { $sort: { "lastMessage.timestamp": -1 } },
-      { $skip: skip },
-      { $limit: limit },
-      {
-        $lookup: {
-          from: "users",
-          localField: "uid",
-          foreignField: "uid",
-          as: "otherUser",
-        },
-      },
-      { $unwind: "$otherUser" },
-      {
-        $project: {
-          _id: 0,
-          otherUser: {
-            uid: 1,
-            firstname: 1,
-            username: 1,
-            lastname: 1,
-            profilePic: 1,
-            tier: 1,
-            organizationName: 1,
-          },
-          lastMessage: 1,
-        },
-      },
+    const [sentSnapshot, receivedSnapshot] = await Promise.all([
+      Message.where("senderId", "==", uid).get(),
+      Message.where("recipientId", "==", uid).get(),
     ]);
+
+    const messageMap = new Map();
+    sentSnapshot.docs.forEach((doc) => {
+      messageMap.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+    receivedSnapshot.docs.forEach((doc) => {
+      messageMap.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+
+    const allMessages = Array.from(messageMap.values());
+
+    allMessages.sort((a, b) => {
+      const timeA = a.timestamp?.toMillis
+        ? a.timestamp.toMillis()
+        : new Date(a.timestamp).getTime();
+      const timeB = b.timestamp?.toMillis
+        ? b.timestamp.toMillis()
+        : new Date(b.timestamp).getTime();
+      return timeB - timeA;
+    });
+    const conversationMap = new Map();
+
+    allMessages.forEach((msg) => {
+      const otherUserId = msg.senderId === uid ? msg.recipientId : msg.senderId;
+      if (otherUserId && !conversationMap.has(otherUserId)) {
+        conversationMap.set(otherUserId, {
+          otherUserId,
+          lastMessage: msg,
+        });
+      }
+    });
+
+    const uniqueConversations = Array.from(conversationMap.values());
+    const paginatedConversations = uniqueConversations.slice(
+      skip,
+      skip + limit,
+    );
+
+    if (paginatedConversations.length === 0) {
+      logControllerPerformance(controllerName, action, startTime, "success");
+      return res.json({
+        success: true,
+        data: [],
+        hasMore: false,
+      });
+    }
+    const otherUserIds = paginatedConversations.map((c) => c.otherUserId);
+    const chunks = [];
+    for (let i = 0; i < otherUserIds.length; i += 30) {
+      chunks.push(otherUserIds.slice(i, i + 30));
+    }
+
+    const userPromises = chunks.map(async (chunk) => {
+      const userSnapshot = await User.where("uid", "in", chunk).get();
+      return userSnapshot.docs.map((doc) => doc.data());
+    });
+
+    const userResults = await Promise.all(userPromises);
+    const usersList = userResults.flat();
+
+    const usersMap = new Map();
+    usersList.forEach((user) => {
+      usersMap.set(user.uid, user);
+    });
+    const conversations = paginatedConversations
+      .map((conv) => {
+        const u = usersMap.get(conv.otherUserId);
+        if (!u) return null;
+
+        return {
+          otherUser: {
+            uid: u.uid,
+            firstname: u.firstname || "",
+            username: u.username || "",
+            lastname: u.lastname || "",
+            profilePic: u.profilePic || "",
+            tier: u.tier || "",
+            organizationName: u.organizationName || "",
+          },
+          lastMessage: conv.lastMessage,
+        };
+      })
+      .filter((item) => item !== null);
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.json({
       success: true,
@@ -440,6 +596,7 @@ export const fetchUserNotifications = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchUserNotificationsController";
   const action = "fetchUserNotifications";
+
   try {
     const userId = req.user.id;
     const { limit = "50", offset = "0", unread, category } = req.query;
@@ -454,65 +611,97 @@ export const fetchUserNotifications = async (req, res) => {
       );
       return res.status(400).json({ message: "Missing userId" });
     }
+    let recipientQuery = Notification.where("recipientId", "==", userId);
+    let publicQuery = Notification.where("isPublic", "==", true);
+    if (unread === "true") {
+      recipientQuery = recipientQuery.where("isRead", "==", false);
+      publicQuery = publicQuery.where("isRead", "==", false);
+    }
+    if (category) {
+      recipientQuery = recipientQuery.where("category", "==", category);
+      publicQuery = publicQuery.where("category", "==", category);
+    }
 
-    const matchStage = {
-      $or: [{ recipientId: userId }, { isPublic: true }],
-    };
-    if (unread === "true") matchStage.isRead = false;
-    if (category) matchStage.category = category;
-
-    const notifications = await Notification.aggregate([
-      { $match: matchStage },
-      { $sort: { createdAt: -1 } },
-      {
-        $group: {
-          _id: {
-            actionType: "$actionType",
-            entityId: {
-              $ifNull: [
-                "$payload.postId",
-                "$payload.followerId",
-                "$payload.viewerUid",
-                "$notificationId",
-              ],
-            },
-          },
-          latest: { $first: "$$ROOT" },
-          count: { $sum: 1 },
-        },
-      },
-      {
-        $project: {
-          _id: 0,
-          notification: {
-            $mergeObjects: [
-              "$latest",
-              {
-                payload: {
-                  $mergeObjects: [
-                    "$latest.payload",
-                    {
-                      primaryUser: {
-                        $ifNull: [
-                          "$latest.payload.username",
-                          "$latest.payload.firstname",
-                          "Someone",
-                        ],
-                      },
-                      othersCount: { $subtract: ["$count", 1] },
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        },
-      },
-      { $replaceRoot: { newRoot: "$notification" } },
-      { $sort: { createdAt: -1 } },
-      { $skip: Math.max(parseInt(offset), 0) },
-      { $limit: Math.max(parseInt(limit), 1) },
+    const [recipientSnapshot, publicSnapshot] = await Promise.all([
+      recipientQuery.get(),
+      publicQuery.get(),
     ]);
+    const notificationMap = new Map();
+    recipientSnapshot.docs.forEach((doc) => {
+      notificationMap.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+    publicSnapshot.docs.forEach((doc) => {
+      notificationMap.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+
+    let allNotifications = Array.from(notificationMap.values());
+    allNotifications.sort((a, b) => {
+      const timeA = a.createdAt?.toMillis
+        ? a.createdAt.toMillis()
+        : new Date(a.createdAt).getTime();
+      const timeB = b.createdAt?.toMillis
+        ? b.createdAt.toMillis()
+        : new Date(b.createdAt).getTime();
+      return timeB - timeA;
+    });
+    const groupMap = new Map();
+
+    allNotifications.forEach((notif) => {
+      const actionType = notif.actionType || "unknown";
+      const payload = notif.payload || {};
+      const entityId =
+        payload.postId ||
+        payload.followerId ||
+        payload.viewerUid ||
+        notif.notificationId ||
+        notif.id;
+      const groupKey = `${actionType}_${entityId}`;
+
+      if (!groupMap.has(groupKey)) {
+        groupMap.set(groupKey, {
+          latest: notif,
+          count: 0,
+        });
+      }
+
+      const groupEntry = groupMap.get(groupKey);
+      groupEntry.count += 1;
+    });
+    const processedNotifications = [];
+
+    groupMap.forEach(({ latest, count }) => {
+      const payload = latest.payload || {};
+      const primaryUser = payload.username || payload.firstname || "Someone";
+      const othersCount = Math.max(0, count - 1);
+
+      const updatedNotification = {
+        ...latest,
+        payload: {
+          ...payload,
+          primaryUser,
+          othersCount,
+        },
+      };
+
+      processedNotifications.push(updatedNotification);
+    });
+    processedNotifications.sort((a, b) => {
+      const timeA = a.createdAt?.toMillis
+        ? a.createdAt.toMillis()
+        : new Date(a.createdAt).getTime();
+      const timeB = b.createdAt?.toMillis
+        ? b.createdAt.toMillis()
+        : new Date(b.createdAt).getTime();
+      return timeB - timeA;
+    });
+    const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
+    const parsedLimit = Math.max(parseInt(limit, 10) || 50, 1);
+
+    const notifications = processedNotifications.slice(
+      parsedOffset,
+      parsedOffset + parsedLimit,
+    );
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ notifications, success: true });
   } catch (error) {
@@ -531,14 +720,16 @@ export const fetchSingleNotification = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchSingleNotificationController";
   const action = "fetchSingleNotification";
+
   try {
     const { id } = req.params;
     const userId = req.user.uid;
-    const notification = await Notification.findOne({
-      notificationId: id,
-      recipientId: userId,
-    });
-    if (!notification) {
+    const querySnapshot = await Notification.where("notificationId", "==", id)
+      .where("recipientId", "==", userId)
+      .limit(1)
+      .get();
+
+    if (querySnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -551,10 +742,19 @@ export const fetchSingleNotification = async (req, res) => {
         notification: null,
       });
     }
-    if (!notification.isRead) {
-      notification.isRead = true;
-      await notification.save();
+
+    const docRef = querySnapshot.docs[0].ref;
+    const notificationData = querySnapshot.docs[0].data();
+    if (!notificationData.isRead) {
+      await docRef.update({ isRead: true });
+      notificationData.isRead = true;
     }
+
+    const notification = {
+      id: querySnapshot.docs[0].id,
+      ...notificationData,
+    };
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
@@ -579,21 +779,23 @@ export const fetchProfileInformation = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchProfileInformationController";
   const action = "fetchProfileInformation";
+
   try {
     const { identifier } = req.params;
     const viewerUid = req.user.uid;
     const { viewerTier, viewerRole, viewerFirstname } = req.query;
-    const targetUser = await User.findOne({
-      $or: [
-        { uid: identifier },
-        { username: identifier },
-        { firstname: identifier },
-        { lastname: identifier },
-      ],
-    })
-      .select("-password -refreshTokens -iCashPin")
-      .lean();
-    if (!targetUser) {
+    const targetUserSnapshot = await User.where(
+      Filter.or(
+        Filter.where("uid", "==", identifier),
+        Filter.where("username", "==", identifier),
+        Filter.where("firstname", "==", identifier),
+        Filter.where("lastname", "==", identifier),
+      ),
+    )
+      .limit(1)
+      .get();
+
+    if (targetUserSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -605,16 +807,21 @@ export const fetchProfileInformation = async (req, res) => {
         .status(404)
         .json({ success: false, message: "User not found" });
     }
-    const viewer = await User.findOne({ uid: viewerUid })
-      .select("blockedUsers")
-      .lean();
 
-    const isBlockedByViewer = (viewer?.blockedUsers || []).includes(
-      targetUser.uid,
+    const rawTargetUserData = targetUserSnapshot.docs[0].data();
+    const { password, refreshTokens, iCashPin, ...targetUser } =
+      rawTargetUserData;
+    const targetUid = targetUser.uid;
+    const viewerDoc = await User.doc(viewerUid).get();
+    const viewerData = viewerDoc.exists ? viewerDoc.data() : null;
+
+    const isBlockedByViewer = (viewerData?.blockedUsers || []).includes(
+      targetUid,
     );
     const isViewerBlockedByTarget = (targetUser.blockedUsers || []).includes(
       viewerUid,
     );
+
     if (isBlockedByViewer || isViewerBlockedByTarget) {
       logControllerPerformance(
         controllerName,
@@ -628,69 +835,211 @@ export const fetchProfileInformation = async (req, res) => {
         message:
           "User not found or you have restricted access to this profile.",
         isBlocked: true,
-        targetUid: targetUser.uid,
+        targetUid: targetUid,
       });
     }
+
+    const fetchUsersByUids = async (uids) => {
+      if (!uids || !uids.length) return [];
+      const chunks = [];
+      for (let i = 0; i < uids.length; i += 30) {
+        chunks.push(uids.slice(i, i + 30));
+      }
+      const promises = chunks.map(async (chunk) => {
+        const snap = await User.where("uid", "in", chunk).get();
+        return snap.docs.map((doc) => {
+          const u = doc.data();
+          return {
+            firstname: u.firstname,
+            lastname: u.lastname,
+            username: u.username,
+            profilePic: u.profilePic,
+            tier: u.tier,
+            isVerified: u.isVerified,
+            usertype: u.usertype,
+            organizationName: u.organizationName,
+          };
+        });
+      });
+      const results = await Promise.all(promises);
+      return results.flat();
+    };
+
+    const attachCommentsAndCountsToPosts = async (postsList) => {
+      if (!postsList || !postsList.length) return [];
+
+      return Promise.all(
+        postsList.map(async (post) => {
+          const targetPostId = post.postId;
+          const commentsSnapshot = await Comments.where(
+            "postId",
+            "==",
+            targetPostId,
+          ).get();
+          const comments = [];
+          for (const doc of commentsSnapshot.docs) {
+            const commentData = doc.data();
+            let commentUser = null;
+            if (commentData.userId) {
+              const commentUserQuery = await Users.where(
+                "uid",
+                "==",
+                commentData.userId,
+              )
+                .limit(1)
+                .get();
+              if (!commentUserQuery.empty) {
+                const cuData = commentUserQuery.docs[0].data();
+                commentUser = {
+                  uid: cuData.uid,
+                  firstname: cuData.firstname,
+                  lastname: cuData.lastname,
+                  username: cuData.username,
+                  profilePic: cuData.profilePic,
+                };
+              }
+            }
+            comments.push({
+              ...commentData,
+              userId: commentUser || commentData.userId,
+            });
+          }
+          const repostersSnapshot = await PostReposters.where(
+            "postId",
+            "==",
+            targetPostId,
+          ).get();
+          const repostersCount = repostersSnapshot.size;
+          const commentsCount = commentsSnapshot.size;
+
+          return {
+            ...post,
+            comments,
+            commentsCount,
+            repostsCount:
+              post.repostsCount !== undefined
+                ? post.repostsCount
+                : repostersCount,
+          };
+        }),
+      );
+    };
+
+    const fetchPostsByIds = async (postIds) => {
+      if (!postIds || !postIds.length) return [];
+      const chunks = [];
+      for (let i = 0; i < postIds.length; i += 30) {
+        chunks.push(postIds.slice(i, i + 30));
+      }
+      const promises = chunks.map(async (chunk) => {
+        const snap = await Posts.where("postId", "in", chunk).get();
+        return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      });
+      const results = await Promise.all(promises);
+      const posts = results.flat();
+      const sortedPosts = posts.sort((a, b) => {
+        const timeA = a.createdAt?.toMillis
+          ? a.createdAt.toMillis()
+          : new Date(a.createdAt).getTime();
+        const timeB = b.createdAt?.toMillis
+          ? b.createdAt.toMillis()
+          : new Date(b.createdAt).getTime();
+        return timeB - timeA;
+      });
+      return await attachCommentsAndCountsToPosts(sortedPosts);
+    };
+
     const [
-      followersList,
-      followingList,
-      isFollowing,
-      courses,
-      userPosts,
-      iTagData,
+      followersSnap,
+      followingSnap,
+      isFollowingSnap,
+      coursesSnap,
+      userPostsSnap,
+      repostsSnap,
+      iTagSnap,
       bookmarkedPosts,
     ] = await Promise.all([
-      Follow.find({ followingId: targetUser.uid }).select("followerId").lean(),
-      Follow.find({ followerId: targetUser.uid }).select("followingId").lean(),
-      Follow.findOne({ followerId: viewerUid, followingId: targetUser.uid }),
+      Follow.where("followingId", "==", targetUid).get(),
+      Follow.where("followerId", "==", targetUid).get(),
+      Follow.where("followerId", "==", viewerUid)
+        .where("followingId", "==", targetUid)
+        .limit(1)
+        .get(),
       targetUser.usertype === "lecturer" || targetUser.usertype === "otherUser"
-        ? Course.find({ lecturerIds: targetUser.uid })
-            .select(
-              "courseTitle courseCode thumbnailUrl session semester isActive description rating studentsEnrolled price",
-            )
-            .lean()
+        ? Course.where("lecturerIds", "array-contains", targetUid).get()
         : null,
+      Posts.where("originalAuthor", "==", targetUid).get(),
+      PostReposters.where("uid", "==", targetUid).get(),
+      ITag.where("userId", "==", targetUid).limit(1).get(),
+      fetchPostsByIds(targetUser.bookmarks || []),
+    ]);
 
-      Posts.find({
-        $or: [{ "userId.uid": uid }, { originalAuthor: uid }],
-      })
-        .sort({ createdAt: -1 })
-        .lean(),
-      ITag.findOne({ userId: targetUser.uid }).lean(),
-      Posts.find({ postId: { $in: targetUser.bookmarks || [] } })
-        .sort({ createdAt: -1 })
-        .lean(),
-    ]);
-    const formattedCourses = courses
-      ? courses.map((course) => ({
-          ...course,
-          enrolledCount: course.studentsEnrolled
-            ? course.studentsEnrolled.length
-            : 0,
-          studentsEnrolled: undefined, // Hide raw ID array
-        }))
-      : [];
-    const followerIds = followersList.map((f) => f.followerId);
-    const followingIds = followingList.map((f) => f.followingId);
+    const followerIds = followersSnap.docs.map((doc) => doc.data().followerId);
+    const followingIds = followingSnap.docs.map(
+      (doc) => doc.data().followingId,
+    );
+
     const [followerDetails, followingDetails] = await Promise.all([
-      User.find({ uid: { $in: followerIds } })
-        .select(
-          "firstname lastname username profilePic tier isVerified usertype organizationName",
-        )
-        .lean(),
-      User.find({ uid: { $in: followingIds } })
-        .select(
-          "firstname lastname username profilePic tier isVerified usertype organizationName",
-        )
-        .lean(),
+      fetchUsersByUids(followerIds),
+      fetchUsersByUids(followingIds),
     ]);
-    const isOwner = viewerUid === targetUser.uid;
+
+    // Format Courses
+    const courses = coursesSnap
+      ? coursesSnap.docs.map((doc) => {
+          const c = doc.data();
+          return {
+            id: doc.id,
+            courseTitle: c.courseTitle,
+            courseCode: c.courseCode,
+            thumbnailUrl: c.thumbnailUrl,
+            session: c.session,
+            semester: c.semester,
+            isActive: c.isActive,
+            description: c.description,
+            rating: c.rating,
+            price: c.price,
+            enrolledCount: c.studentsEnrolled ? c.studentsEnrolled.length : 0,
+          };
+        })
+      : [];
+
+    const authoredPosts = userPostsSnap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    const formattedAuthoredPosts =
+      await attachCommentsAndCountsToPosts(authoredPosts);
+
+    const repostPostIds = repostsSnap.docs.map((doc) => doc.data().postId);
+    const originalRepostedPosts = await fetchPostsByIds(repostPostIds);
+
+    const formattedReposts = originalRepostedPosts.map((post) => ({
+      ...post,
+      isRepost: true,
+    }));
+
+    const userPosts = [...formattedAuthoredPosts, ...formattedReposts].sort(
+      (a, b) => {
+        const timeA = a.createdAt?.toMillis
+          ? a.createdAt.toMillis()
+          : new Date(a.createdAt).getTime();
+        const timeB = b.createdAt?.toMillis
+          ? b.createdAt.toMillis()
+          : new Date(b.createdAt).getTime();
+        return timeB - timeA;
+      },
+    );
+
+    const iTagData = !iTagSnap.empty ? iTagSnap.docs[0].data() : null;
+    const isOwner = viewerUid === targetUid;
     const isPremiumViewer = viewerTier === "premium";
 
     if (!isOwner && !isPremiumViewer) {
       createNotification({
         notificationId: generateNotificationId("profile"),
-        recipientId: targetUser.uid,
+        recipientId: targetUid,
         category: "social",
         actionType: "PROFILE_VIEW",
         title: "Profile View",
@@ -704,6 +1053,7 @@ export const fetchProfileInformation = async (req, res) => {
 
     const canSeeScore =
       isOwner || viewerRole === "enterprise" || viewerTier !== "free";
+
     const profileData = {
       ...targetUser,
       currentIScore: canSeeScore ? targetUser.currentIScore : "Locked",
@@ -711,14 +1061,15 @@ export const fetchProfileInformation = async (req, res) => {
       followersCount: followerDetails.length,
       followingList: followingDetails,
       followingCount: followingDetails.length,
-      isFollowing: !!isFollowing,
-      courses: formattedCourses,
+      isFollowing: !isFollowingSnap.empty,
+      courses,
       posts: userPosts,
-      iTagData: iTagData || null,
-      bookmarkedPosts: bookmarkedPosts,
+      iTagData,
+      bookmarkedPosts,
       bookmarksCount: targetUser.bookmarks?.length || 0,
       likesCount: targetUser.likes?.length || 0,
     };
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
@@ -740,13 +1091,52 @@ export const fetchBlockedUsers = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchBlockedUsersController";
   const action = "fetchBlockedUsers";
+
   try {
-    const user = await User.findOne({ uid: req.user.uid });
-    const blockedList = await User.find({
-      uid: { $in: user.blockedUsers || [] },
-    }).select(
-      "uid firstname lastname username profilePic tier organizationName",
-    );
+    const userDoc = await User.doc(req.user.uid).get();
+
+    if (!userDoc.exists) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const userData = userDoc.data();
+    const blockedIds = userData.blockedUsers || [];
+
+    if (blockedIds.length === 0) {
+      logControllerPerformance(controllerName, action, startTime, "success");
+      return res.status(200).json([]);
+    }
+    const chunks = [];
+    for (let i = 0; i < blockedIds.length; i += 30) {
+      chunks.push(blockedIds.slice(i, i + 30));
+    }
+
+    const userPromises = chunks.map(async (chunk) => {
+      const userSnapshot = await User.where("uid", "in", chunk).get();
+      return userSnapshot.docs.map((doc) => {
+        const u = doc.data();
+        return {
+          uid: u.uid,
+          firstname: u.firstname || "",
+          lastname: u.lastname || "",
+          username: u.username || "",
+          profilePic: u.profilePic || "",
+          tier: u.tier || "",
+          organizationName: u.organizationName || "",
+        };
+      });
+    });
+
+    const userResults = await Promise.all(userPromises);
+    const blockedList = userResults.flat();
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(blockedList);
   } catch (err) {
@@ -764,6 +1154,7 @@ export const fetchLectureExceptions = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchLectureExceptionsController";
   const action = "fetchLectureExceptions";
+
   try {
     const { courseId } = req.query;
     const userId = req.user.uid;
@@ -779,16 +1170,16 @@ export const fetchLectureExceptions = async (req, res) => {
       );
       return res.status(400).json({ message: "courseId is required" });
     }
-
-    let query = { courseId };
+    let exceptionsQuery = Exceptions.where("courseId", "==", courseId);
     if (userRole === "student") {
-      query.studentId = userId;
+      exceptionsQuery = exceptionsQuery.where("studentId", "==", userId);
     } else if (userRole === "lecturer") {
-      const course = await Course.findOne({
-        courseId: courseId,
-        lecturerIds: userId,
-      });
-      if (!course) {
+      const courseSnapshot = await Course.where("courseId", "==", courseId)
+        .where("lecturerIds", "array-contains", userId)
+        .limit(1)
+        .get();
+
+      if (courseSnapshot.empty) {
         logControllerPerformance(
           controllerName,
           action,
@@ -811,10 +1202,12 @@ export const fetchLectureExceptions = async (req, res) => {
       );
       return res.status(403).json({ message: "Unauthorized user type" });
     }
+    const snapshot = await exceptionsQuery.orderBy("createdAt", "desc").get();
 
-    const exceptions = await Exceptions.find(query)
-      .sort({ createdAt: -1 })
-      .lean();
+    const exceptions = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
 
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
@@ -837,12 +1230,17 @@ export const fetchCourseAssignments = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchCourseAssignmentsController";
   const action = "fetchCourseAssignments";
+
   try {
-    const course = await Course.findOne(
-      { courseId: req.params.courseId },
-      "assignments",
-    );
-    if (!course) {
+    const courseSnapshot = await Course.where(
+      "courseId",
+      "==",
+      req.params.courseId,
+    )
+      .limit(1)
+      .get();
+
+    if (courseSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -852,8 +1250,12 @@ export const fetchCourseAssignments = async (req, res) => {
       );
       return res.status(404).json({ message: "Course not found" });
     }
+
+    const courseData = courseSnapshot.docs[0].data();
+    const assignments = courseData.assignments || [];
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json(course.assignments);
+    res.status(200).json(assignments);
   } catch (error) {
     logControllerPerformance(
       controllerName,
@@ -866,37 +1268,61 @@ export const fetchCourseAssignments = async (req, res) => {
   }
 };
 export const fetchCourseLectures = async (req, res) => {
-  const startTime = Date.now();
+  const controllerStartTime = Date.now();
   const controllerName = "fetchCourseLecturesController";
   const action = "fetchCourseLectures";
+
   try {
     const { lectureId } = req.params;
-    const lecture = await Lectures.findOne({ id: lectureId });
-    if (!lecture) {
+    const lectureSnapshot = await Lectures.where("id", "==", lectureId)
+      .limit(1)
+      .get();
+
+    if (lectureSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
-        startTime,
+        controllerStartTime,
         "error",
         "Lectures session not found",
       );
       return res.status(404).json({ error: "Lectures session not found" });
     }
-    const now = new Date();
-    const startTime = new Date(lecture.startTime);
 
-    if (lecture.status === "scheduled" && now >= startTime) {
-      lecture.status = "ongoing";
-      await lecture.save();
+    const lectureDoc = lectureSnapshot.docs[0];
+    const lectureData = lectureDoc.data();
+
+    const now = new Date();
+    const lectureStartTime = lectureData.startTime?.toDate
+      ? lectureData.startTime.toDate()
+      : new Date(lectureData.startTime);
+
+    let currentStatus = lectureData.status;
+
+    if (currentStatus === "scheduled" && now >= lectureStartTime) {
+      currentStatus = "ongoing";
+      await lectureDoc.ref.update({ status: "ongoing" });
+      lectureData.status = "ongoing";
     }
-    logControllerPerformance(controllerName, action, startTime, "success");
-    res.json(lecture);
+
+    const responseLecture = {
+      id: lectureDoc.id,
+      ...lectureData,
+    };
+
+    logControllerPerformance(
+      controllerName,
+      action,
+      controllerStartTime,
+      "success",
+    );
+    res.json(responseLecture);
   } catch (err) {
     console.error("Fetch lecture error:", err.message);
     logControllerPerformance(
       controllerName,
       action,
-      startTime,
+      controllerStartTime,
       "error",
       err.message,
     );
@@ -909,11 +1335,15 @@ export const fetchLectureExceptionsLecturerView = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchLectureExceptionsLecturerViewController";
   const action = "fetchLectureExceptionsLecturerView";
+
   try {
     const { courseId } = req.params;
-    const userId = req.user.id;
-    const course = await Course.findOne({ courseId: courseId });
-    if (!course) {
+    const userId = req.user.id || req.user.uid;
+    const courseSnapshot = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
+
+    if (courseSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -923,9 +1353,12 @@ export const fetchLectureExceptionsLecturerView = async (req, res) => {
       );
       return res.status(404).json({ message: "Course not found" });
     }
-    const isLecturer = course.lecturerIds?.some(
-      (id) => id.toString() === userId.toString(),
-    );
+
+    const courseData = courseSnapshot.docs[0].data();
+    const lecturerIds = courseData.lecturerIds || [];
+
+    const isLecturer = lecturerIds.some((id) => String(id) === String(userId));
+
     if (!isLecturer) {
       logControllerPerformance(
         controllerName,
@@ -939,7 +1372,19 @@ export const fetchLectureExceptionsLecturerView = async (req, res) => {
           "Access Denied: You are not authorized to view this course's exceptions",
       });
     }
-    const exceptions = await Exceptions.find({ courseId }).sort({ date: -1 });
+    const exceptionsSnapshot = await Exceptions.where(
+      "courseId",
+      "==",
+      courseId,
+    )
+      .orderBy("date", "desc")
+      .get();
+
+    const exceptions = exceptionsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(exceptions);
   } catch (error) {
@@ -958,25 +1403,60 @@ export const fetchLeaderBoards = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchLeaderBoardsController";
   const action = "fetchLeaderBoards";
-  try {
-    const topStudents = await User.find({ usertype: "student" })
-      .sort({ currentIScore: -1 })
-      .limit(10)
-      .select(
-        "uid firstname lastname currentIScore email previousIScore profilePic department schoolName",
-      );
 
-    const topInstructors = await User.find({
-      usertype: { $in: ["lecturer", "otherUser"] },
-    })
-      .sort({ currentIScore: -1, "monthlyStats.avgReview": -1 })
+  try {
+    const studentsSnapshot = await User.where("usertype", "==", "student")
+      .orderBy("currentIScore", "desc")
       .limit(10)
-      .select(
-        "uid firstname lastname currentIScore email profilePic jobTitle previousIScore",
-      );
-    const topInstitutions = await OperationalInstitutions.find()
-      .sort({ currentiScoreAvg: -1 })
-      .limit(10);
+      .get();
+
+    const topStudents = studentsSnapshot.docs.map((doc) => {
+      const u = doc.data();
+      return {
+        uid: u.uid,
+        firstname: u.firstname || "",
+        lastname: u.lastname || "",
+        currentIScore: u.currentIScore || 0,
+        email: u.email || "",
+        previousIScore: u.previousIScore || 0,
+        profilePic: u.profilePic || "",
+        department: u.department || "",
+        schoolName: u.schoolName || "",
+      };
+    });
+    const instructorsSnapshot = await User.where("usertype", "in", [
+      "lecturer",
+      "otherUser",
+    ])
+      .orderBy("currentIScore", "desc")
+      .orderBy("monthlyStats.avgReview", "desc")
+      .limit(10)
+      .get();
+
+    const topInstructors = instructorsSnapshot.docs.map((doc) => {
+      const u = doc.data();
+      return {
+        uid: u.uid,
+        firstname: u.firstname || "",
+        lastname: u.lastname || "",
+        currentIScore: u.currentIScore || 0,
+        email: u.email || "",
+        profilePic: u.profilePic || "",
+        jobTitle: u.jobTitle || "",
+        previousIScore: u.previousIScore || 0,
+      };
+    });
+    const institutionsSnapshot = await OperationalInstitutions.orderBy(
+      "currentiScoreAvg",
+      "desc",
+    )
+      .limit(10)
+      .get();
+
+    const topInstitutions = institutionsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
 
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
@@ -1031,22 +1511,85 @@ export const fetchOngoingLectures = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchOngoingLecturesController";
   const action = "fetchOngoingLectures";
+
   try {
-    const userId = req.user.id;
-    const enrolledOrTaughtCourseIds = await Course.find({
-      $or: [{ studentsEnrolled: userId }, { lecturerIds: userId }],
-    }).distinct("courseId");
-    const ongoingLecture = await Lectures.findOne({
-      status: "ongoing",
-      courseId: { $in: enrolledOrTaughtCourseIds },
-    }).populate("courseId");
-    if (ongoingLecture) {
+    const userId = req.user.id || req.user.uid;
+    const [enrolledCoursesSnap, taughtCoursesSnap] = await Promise.all([
+      Course.where("studentsEnrolled", "array-contains", userId).get(),
+      Course.where("lecturerIds", "array-contains", userId).get(),
+    ]);
+
+    const courseIdSet = new Set();
+
+    enrolledCoursesSnap.docs.forEach((doc) => {
+      const data = doc.data();
+      if (data.courseId) courseIdSet.add(data.courseId);
+    });
+
+    taughtCoursesSnap.docs.forEach((doc) => {
+      const data = doc.data();
+      if (data.courseId) courseIdSet.add(data.courseId);
+    });
+
+    const enrolledOrTaughtCourseIds = Array.from(courseIdSet);
+
+    if (enrolledOrTaughtCourseIds.length === 0) {
+      logControllerPerformance(controllerName, action, startTime, "success");
+      return res.status(200).json({ ongoing: false });
+    }
+    let ongoingLectureDoc = null;
+    let foundCourseData = null;
+
+    const chunks = [];
+    for (let i = 0; i < enrolledOrTaughtCourseIds.length; i += 30) {
+      chunks.push(enrolledOrTaughtCourseIds.slice(i, i + 30));
+    }
+
+    for (const chunk of chunks) {
+      const lectureSnap = await Lectures.where("status", "==", "ongoing")
+        .where("courseId", "in", chunk)
+        .limit(1)
+        .get();
+
+      if (!lectureSnap.empty) {
+        ongoingLectureDoc = lectureSnap.docs[0];
+        break;
+      }
+    }
+
+    if (ongoingLectureDoc) {
+      const lectureData = ongoingLectureDoc.data();
+
+      let populatedCourse = null;
+      if (lectureData.courseId) {
+        const courseSnap = await Course.where(
+          "courseId",
+          "==",
+          lectureData.courseId,
+        )
+          .limit(1)
+          .get();
+        if (!courseSnap.empty) {
+          populatedCourse = {
+            id: courseSnap.docs[0].id,
+            ...courseSnap.docs[0].data(),
+          };
+        }
+      }
+
+      const formattedLecture = {
+        id: ongoingLectureDoc.id,
+        ...lectureData,
+        courseId: populatedCourse || lectureData.courseId,
+      };
+
       logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         ongoing: true,
-        lecture: ongoingLecture,
+        lecture: formattedLecture,
       });
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ ongoing: false });
   } catch (err) {
@@ -1065,6 +1608,7 @@ export const fetchFeaturedBooksFromLibrary = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchFeaturedBooksFromLibraryController";
   const action = "fetchFeaturedBooksFromLibrary";
+
   try {
     const rawDept = req.query.department;
     const department =
@@ -1122,8 +1666,10 @@ export const fetchFeaturedBooksFromLibrary = async (req, res) => {
     });
 
     if (featuredBooks.length === 0) {
+      logControllerPerformance(controllerName, action, startTime, "success");
       return res.json(getFallbackBooks());
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.json(featuredBooks);
   } catch (error) {
@@ -1142,10 +1688,14 @@ export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchCourseDetailsForOngoingLectureController";
   const action = "fetchCourseDetailsForOngoingLecture";
+
   try {
     const { courseId } = req.params;
-    const course = await Course.findOne({ courseId: courseId }).lean();
-    if (!course) {
+    const courseSnapshot = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
+
+    if (courseSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1155,16 +1705,23 @@ export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
       );
       return res.status(404).json({ message: "Course not found" });
     }
+
+    const courseDoc = courseSnapshot.docs[0];
+    const course = {
+      id: courseDoc.id,
+      ...courseDoc.data(),
+    };
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(course);
   } catch (error) {
-    console.error("Fetch Course Error:", error.messsage);
+    console.error("Fetch Course Error:", error.message);
     logControllerPerformance(
       controllerName,
       action,
       startTime,
       "error",
-      error.messsage,
+      error.message,
     );
     res.status(500).json({ message: "Internal server error" });
   }
@@ -1173,11 +1730,18 @@ export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllExceptionsForOngoingLectureController";
   const action = "fetchAllExceptionsForOngoingLecture";
+
   try {
     const { lectureId } = req.params;
-    const exceptions = await Exceptions.find({ lectureId }).sort({
-      date: -1,
-    });
+    const snapshot = await Exceptions.where("lectureId", "==", lectureId)
+      .orderBy("date", "desc")
+      .get();
+
+    const exceptions = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(exceptions);
   } catch (error) {
@@ -1195,15 +1759,21 @@ export const fetchCourseDetails = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchCourseDetailsController";
   const action = "fetchCourseDetails";
+
   try {
     const { courseId } = req.params;
     const userId = req.user.uid;
+    const courseSnapshot = await Course.where("courseId", "==", courseId)
+      .where(
+        Filter.or(
+          Filter.where("studentsEnrolled", "array-contains", userId),
+          Filter.where("lecturerIds", "array-contains", userId),
+        ),
+      )
+      .limit(1)
+      .get();
 
-    const course = await Course.findOne({
-      courseId: courseId,
-      $or: [{ studentsEnrolled: userId }, { lecturerIds: userId }],
-    });
-    if (!course) {
+    if (courseSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1216,6 +1786,13 @@ export const fetchCourseDetails = async (req, res) => {
         message: "Course not found or you do not have permission to view it.",
       });
     }
+
+    const courseDoc = courseSnapshot.docs[0];
+    const course = {
+      id: courseDoc.id,
+      ...courseDoc.data(),
+    };
+
     logControllerPerformance(controllerName, action, startTime, "success");
 
     return res.status(200).json({
@@ -1245,26 +1822,83 @@ export const fetchStudentsLecturesTimeline = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchStudentsLecturesTimelineController";
   const action = "fetchStudentsLecturesTimeline";
+
   try {
     const studentId = req.user.uid;
-    const enrolledCourses = await Course.find({
-      studentsEnrolled: studentId,
-    }).select("courseId courseCode courseTitle");
-    const courseIds = enrolledCourses.map((c) => c.courseId);
-    const lectures = await Lectures.find({
-      courseId: { $in: courseIds },
-      status: { $ne: "cancelled" },
-    }).sort({ date: 1, startTime: 1 });
-    const decoratedLectures = lectures.map((lecture) => {
+    const enrolledCoursesSnapshot = await Course.where(
+      "studentsEnrolled",
+      "array-contains",
+      studentId,
+    ).get();
+
+    const enrolledCourses = enrolledCoursesSnapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        courseId: data.courseId,
+        courseCode: data.courseCode,
+        courseTitle: data.courseTitle,
+      };
+    });
+
+    const courseIds = enrolledCourses
+      .map((c) => c.courseId)
+      .filter((id) => id !== undefined && id !== null);
+
+    if (courseIds.length === 0) {
+      logControllerPerformance(controllerName, action, startTime, "success");
+      return res.status(200).json({ success: true, data: [] });
+    }
+    const chunks = [];
+    for (let i = 0; i < courseIds.length; i += 30) {
+      chunks.push(courseIds.slice(i, i + 30));
+    }
+
+    const lecturePromises = chunks.map(async (chunk) => {
+      const snap = await Lectures.where("courseId", "in", chunk).get();
+      return snap.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    });
+
+    const lectureResults = await Promise.all(lecturePromises);
+    const allLectures = lectureResults.flat();
+
+    const filteredLectures = allLectures
+      .filter((lecture) => lecture.status !== "cancelled")
+      .sort((a, b) => {
+        const dateA = a.date?.toMillis
+          ? a.date.toMillis()
+          : new Date(a.date).getTime();
+        const dateB = b.date?.toMillis
+          ? b.date.toMillis()
+          : new Date(b.date).getTime();
+
+        if (dateA !== dateB) {
+          return dateA - dateB;
+        }
+
+        const timeA = a.startTime?.toMillis
+          ? a.startTime.toMillis()
+          : new Date(a.startTime).getTime();
+        const timeB = b.startTime?.toMillis
+          ? b.startTime.toMillis()
+          : new Date(b.startTime).getTime();
+        return timeA - timeB;
+      });
+
+    const decoratedLectures = filteredLectures.map((lecture) => {
       const courseInfo = enrolledCourses.find(
         (c) => c.courseId === lecture.courseId,
       );
       return {
-        ...lecture._doc,
+        ...lecture,
         courseCode: courseInfo?.courseCode,
         courseTitle: courseInfo?.courseTitle,
       };
     });
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ success: true, data: decoratedLectures });
   } catch (error) {
@@ -1282,11 +1916,21 @@ export const fetchAllCourseAssessments = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllCourseAssessmentsController";
   const action = "fetchAllCourseAssessments";
+
   try {
     const { courseId } = req.params;
-    const assessments = await Assessment.find({ courseId })
-      .sort({ updatedAt: -1 })
-      .select("-__v");
+    const snapshot = await Assessment.where("courseId", "==", courseId)
+      .orderBy("updatedAt", "desc")
+      .get();
+
+    const assessments = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      const { __v, ...rest } = data;
+      return {
+        id: doc.id,
+        ...rest,
+      };
+    });
 
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
@@ -1309,11 +1953,12 @@ export const fetchAllLecturesByCourseId = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllLecturesByCourseIdController";
   const action = "fetchAllLecturesByCourseId";
+
   try {
     const { courseId } = req.params;
-    const lectures = await Lectures.find({ courseId: courseId }).lean();
+    const snapshot = await Lectures.where("courseId", "==", courseId).get();
 
-    if (!lectures || lectures.length === 0) {
+    if (snapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1325,6 +1970,12 @@ export const fetchAllLecturesByCourseId = async (req, res) => {
         .status(404)
         .json({ error: "No lectures found for this course" });
     }
+
+    const lectures = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.json(lectures);
   } catch (err) {
@@ -1345,26 +1996,81 @@ export const fetchLecturersLecturesTimeline = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchLecturersLecturesTimelineController";
   const action = "fetchLecturersLecturesTimeline";
+
   try {
     const lecturerId = req.user.uid;
-    const taughtCourses = await Course.find({
-      lecturerIds: lecturerId,
-    }).select("courseId courseCode courseTitle");
-    const courseIds = taughtCourses.map((c) => c.courseId);
-    const lectures = await Lectures.find({
-      courseId: { $in: courseIds },
-      status: { $ne: "cancelled" },
-    }).sort({ date: 1, startTime: 1 });
-    const decoratedLectures = lectures.map((lecture) => {
+    const taughtCoursesSnapshot = await Course.where(
+      "lecturerIds",
+      "array-contains",
+      lecturerId,
+    ).get();
+
+    const taughtCourses = taughtCoursesSnapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        courseId: data.courseId,
+        courseCode: data.courseCode,
+        courseTitle: data.courseTitle,
+      };
+    });
+
+    const courseIds = taughtCourses
+      .map((c) => c.courseId)
+      .filter((id) => id !== undefined && id !== null);
+
+    if (courseIds.length === 0) {
+      logControllerPerformance(controllerName, action, startTime, "success");
+      return res.status(200).json({ success: true, data: [] });
+    }
+    const chunks = [];
+    for (let i = 0; i < courseIds.length; i += 30) {
+      chunks.push(courseIds.slice(i, i + 30));
+    }
+    const lecturePromises = chunks.map(async (chunk) => {
+      const snap = await Lectures.where("courseId", "in", chunk).get();
+      return snap.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    });
+
+    const lectureResults = await Promise.all(lecturePromises);
+    const allLectures = lectureResults.flat();
+
+    const filteredLectures = allLectures
+      .filter((lecture) => lecture.status !== "cancelled")
+      .sort((a, b) => {
+        const dateA = a.date?.toMillis
+          ? a.date.toMillis()
+          : new Date(a.date).getTime();
+        const dateB = b.date?.toMillis
+          ? b.date.toMillis()
+          : new Date(b.date).getTime();
+
+        if (dateA !== dateB) {
+          return dateA - dateB;
+        }
+
+        const timeA = a.startTime?.toMillis
+          ? a.startTime.toMillis()
+          : new Date(a.startTime).getTime();
+        const timeB = b.startTime?.toMillis
+          ? b.startTime.toMillis()
+          : new Date(b.startTime).getTime();
+        return timeA - timeB;
+      });
+    const decoratedLectures = filteredLectures.map((lecture) => {
       const courseInfo = taughtCourses.find(
         (c) => c.courseId === lecture.courseId,
       );
       return {
-        ...lecture._doc,
+        ...lecture,
         courseCode: courseInfo?.courseCode,
         courseTitle: courseInfo?.courseTitle,
       };
     });
+
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({ success: true, data: decoratedLectures });
   } catch (error) {
@@ -1382,9 +2088,10 @@ export const getTransactionById = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getTransactionByIdController";
   const action = "getTransactionById";
+
   try {
     const { transactionId } = req.params;
-    const currentUserId = req.user.id;
+    const currentUserId = req.user.id || req.user.uid;
 
     if (!transactionId) {
       logControllerPerformance(
@@ -1399,8 +2106,15 @@ export const getTransactionById = async (req, res) => {
         message: "Transaction ID parameter is required",
       });
     }
-    const transaction = await Transactions.findOne({ transactionId }).lean();
-    if (!transaction) {
+    const transactionSnapshot = await Transactions.where(
+      "transactionId",
+      "==",
+      transactionId,
+    )
+      .limit(1)
+      .get();
+
+    if (transactionSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1413,6 +2127,12 @@ export const getTransactionById = async (req, res) => {
         message: "Transaction detail not found",
       });
     }
+
+    const transactionDoc = transactionSnapshot.docs[0];
+    const transaction = {
+      id: transactionDoc.id,
+      ...transactionDoc.data(),
+    };
 
     const isOwner = transaction.userId === currentUserId;
     const isSender = transaction.metadata?.senderId === currentUserId;
@@ -1431,6 +2151,7 @@ export const getTransactionById = async (req, res) => {
         message: "Unauthorized access to this transaction record",
       });
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
@@ -1456,6 +2177,7 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
+
   try {
     const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user.uid;
@@ -1463,22 +2185,30 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
 
-    const query = {
-      studentsEnrolled: userId,
-      isActive: true,
-    };
+    let queryRef = Course.where(
+      "studentsEnrolled",
+      "array-contains",
+      userId,
+    ).where("isActive", "==", true);
 
-    if (semester && semester !== "All") query.semester = semester;
-    if (session && session !== "All") query.session = session;
+    if (semester && semester !== "All") {
+      queryRef = queryRef.where("semester", "==", semester);
+    }
+    if (session && session !== "All") {
+      queryRef = queryRef.where("session", "==", session);
+    }
+    queryRef = queryRef.orderBy("createdAt", "desc");
 
-    const courses = await Course.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum)
-      .lean();
+    const snapshot = await queryRef.get();
+    const allCourses = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    const paginatedCourses = allCourses.slice(skip, skip + limitNum);
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json(courses);
+    res.status(200).json(paginatedCourses);
   } catch (error) {
     logControllerPerformance(
       controllerName,
@@ -1532,10 +2262,23 @@ export const fetchAllAdmins = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllAdminsController";
   const action = "fetchAllAdmins";
+
   try {
-    const admins = await Admin.find({}).select(
-      "uid firstname lastname profilePic adminType lastAccessed",
-    );
+    const snapshot = await Admin.get();
+
+    const admins = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        uid: data.uid || "",
+        firstname: data.firstname || "",
+        lastname: data.lastname || "",
+        profilePic: data.profilePic || "",
+        adminType: data.adminType || "",
+        lastAccessed: data.lastAccessed || null,
+      };
+    });
+
     console.log(`Admin ${req.admin.uid} fetched the administrator list.`);
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json(admins);
@@ -1563,38 +2306,58 @@ export const getNotifications = async (req, res) => {
       });
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
-    //Attach the user.usertype
-    const notifications = await Notification.aggregate([
-      { $match: { category } },
-      { $sort: { createdAt: -1 } },
-      { $skip: skip },
-      { $limit: parseInt(limit) },
-      {
-        $lookup: {
-          from: "users",
-          localField: "recipientId",
-          foreignField: "uid",
-          as: "receipientDetails",
-        },
-      },
-      {
-        $addFields: {
-          recipientUserType: {
-            $ifNull: [
-              { $arrayElemAt: ["$receipientDetails.usertype", 0] },
-              "unknown",
-            ],
-          },
-        },
-      },
-      { $project: { receipientDetails: 0 } },
-    ]);
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const snapshot = await Notification.where("category", "==", category)
+      .orderBy("createdAt", "desc")
+      .get();
+
+    const allNotifications = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    const paginatedNotifications = allNotifications.slice(
+      skip,
+      skip + limitNum,
+    );
+    const recipientIds = paginatedNotifications
+      .map((n) => n.recipientId)
+      .filter((id) => id !== undefined && id !== null);
+
+    const userTypeMap = new Map();
+
+    if (recipientIds.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < recipientIds.length; i += 30) {
+        chunks.push(recipientIds.slice(i, i + 30));
+      }
+
+      const userPromises = chunks.map(async (chunk) => {
+        const userSnap = await User.where("uid", "in", chunk).get();
+        userSnap.docs.forEach((doc) => {
+          const userData = doc.data();
+          if (userData.uid) {
+            userTypeMap.set(userData.uid, userData.usertype || "unknown");
+          }
+        });
+      });
+
+      await Promise.all(userPromises);
+    }
+    const notifications = paginatedNotifications.map((notification) => ({
+      ...notification,
+      recipientUserType: notification.recipientId
+        ? userTypeMap.get(notification.recipientId) || "unknown"
+        : "unknown",
+    }));
 
     res.status(200).json({
       success: true,
       data: notifications,
-      currentPage: parseInt(page),
+      currentPage: pageNum,
     });
   } catch (error) {
     console.error("Fetch Notifications Error:", error);
@@ -1608,89 +2371,155 @@ export const fetchPosts = async (req, res) => {
   const limit = parseInt(req.query.limit) || 15;
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const isInitialLoad = !cursorScore;
+  const userId = req.user?.uid || req.user?.id;
 
   try {
-    const pipeline = [
-      {
-        $match: {
-          status: { $ne: "hidden" },
-        },
-      },
-      {
-        $lookup: {
-          from: "users",
-          localField: "originalAuthor",
-          foreignField: "uid",
-          as: "authorDetails",
-        },
-      },
-      {
-        $unwind: {
-          path: "$authorDetails",
-          preserveNullAndEmptyArrays: true,
-        },
-      },
-      {
-        $addFields: {
-          rankingScore: {
-            $add: [
-              {
-                $cond: [
-                  { $eq: ["$authorDetails.isSubscriber", true] },
-                  1000,
-                  0,
-                ],
-              },
-              {
-                $multiply: [
-                  "$impressions",
-                  0.1,
-                  {
-                    $switch: {
-                      branches: [
-                        {
-                          case: { $eq: ["$authorDetails.tier", "premium"] },
-                          then: 5,
-                        },
-                        {
-                          case: { $eq: ["$authorDetails.tier", "pro"] },
-                          then: 2,
-                        },
-                      ],
-                      default: 1,
-                    },
-                  },
-                ],
-              },
-              { $divide: [{ $toLong: "$createdAt" }, 1000000000] },
-            ],
-          },
-        },
-      },
-    ];
-    if (cursorScore) {
-      pipeline.push({ $match: { rankingScore: { $lt: cursorScore } } });
-    }
-    pipeline.push(
-      { $sort: { rankingScore: -1 } },
-      { $limit: limit },
-      {
-        $project: {
-          "authorDetails.password": 0,
-          "authorDetails.iCashPin": 0,
-        },
-      },
-    );
-    if (isInitialLoad) {
+    let cachedPosts = null;
+    if (isInitialLoad && typeof client !== "undefined" && client.get) {
       const cached = await client.get("hot_posts");
-      posts = cached ? JSON.parse(cached) : await Posts.aggregate(pipeline);
+      if (cached) {
+        cachedPosts = JSON.parse(cached);
+      }
+    }
+
+    let posts = [];
+
+    if (cachedPosts) {
+      posts = cachedPosts;
     } else {
-      posts = await Posts.aggregate(pipeline);
+      const postsSnapshot = await Posts.where("status", "!=", "hidden").get();
+
+      const rawPosts = postsSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      const authorIds = [
+        ...new Set(rawPosts.map((p) => p.originalAuthor).filter(Boolean)),
+      ];
+      const postIds = rawPosts.map((p) => p.id);
+      const authorMap = new Map();
+      if (authorIds.length > 0) {
+        const authorChunks = [];
+        for (let i = 0; i < authorIds.length; i += 30) {
+          authorChunks.push(authorIds.slice(i, i + 30));
+        }
+
+        const authorPromises = authorChunks.map(async (chunk) => {
+          const userSnap = await User.where("uid", "in", chunk).get();
+          userSnap.docs.forEach((doc) => {
+            const userData = doc.data();
+            const { password, iCashPin, ...safeData } = userData;
+            authorMap.set(userData.uid || doc.id, safeData);
+          });
+        });
+        await Promise.all(authorPromises);
+      }
+      const repostersMap = new Map();
+      if (postIds.length > 0) {
+        const reposterChunks = [];
+        for (let i = 0; i < postIds.length; i += 30) {
+          reposterChunks.push(postIds.slice(i, i + 30));
+        }
+
+        const reposterPromises = reposterChunks.map(async (chunk) => {
+          const repSnap = await PostReposters.where(
+            "postId",
+            "in",
+            chunk,
+          ).get();
+          repSnap.docs.forEach((doc) => {
+            const repData = doc.data();
+            const pId = repData.postId;
+            if (!repostersMap.has(pId)) {
+              repostersMap.set(pId, []);
+            }
+            repostersMap.get(pId).push({ id: doc.id, ...repData });
+          });
+        });
+        await Promise.all(reposterPromises);
+      }
+      const calculatedPosts = rawPosts.map((post) => {
+        const authorDetails = authorMap.get(post.originalAuthor) || {};
+        const repostersDetails = repostersMap.get(post.id) || [];
+
+        const subscriberBonus = authorDetails.isSubscriber === true ? 1000 : 0;
+        let tierMultiplier = 1;
+        if (authorDetails.tier === "premium") {
+          tierMultiplier = 5;
+        } else if (authorDetails.tier === "pro") {
+          tierMultiplier = 2;
+        }
+        const impressionsScore = (post.impressions || 0) * 0.1 * tierMultiplier;
+        const createdAtTime = post.createdAt?.toMillis
+          ? post.createdAt.toMillis()
+          : new Date(post.createdAt || 0).getTime();
+        const timeScore = createdAtTime / 1000000000;
+
+        const rankingScore = subscriberBonus + impressionsScore + timeScore;
+
+        return {
+          ...post,
+          authorDetails,
+          repostersDetails,
+          rankingScore,
+        };
+      });
+
+      let filteredPosts = calculatedPosts;
+      if (cursorScore !== null) {
+        filteredPosts = calculatedPosts.filter(
+          (p) => p.rankingScore < cursorScore,
+        );
+      }
+      filteredPosts.sort((a, b) => b.rankingScore - a.rankingScore);
+      posts = filteredPosts.slice(0, limit);
     }
     const processedPosts = await Promise.all(
       posts.map(async (post) => {
+        const targetPostId = post.postId || post.id;
+        const commentsSnapshot = await Comments.where(
+          "postId",
+          "==",
+          targetPostId,
+        ).get();
+        const comments = [];
+        for (const doc of commentsSnapshot.docs) {
+          const commentData = doc.data();
+          let commentUser = null;
+          if (commentData.userId) {
+            const commentUserQuery = await User.where(
+              "uid",
+              "==",
+              commentData.userId,
+            )
+              .limit(1)
+              .get();
+            if (!commentUserQuery.empty) {
+              const cuData = commentUserQuery.docs[0].data();
+              commentUser = {
+                uid: cuData.uid,
+                firstname: cuData.firstname,
+                lastname: cuData.lastname,
+                username: cuData.username,
+                profilePic: cuData.profilePic,
+              };
+            }
+          }
+          comments.push({
+            ...commentData,
+            userId: commentUser || commentData.userId,
+          });
+        }
+        const commentsCount = commentsSnapshot.size;
+
         return {
           ...post,
+          comments,
+          commentsCount,
+          repostsCount:
+            post.repostsCount !== undefined
+              ? post.repostsCount
+              : (post.repostersDetails || []).length,
           featuredReposter: await getPriorityReposter(
             post.repostersDetails || [],
             userId,
@@ -1698,8 +2527,10 @@ export const fetchPosts = async (req, res) => {
         };
       }),
     );
+
     const nextCursor =
       posts.length === limit ? posts[posts.length - 1].rankingScore : null;
+
     const responseData = { posts: processedPosts, nextCursor };
     logControllerPerformance(controllerName, action, startTime, "success");
     res.json(responseData);
@@ -1719,20 +2550,31 @@ export const fetchActiveTickets = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const cursor = req.query.cursor;
-    const query = {
-      status: { $nin: ["closed", "resolved"] },
-    };
+
+    let queryRef = SupportTicket.where("status", "not-in", [
+      "closed",
+      "resolved",
+    ]).orderBy("__name__", "desc");
 
     if (cursor) {
-      query._id = { $lt: cursor };
+      const cursorDoc = await SupportTicket.doc(cursor).get();
+      if (cursorDoc.exists) {
+        queryRef = queryRef.startAfter(cursorDoc);
+      }
     }
+    const snapshot = await queryRef.limit(limit + 1).get();
 
-    const tickets = await SupportTicket.find(query)
-      .sort({ _id: -1 })
-      .limit(limit)
-      .lean();
-    const nextCursor =
-      tickets.length === limit ? tickets[tickets.length - 1]._id : null;
+    const docs = snapshot.docs;
+    const hasMore = docs.length > limit;
+    const ticketDocs = hasMore ? docs.slice(0, limit) : docs;
+
+    const tickets = ticketDocs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    const nextCursor = hasMore ? tickets[tickets.length - 1].id : null;
+
     console.log(`Admin ${req.admin.uid} fetched active support tickets.`);
     res.status(200).json({
       tickets,
@@ -1746,15 +2588,32 @@ export const fetchActiveTickets = async (req, res) => {
 export const adminFetchUserDetails = async (req, res) => {
   try {
     const { userId } = req.params;
-    const user = await User.findOne({ uid: userId })
-      .select("-password -iCashPin -resetPinOTP -verificationToken -sessions")
-      .lean();
 
-    if (!user) {
+    const userSnapshot = await User.where("uid", "==", userId).limit(1).get();
+
+    if (userSnapshot.empty) {
       return res
         .status(404)
         .json({ message: "User not found", success: false });
     }
+
+    const userDoc = userSnapshot.docs[0];
+    const userData = userDoc.data();
+
+    const {
+      password,
+      iCashPin,
+      resetPinOTP,
+      verificationToken,
+      sessions,
+      ...safeUserData
+    } = userData;
+
+    const user = {
+      id: userDoc.id,
+      ...safeUserData,
+    };
+
     console.log(`Admin ${req.admin.uid} viewed details for user ${userId}`);
     res.status(200).json(user);
   } catch (error) {
@@ -1770,63 +2629,84 @@ export const adminFetchUserNotifications = async (req, res) => {
     if (!userId) {
       return res.status(400).json({ message: "Missing userId parameter" });
     }
+    const snapshot = await Notification.where(
+      "recipientId",
+      "==",
+      userId,
+    ).get();
 
-    const matchStage = {
-      $or: [{ recipientId: userId }],
-    };
+    const allNotifications = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+    allNotifications.sort((a, b) => {
+      const timeA = a.createdAt?.toMillis
+        ? a.createdAt.toMillis()
+        : new Date(a.createdAt || 0).getTime();
+      const timeB = b.createdAt?.toMillis
+        ? b.createdAt.toMillis()
+        : new Date(b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+    const groupMap = new Map();
 
-    const notifications = await Notification.aggregate([
-      { $match: matchStage },
-      { $sort: { createdAt: -1 } },
-      {
-        $group: {
-          _id: {
-            actionType: "$actionType",
-            entityId: {
-              $ifNull: [
-                "$payload.postId",
-                "$payload.followerId",
-                "$payload.viewerUid",
-                "$notificationId",
-              ],
-            },
-          },
-          latest: { $first: "$$ROOT" },
-          count: { $sum: 1 },
+    for (const notification of allNotifications) {
+      const actionType = notification.actionType;
+      const payload = notification.payload || {};
+      const entityId =
+        payload.postId ||
+        payload.followerId ||
+        payload.viewerUid ||
+        notification.notificationId ||
+        "default";
+
+      const groupKey = `${actionType}_${entityId}`;
+
+      if (!groupMap.has(groupKey)) {
+        groupMap.set(groupKey, {
+          latest: notification,
+          count: 1,
+        });
+      } else {
+        const group = groupMap.get(groupKey);
+        group.count += 1;
+      }
+    }
+    const aggregatedNotifications = [];
+    for (const [, group] of groupMap.entries()) {
+      const latest = group.latest;
+      const payload = latest.payload || {};
+
+      const primaryUser = payload.username || payload.firstname || "Someone";
+      const othersCount = Math.max(0, group.count - 1);
+
+      const enrichedNotification = {
+        ...latest,
+        payload: {
+          ...payload,
+          primaryUser,
+          othersCount,
         },
-      },
-      {
-        $project: {
-          _id: 0,
-          notification: {
-            $mergeObjects: [
-              "$latest",
-              {
-                payload: {
-                  $mergeObjects: [
-                    "$latest.payload",
-                    {
-                      primaryUser: {
-                        $ifNull: [
-                          "$latest.payload.username",
-                          "$latest.payload.firstname",
-                          "Someone",
-                        ],
-                      },
-                      othersCount: { $subtract: ["$count", 1] },
-                    },
-                  ],
-                },
-              },
-            ],
-          },
-        },
-      },
-      { $replaceRoot: { newRoot: "$notification" } },
-      { $sort: { createdAt: -1 } },
-      { $skip: Math.max(parseInt(offset), 0) },
-      { $limit: Math.max(parseInt(limit), 1) },
-    ]);
+      };
+
+      aggregatedNotifications.push(enrichedNotification);
+    }
+    aggregatedNotifications.sort((a, b) => {
+      const timeA = a.createdAt?.toMillis
+        ? a.createdAt.toMillis()
+        : new Date(a.createdAt || 0).getTime();
+      const timeB = b.createdAt?.toMillis
+        ? b.createdAt.toMillis()
+        : new Date(b.createdAt || 0).getTime();
+      return timeB - timeA;
+    });
+    const parsedOffset = Math.max(parseInt(offset), 0);
+    const parsedLimit = Math.max(parseInt(limit), 1);
+
+    const notifications = aggregatedNotifications.slice(
+      parsedOffset,
+      parsedOffset + parsedLimit,
+    );
 
     res.status(200).json({ notifications, success: true });
   } catch (error) {

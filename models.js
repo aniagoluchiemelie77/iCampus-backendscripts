@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 
 const reposterSchema = new mongoose.Schema({
   uid: { type: String, required: true },
+  postId: { type: String, required: true },
   firstname: { type: String, default: null },
   lastname: { type: String, default: null },
   username: { type: String, default: null },
@@ -64,6 +65,7 @@ export const assessmentSchema = new mongoose.Schema(
 );
 export const commentSchema = new mongoose.Schema({
   id: { type: String, required: true },
+  postId: { type: String, required: true },
   userId: { type: String, required: true },
   username: { type: String, required: true },
   profilePic: { type: String },

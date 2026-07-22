@@ -486,8 +486,19 @@ export const deleteAccount = async (req, res) => {
     postRepostersQuery.forEach((doc) => {
       batch.delete(doc.ref);
     });
+
     const commentsQuery = await Comments.where("userId", "==", userUid).get();
     commentsQuery.forEach((doc) => {
+      batch.delete(doc.ref);
+    });
+
+    // Also remove the deleted user's repost details from other posts or collections if applicable
+    const repostsAsUserQuery = await PostReposters.where(
+      "userId",
+      "==",
+      userUid,
+    ).get();
+    repostsAsUserQuery.forEach((doc) => {
       batch.delete(doc.ref);
     });
 
@@ -2948,12 +2959,55 @@ export const searchPosts = async (req, res) => {
 
     const formattedPosts = await Promise.all(
       limitedPosts.map(async (post) => {
+        const targetPostId = post.postId || post.id;
+        const commentsSnapshot = await Comments.where(
+          "postId",
+          "==",
+          targetPostId,
+        ).get();
+        const comments = [];
+        for (const doc of commentsSnapshot.docs) {
+          const commentData = doc.data();
+          let commentUser = null;
+          if (commentData.userId) {
+            const commentUserQuery = await User.where(
+              "uid",
+              "==",
+              commentData.userId,
+            )
+              .limit(1)
+              .get();
+            if (!commentUserQuery.empty) {
+              const cuData = commentUserQuery.docs[0].data();
+              commentUser = {
+                uid: cuData.uid,
+                firstname: cuData.firstname,
+                lastname: cuData.lastname,
+                username: cuData.username,
+                profilePic: cuData.profilePic,
+              };
+            }
+          }
+          comments.push({
+            ...commentData,
+            userId: commentUser || commentData.userId,
+          });
+        }
+        const commentsCount = commentsSnapshot.size;
+
         const featuredReposter =
           typeof getPriorityReposter === "function"
             ? await getPriorityReposter(post.repostersDetails || [], userId)
             : null;
+
         return {
           ...post,
+          comments,
+          commentsCount,
+          repostsCount:
+            post.repostsCount !== undefined
+              ? post.repostsCount
+              : (post.repostersDetails || []).length,
           featuredReposter,
         };
       }),

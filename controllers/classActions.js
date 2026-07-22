@@ -34,7 +34,6 @@ import { generateAttendancePDF } from "../templates/courseAttendanceTemplate.js"
 import { GoogleGenAI } from "@google/genai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import axios from "axios";
-import mongoose from "mongoose";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 
@@ -1558,9 +1557,7 @@ export const deleteCourseMaterial = async (req, res) => {
       );
       return res.status(400).json({ message: "Missing reference target URL." });
     }
-
-    // Fetch course from Firestore
-    const courseQuery = await Courses.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -1632,9 +1629,7 @@ export const deleteCourseMaterial = async (req, res) => {
     };
 
     const fileName = materialUrl.split("/").pop() || "Resource Document";
-
-    // Fetch students matching department and level to notify
-    const studentsQuery = await Users
+    const studentsQuery = await User
       .where("usertype", "==", "student")
       .where("department", "==", updatedCourse.department)
       .where("level", "==", updatedCourse.level)
@@ -1701,7 +1696,7 @@ export const createCourseContent = async (req, res) => {
   try {
     const { courseId } = req.params;
     const { topic, lectureId } = req.body;
-    const requesterUid = req.user.uid;
+    const requesterUid = req.user?.uid || req.user?.id;
 
     if (!topic || typeof topic !== "string") {
       logControllerPerformance(
@@ -1715,9 +1710,8 @@ export const createCourseContent = async (req, res) => {
         .status(400)
         .json({ message: "Invalid or missing topic content" });
     }
-
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1727,6 +1721,10 @@ export const createCourseContent = async (req, res) => {
       );
       return res.status(404).json({ message: "Course not found" });
     }
+
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
+
     const isAuthorized = await checkContentAuthorization(
       requesterUid,
       course,
@@ -1745,40 +1743,54 @@ export const createCourseContent = async (req, res) => {
       });
     }
 
-    course.courseContents.push(topic);
-    await course.save();
-    User.find({
-      usertype: "student",
-      department: course.department,
-      level: course.level,
-    })
-      .select("uid")
-      .then((students) => {
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "CONTENT_ADDED",
-            title: "New Topic Added",
-            message: `A new topic "${topic}" was added to ${course.courseCode}.`,
-            payload: {
-              courseId: course.courseId,
-              topic,
-              courseTitle: course.courseTitle,
-            },
-            sendPush: false,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-      })
-      .catch((err) => console.error("Notification Fetch Error:", err));
+    const existingContents = course.courseContents || [];
+    const updatedContents = [...existingContents, topic];
+    const now = new Date();
+
+    await courseDocRef.update({
+      courseContents: updatedContents,
+      updatedAt: now,
+    });
+    const studentsQuery = await User
+      .where("usertype", "==", "student")
+      .where("department", "==", course.department)
+      .where("level", "==", course.level)
+      .get();
+
+    const notificationPromises = [];
+    studentsQuery.forEach((doc) => {
+      const student = doc.data();
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "CONTENT_ADDED",
+          title: "New Topic Added",
+          message: `A new topic "${topic}" was added to ${course.courseCode}.`,
+          recipientEmail: student.email,
+          sendEmail: !!student.email,
+          payload: {
+            userName: student.firstname,
+            courseId: course.courseId,
+            topic,
+            courseTitle: course.courseTitle || course.title,
+          },
+          sendPush: false,
+          sendSocket: true,
+          saveToDb: true,
+        })
+      );
+    });
+
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Notification Fetch Error:", err)
+    );
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Topic added successfully",
-      updatedContents: course.courseContents,
+      updatedContents: updatedContents,
     });
   } catch (error) {
     console.error("Add Content Error:", error.message);
@@ -1801,7 +1813,7 @@ export const editCourseContent = async (req, res) => {
   try {
     const { courseId } = req.params;
     const { index, updatedTopic, lectureId } = req.body;
-    const requesterUid = req.user.uid;
+    const requesterUid = req.user?.uid || req.user?.id;
 
     if (typeof index !== "number" || !updatedTopic) {
       logControllerPerformance(
@@ -1815,8 +1827,8 @@ export const editCourseContent = async (req, res) => {
         .status(400)
         .json({ message: "Missing required update body fields" });
     }
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1826,6 +1838,9 @@ export const editCourseContent = async (req, res) => {
       );
       return res.status(404).json({ message: "Course not found" });
     }
+
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
 
     const isAuthorized = await checkContentAuthorization(
       requesterUid,
@@ -1845,7 +1860,8 @@ export const editCourseContent = async (req, res) => {
       });
     }
 
-    if (index < 0 || index >= course.courseContents.length) {
+    const courseContents = course.courseContents || [];
+    if (index < 0 || index >= courseContents.length) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1857,43 +1873,55 @@ export const editCourseContent = async (req, res) => {
         .status(400)
         .json({ message: "Target topic position index out of bounds" });
     }
-    const updateQuery = {};
-    updateQuery[`courseContents.${index}`] = updatedTopic;
 
-    const updatedCourse = await Course.findOneAndUpdate(
-      { courseId },
-      { $set: updateQuery },
-      { new: true },
+    const updatedContents = [...courseContents];
+    updatedContents[index] = updatedTopic;
+    const now = new Date();
+
+    await courseDocRef.update({
+      courseContents: updatedContents,
+      updatedAt: now,
+    });
+
+    const updatedCourse = {
+      ...course,
+      courseContents: updatedContents,
+    };
+    const studentsQuery = await User
+      .where("usertype", "==", "student")
+      .where("department", "==", updatedCourse.department)
+      .where("level", "==", updatedCourse.level)
+      .get();
+
+    const notificationPromises = [];
+    studentsQuery.forEach((doc) => {
+      const student = doc.data();
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "CONTENT_MUTATED",
+          title: "Course Syllabus Updated",
+          message: `A topic in ${updatedCourse.courseCode} has been edited to "${updatedTopic}".`,
+          recipientEmail: student.email,
+          sendEmail: false,
+          sendPush: false,
+          sendSocket: true,
+          saveToDb: true,
+          payload: {
+            userName: student.firstname,
+            course: updatedCourse,
+            updatedTopic,
+            courseTitle: updatedCourse.courseTitle || updatedCourse.title,
+          },
+        })
+      );
+    });
+
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Notification Error:", err)
     );
-
-    User.find({
-      usertype: "student",
-      department: updatedCourse.department,
-      level: updatedCourse.level,
-    })
-      .select("uid")
-      .then((students) => {
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "CONTENT_MUTATED",
-            title: "Course Syllabus Updated",
-            message: `A topic in ${updatedCourse.courseCode} has been edited to "${updatedTopic}".`,
-            payload: {
-              course: updatedCourse,
-              updatedTopic,
-              courseTitle: updatedCourse.courseTitle,
-            },
-            sendEmail: false,
-            sendPush: false,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-      })
-      .catch((err) => console.error("Notification Error:", err));
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -1921,7 +1949,7 @@ export const deleteCourseContent = async (req, res) => {
   try {
     const { courseId } = req.params;
     const { index, lectureId } = req.body;
-    const requesterUid = req.user.uid;
+    const requesterUid = req.user?.uid || req.user?.id;
 
     if (typeof index !== "number") {
       logControllerPerformance(
@@ -1935,8 +1963,8 @@ export const deleteCourseContent = async (req, res) => {
         .status(400)
         .json({ message: "Target element index parameter required" });
     }
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1946,6 +1974,9 @@ export const deleteCourseContent = async (req, res) => {
       );
       return res.status(404).json({ message: "Course not found" });
     }
+
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
 
     const isAuthorized = await checkContentAuthorization(
       requesterUid,
@@ -1963,7 +1994,8 @@ export const deleteCourseContent = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized Access" });
     }
 
-    if (index < 0 || index >= course.courseContents.length) {
+    const courseContents = course.courseContents || [];
+    if (index < 0 || index >= courseContents.length) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1975,43 +2007,59 @@ export const deleteCourseContent = async (req, res) => {
         .status(400)
         .json({ message: "Target position index out of array bounds" });
     }
-    const removedTopic = course.courseContents.splice(index, 1)[0];
-    await course.save();
 
-    User.find({
-      usertype: "student",
-      department: course.department,
-      level: course.level,
-    })
-      .select("uid")
-      .then((students) => {
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "CONTENT_DELETION",
-            title: "Syllabus Content Removed",
-            message: `"${removedTopic}" was removed from the course plan of ${course.courseCode}.`,
-            payload: {
-              courseId: course.courseId,
-              removedTopic,
-              course,
-              courseTitle: course.courseTitle,
-            },
-            sendEmail: false,
-            sendPush: false,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-      })
-      .catch((err) => console.error("Notification Error:", err));
+    const updatedContents = [...courseContents];
+    const removedTopic = updatedContents.splice(index, 1)[0];
+    const now = new Date();
+
+    await courseDocRef.update({
+      courseContents: updatedContents,
+      updatedAt: now,
+    });
+
+    const updatedCourse = {
+      ...course,
+      courseContents: updatedContents,
+    };
+    const studentsQuery = await User
+      .where("usertype", "==", "student")
+      .where("department", "==", updatedCourse.department)
+      .where("level", "==", updatedCourse.level)
+      .get();
+
+    const notificationPromises = [];
+    studentsQuery.forEach((doc) => {
+      const student = doc.data();
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "CONTENT_DELETION",
+          title: "Syllabus Content Removed",
+          message: `"${removedTopic}" was removed from the course plan of ${updatedCourse.courseCode}.`,
+          recipientEmail: student.email,
+          sendEmail: false,
+          sendPush: false,
+          sendSocket: true,
+          saveToDb: true,
+          payload: {
+            userName: student.firstname,
+            courseId: updatedCourse.courseId,
+            removedTopic,
+            course: updatedCourse,
+            courseTitle: updatedCourse.courseTitle || updatedCourse.title,
+          },
+        })
+      );
+    });
+
+    Promise.all(notificationPromises).catch((err) => console.error("Notification Error:", err));
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Topic removed successfully",
-      updatedContents: course.courseContents,
+      updatedContents: updatedCourse.courseContents,
     });
   } catch (error) {
     console.error("Delete Content Error:", error.message);
@@ -2035,10 +2083,9 @@ export const createCourseAssignment = async (req, res) => {
     const { courseId } = req.params;
     const { title, description, dueDate, submissionMethod, lectureId } =
       req.body;
-    const requesterUid = req.user.uid;
-
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+    const requesterUid = req.user?.uid || req.user?.id;
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -2048,6 +2095,10 @@ export const createCourseAssignment = async (req, res) => {
       );
       return res.status(404).json({ message: "Course not found" });
     }
+
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
+
     const isAuthorized = await checkContentAuthorization(
       requesterUid,
       course,
@@ -2079,43 +2130,58 @@ export const createCourseAssignment = async (req, res) => {
       submissions: [],
     };
 
-    course.assignments.push(newAssignment);
-    await course.save();
+    const existingAssignments = course.assignments || [];
+    const updatedAssignments = [...existingAssignments, newAssignment];
+    const now = new Date();
+
+    await courseDocRef.update({
+      assignments: updatedAssignments,
+      updatedAt: now,
+    });
 
     const formattedDate = new Date(dueDate).toLocaleDateString();
-    User.find({
-      usertype: "student",
-      department: course.department,
-      level: course.level,
-    })
-      .select("uid")
-      .then((students) => {
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "ASSIGNMENT_CREATED",
-            title: "New Assignment",
-            message: `New assignment uploaded for ${course.courseTitle}: "${title}". Due: ${formattedDate}`,
-            payload: {
-              course,
-              assignmentId,
-              assignmentTitle: title,
-              dueDate: formattedDate,
-            },
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-      })
-      .catch((err) =>
-        console.error("Assignment Notification Dispatch Failure:", err),
+
+    const studentsQuery = await User
+      .where("usertype", "==", "student")
+      .where("department", "==", course.department)
+      .where("level", "==", course.level)
+      .get();
+
+    const notificationPromises = [];
+    studentsQuery.forEach((doc) => {
+      const student = doc.data();
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "ASSIGNMENT_CREATED",
+          title: "New Assignment",
+          message: `New assignment uploaded for ${course.courseTitle || course.title}: "${title}". Due: ${formattedDate}`,
+          recipientEmail: student.email,
+          sendEmail: !!student.email,
+          payload: {
+            userName: student.firstname,
+            course: { ...course, assignments: updatedAssignments },
+            assignmentId,
+            assignmentTitle: title,
+            dueDate: formattedDate,
+          },
+          entityId: assignmentId,
+          entityType: "assignment",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        })
       );
+    });
+
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Assignment Notification Dispatch Failure:", err)
+    );
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(201).json(course.assignments);
+    return res.status(201).json(updatedAssignments);
   } catch (error) {
     logControllerPerformance(
       controllerName,
@@ -2133,10 +2199,9 @@ export const deleteCourseAssignment = async (req, res) => {
   const action = "deleteCourseAssignment";
   try {
     const { courseId, assignmentId } = req.params;
-    const requesterUid = req.user.uid;
-
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+    const requesterUid = req.user?.uid || req.user?.id;
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -2147,9 +2212,14 @@ export const deleteCourseAssignment = async (req, res) => {
       return res.status(404).json({ message: "Course not found" });
     }
 
-    const targetAssignment = course.assignments.find(
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
+
+    const assignments = course.assignments || [];
+    const targetAssignment = assignments.find(
       (asg) => asg.assignmentId === assignmentId,
     );
+
     if (!targetAssignment) {
       logControllerPerformance(
         controllerName,
@@ -2162,6 +2232,7 @@ export const deleteCourseAssignment = async (req, res) => {
         message: "Target assignment not found within this course profile",
       });
     }
+
     const isAuthorized = await checkContentAuthorization(
       requesterUid,
       course,
@@ -2178,36 +2249,58 @@ export const deleteCourseAssignment = async (req, res) => {
       return res.status(403).json({ message: "Unauthorized Access" });
     }
 
-    const updatedCourse = await Course.findOneAndUpdate(
-      { courseId },
-      { $pull: { assignments: { assignmentId: assignmentId } } },
-      { new: true },
+    const updatedAssignments = assignments.filter(
+      (asg) => asg.assignmentId !== assignmentId,
     );
+    const now = new Date();
 
-    User.find({
-      usertype: "student",
-      department: updatedCourse.department,
-      level: updatedCourse.level,
-    })
-      .select("uid")
-      .then((students) => {
-        students.forEach((student) => {
-          createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            category: "classroom",
-            actionType: "ASSIGNMENT_REMOVED",
-            title: "Assignment Cancelled",
-            message: `The assignment "${targetAssignment.title}" has been removed by the instructor.`,
-            payload: { course, assignmentId, title: targetAssignment.title },
-            sendEmail: false,
-            sendPush: true,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-      })
-      .catch((err) => console.error("Wipe notification thread failed:", err));
+    await courseDocRef.update({
+      assignments: updatedAssignments,
+      updatedAt: now,
+    });
+
+    const updatedCourse = {
+      ...course,
+      assignments: updatedAssignments,
+    };
+    const studentsQuery = await User
+      .where("usertype", "==", "student")
+      .where("department", "==", updatedCourse.department)
+      .where("level", "==", updatedCourse.level)
+      .get();
+
+    const notificationPromises = [];
+    studentsQuery.forEach((doc) => {
+      const student = doc.data();
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          category: "classroom",
+          actionType: "ASSIGNMENT_REMOVED",
+          title: "Assignment Cancelled",
+          message: `The assignment "${targetAssignment.title}" has been removed by the instructor.`,
+          recipientEmail: student.email,
+          sendEmail: false,
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+          payload: {
+            userName: student.firstname,
+            course: updatedCourse,
+            assignmentId,
+            title: targetAssignment.title,
+            courseTitle: updatedCourse.courseTitle || updatedCourse.title,
+          },
+          entityId: assignmentId,
+          entityType: "assignment",
+        })
+      );
+    });
+
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Wipe notification thread failed:", err)
+    );
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -2234,8 +2327,8 @@ export const getAssessmentReport = async (req, res) => {
     if (!token) return res.status(401).json({ error: "Unauthorized" });
 
     const { testId } = req.params;
-    const test = await Assessment.findOne({ id: testId });
-    if (!test) {
+    const testQuery = await Assessment.where("id", "==", testId).limit(1).get();
+    if (testQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -2245,6 +2338,8 @@ export const getAssessmentReport = async (req, res) => {
       );
       return res.status(404).json({ error: "Assessment not found" });
     }
+
+    const test = testQuery.docs[0].data();
 
     const isPastDue = new Date() > new Date(test.dueDate);
     if (!isPastDue) {
@@ -2259,6 +2354,7 @@ export const getAssessmentReport = async (req, res) => {
         .status(403)
         .json({ error: "Analysis is only available after the due date." });
     }
+
     const bucket = storage.bucket();
     const filePath = `assessments/${test.courseId}/Analysis-${testId}.pdf`;
     const file = bucket.file(filePath);
@@ -2269,10 +2365,17 @@ export const getAssessmentReport = async (req, res) => {
       logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({ success: true, downloadUrl: firebaseUrl });
     }
-    const course = await Course.findOne({ courseId: test.courseId });
-    const submissions = await TestSubmission.find({ testId });
-    const enrolledStudents = await User.find({
-      enrolledCourses: test.courseId,
+    const courseQuery = await Course.where("courseId", "==", test.courseId).limit(1).get();
+    const course = courseQuery.empty ? null : courseQuery.docs[0].data();
+    const submissionsSnapshot = await TestSubmission.where("testId", "==", testId).get();
+    const submissions = [];
+    submissionsSnapshot.forEach((doc) => {
+      submissions.push(doc.data());
+    });
+    const enrolledStudentsQuery = await User.where("enrolledCourses", "array-contains", test.courseId).get();
+    const enrolledStudents = [];
+    enrolledStudentsQuery.forEach((doc) => {
+      enrolledStudents.push(doc.data());
     });
 
     const submittedIds = submissions.map((s) => s.studentId);
@@ -2312,6 +2415,7 @@ export const getAssessmentReport = async (req, res) => {
         passRate,
       },
     };
+
     const pdfBuffer = await generateTestAnalysisPDF(reportData);
     await file.save(pdfBuffer, {
       metadata: {
@@ -2344,11 +2448,11 @@ export const submitAssessment = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "submitAssessmentController";
   const action = "submitAssessment";
-  const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
     const { testId, answers, proctoringData, score } = req.body;
+    const currentUserId = req.user?.uid || req.user?.id;
+
     if (!testId || !answers) {
       logControllerPerformance(
         controllerName,
@@ -2361,11 +2465,87 @@ export const submitAssessment = async (req, res) => {
         .status(400)
         .json({ message: "Missing required submission data." });
     }
-    const existingSubmission = await TestSubmission.findOne({
-      testId,
-      studentId: req.user.uid,
-    }).session(session);
-    if (existingSubmission) {
+
+    const result = await db.runTransaction(async (transaction) => {
+      const existingSubmissionQuery = await transaction.get(
+        TestSubmission.where("testId", "==", testId)
+          .where("studentId", "==", currentUserId)
+          .limit(1)
+      );
+
+      if (!existingSubmissionQuery.empty) {
+        return { error: "already_submitted" };
+      }
+      const userQuery = await transaction.get(
+        User.where("uid", "==", currentUserId).limit(1)
+      );
+      const studentUser = userQuery.empty ? null : userQuery.docs[0].data();
+      const userDocRef = userQuery.empty ? null : userQuery.docs[0].ref;
+      const testQuery = await transaction.get(
+        Assessment.where("id", "==", testId).limit(1)
+      );
+      const test = testQuery.empty ? null : testQuery.docs[0].data();
+
+      const rawSelfieStatus = proctoringData?.entrySelfieUrl || "";
+      const isImpersonator = rawSelfieStatus.startsWith("FRAUD_BLOCKED");
+      const isTabFlagged = (proctoringData?.tabSwitchCount || 0) >= 3;
+      const isFlagged = isImpersonator || isTabFlagged;
+      let verificationStatus = "Verified";
+
+      if (isImpersonator) {
+        verificationStatus = "Impersonation_Detected";
+      } else if (rawSelfieStatus.includes("Skipped")) {
+        verificationStatus = "Skipped_No_Avatar";
+      } else if (!rawSelfieStatus || rawSelfieStatus.includes("Failed")) {
+        verificationStatus = "Unverified_Camera_Failure";
+      }
+
+      const matricNumber = studentUser?.matricNumber || "N/A";
+      const customSubmissionId = generateSubmissionId(testId, matricNumber);
+
+      const newSubmissionData = {
+        id: customSubmissionId,
+        verificationStatus,
+        ...req.body,
+        studentId: currentUserId,
+        isFlagged: isFlagged,
+        score: isImpersonator ? 0 : score || 0,
+        proctoringData: {
+          deviceId: proctoringData?.deviceId || "Unknown",
+          entrySelfieUrl: rawSelfieStatus,
+          tabSwitchCount: proctoringData?.tabSwitchCount || 0,
+        },
+        createdAt: new Date(),
+      };
+
+      const newSubRef = TestSubmission.doc();
+      transaction.set(newSubRef, newSubmissionData);
+
+      if (!isImpersonator && userDocRef && studentUser) {
+        const completedTests = studentUser.completedTests || [];
+        const updatedCompletedTests = completedTests.includes(testId)
+          ? completedTests
+          : [...completedTests, testId];
+        const currentProgress = studentUser.overallProgress || 0;
+        const updatedProgress = currentProgress + 5;
+
+        transaction.update(userDocRef, {
+          completedTests: updatedCompletedTests,
+          overallProgress: updatedProgress,
+          updatedAt: new Date(),
+        });
+      }
+
+      return {
+        success: true,
+        isImpersonator,
+        isFlagged,
+        customSubmissionId,
+        test,
+      };
+    });
+
+    if (result.error === "already_submitted") {
       logControllerPerformance(
         controllerName,
         action,
@@ -2377,58 +2557,14 @@ export const submitAssessment = async (req, res) => {
         .status(403)
         .json({ message: "You have already submitted this test." });
     }
-    const rawSelfieStatus = proctoringData?.entrySelfieUrl || "";
-    const isImpersonator = rawSelfieStatus.startsWith("FRAUD_BLOCKED");
-    const isTabFlagged = (proctoringData?.tabSwitchCount || 0) >= 3;
-    const isFlagged = isImpersonator || isTabFlagged;
-    let verificationStatus = "Verified";
 
-    if (isImpersonator) {
-      verificationStatus = "Impersonation_Detected";
-    } else if (rawSelfieStatus.includes("Skipped")) {
-      verificationStatus = "Skipped_No_Avatar";
-    } else if (!rawSelfieStatus || rawSelfieStatus.includes("Failed")) {
-      verificationStatus = "Unverified_Camera_Failure";
-    }
+    const { isImpersonator, isFlagged, customSubmissionId, test } = result;
 
-    const studentUser = await User.findOne({ uid: req.user.uid }).session(
-      session,
-    );
-    const matricNumber = studentUser?.matricNumber || "N/A";
-    const customSubmissionId = generateSubmissionId(testId, matricNumber);
-
-    const newSubmission = new TestSubmission({
-      id: customSubmissionId,
-      verificationStatus,
-      ...req.body,
-      studentId: req.user.uid,
-      isFlagged: isFlagged,
-      score: isImpersonator ? 0 : score || 0,
-      proctoringData: {
-        deviceId: proctoringData?.deviceId || "Unknown",
-        entrySelfieUrl: rawSelfieStatus,
-        tabSwitchCount: proctoringData?.tabSwitchCount || 0,
-      },
-    });
-    await newSubmission.save({ session });
-
-    let updatedUser = studentUser;
-    if (!isImpersonator) {
-      updatedUser = await User.findOneAndUpdate(
-        { uid: req.user.uid },
-        {
-          $addToSet: { completedTests: testId },
-          $inc: { overallProgress: 5 },
-        },
-        { session, new: true },
-      );
-    }
-
-    const test = await Assessment.findOne({ id: testId }).session(session);
-    await session.commitTransaction();
-    createNotification({
+    await createNotification({
       notificationId: generateNotificationId("classroom"),
-      recipientId: req.user.uid,
+      recipientId: currentUserId,
+      recipientEmail: req.user?.email,
+      sendEmail: !!req.user?.email,
       category: "academic",
       actionType: isImpersonator ? "TEST_FRAUD_BLOCKED" : "TEST_SUBMITTED",
       title: isImpersonator ? "Submission Flagged!" : "Assessment Submitted!",
@@ -2436,12 +2572,15 @@ export const submitAssessment = async (req, res) => {
         ? `Your submission for "${test?.title || "the assessment"}" failed biometric verification. System security response logs have been populated.`
         : `Your submission for "${test?.title || "the assessment"}" has been received successfully.`,
       payload: {
+        userName: req.user?.firstname,
         testId,
         submissionId: customSubmissionId,
         isFlagged,
         actionEnforced: isImpersonator ? "SCORE_NULLIFIED" : "RECORDED",
         title: test?.title,
       },
+      entityId: testId,
+      entityType: "assessment",
       sendPush: true,
       sendSocket: true,
       saveToDb: true,
@@ -2457,7 +2596,6 @@ export const submitAssessment = async (req, res) => {
       flagged: isFlagged,
     });
   } catch (error) {
-    await session.abortTransaction();
     console.error("Submission Error Engine Exception:", error.message);
     logControllerPerformance(
       controllerName,
@@ -2469,8 +2607,6 @@ export const submitAssessment = async (req, res) => {
     return res
       .status(500)
       .json({ message: "Internal Server Error", error: error.message });
-  } finally {
-    session.endSession();
   }
 };
 export const editLectures = async (req, res) => {
@@ -2481,9 +2617,9 @@ export const editLectures = async (req, res) => {
     const { lectureId, courseId } = req.params;
     const { newDate, newStartTime, topicName, lectureType, location } =
       req.body;
-
-    const originalLecture = await Lectures.findOne({ id: lectureId });
-    if (!originalLecture) {
+    const requesterUid = req.user?.uid || req.user?.id;
+    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    if (lectureQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -2493,8 +2629,11 @@ export const editLectures = async (req, res) => {
       );
       return res.status(404).json({ message: "Lecture not found" });
     }
-    const course = await Course.findOne({ courseId });
-    if (!course) {
+
+    const lectureDocRef = lectureQuery.docs[0].ref;
+    const originalLecture = lectureQuery.docs[0].data();
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -2504,9 +2643,12 @@ export const editLectures = async (req, res) => {
       );
       return res.status(404).json({ message: "Associated course not found" });
     }
-    const isCourseLecturer =
-      course.lecturerIds && course.lecturerIds.includes(req.user.uid);
-    const isLectureHost = originalLecture.hostId === req.user.uid;
+
+    const course = courseQuery.docs[0].data();
+
+    const lecturerIds = course.lecturerIds || [];
+    const isCourseLecturer = lecturerIds.includes(requesterUid);
+    const isLectureHost = originalLecture.hostId === requesterUid;
 
     if (!isCourseLecturer && !isLectureHost) {
       logControllerPerformance(
@@ -2566,29 +2708,34 @@ export const editLectures = async (req, res) => {
       });
     }
 
+    const resolvedLectureType = lectureType || originalLecture.lectureType;
     const updatePayload = {
       topicName: topicName || originalLecture.topicName,
-      lectureType: lectureType || originalLecture.lectureType,
-      location: lectureType === "Physical" ? location : undefined, // Wipe venue data if shifted online
+      lectureType: resolvedLectureType,
+      location: resolvedLectureType === "Physical" ? location : null, // Wipe venue data if shifted online
       date: newDate || originalLecture.date,
       startTime: newStartTime || originalLecture.startTime,
       status: updatedStatus,
+      updatedAt: new Date(),
     };
 
-    const updatedLecture = await Lectures.findOneAndUpdate(
-      { id: lectureId },
-      updatePayload,
-      { new: true },
-    );
+    await lectureDocRef.update(updatePayload);
 
-    const students = await User.find({
-      usertype: "student",
-      department: course.department,
-      level: course.level,
-    }).select("uid firstName");
+    const updatedLecture = {
+      ...originalLecture,
+      ...updatePayload,
+    };
+    const studentsQuery = await User
+      .where("usertype", "==", "student")
+      .where("department", "==", course.department)
+      .where("level", "==", course.level)
+      .get();
 
     const changeListString = changes.join(", ");
-    const notificationPromises = students.map((student) => {
+    const notificationPromises = [];
+
+    studentsQuery.forEach((doc) => {
+      const student = doc.data();
       let updateDetailsMessage = `The details for your lecture "${updatePayload.topicName}" have been updated (${changeListString}).`;
       if (isDateChanged || isTimeChanged) {
         updateDetailsMessage = `The lecture "${updatePayload.topicName}" has been rescheduled to ${updatePayload.date} at ${updatePayload.startTime}.`;
@@ -2601,30 +2748,35 @@ export const editLectures = async (req, res) => {
         updateDetailsMessage = `The delivery format for "${updatePayload.topicName}" has changed to ${updatePayload.lectureType}.`;
       }
 
-      return createNotification({
-        notificationId: generateNotificationId("classroom"),
-        recipientId: student.uid,
-        category: "classroom",
-        actionType: primaryActionType,
-        title: `Lecture Update: ${course.courseId}`,
-        message: updateDetailsMessage,
-        payload: {
-          userName: student.firstName,
-          topicName: updatePayload.topicName,
-          newDate: updatePayload.date,
-          newTime: updatePayload.startTime,
-          lectureType: updatePayload.lectureType,
-          location: updatePayload.location,
-          courseId: courseId,
-          lectureId: lectureId,
-          changedAttributes: changes,
-          course,
-        },
-        entityId: lectureId,
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
-      });
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: student.uid,
+          recipientEmail: student.email,
+          sendEmail: !!student.email,
+          category: "classroom",
+          actionType: primaryActionType,
+          title: `Lecture Update: ${course.courseId || course.courseCode}`,
+          message: updateDetailsMessage,
+          payload: {
+            userName: student.firstname || student.firstName,
+            topicName: updatePayload.topicName,
+            newDate: updatePayload.date,
+            newTime: updatePayload.startTime,
+            lectureType: updatePayload.lectureType,
+            location: updatePayload.location,
+            courseId: courseId,
+            lectureId: lectureId,
+            changedAttributes: changes,
+            course,
+          },
+          entityId: lectureId,
+          entityType: "lecture",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        })
+      );
     });
 
     Promise.all(notificationPromises).catch((err) =>
@@ -2632,7 +2784,7 @@ export const editLectures = async (req, res) => {
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       message: `Lecture modified successfully. Notification sent with type: ${primaryActionType}`,
       updatedLecture,
     });
@@ -2645,7 +2797,7 @@ export const editLectures = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Internal Server Error" });
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const submitOnlineClassAttendance = async (req, res) => {
@@ -2654,7 +2806,8 @@ export const submitOnlineClassAttendance = async (req, res) => {
   const action = "submitOnlineClassAttendance";
   try {
     const { lectureId, courseId, status } = req.body;
-    const studentId = req.user.uid;
+    const studentId = req.user?.uid || req.user?.id;
+
     if (!lectureId || !courseId || !status) {
       logControllerPerformance(
         controllerName,
@@ -2667,9 +2820,8 @@ export const submitOnlineClassAttendance = async (req, res) => {
         .status(400)
         .json({ error: "Missing required online attendance parameters." });
     }
-
-    const lecture = await Lectures.findOne({ id: lectureId });
-    if (!lecture) {
+    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    if (lectureQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -2679,6 +2831,8 @@ export const submitOnlineClassAttendance = async (req, res) => {
       );
       return res.status(404).json({ error: "Lecture not found." });
     }
+
+    const lecture = lectureQuery.docs[0].data();
 
     const gracePeriod = 60 * 60 * 1000;
     const currentTime = new Date();
@@ -2696,33 +2850,79 @@ export const submitOnlineClassAttendance = async (req, res) => {
         error: "Submission window closed",
       });
     }
-    const existingRecord = await Attendance.findOne({ studentId, lectureId });
+    await db.runTransaction(async (transaction) => {
+      const attendanceQuery = await transaction.get(
+        Attendance.where("studentId", "==", studentId)
+          .where("lectureId", "==", lectureId)
+          .limit(1)
+      );
 
-    const record = await Attendance.findOneAndUpdate(
-      { studentId, lectureId },
-      {
+      const existingRecord = attendanceQuery.empty ? null : attendanceQuery.docs[0].data();
+      const attendanceDocRef = attendanceQuery.empty
+        ? Attendance.doc()
+        : attendanceQuery.docs[0].ref;
+
+      const attendanceData = {
+        studentId,
+        lectureId,
         courseId,
         status,
         checkData: [],
         timestamp: currentTime,
-      },
-      { upsert: true, new: true },
-    );
-    if (
-      status === "Present" &&
-      (!existingRecord || existingRecord.status !== "Present")
-    ) {
-      await Promise.all([
-        Course.updateOne(
-          { courseId, "students.id": studentId },
-          { $inc: { "students.$.classesAttended": 1 } },
-        ),
-        User.updateOne(
-          { uid: studentId },
-          { $inc: { "monthlyStats.libraryUsageSessions": 1 } },
-        ),
-      ]);
-    }
+        updatedAt: currentTime,
+      };
+
+      if (attendanceQuery.empty) {
+        attendanceData.createdAt = currentTime;
+      }
+
+      transaction.set(attendanceDocRef, attendanceData, { merge: true });
+
+      const wasNotPresentBefore = !existingRecord || existingRecord.status !== "Present";
+      if (status === "Present" && wasNotPresentBefore) {
+        const courseQuery = await transaction.get(
+          Course.where("courseId", "==", courseId).limit(1)
+        );
+        if (!courseQuery.empty) {
+          const courseDocRef = courseQuery.docs[0].ref;
+          const courseData = courseQuery.docs[0].data();
+          const studentsArray = courseData.students || [];
+
+          let studentFoundInCourse = false;
+          const updatedStudents = studentsArray.map((student) => {
+            if (student.id === studentId || student.uid === studentId) {
+              studentFoundInCourse = true;
+              return {
+                ...student,
+                classesAttended: (student.classesAttended || 0) + 1,
+              };
+            }
+            return student;
+          });
+
+          if (studentFoundInCourse) {
+            transaction.update(courseDocRef, {
+              students: updatedStudents,
+              updatedAt: currentTime,
+            });
+          }
+        }
+        const userQuery = await transaction.get(
+          User.where("uid", "==", studentId).limit(1)
+        );
+        if (!userQuery.empty) {
+          const userDocRef = userQuery.docs[0].ref;
+          const userData = userQuery.docs[0].data();
+          const monthlyStats = userData.monthlyStats || {};
+          const currentSessions = monthlyStats.libraryUsageSessions || 0;
+
+          transaction.update(userDocRef, {
+            "monthlyStats.libraryUsageSessions": currentSessions + 1,
+            updatedAt: currentTime,
+          });
+        }
+      }
+    });
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -2738,7 +2938,7 @@ export const submitOnlineClassAttendance = async (req, res) => {
       "error",
       err.message,
     );
-    res
+    return res
       .status(500)
       .json({ error: "Internal server error during attendance sync." });
   }
@@ -2758,6 +2958,8 @@ export const uploadCourseDetails = async (req, res) => {
       );
       return res.status(400).json({ message: "No files uploaded" });
     }
+
+    const requesterUid = req.user?.uid || req.user?.id;
 
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
@@ -2831,10 +3033,11 @@ export const uploadCourseDetails = async (req, res) => {
         .status(422)
         .json({ message: "Failed to extract structured course records." });
     }
+
     const submittedMatric = studentInfo.matricNo
       ?.replace(/[^a-zA-Z0-9]/g, "")
       .toLowerCase();
-    const userMatric = req.user.matricNumber
+    const userMatric = req.user?.matricNumber
       ?.replace(/[^a-zA-Z0-9]/g, "")
       .toLowerCase();
 
@@ -2851,65 +3054,93 @@ export const uploadCourseDetails = async (req, res) => {
       });
     }
 
-    const processedCourseIds = await Promise.all(
-      courses.map(async (courseData) => {
-        const cleanTitle = courseData.courseTitle
-          .trim()
-          .replace(/\s+/g, "\\s*");
-        let course = await Course.findOne({
-          courseTitle: { $regex: new RegExp(`^${cleanTitle}$`, "i") },
-          schoolName: req.user.schoolName,
-        });
+    const now = new Date();
+    const processedCourseIds = [];
+    for (const courseData of courses) {
+      const cleanTitle = courseData.courseTitle.trim();
+      
+      const courseQuery = await Courses
+        .where("courseTitle", ">=", cleanTitle)
+        .where("courseTitle", "<=", cleanTitle + "\uf8ff")
+        .limit(1)
+        .get();
 
-        if (course) {
-          await Course.updateOne({
-            $addToSet: { studentsEnrolled: req.user.uid },
+      let courseDocRef;
+      let courseId;
+
+      if (!courseQuery.empty) {
+        const doc = courseQuery.docs[0];
+        courseDocRef = doc.ref;
+        const existingData = doc.data();
+        courseId = existingData.courseId;
+
+        const studentsEnrolled = existingData.studentsEnrolled || [];
+        if (!studentsEnrolled.includes(requesterUid)) {
+          await courseDocRef.update({
+            studentsEnrolled: [...studentsEnrolled, requesterUid],
+            updatedAt: now,
           });
-          return course.courseId;
-        } else {
-          const uniqueCourseId = generateCourseId(
-            courseData.courseTitle,
-            courseData.courseCode,
-          );
-          const newCourse = new Course({
-            ...courseData,
-            courseId: uniqueCourseId,
-            schoolName: req.user.schoolName,
-            department: studentInfo.department || req.user.department,
-            level: studentInfo.level,
-            studentsEnrolled: [req.user.uid],
-            isActive: true,
-          });
-          await newCourse.save();
-          return uniqueCourseId;
         }
-      }),
-    );
-    await User.findOneAndUpdate(
-      { uid: req.user.uid },
-      { $addToSet: { coursesEnrolled: { $each: processedCourseIds } } },
-    );
-    createNotification({
+      } else {
+        courseId = generateCourseId(courseData.courseTitle, courseData.courseCode);
+        courseDocRef = Course.doc();
+        
+        const newCourseData = {
+          ...courseData,
+          courseId,
+          schoolName: req.user?.schoolName || studentInfo.schoolName,
+          department: studentInfo.department || req.user?.department,
+          level: studentInfo.level,
+          studentsEnrolled: [requesterUid],
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        await courseDocRef.set(newCourseData);
+      }
+      processedCourseIds.push(courseId);
+    }
+    const userQuery = await User.where("uid", "==", requesterUid).limit(1).get();
+    if (!userQuery.empty) {
+      const userDocRef = userQuery.docs[0].ref;
+      const userData = userQuery.docs[0].data();
+      const existingEnrolled = userData.enrolledCourses || userData.coursesEnrolled || [];
+      const updatedEnrolled = Array.from(new Set([...existingEnrolled, ...processedCourseIds]));
+
+      await userDocRef.update({
+        enrolledCourses: updatedEnrolled,
+        updatedAt: now,
+      });
+    }
+
+    const firstCourse = courses[0] || {};
+    await createNotification({
       notificationId: generateNotificationId("classroom"),
-      recipientId: req.user.uid,
+      recipientId: requesterUid,
+      recipientEmail: req.user?.email,
+      sendEmail: !!req.user?.email,
       category: "academic",
       actionType: "COURSES_EXTRACTED",
       title: "Course Registration Synced",
       message: `Successfully extracted ${courses.length} courses for the ${studentInfo.level}L curriculum.`,
       payload: {
+        userName: req.user?.firstname || studentInfo.studentName,
         courseCount: courses.length,
         level: studentInfo.level,
         matricNo: studentInfo.matricNo,
-        semester: courses.semester.toLowerCase(),
-        session: courses.session,
+        semester: firstCourse.semester ? firstCourse.semester.toLowerCase() : "unknown",
+        session: firstCourse.session || "",
       },
+      entityId: requesterUid,
+      entityType: "user",
       sendPush: true,
       sendSocket: true,
       saveToDb: true,
     }).catch((err) => console.error("Notification Dispatch Error:", err));
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       message: `Processed ${courses.length} courses successfully.`,
       studentName: studentInfo.studentName,
       coursesCount: courses.length,
@@ -2923,7 +3154,7 @@ export const uploadCourseDetails = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Internal Server Error" });
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const uploadCourseDetailsManually = async (req, res) => {
@@ -2932,7 +3163,11 @@ export const uploadCourseDetailsManually = async (req, res) => {
   const action = "uploadCourseDetailsManually";
   try {
     const { courseTitle, courseCode, credits } = req.body;
-    const { uid, usertype, schoolName, department } = req.user;
+    const uid = req.user?.uid || req.user?.id;
+    const usertype = req.user?.usertype;
+    const schoolName = req.user?.schoolName;
+    const department = req.user?.department;
+
     if (!courseTitle || !courseCode) {
       logControllerPerformance(
         controllerName,
@@ -2945,55 +3180,96 @@ export const uploadCourseDetailsManually = async (req, res) => {
         .status(400)
         .json({ message: "Course Title or Code is required." });
     }
-    const cleanCode = courseCode.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const cleanTitle = courseTitle.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const looseCodeRegex = new RegExp(cleanCode.split("").join("\\s*"), "i");
-    const looseTitleRegex = new RegExp(cleanTitle.split("").join("\\s*"), "i");
-    let course = await Course.findOne({
-      schoolName: schoolName,
-      $or: [
-        { courseCode: { $regex: looseCodeRegex } },
-        { courseTitle: { $regex: looseTitleRegex } },
-      ],
-    });
 
-    let assignedCourseId;
+    const trimmedCode = courseCode.trim();
+    const trimmedTitle = courseTitle.trim();
+    const now = new Date();
+    let courseDocRef = null;
+    let courseData = null;
+    let assignedCourseId = null;
 
-    if (course) {
-      assignedCourseId = course.courseId;
+    const codeQuery = await Course
+      .where("schoolName", "==", schoolName)
+      .where("courseCode", "==", trimmedCode)
+      .limit(1)
+      .get();
+
+    if (!codeQuery.empty) {
+      courseDocRef = codeQuery.docs[0].ref;
+      courseData = codeQuery.docs[0].data();
+      assignedCourseId = courseData.courseId;
+    } else {
+      const titleQuery = await Course
+        .where("schoolName", "==", schoolName)
+        .where("courseTitle", "==", trimmedTitle)
+        .limit(1)
+        .get();
+
+      if (!titleQuery.empty) {
+        courseDocRef = titleQuery.docs[0].ref;
+        courseData = titleQuery.docs[0].data();
+        assignedCourseId = courseData.courseId;
+      }
+    }
+
+    if (courseDocRef && courseData) {
+      assignedCourseId = courseData.courseId;
       if (usertype === "lecturer") {
-        await Course.updateOne({ $addToSet: { lecturerIds: uid } });
+        const lecturerIds = courseData.lecturerIds || [];
+        if (!lecturerIds.includes(uid)) {
+          await courseDocRef.update({
+            lecturerIds: [...lecturerIds, uid],
+            updatedAt: now,
+          });
+        }
       } else {
-        await Course.updateOne({ $addToSet: { studentsEnrolled: uid } });
+        const studentsEnrolled = courseData.studentsEnrolled || [];
+        if (!studentsEnrolled.includes(uid)) {
+          await courseDocRef.update({
+            studentsEnrolled: [...studentsEnrolled, uid],
+            updatedAt: now,
+          });
+        }
       }
     } else {
-      assignedCourseId = generateCourseId(courseTitle, courseCode);
+      assignedCourseId = generateCourseId(trimmedTitle, trimmedCode);
+      courseDocRef = Course.doc();
 
       const newCourseData = {
         courseId: assignedCourseId,
-        courseCode: courseCode.trim(),
-        courseTitle: courseTitle.trim(),
+        courseCode: trimmedCode,
+        courseTitle: trimmedTitle,
         credits: parseInt(credits, 10) || 0,
         schoolName: schoolName,
         department: department || "General",
         isActive: true,
         lecturerIds: usertype === "lecturer" ? [uid] : [],
         studentsEnrolled: usertype !== "lecturer" ? [uid] : [],
+        createdAt: now,
+        updatedAt: now,
       };
 
-      const newCourse = new Course(newCourseData);
-      await newCourse.save();
+      await courseDocRef.set(newCourseData);
     }
-    const userFieldToUpdate =
-      usertype === "lecturer" ? "coursesTaught" : "coursesEnrolled";
+    const userQuery = await User.where("uid", "==", uid).limit(1).get();
+    if (!userQuery.empty) {
+      const userDocRef = userQuery.docs[0].ref;
+      const userData = userQuery.docs[0].data();
+      const userFieldToUpdate =
+        usertype === "lecturer" ? "coursesTaught" : "coursesEnrolled";
 
-    await User.findOneAndUpdate(
-      { uid: uid },
-      { $addToSet: { [userFieldToUpdate]: assignedCourseId } },
-    );
+      const existingArray = userData[userFieldToUpdate] || [];
+      if (!existingArray.includes(assignedCourseId)) {
+        await userDocRef.update({
+          [userFieldToUpdate]: [...existingArray, assignedCourseId],
+          updatedAt: now,
+        });
+      }
+    }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
-      message: course
+      message: courseDocRef && courseData
         ? "You have been added to this existing course curriculum successfully."
         : "New course catalog entry generated and linked to your profile successfully.",
       courseId: assignedCourseId,
@@ -3027,77 +3303,76 @@ export const handleUpcomingLectureRemindersCron = async () => {
     console.log(
       `[CRON_ENGINE] Scanning for live sessions matching: [Date: ${targetDateStr}] [Time: ${targetHourMin}]`,
     );
-    const upcomingLectures = await Lectures.aggregate([
-      {
-        $match: {
-          date: targetDateStr,
-          startTime: targetHourMin,
-          status: "scheduled",
-        },
-      },
-      {
-        $lookup: {
-          from: "courses",
-          localField: "courseId",
-          foreignField: "courseId",
-          as: "courseContext",
-        },
-      },
-      {
-        $unwind: "$courseContext",
-      },
-      {
-        $project: {
-          id: 1,
-          topicName: 1,
-          startTime: 1,
-          lectureType: 1,
-          location: 1,
-          courseId: 1,
-          "courseContext.courseCode": 1,
-          "courseContext.studentsEnrolled": 1,
-        },
-      },
-    ]);
 
-    if (!upcomingLectures || upcomingLectures.length === 0) {
+    const lectureQuery = await Lectures.where("date", "==", targetDateStr)
+      .where("startTime", "==", targetHourMin)
+      .where("status", "==", "scheduled")
+      .get();
+
+    if (lectureQuery.empty) {
       console.log(
         `[CRON_ENGINE] Verification cycle completed. 0 matching upcoming lectures identified.`,
       );
       return;
     }
-    for (const lecture of upcomingLectures) {
-      const studentUids = lecture.courseContext.studentsEnrolled;
 
-      if (!studentUids || studentUids.length === 0) {
+    for (const lectureDoc of lectureQuery.docs) {
+      const lecture = lectureDoc.data();
+      const courseId = lecture.courseId;
+      const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+      if (courseQuery.empty) {
         console.log(
-          `[CRON_ENGINE] Skipping session ${lecture.id}: No student enrollments detected.`,
+          `[CRON_ENGINE] Skipping session ${lecture.id || lectureDoc.id}: Course context not found for courseId ${courseId}.`,
         );
         continue;
       }
-      const enrolledStudents = await User.find({
-        uid: { $in: studentUids },
-      })
-        .select("uid firstname")
-        .lean();
+
+      const courseData = courseQuery.docs[0].data();
+      const studentUids = courseData.studentsEnrolled || [];
+
+      if (studentUids.length === 0) {
+        console.log(
+          `[CRON_ENGINE] Skipping session ${lecture.id || lectureDoc.id}: No student enrollments detected.`,
+        );
+        continue;
+      }
+      const batchSize = 30;
+      const enrolledStudents = [];
+
+      for (let i = 0; i < studentUids.length; i += batchSize) {
+        const batchIds = studentUids.slice(i, i + batchSize);
+        const userQuery = await User.where("uid", "in", batchIds).get();
+
+        userQuery.forEach((doc) => {
+          const userData = doc.data();
+          enrolledStudents.push({
+            uid: userData.uid,
+            firstname: userData.firstname,
+          });
+        });
+      }
 
       const notificationPromises = enrolledStudents.map(async (student) => {
         try {
           return await createNotification({
             notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
+            recipientEmail: student.email,
+            sendEmail: !!student.email,
             category: "classroom",
             actionType: "LECTURE_REMINDER",
-            title: `Class Starting Soon: ${lecture.courseContext.courseCode}`,
+            title: `Class Starting Soon: ${courseData.courseCode}`,
             message: `Your ${lecture.lectureType || "live"} lecture on "${lecture.topicName}" starts in 45 minutes at ${lecture.location || "Online"}.`,
             payload: {
               courseId: lecture.courseId,
-              lectureId: lecture.id,
+              lectureId: lecture.id || lectureDoc.id,
               topicName: lecture.topicName,
               startTime: lecture.startTime,
               location: lecture.location,
               userName: student.firstname || "Student",
             },
+            entityId: student.uid,
+            entityType: "user",
             sendPush: true,
             sendSocket: true,
             saveToDb: true,
@@ -3107,7 +3382,6 @@ export const handleUpcomingLectureRemindersCron = async () => {
             `[CRON_NOTIFICATION_ERR] Failed for recipient ${student.uid}:`,
             err.message,
           );
-          // Return null or undefined so Promise.all resolved array doesn't break
           return null;
         }
       });
@@ -3116,7 +3390,7 @@ export const handleUpcomingLectureRemindersCron = async () => {
 
       logControllerPerformance(controllerName, action, startTime, "success");
       console.log(
-        `[CRON_SUCCESS] Dispatched reminders for ${lecture.courseContext.courseCode} - "${lecture.topicName}" to ${enrolledStudents.length} students.`,
+        `[CRON_SUCCESS] Dispatched reminders for ${courseData.courseCode} - "${lecture.topicName}" to ${enrolledStudents.length} students.`,
       );
     }
   } catch (error) {
@@ -3140,17 +3414,24 @@ export const sendInactiveUserReminders = async () => {
   try {
     const threeDaysAgo = new Date();
     threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    const inactiveUsers = await UserDownloads.find({
-      lastAccessed: { $lt: threeDaysAgo },
-    }).lean();
+    const snapshot = await UserDownloads
+      .where("lastAccessed", "<", threeDaysAgo)
+      .get();
 
-    if (!inactiveUsers.length) {
+    if (snapshot.empty) {
       return;
     }
+
+    const inactiveUsers = [];
+    snapshot.forEach((doc) => {
+      inactiveUsers.push({ id: doc.id, ...doc.data() });
+    });
+
     const notificationPromises = inactiveUsers.map(async (record) => {
-      const activeCourse = [...record.ownedProducts]
-        .sort((a, b) => b.lastWatched - a.lastWatched)
-        .find((p) => p.progress < 100);
+      const ownedProducts = record.ownedProducts || [];
+      const activeCourse = [...ownedProducts]
+        .sort((a, b) => (b.lastWatched || 0) - (a.lastWatched || 0))
+        .find((p) => (p.progress || 0) < 100);
 
       if (!activeCourse) return null;
 
@@ -3158,16 +3439,23 @@ export const sendInactiveUserReminders = async () => {
         return await createNotification({
           notificationId: generateNotificationId("reminder"),
           recipientId: record.userId,
+          recipientEmail: record.email,
+          sendEmail: !!record.email,
           category: "academic",
           actionType: "LEARNING_REMINDER",
           title: "Don't break your streak",
           message: `It's been a few days since you accessed your course. Your progress is waiting for you!`,
           sendEmail: false,
           sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
           payload: {
+            userName: record.userName || record.firstname,
             productId: activeCourse.productId,
             currentProgress: activeCourse.progress,
           },
+          entityId: activeCourse.productId,
+          entityType: "product",
         });
       } catch (err) {
         console.error(
@@ -3177,6 +3465,7 @@ export const sendInactiveUserReminders = async () => {
         return null;
       }
     });
+
     const results = await Promise.all(notificationPromises);
     const sentCount = results.filter((result) => result !== null).length;
 
@@ -3202,10 +3491,8 @@ export const getCourseGradebook = async (req, res) => {
   const { courseId } = req.params;
 
   try {
-    const course = await Course.findOne({ courseId }).select(
-      "studentsEnrolled tests",
-    );
-    if (!course) {
+    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
         action,
@@ -3215,90 +3502,117 @@ export const getCourseGradebook = async (req, res) => {
       );
       return res.status(404).json({ message: "Course not found" });
     }
-    const gradebookData = await User.aggregate([
-      { $match: { uid: { $in: course.studentsEnrolled } } },
-      {
-        $lookup: {
-          from: "lectures",
-          let: { studentId: "$uid" },
-          pipeline: [
-            { $match: { courseId: courseId } },
-            { $unwind: "$attendance" },
-            {
-              $match: {
-                $expr: { $eq: ["$attendance.studentId", "$$studentId"] },
-              },
-            },
-          ],
-          as: "attendanceRecords",
-        },
-      },
-      {
-        $lookup: {
-          from: "testSubmission",
-          let: { studentId: "$uid" },
-          pipeline: [
-            { $match: { testId: { $in: course.tests.map((t) => t.id) } } },
-            { $match: { $expr: { $eq: ["$studentId", "$$studentId"] } } },
-          ],
-          as: "testSubmissions",
-        },
-      },
-      {
-        $lookup: {
-          from: "exceptions",
-          let: { studentId: "$uid" },
-          pipeline: [
-            { $match: { courseId: courseId } },
-            { $match: { $expr: { $eq: ["$studentId", "$$studentId"] } } },
-          ],
-          as: "exceptions",
-        },
-      },
-      {
-        $project: {
-          studentName: { $concat: ["$firstname", " ", "$lastname"] },
-          matricNumber: "$matricNumber",
-          attendanceCount: { $size: "$attendanceRecords" },
-          attendanceSum: {
-            $add: [
-              {
-                $size: {
-                  $filter: {
-                    input: "$attendanceRecords",
-                    as: "rec",
-                    cond: { $eq: ["$$rec.attendance.status", "Present"] },
-                  },
-                },
-              },
-              {
-                $size: {
-                  $filter: {
-                    input: "$exceptions",
-                    as: "ex",
-                    cond: { $eq: ["$$ex.status", "approved"] },
-                  },
-                },
-              },
-            ],
-          },
-          testScores: "$testSubmissions.score",
-          testSum: { $sum: "$testSubmissions.score" },
-          exceptions: "$exceptions",
-          allActivities: {
-            $concatArrays: [
-              "$attendanceRecords",
-              "$testSubmissions",
-              "$exceptions",
-            ],
-          },
-        },
-      },
-    ]);
+
+    const courseData = courseQuery.docs[0].data();
+    const studentsEnrolled = courseData.studentsEnrolled || [];
+    const tests = courseData.tests || [];
+    const testIds = tests.map((t) => t.id).filter(Boolean);
+
+    if (studentsEnrolled.length === 0) {
+      logControllerPerformance(controllerName, action, startTime, "success");
+      return res.status(200).json({ success: true, data: [] });
+    }
+    const batchSize = 30;
+    const studentsMap = new Map();
+
+    for (let i = 0; i < studentsEnrolled.length; i += batchSize) {
+      const batchIds = studentsEnrolled.slice(i, i + batchSize);
+      const usersQuery = await User.where("uid", "in", batchIds).get();
+      usersQuery.forEach((doc) => {
+        const uData = doc.data();
+        studentsMap.set(uData.uid, uData);
+      });
+    }
+    const attendanceSnapshot = await Attendance.where("courseId", "==", courseId).get();
+    const attendanceByStudent = new Map();
+    attendanceSnapshot.forEach((doc) => {
+      const att = doc.data();
+      const sId = att.studentId;
+      if (!attendanceByStudent.has(sId)) {
+        attendanceByStudent.set(sId, []);
+      }
+      attendanceByStudent.get(sId).push(att);
+    });
+    const testSubmissionsByStudent = new Map();
+    if (testIds.length > 0) {
+      for (let i = 0; i < testIds.length; i += batchSize) {
+        const batchTestIds = testIds.slice(i, i + batchSize);
+        const subSnapshot = await TestSubmission.where("testId", "in", batchTestIds).get();
+        subSnapshot.forEach((doc) => {
+          const sub = doc.data();
+          const sId = sub.studentId;
+          if (!testSubmissionsByStudent.has(sId)) {
+            testSubmissionsByStudent.set(sId, []);
+          }
+          testSubmissionsByStudent.get(sId).push(sub);
+        });
+      }
+    }
+    const exceptionsSnapshot = await Exceptions.where("courseId", "==", courseId).get();
+    const exceptionsByStudent = new Map();
+    exceptionsSnapshot.forEach((doc) => {
+      const ex = doc.data();
+      const sId = ex.studentId;
+      if (!exceptionsByStudent.has(sId)) {
+        exceptionsByStudent.set(sId, []);
+      }
+      exceptionsByStudent.get(sId).push(ex);
+    });
+    const gradebookData = [];
+
+    for (const studentId of studentsEnrolled) {
+      const student = studentsMap.get(studentId) || {
+        uid: studentId,
+        firstname: "",
+        lastname: "",
+        matricNumber: "N/A",
+      };
+
+      const studentName =
+        student.firstname && student.lastname
+          ? `${student.firstname} ${student.lastname}`
+          : student.name || "Unknown Student";
+      const matricNumber = student.matricNumber || "N/A";
+
+      const attendanceRecords = attendanceByStudent.get(studentId) || [];
+      const testSubmissions = testSubmissionsByStudent.get(studentId) || [];
+      const exceptions = exceptionsByStudent.get(studentId) || [];
+
+      const presentAttendanceCount = attendanceRecords.filter(
+        (rec) => rec.status === "Present"
+      ).length;
+
+      const approvedExceptionsCount = exceptions.filter(
+        (ex) => ex.status === "approved"
+      ).length;
+
+      const attendanceSum = presentAttendanceCount + approvedExceptionsCount;
+      const testScores = testSubmissions.map((sub) => sub.score || 0);
+      const testSum = testScores.reduce((acc, curr) => acc + curr, 0);
+
+      const allActivities = [
+        ...attendanceRecords,
+        ...testSubmissions,
+        ...exceptions,
+      ];
+
+      gradebookData.push({
+        _id: student.uid || studentId,
+        studentName,
+        matricNumber,
+        attendanceCount: attendanceRecords.length,
+        attendanceSum,
+        testScores,
+        testSum,
+        exceptions,
+        allActivities,
+      });
+    }
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ success: true, data: gradebookData });
+    return res.status(200).json({ success: true, data: gradebookData });
   } catch (error) {
+    console.error("Gradebook Engine Error:", error.message);
     logControllerPerformance(
       controllerName,
       action,
@@ -3306,6 +3620,6 @@ export const getCourseGradebook = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ message: error.message });
   }
 };
