@@ -2235,6 +2235,7 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
       return {
         uid: u.uid,
         firstname: u.firstname,
+        email: u.email,
         username: u.username,
         lastname: u.lastname,
         profilePic: u.profilePic,
@@ -2244,6 +2245,20 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
         organizationName: u.organizationName || "",
         displayScore:
           isEnterprise || isPro ? Math.round(u.currentIScore || 0) : "Locked",
+        bio: isAdmin ? u.bio : "",
+        pointsBalance: isAdmin ? u.pointsBalance : "",
+        pendingSalesBalance: isAdmin ? u.pendingSalesBalance : "",
+        website: isAdmin ? u.website : "",
+        headline: isAdmin ? u.headline : "",
+        department: isAdmin ? u.department : "",
+        staffId: isAdmin ? u.staffId : "",
+        matricNumber: isAdmin ? u.matricNumber : "",
+        itagusername: isAdmin ? u.itagusername : "",
+        schoolName: isAdmin ? u.schoolName : "",
+        country: isAdmin ? u.country : "",
+        current_level: isAdmin ? u.current_level : "",
+        isSuspended: isAdmin ? u.isSuspended : "",
+        twoFactorEnabled: isAdmin ? u.twoFactorEnabled : "",
       };
     });
 
