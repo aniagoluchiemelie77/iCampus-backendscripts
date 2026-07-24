@@ -1362,7 +1362,6 @@ export const verifyLecturer = async (req, res) => {
         message: "Instructor credentials not found in school records",
       });
     }
-
     const externalLecturer = await portalResponse.json();
     const lecturerData = {
       firstname: externalLecturer.first_name,
