@@ -25,7 +25,7 @@ export const DELIVERY_FEES = Object.freeze({
     drop_off: 0.02,
   },
 });
-export const TAX_RATE = 0.02;
+export const TAX_RATE = 0.05;
 
 export const CATEGORY_ROLES = Object.freeze({
   security: ["super_admin"],

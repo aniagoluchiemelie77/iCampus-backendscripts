@@ -9,6 +9,7 @@ import {
   ControllerLog,
   SchoolConfiguration,
   Posts,
+  TaxEntries,
 } from "../tableDeclarations.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { createNotification } from "../services/notification.js";
@@ -327,6 +328,7 @@ export const getAdminMetrics = async (req, res) => {
       recentStationsSnapshot,
       totalStationsCount,
       latencySnapshot,
+      taxesSnapshot,
     ] = await Promise.all([
       User.where("isSuspended", "==", false).get(),
       Transactions.where("status", "==", "success").get(),
@@ -338,7 +340,8 @@ export const getAdminMetrics = async (req, res) => {
       OperationalInstitutions.get().then((snap) => snap.size),
       DropOffStation.orderBy("createdAt", "desc").limit(10).get(),
       DropOffStation.get().then((snap) => snap.size),
-      ControllerLog.get(),
+      ControllerLog.limit(10).get(),
+      TaxEntries.orderBy("date", "desc").limit(10).get(),
     ]);
     let totalLiquidity = 0;
     let totalUsers = 0;
@@ -425,6 +428,10 @@ export const getAdminMetrics = async (req, res) => {
       id: doc.id,
       ...doc.data(),
     }));
+    const recentTaxes = taxesSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
     res.json({
       activeUsers: totalUsers,
       platformLiquidity: totalLiquidity,
@@ -444,6 +451,7 @@ export const getAdminMetrics = async (req, res) => {
           ? liquidityTrend
           : { labels: [], inFlow: [], outFlow: [] },
       locationStats: locationStats,
+      recentTaxes,
     });
   } catch (error) {
     console.error("Dashboard Stats Error:", error);

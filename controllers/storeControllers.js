@@ -9,6 +9,7 @@ import {
   Payout,
   DropOffStation,
   Follow,
+  TaxEntries,
 } from "../tableDeclarations.js";
 import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
@@ -591,8 +592,28 @@ export const initializeCheckout = async (req, res) => {
             ? item.selectedStation.agentId
             : null;
         const itemTotal = item.price * item.quantity;
+        const netEarnings = itemTotal * PAYOUT_FACTOR;
+        const productTaxAmount = itemTotal - netEarnings;
+        if (productTaxAmount > 0) {
+          const taxEntryId = generateTransactionId("appTax");
+          const taxDocRef = TaxEntries.doc(taxEntryId);
+
+          transaction.set(taxDocRef, {
+            transactionReference: `REF-${buyerTxId}`,
+            taxType: "product_tax",
+            amount: productTaxAmount,
+            currency: "iCash",
+            date: new Date(),
+            sourceDetails: {
+              buyerId: buyerId,
+              sellerId: item.sellerId,
+              productId: item.productId,
+              relatedTransactionId: orderId,
+            },
+            createdAt: new Date(),
+          });
+        }
         if (productData.type === "file" || productData.type === "course") {
-          const netEarnings = itemTotal * PAYOUT_FACTOR;
           const updatedPendingSales =
             (sellerData.pendingSalesBalance || 0) + netEarnings;
           const salesIncrement =
@@ -730,12 +751,10 @@ export const initializeCheckout = async (req, res) => {
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res
-      .status(200)
-      .json({
-        success: true,
-        data: processedResults.processedResults.map((r) => r.order),
-      });
+    res.status(200).json({
+      success: true,
+      data: processedResults.processedResults.map((r) => r.order),
+    });
   } catch (error) {
     logControllerPerformance(
       controllerName,

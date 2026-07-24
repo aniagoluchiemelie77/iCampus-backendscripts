@@ -4,6 +4,7 @@ import {
   Transactions,
   AccountStatement,
   PaymentMethods,
+  TaxEntries,
 } from "../tableDeclarations.js";
 import {
   generateTransactionId,
@@ -360,6 +361,22 @@ export const initializeWithdraw = async (req, res) => {
       await Transactions.doc(transactionId).update({
         status: "success",
         updatedAt: new Date(),
+      });
+      const taxEntryId = generateTransactionId("appTax");
+      const taxDocRef = TaxEntries.doc(taxEntryId);
+      await taxDocRef.set({
+        transactionReference: idempotencyKey,
+        taxType: "withdrawal_tax",
+        amount: fee,
+        currency: "iCash",
+        date: now,
+        sourceDetails: {
+          userId: userId,
+          relatedTransactionId: transactionId,
+          iCashAmountDeducted: iCashAmount,
+          localAmountReceived: amountToReceive,
+        },
+        createdAt: now,
       });
 
       createNotification({

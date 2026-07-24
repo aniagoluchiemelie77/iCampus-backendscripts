@@ -11,6 +11,7 @@ import {
   Course,
   Attendance,
   UserDownloads,
+  TaxEntries,
 } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
 import { generateCertificatePDF } from "../templates/downloadsCertificateTemplate.js";
@@ -205,7 +206,8 @@ export const submitLectureException = async (req, res) => {
   const action = "submitLectureException";
 
   try {
-    const { courseId, lectureId, reason, reasonCategory, courseInfo } = req.body;
+    const { courseId, lectureId, reason, reasonCategory, courseInfo } =
+      req.body;
     const studentId = req.user?.uid || req.user?.id;
     const userQuery = await User.where("uid", "==", studentId).limit(1).get();
     if (userQuery.empty) {
@@ -221,7 +223,9 @@ export const submitLectureException = async (req, res) => {
 
     const userDocRef = userQuery.docs[0].ref;
     const user = userQuery.docs[0].data();
-    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    const lectureQuery = await Lectures.where("id", "==", lectureId)
+      .limit(1)
+      .get();
     let lectureTopic = "Lecture";
     if (!lectureQuery.empty) {
       const lectureData = lectureQuery.docs[0].data();
@@ -232,8 +236,11 @@ export const submitLectureException = async (req, res) => {
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    const monthlyExceptionsQuery = await Exceptions
-      .where("studentId", "==", studentId)
+    const monthlyExceptionsQuery = await Exceptions.where(
+      "studentId",
+      "==",
+      studentId,
+    )
       .where("createdAt", ">=", startOfMonth)
       .get();
 
@@ -249,7 +256,7 @@ export const submitLectureException = async (req, res) => {
       if (isPaidRequest) {
         if (currentBalance < EXCEPTION_COST_IN_ICASH) {
           throw new Error(
-            `Monthly free limit (${userLimit}) reached. This exception costs ${EXCEPTION_COST_IN_ICASH} iCash, and your balance is insufficient.`
+            `Monthly free limit (${userLimit}) reached. This exception costs ${EXCEPTION_COST_IN_ICASH} iCash, and your balance is insufficient.`,
           );
         }
 
@@ -257,7 +264,6 @@ export const submitLectureException = async (req, res) => {
         chargedAmount = EXCEPTION_COST_IN_ICASH;
 
         t.update(userDocRef, {
-          iCashBalance: newBalance,
           pointsBalance: newBalance,
           updatedAt: now,
         });
@@ -267,7 +273,7 @@ export const submitLectureException = async (req, res) => {
           transactionId: senderTransactionId,
           userId: user.uid,
           type: "payment",
-          amountICash: EXCEPTION_COST_IN_ICASH,
+          amountICash: chargedAmount,
           status: "success",
           payType: "out",
           title: "Lectures Exception Purchase (Over Tier Limit)",
@@ -277,7 +283,8 @@ export const submitLectureException = async (req, res) => {
         });
       }
 
-      const studentName = `${user.firstname || ""} ${user.lastname || ""}`.trim();
+      const studentName =
+        `${user.firstname || ""} ${user.lastname || ""}`.trim();
       const studentMatric = user.matricNumber || "N/A";
       const exceptionId = generateExceptionId(courseId, lectureId);
 
@@ -343,7 +350,10 @@ export const submitLectureException = async (req, res) => {
       "error",
       error.message,
     );
-    const statusCode = error.message.includes("insufficient") || error.message.includes("limit") ? 402 : 500;
+    const statusCode =
+      error.message.includes("insufficient") || error.message.includes("limit")
+        ? 402
+        : 500;
     return res.status(statusCode).json({ message: error.message });
   }
 };
@@ -354,8 +364,7 @@ export const checkTestStatus = async (req, res) => {
   try {
     const { assessmentId } = req.params;
     const studentId = req.user?.uid || req.user?.id;
-    const assessmentQuery = await Assessment
-      .where("id", "==", assessmentId)
+    const assessmentQuery = await Assessment.where("id", "==", assessmentId)
       .limit(1)
       .get();
 
@@ -372,8 +381,11 @@ export const checkTestStatus = async (req, res) => {
 
     const testDoc = assessmentQuery.docs[0];
     const test = { id: testDoc.id, ...testDoc.data() };
-    const submissionQuery = await TestSubmission
-      .where("testId", "==", assessmentId)
+    const submissionQuery = await TestSubmission.where(
+      "testId",
+      "==",
+      assessmentId,
+    )
       .where("studentId", "==", studentId)
       .limit(1)
       .get();
@@ -407,7 +419,9 @@ export const manageExceptions = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
     const currentLecturerUid = req.user?.uid || req.user?.id;
-    const exceptionQuery = await Exceptions.where("id", "==", id).limit(1).get();
+    const exceptionQuery = await Exceptions.where("id", "==", id)
+      .limit(1)
+      .get();
     if (exceptionQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -440,43 +454,74 @@ export const manageExceptions = async (req, res) => {
 
     await db.runTransaction(async (t) => {
       if (status === "approved") {
-        const txQuery = await Transactions
-          .where("reference", "==", `EXC-REF-${id}`)
+        const txQuery = await Transactions.where(
+          "reference",
+          "==",
+          `EXC-REF-${id}`,
+        )
           .where("status", "==", "success")
           .where("type", "==", "payment")
           .limit(1)
           .get();
 
         if (!txQuery.empty) {
-          const lecturerQuery = await User.where("uid", "==", currentLecturerUid).limit(1).get();
+          const studentPaymentTx = txQuery.docs[0].data();
+          const totalCharged = studentPaymentTx.amountICash;
+          const lecturerShare = 0.4;
+          const appTaxShare = totalCharged - lecturerShare;
+          const lecturerQuery = await User.where(
+            "uid",
+            "==",
+            currentLecturerUid,
+          )
+            .limit(1)
+            .get();
           if (!lecturerQuery.empty) {
             const lecturerDocRef = lecturerQuery.docs[0].ref;
             const lecturerData = lecturerQuery.docs[0].data();
 
-            const currentPoints = lecturerData.iCashBalance ?? lecturerData.pointsBalance ?? 0;
-            lecturerNewBalance = currentPoints + EXCEPTION_LECTURER_DIVIDEND_IN_ICASH;
+            const currentPoints =
+              lecturerData.iCashBalance ?? lecturerData.pointsBalance ?? 0;
+            lecturerNewBalance = currentPoints + lecturerShare;
 
             t.update(lecturerDocRef, {
-              iCashBalance: lecturerNewBalance,
               pointsBalance: lecturerNewBalance,
               updatedAt: now,
             });
+
             const transactionId = generateTransactionId("exceptionsDividend");
             const divTxRef = Transactions.doc(transactionId);
             t.set(divTxRef, {
               transactionId,
               userId: currentLecturerUid,
               type: "exceptionsDividend",
-              amountICash: EXCEPTION_LECTURER_DIVIDEND_IN_ICASH,
+              amountICash: lecturerShare,
               status: "success",
               payType: "in",
               title: `Lectures Exception Dividend for ${exception.courseInfo?.courseTitle || "Course"}`,
               reference: `EXC-REF-${id}`,
               metadata: {
                 recipientId: currentLecturerUid,
+                source: "exception_split",
               },
               createdAt: now,
               updatedAt: now,
+            });
+            const taxEntryId = generateTransactionId("appTax");
+            const taxDocRef = TaxEntries.doc(taxEntryId);
+
+            t.set(taxDocRef, {
+              transactionReference: `EXC-REF-${id}`,
+              taxType: "exception_tax",
+              amount: appTaxShare,
+              currency: "iCash",
+              date: now,
+              sourceDetails: {
+                studentId: exception.studentId,
+                lecturerId: currentLecturerUid,
+                relatedTransactionId: transactionId,
+              },
+              createdAt: now,
             });
           }
         }
@@ -487,8 +532,12 @@ export const manageExceptions = async (req, res) => {
       });
     });
 
-    const studentQuery = await User.where("uid", "==", exception.studentId).limit(1).get();
-    const lectureQuery = await Lectures.where("id", "==", exception.lectureId).limit(1).get();
+    const studentQuery = await User.where("uid", "==", exception.studentId)
+      .limit(1)
+      .get();
+    const lectureQuery = await Lectures.where("id", "==", exception.lectureId)
+      .limit(1)
+      .get();
 
     let studentEmail = "";
     let studentUid = exception.studentId;
@@ -501,7 +550,8 @@ export const manageExceptions = async (req, res) => {
     let lectureTopicName = "your course";
     if (!lectureQuery.empty) {
       const lectureData = lectureQuery.docs[0].data();
-      lectureTopicName = lectureData.topicName || lectureData.title || "your course";
+      lectureTopicName =
+        lectureData.topicName || lectureData.title || "your course";
     }
 
     await createNotification({

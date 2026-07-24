@@ -1126,6 +1126,53 @@ export const controllerLogSchema = new mongoose.Schema({
   latency: Number,
   timestamp: { type: Date, default: Date.now, expires: "30d" },
 });
+export const taxEntrySchema = new mongoose.Schema(
+  {
+    transactionReference: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      index: true,
+    },
+    taxType: {
+      type: String,
+      required: true,
+      enum: ["product_tax", "withdrawal_tax", "exception_tax"],
+      index: true,
+    },
+    amount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+    currency: {
+      type: String,
+      default: "iCash",
+      required: true,
+    },
+    date: {
+      type: Date,
+      required: true,
+      default: Date.now,
+      index: true,
+    },
+    sourceDetails: {
+      userId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        required: false,
+      },
+      relatedTransactionId: {
+        type: String,
+        required: false,
+      },
+    },
+  },
+  {
+    timestamps: true,
+  },
+);
 
 supportTicketSchema.index({ category: 1, status: 1 });
 userSchema.index(
@@ -1145,7 +1192,7 @@ impressionLogSchema.index(
   { userId: 1, productId: 1, monthYear: 1 },
   { unique: true },
 );
-
+taxEntrySchema.index({ taxType: 1, date: 1 });
 exceptionSchema.index({ studentId: 1, date: -1 });
 EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 attendanceSchema.index({ studentId: 1, lectureId: 1 }, { unique: true });
