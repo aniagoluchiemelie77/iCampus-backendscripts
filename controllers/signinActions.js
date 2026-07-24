@@ -1259,6 +1259,7 @@ export const verifyStudent = async (req, res) => {
       department: schoolStudent.faculty_dept,
       current_level: schoolStudent.level,
       schoolAvatarUrl: schoolStudent.profile_picture_url,
+      email: schoolStudent.email,
       isStillInSchool: schoolStudent.isStillInSchool,
       matricNumber: matriculation_number,
       isVerified: true,
@@ -1368,6 +1369,8 @@ export const verifyLecturer = async (req, res) => {
       lastname: externalLecturer.last_name,
       department: externalLecturer.department,
       staff_id: externalLecturer.staff_id,
+      schoolAvatarUrl: externalLecturer.profile_picture_url,
+      email: externalLecturer.email,
     };
 
     logControllerPerformance(controllerName, action, startTime, "success");
