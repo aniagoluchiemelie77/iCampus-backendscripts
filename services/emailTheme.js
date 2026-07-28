@@ -19,7 +19,7 @@ export const theme = {
     supportEmail: "@inbound.useicampus.io.",
     supportEmailMain: "support@inbound.useicampus.io.",
     websiteUrl: "https://useicampus.io",
-    appDashboardUrl: "https://useicampus.io/home",
+    appDashboardUrl: "https://useicampus.io/login",
     appReviewsScreenUrl: "https://useicampus.io/reviews",
   },
   typography: {

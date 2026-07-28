@@ -22,6 +22,8 @@ import {
 } from "../utils/idGenerator.js";
 import { generateTaxStatementPDF } from "../templates/taxEntriesTemplate.js";
 import { storage } from "../config/firebaseAdmin.js";
+import { taxReportEmailTemplate } from "../services/emailTemplates.js";
+import { sendEmail } from "../services/emailService.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -942,8 +944,7 @@ export const downloadTaxReport = async (req, res) => {
   const action = "downloadTaxReport";
 
   try {
-    const { colors } = theme;
-    const { month, year } = req.query;
+    const { month, year, adminEmail } = req.query;
 
     if (!month || !year) {
       return res.status(400).json({
@@ -1033,12 +1034,32 @@ export const downloadTaxReport = async (req, res) => {
         createdAt: new Date(),
       });
     }
+    const monthName = start.toLocaleString("en-US", { month: "long" });
+    const emailHtml = taxReportEmailTemplate(
+      monthName,
+      year,
+      totalTaxAmount,
+      firebaseUrl,
+    );
+    await sendEmail({
+      to: adminEmail || process.env.POSTMARK_SENDER_SIGNATURE,
+      subject: `iCampus Tax Report: ${monthName} ${year}`,
+      text: `The iCampus tax report for ${monthName} ${year} has been generated. Total Tax: ${totalTaxAmount} iCash.`,
+      html: emailHtml,
+      attachments: [
+        {
+          filename: `iCampus_Tax_Report_${year}_${month}.pdf`,
+          content: pdfBuffer,
+          contentType: "application/pdf",
+        },
+      ],
+    });
 
     logControllerPerformance(controllerName, action, startTime, "success");
 
     return res.status(200).json({
       success: true,
-      message: "Tax report generated successfully.",
+      message: "Tax report generated successfully and emailed.",
       pdfUrl: firebaseUrl,
     });
   } catch (error) {
