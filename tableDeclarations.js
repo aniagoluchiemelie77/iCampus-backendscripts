@@ -41,3 +41,4 @@ export const ControllerLog = db.collection("logs");
 export const Comments = db.collection("postcomments");
 export const PostReposters = db.collection("postreposters");
 export const TaxEntries = db.collection("taxentries");
+export const TaxStatements = db.collection("taxstatements");

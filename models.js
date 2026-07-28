@@ -1173,47 +1173,36 @@ export const taxEntrySchema = new mongoose.Schema(
     timestamps: true,
   },
 );
-
-supportTicketSchema.index({ category: 1, status: 1 });
-userSchema.index(
-  { matricNumber: 1, department: 1 },
-  { unique: true, partialFilterExpression: { usertype: "student" } },
-);
-userSchema.index(
-  { staff_id: 1, department: 1 },
-  { unique: true, partialFilterExpression: { usertype: "lecturer" } },
-);
-
-assessmentSchema.index({ courseId: 1, title: 1 });
-commentSchema.add({
-  replies: [commentSchema],
-});
-impressionLogSchema.index(
-  { userId: 1, productId: 1, monthYear: 1 },
-  { unique: true },
-);
-taxEntrySchema.index({ taxType: 1, date: 1 });
-exceptionSchema.index({ studentId: 1, date: -1 });
-EmailVerificationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-attendanceSchema.index({ studentId: 1, lectureId: 1 }, { unique: true });
-postSchema.index(
+export const taxStatementSchema = new mongoose.Schema(
   {
-    content: "text",
-    "comments.comment": "text",
-    "jobMetadata.title": "text",
-    "jobMetadata.company": "text",
-    "eventMetadata.title": "text",
-    createdAt: -1,
-  },
-  {
-    weights: {
-      "jobMetadata.title": 5,
-      "eventMetadata.title": 5,
-      content: 3,
-      "comments.comment": 1,
+    statementId: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+      index: true,
     },
-    name: "icampus_post_text_search_index",
+    startDate: {
+      type: Date,
+      required: true,
+      index: true,
+    },
+    endDate: {
+      type: Date,
+      required: true,
+      index: true,
+    },
+    pdfUrl: {
+      type: String,
+      required: true,
+    },
+    totalTaxAmount: {
+      type: Number,
+      required: true,
+      min: 0,
+    },
+  },
+  {
+    timestamps: true,
   },
 );
-
-//Go to your Firestore Database > Data tab, click on your emailVerifications collection, and select Set TTL field. Choose your expiresAt timestamp field. Firestore will automatically delete documents after that time passes.

@@ -10,6 +10,7 @@ import {
   SchoolConfiguration,
   Posts,
   TaxEntries,
+  TaxStatements,
 } from "../tableDeclarations.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { createNotification } from "../services/notification.js";
@@ -19,6 +20,8 @@ import {
   generatePostId,
   generateStationId,
 } from "../utils/idGenerator.js";
+import { generateTaxStatementPDF } from "../templates/taxEntriesTemplate.js";
+import { storage } from "../config/firebaseAdmin.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -886,5 +889,167 @@ export const getStationDetails = async (req, res) => {
     });
   } catch (error) {
     res.status(500).json({ message: "Server error" });
+  }
+};
+export const getTaxEntries = async (req, res) => {
+  try {
+    let { page = 1, limit = 10 } = req.query;
+    page = parseInt(page);
+    limit = parseInt(limit);
+    let query = TaxEntries.orderBy("date", "desc");
+    const snapshot = await query.get();
+    const totalDocs = snapshot.size;
+    const totalPages = Math.ceil(totalDocs / limit) || 1;
+    const paginatedDocs = snapshot.docs.slice((page - 1) * limit, page * limit);
+
+    const items = paginatedDocs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        transactionReference: data.transactionReference,
+        taxType: data.taxType,
+        amount: data.amount,
+        currency: data.currency,
+        date: data.date?.toDate ? data.date.toDate() : data.date,
+        sourceDetails: data.sourceDetails
+          ? {
+              userId: data.sourceDetails.userId,
+              relatedTransactionId: data.sourceDetails.relatedTransactionId,
+            }
+          : null,
+      };
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: items,
+      currentPage: page,
+      totalPages: totalPages,
+      totalEntries: totalDocs,
+      message: "Tax entries loaded successfully",
+    });
+  } catch (error) {
+    console.error("Get Tax Entries Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching tax entries",
+    });
+  }
+};
+export const downloadTaxReport = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "downloadTaxReportController";
+  const action = "downloadTaxReport";
+
+  try {
+    const { colors } = theme;
+    const { month, year } = req.query;
+
+    if (!month || !year) {
+      return res.status(400).json({
+        success: false,
+        message: "Month and year parameters are required",
+      });
+    }
+
+    if (parseInt(year) < 2026) {
+      return res.status(400).json({
+        success: false,
+        message: "Reports are only available from year 2026 onwards",
+      });
+    }
+
+    const start = new Date(
+      Date.UTC(parseInt(year), parseInt(month) - 1, 1, 0, 0, 0, 0),
+    );
+    const end = new Date(
+      Date.UTC(parseInt(year), parseInt(month), 0, 23, 59, 59, 999),
+    );
+
+    const statementQuery = await TaxStatements.where("startDate", "==", start)
+      .where("endDate", "==", end)
+      .limit(1)
+      .get();
+
+    let firebaseUrl;
+    let totalTaxAmount = 0;
+    let pdfBuffer;
+
+    const bucket = storage.bucket();
+    const filePath = `tax-statements/iCampus/TaxReport-${year}-${month}.pdf`;
+    const file = bucket.file(filePath);
+
+    if (!statementQuery.empty) {
+      const existingStatement = statementQuery.docs[0].data();
+      firebaseUrl = existingStatement.pdfUrl;
+      totalTaxAmount = existingStatement.totalTaxAmount || 0;
+
+      const [downloadBuffer] = await file.download();
+      pdfBuffer = downloadBuffer;
+    } else {
+      const taxQuery = await TaxEntries.where("date", ">=", start)
+        .where("date", "<=", end)
+        .orderBy("date", "desc")
+        .get();
+
+      const history = [];
+      taxQuery.forEach((doc) => {
+        const data = doc.data();
+        totalTaxAmount += data.amount || 0;
+        history.push({
+          ...data,
+          date: data.date?.toDate ? data.date.toDate() : data.date,
+        });
+      });
+
+      if (history.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: `No tax records found for ${month}/${year}.`,
+        });
+      }
+
+      pdfBuffer = await generateTaxStatementPDF({
+        start,
+        end,
+        totalTaxAmount,
+        history,
+      });
+
+      await file.save(pdfBuffer, {
+        metadata: { contentType: "application/pdf" },
+        public: true,
+      });
+
+      firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
+
+      const statementId = `tax-stmt-icampus-${year}-${month}`;
+      await TaxStatements.doc(statementId).set({
+        statementId,
+        startDate: start,
+        endDate: end,
+        pdfUrl: firebaseUrl,
+        totalTaxAmount,
+        createdAt: new Date(),
+      });
+    }
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+
+    return res.status(200).json({
+      success: true,
+      message: "Tax report generated successfully.",
+      pdfUrl: firebaseUrl,
+    });
+  } catch (error) {
+    console.error("Download Tax Report Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    return res.status(500).json({ success: false, message: error.message });
   }
 };

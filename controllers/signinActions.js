@@ -1225,7 +1225,7 @@ export const verifyStudent = async (req, res) => {
     const schoolApiResponse = await fetch(
       schoolConfig.externalApiConfig.endpoint,
       {
-        method: "POST",
+        method: "GET",
         headers: {
           "Content-Type": "application/json",
           "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
@@ -1338,7 +1338,7 @@ export const verifyLecturer = async (req, res) => {
     const portalResponse = await fetch(
       schoolConfig.externalApiConfig.endpoint,
       {
-        method: "POST",
+        method: "GET",
         headers: {
           "Content-Type": "application/json",
           "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,

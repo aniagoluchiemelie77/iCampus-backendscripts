@@ -23,6 +23,8 @@ import {
   updateStation,
   getInstitutionDetails,
   getStationDetails,
+  getTaxEntries,
+  downloadTaxReport,
 } from "../controllers/adminActions.js";
 
 const router = express.Router();
@@ -87,5 +89,7 @@ router.get(
   verifyAdmin,
   getStationDetails,
 );
+router.get("/tax-entries/fetch", protect, verifyAdmin, getTaxEntries);
+router.get("/tax-entries/download", protect, verifyAdmin, downloadTaxReport);
 
 export default router;
