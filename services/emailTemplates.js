@@ -12,24 +12,7 @@ const sanitize = (str) => {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 };
-export const emailWrapper = (content) => `
-  <div style="background-color: ${colors.background}; padding: 40px 0; font-family: ${typography.fontFamily};">
-    <div style="max-width: 600px; margin: 0 auto; background: ${colors.white}; border-radius: 8px; overflow: hidden; border: 1px solid #e1e4e8;">
-      <div style="background-color: ${colors.primary}; padding: 20px; text-align: center;">
-        <img src="${branding.logoUrl}" alt="${branding.companyName}" style="width: 150px;">
-      </div>
-      
-      <div style="padding: 30px; line-height: 1.6; color: ${colors.text}; font-size: ${typography.fontSize};">
-        ${content}
-      </div>
 
-      <div style="padding: 20px; text-align: center; font-size: 12px; color: ${colors.muted}; border-top: 1px solid #eee;">
-        <p>&copy; ${new Date().getFullYear()} ${branding.companyName}. All rights reserved.</p>
-        <p>Visit us at <a href="${branding.websiteUrl}" style="color: ${colors.primary};">${branding.websiteUrl}</a></p>
-      </div>
-    </div>
-  </div>
-`;
 export const welcomeEmailTemplate = (userName) => {
   const body = `
     <p style="font-size: 16px; color: ${colors.text}; line-height: 1.5;">Hello ${userName},</p>
@@ -63,7 +46,7 @@ export const welcomeEmailTemplate = (userName) => {
       </p>
     </div>
   `;
-  return emailWrapper(body);
+  return body;
 };
 export const loginAlertTemplate = (
   userName,
@@ -99,7 +82,7 @@ export const loginAlertTemplate = (
       </p>
     </div>
   `;
-  return emailWrapper(body);
+  return body;
 };
 export const passwordResetSuccessTemplate = (userName, date, time, userId) => {
   const { colors, branding } = theme;
@@ -145,7 +128,7 @@ export const passwordResetSuccessTemplate = (userName, date, time, userId) => {
       </tr>
     </table>
   `;
-  return emailWrapper(body);
+  return body;
 };
 export const testCreatedTemplate = (
   userName,
@@ -190,7 +173,7 @@ export const testCreatedTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const emailVerificationTemplate = (code) => {
   const safeCode = sanitize(code);
@@ -225,7 +208,7 @@ export const emailVerificationTemplate = (code) => {
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const lectureScheduledTemplate = (
   userName,
@@ -314,7 +297,7 @@ export const lectureScheduledTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const passwordResetTemplate = (userName, code, expiryTime) => {
   const safeUserName = sanitize(userName);
@@ -352,7 +335,7 @@ export const passwordResetTemplate = (userName, code, expiryTime) => {
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const icashPinResetTemplate = (userName, code) => {
   const safeUserName = sanitize(userName);
@@ -419,7 +402,7 @@ export const icashPinResetTemplate = (userName, code) => {
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const iCashPurchaseTemplate = (
   userName,
@@ -499,7 +482,7 @@ export const iCashPurchaseTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const iCashWithdrawalTemplate = (
   userName,
@@ -583,7 +566,7 @@ export const iCashWithdrawalTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const iCashSuccessfulPinResetTemplate = (userName, time) => {
   const sanitizeEmailHref = (email) => {
@@ -638,7 +621,7 @@ export const iCashSuccessfulPinResetTemplate = (userName, time) => {
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const subscriptionUpgradeTemplate = (
   userName,
@@ -747,7 +730,7 @@ export const subscriptionUpgradeTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const newOrderTemplate = (
   buyerName,
@@ -860,7 +843,7 @@ export const newOrderTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const marketplacePurchaseTemplate = (
   userName,
@@ -968,7 +951,7 @@ export const marketplacePurchaseTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const orderCompletedTemplate = (
   userName,
@@ -1046,7 +1029,7 @@ export const orderCompletedTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const orderReviewTemplate = (
   userName,
@@ -1119,7 +1102,7 @@ export const orderReviewTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const orderCancelledEmailTemplate = (
   sellerName,
@@ -1190,7 +1173,7 @@ export const orderCancelledEmailTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const courseCompletionEmailTemplate = (
   userName,
@@ -1268,7 +1251,7 @@ export const courseCompletionEmailTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const salesPayoutTemplate = (
   username,
@@ -1355,7 +1338,7 @@ export const salesPayoutTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const productCreationTemplate = (
   username,
@@ -1445,7 +1428,7 @@ export const productCreationTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const productUpdateTemplate = (
   username,
@@ -1535,7 +1518,7 @@ export const productUpdateTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const productDeletionTemplate = (
   username,
@@ -1592,7 +1575,7 @@ export const productDeletionTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const orderDroppedOffEmailTemplate = (
   userName,
@@ -1657,7 +1640,7 @@ export const orderDroppedOffEmailTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const agentAwaitingPickupEmailTemplate = (
   agentName,
@@ -1709,7 +1692,7 @@ export const agentAwaitingPickupEmailTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const newAdminWelcomeTemplate = (adminName, creatorName) => {
   const safeAdminName = sanitize(adminName);
@@ -1746,7 +1729,7 @@ export const newAdminWelcomeTemplate = (adminName, creatorName) => {
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const supportTicketReceivedTemplate = (
   userName,
@@ -1807,7 +1790,7 @@ export const supportTicketReceivedTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const supportTicketResolvedTemplate = (
   userName,
@@ -1815,15 +1798,14 @@ export const supportTicketResolvedTemplate = (
   date,
   time,
 ) => {
-
   const safeUserName = sanitize(userName);
   const safeTicketRefId = sanitize(ticketRefId);
   const safeDate = sanitize(date);
   const safeTime = sanitize(time);
 
-  const primaryColor = theme?.colors?.primary || '#3b82f6';
-  const bgColor = theme?.colors?.background || '#f8f9fa';
-  const textColor = colors?.text || '#333333';
+  const primaryColor = theme?.colors?.primary || "#3b82f6";
+  const bgColor = theme?.colors?.background || "#f8f9fa";
+  const textColor = colors?.text || "#333333";
 
   const body = `
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
@@ -1869,7 +1851,7 @@ export const supportTicketResolvedTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const supportTicketReplyTemplate = (
   userName,
@@ -1878,16 +1860,15 @@ export const supportTicketReplyTemplate = (
   date,
   time,
 ) => {
-
   const safeUserName = sanitize(userName);
   const safeTicketRefId = sanitize(ticketRefId);
   const safeAdminMessage = sanitize(adminMessage);
   const safeDate = sanitize(date);
   const safeTime = sanitize(time);
 
-  const primaryColor = theme?.colors?.primary || '#3b82f6';
-  const bgColor = theme?.colors?.background || '#f8f9fa';
-  const textColor = colors?.text || '#333333';
+  const primaryColor = theme?.colors?.primary || "#3b82f6";
+  const bgColor = theme?.colors?.background || "#f8f9fa";
+  const textColor = colors?.text || "#333333";
 
   const body = `
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
@@ -1946,7 +1927,7 @@ export const supportTicketReplyTemplate = (
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const suspiciousPasswordChangeTemplate = (payload, isSuspicious) => {
   const safeUserEmail = sanitize(payload?.userEmail);
@@ -1954,10 +1935,10 @@ export const suspiciousPasswordChangeTemplate = (payload, isSuspicious) => {
   const safeCurrentLocation = sanitize(payload?.currentLocation);
   const safePreviousLocation = sanitize(payload?.previousLocation);
 
-  const dangerColor = theme?.colors?.danger || '#ef4444';
-  const warningColor = theme?.colors?.warning || '#f59e0b';
-  const textColor = theme?.colors?.text || '#333333';
-  const bgColor = theme?.colors?.background || '#f8f9fa';
+  const dangerColor = theme?.colors?.danger || "#ef4444";
+  const warningColor = theme?.colors?.warning || "#f59e0b";
+  const textColor = theme?.colors?.text || "#333333";
+  const bgColor = theme?.colors?.background || "#f8f9fa";
 
   const alertColor = isSuspicious ? dangerColor : warningColor;
   const alertTitle = isSuspicious
@@ -2019,12 +2000,12 @@ export const suspiciousPasswordChangeTemplate = (payload, isSuspicious) => {
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const financialSecurityAlertTemplate = (payload) => {
   const formatNumber = (val) => {
     const num = Number(val);
-    return isNaN(num) ? String(val || '0') : num.toLocaleString();
+    return isNaN(num) ? String(val || "0") : num.toLocaleString();
   };
 
   const safeUserId = sanitize(payload?.userId);
@@ -2032,9 +2013,9 @@ export const financialSecurityAlertTemplate = (payload) => {
   const formattedExpectedAmount = formatNumber(payload?.expectedAmount);
   const safeIpAddress = sanitize(payload?.ipAddress);
 
-  const dangerColor = theme?.colors?.danger || '#ef4444';
-  const textColor = theme?.colors?.text || '#333333';
-  const bgColor = theme?.colors?.background || '#f8f9fa';
+  const dangerColor = theme?.colors?.danger || "#ef4444";
+  const textColor = theme?.colors?.text || "#333333";
+  const bgColor = theme?.colors?.background || "#f8f9fa";
 
   const body = `
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
@@ -2098,7 +2079,7 @@ export const financialSecurityAlertTemplate = (payload) => {
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const newStationRegistrationTemplate = (name, userId, payload) => {
   const safeName = sanitize(name);
@@ -2106,9 +2087,9 @@ export const newStationRegistrationTemplate = (name, userId, payload) => {
   const safeRequestId = sanitize(payload?.requestId);
   const safeTicketRefId = sanitize(payload?.ticketRefId);
 
-  const primaryColor = theme?.colors?.primary || '#3b82f6';
-  const textColor = theme?.colors?.text || '#333333';
-  const bgColor = theme?.colors?.background || '#f8f9fa';
+  const primaryColor = theme?.colors?.primary || "#3b82f6";
+  const textColor = theme?.colors?.text || "#333333";
+  const bgColor = theme?.colors?.background || "#f8f9fa";
 
   const body = `
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
@@ -2154,7 +2135,7 @@ export const newStationRegistrationTemplate = (name, userId, payload) => {
             </tr>
             <tr>
               <td align="left" style="padding-top: 20px;">
-                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: ${bgColor}; border: 1px solid #edf2f7; border-radius: 4px;">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border-radius: 4px;">
                   <tr>
                     <td style="padding: 16px;">
                       <p style="margin: 0; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px; color: ${textColor};">
@@ -2172,7 +2153,7 @@ export const newStationRegistrationTemplate = (name, userId, payload) => {
     </table>
   `;
 
-  return emailWrapper(body);
+  return body;
 };
 export const taxReportEmailTemplate = (
   monthName,
@@ -2180,30 +2161,86 @@ export const taxReportEmailTemplate = (
   totalTaxAmount,
   pdfUrl,
 ) => {
-  const { colors, branding } = theme;
+  const formatNumber = (val) => {
+    const num = Number(val);
+    return isNaN(num) ? String(val || "0") : num.toLocaleString();
+  };
+
+  const safeMonthName = sanitize(monthName);
+  const safeYear = sanitize(year);
+  const formattedTaxAmount = formatNumber(totalTaxAmount);
+  const cleanPdfUrl = (url) => {
+    if (typeof url !== "string") return "#";
+    const trimmed = url.trim();
+    if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+      return sanitize(trimmed);
+    }
+    return "#";
+  };
+
+  const safePdfUrl = cleanPdfUrl(pdfUrl);
+  const supportEmail = sanitize(
+    theme?.branding?.supportEmail || "support@icampus.com",
+  );
+
+  const primaryColor = theme?.colors?.primary || "#3b82f6";
+  const successColor = theme?.colors?.success || "#10b981";
+  const secondaryColor = theme?.colors?.secondary || "#666666";
+  const textColor = theme?.colors?.text || "#333333";
+  const bgColor = theme?.colors?.background || "#f8f9fa";
+
   const body = `
-    <p style="color: ${colors.text}; font-size: 16px; line-height: 1.5;">Hello Admin,</p>
-    <p style="color: ${colors.text}; font-size: 16px; line-height: 1.5;">
-      The official iCampus tax report for <strong>${monthName} ${year}</strong> has been successfully generated.
-    </p>
-    <div style="border: 1px solid ${colors.secondary}; border-radius: 6px; padding: 20px; margin: 20px 0; background: ${colors.background};">
-      <h3 style="margin-top: 0; color: ${colors.primary}; font-size: 16px; margin-bottom: 15px;">Report Summary</h3>
-      <table style="width: 100%; color: ${colors.text}; font-size: 14px;">
-        <tr><td style="padding: 5px 0;"><strong>Period:</strong></td><td>${monthName} ${year}</td></tr>
-        <tr><td style="padding: 5px 0;"><strong>Total Tax Collected:</strong></td><td style="color: ${colors.success}; font-weight: bold;">${totalTaxAmount.toLocaleString()} iCash</td></tr>
-      </table>
-    </div>
-    <div style="text-align: center; margin: 30px 0;">
-      <a href="${pdfUrl}" style="background-color: ${colors.primary}; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
-        Download PDF Report
-      </a>
-    </div>
-    <p style="font-size: 13px; color: #666; margin-top: 20px;">
-      For any billing discrepancies, please reach out via support at 
-      <a href="mailto:${branding.supportEmail}" style="color: ${colors.primary};">
-        ${branding.supportEmail}
-      </a>
-    </p>
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center" style="padding: 0;">
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 500px; text-align: left;">
+            <tr>
+              <td>
+                <p style="color: ${textColor}; font-family: Helvetica, Arial, sans-serif; font-size: 16px; line-height: 24px; margin: 5px 0;">Hello Admin,</p>
+                <p style="color: ${textColor}; font-family: Helvetica, Arial, sans-serif; font-size: 16px; line-height: 24px; margin: 0 0 20px 0;">
+                  The official iCampus tax report for <strong>${safeMonthName} ${safeYear}</strong> has been successfully generated.
+                </p>
+              </td>
+            </tr>
+            <tr>
+              <td align="left" style="padding-top: 5px;">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="border: 1px solid ${secondaryColor}; border-radius: 6px; background-color: ${bgColor};">
+                  <tr>
+                    <td style="padding: 20px;">
+                      <h3 style="margin: 0 0 15px 0; color: ${primaryColor}; font-family: Helvetica, Arial, sans-serif; font-size: 16px; font-weight: bold;">Report Summary</h3>
+                      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="color: ${textColor}; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px;">
+                        <tr>
+                          <td style="padding: 6px 0; width: 150px;"><strong>Period:</strong></td>
+                          <td style="padding: 6px 0;">${safeMonthName} ${safeYear}</td>
+                        </tr>
+                        <tr>
+                          <td style="padding: 6px 0;"><strong>Total Tax Collected:</strong></td>
+                          <td style="padding: 6px 0; color: ${successColor}; font-weight: bold;">${formattedTaxAmount} iCash</td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding: 30px 0;">
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0">
+                  <tr>
+                    <td align="center" bgcolor="${primaryColor}" style="border-radius: 6px;">
+                      <a href="${safePdfUrl}" target="_blank" rel="noopener noreferrer" style="background-color: ${primaryColor}; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; font-family: Helvetica, Arial, sans-serif; font-size: 14px; border: 1px solid ${primaryColor};">
+                        Download PDF Report
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   `;
-  return emailWrapper(body);
+
+  return body;
 };
