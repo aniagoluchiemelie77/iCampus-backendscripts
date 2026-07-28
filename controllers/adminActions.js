@@ -944,7 +944,8 @@ export const downloadTaxReport = async (req, res) => {
   const action = "downloadTaxReport";
 
   try {
-    const { month, year, adminEmail } = req.query;
+    const adminEmail = req.admin.email;
+    const { month, year } = req.query;
 
     if (!month || !year) {
       return res.status(400).json({
