@@ -1193,12 +1193,10 @@ export const createAd = async (req, res) => {
 export const updateAd = async (req, res) => {
   try {
     if (req.admin.adminType !== "super_admin") {
-      return res
-        .status(403)
-        .json({
-          success: false,
-          error: "Unauthorized. Super admin access required.",
-        });
+      return res.status(403).json({
+        success: false,
+        error: "Unauthorized. Super admin access required.",
+      });
     }
 
     const { id } = req.params;
@@ -1250,11 +1248,98 @@ export const updateAd = async (req, res) => {
     });
   } catch (error) {
     console.error("Update Ad Error:", error);
-    return res
-      .status(500)
-      .json({
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error during ad update.",
+    });
+  }
+};
+export const sendSupportMessage = async (req, res) => {
+  try {
+    const { ticketRefId } = req.params;
+    const { message, attachments = [] } = req.body;
+    const currentUserId = req.user.id || req.user.uid;
+    const userEmail = req.user.email;
+
+    if (!ticketRefId || (!message && attachments.length === 0)) {
+      return res.status(400).json({
         success: false,
-        error: "Internal server error during ad update.",
+        message:
+          "Ticket reference ID and message content or attachments are required.",
       });
+    }
+
+    const ticketSnapshot = await SupportTicket.where(
+      "ticketRefId",
+      "==",
+      ticketRefId,
+    )
+      .limit(1)
+      .get();
+
+    if (ticketSnapshot.empty) {
+      return res.status(404).json({
+        success: false,
+        message: "Support ticket not found.",
+      });
+    }
+
+    const ticketDoc = ticketSnapshot.docs[0];
+    const ticketData = ticketDoc.data();
+
+    const isAdmin =
+      req.user.adminType === "support" || req.user.adminType === "super_admin";
+
+    if (!isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access to this support ticket thread.",
+      });
+    }
+
+    const newMessage = {
+      sender: currentUserId,
+      message: message || "",
+      attachments: attachments,
+      timestamp: new Date().toISOString(),
+    };
+    const updatedThread = [...(ticketData.thread || []), newMessage];
+    await ticketDoc.ref.update({
+      thread: updatedThread,
+      updatedAt: new Date().toISOString(),
+    });
+
+    if (isAdmin && ticketData.source === "email" && ticketData.guestEmail) {
+      await sendEmail({
+        to: ticketData.guestEmail,
+        subject: `Update on Support Ticket: Ref ${ticketRefId}`,
+        text: message,
+        html: `<p>${message.replace(/\n/g, "<br>")}</p>`,
+        attachments: attachments,
+      });
+    }
+    await notifyAdmins(
+      { role: "super_admin" },
+      {
+        notificationId: generateNotificationId("system"),
+        category: "system",
+        actionType: "SUPPORT_MESSAGE_REPLY",
+        title: "New Support Ticket Message",
+        message: `New message added to ticket Ref: ${ticketRefId}`,
+        payload: { ticketRefId: ticketRefId },
+      },
+      false,
+    );
+    return res.status(200).json({
+      success: true,
+      message: "Message sent successfully.",
+      data: newMessage,
+    });
+  } catch (error) {
+    console.error("Backend sendSupportMessage Error:", error.message);
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal Server Error",
+    });
   }
 };

@@ -5,10 +5,11 @@ import {
   PaymentMethods,
   SupportTicket,
 } from "../tableDeclarations.js";
-import admin from "firebase-admin";
+import { admin } from "../config/firebaseAdmin.js";
 import {
   generateTransactionId,
   generateNotificationId,
+  generateTicketRefId,
 } from "../utils/idGenerator.js";
 import { createNotification } from "../services/notification.js";
 import { notifyAdmins } from "../services/adminNotification.js";
@@ -249,10 +250,22 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "postmarkInboundEmailWebhookController";
   const action = "postmarkInboundEmailWebhook";
+
   try {
     const { ToFull, From, Subject, TextBody, MessageID } = req.body;
-    const recipient = ToFull[0].Email;
-    const userId = recipient.split("+")[1].split("@")[0];
+    const recipient = ToFull[0].Email.toLowerCase();
+
+    let userId;
+    let isExternal = false;
+
+    if (recipient.includes("+")) {
+      userId = recipient.split("+")[1].split("@")[0];
+    } else {
+      // General support email main (e.g., support@inbound.useicampus.io) for outsiders
+      userId = `EXT_${From.replace(/[^a-zA-Z0-9]/g, "_")}`;
+      isExternal = true;
+    }
+
     const querySnapshot = await SupportTicket.where("userId", "==", userId)
       .where("status", "!=", "closed")
       .orderBy("status")
@@ -278,15 +291,16 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
         updatedAt: new Date(),
       });
     } else {
-      ticketRefId = generateTicketRefId("technical");
+      ticketRefId = generateTicketRefId(isExternal ? "general" : "technical");
       ticketData = {
         userId,
+        guestEmail: isExternal ? From : null,
         ticketRefId,
         source: "email",
-        severity: "high",
+        severity: isExternal ? "medium" : "high",
         status: "open",
         originalMessage: TextBody,
-        summary: Subject,
+        summary: Subject || "Inbound Support Inquiry",
         thread: [
           {
             sender: From,
@@ -300,22 +314,24 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
       await SupportTicket.doc(ticketRefId).set(ticketData);
     }
 
-    await createNotification({
-      recipientId: userId,
-      category: "system",
-      actionType: "SUPPORT_TICKET_RECEIVED",
-      sendEmail: true,
-      recipientEmail: From,
-      payload: {
-        userName: "User",
-        ticketRefId: ticketRefId,
-        date: new Date().toLocaleDateString(),
-        time: new Date().toLocaleTimeString(),
-      },
-    });
+    if (!isExternal) {
+      await createNotification({
+        recipientId: userId,
+        category: "system",
+        actionType: "SUPPORT_TICKET_RECEIVED",
+        sendEmail: true,
+        recipientEmail: From,
+        payload: {
+          userName: "User",
+          ticketRefId: ticketRefId,
+          date: new Date().toLocaleDateString(),
+          time: new Date().toLocaleTimeString(),
+        },
+      });
+    }
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).send("Webhook Processed");
+    res.status(200).send("Webhook Processed Successfully");
   } catch (error) {
     console.error("Postmark Webhook Error:", error.message);
     logControllerPerformance(

@@ -5,6 +5,7 @@ import {
   getNotifications,
   adminFetchUserDetails,
   adminFetchUserNotifications,
+  getSupportTicketByRefId,
 } from "../controllers/fetchActions.js";
 import {
   deleteAdmin,
@@ -28,6 +29,7 @@ import {
   deleteAd,
   createAd,
   updateAd,
+  sendSupportMessage,
 } from "../controllers/adminActions.js";
 
 const router = express.Router();
@@ -97,5 +99,17 @@ router.get("/tax-entries/download", protect, verifyAdmin, downloadTaxReport);
 router.delete("/ads/:id/delete", protect, verifyAdmin, deleteAd);
 router.post("/ads/create", protect, verifyAdmin, createAd);
 router.patch("/ads/:id/update", protect, verifyAdmin, updateAd);
+router.get(
+  "/support-tickets/:ticketRefId/fetch",
+  protect,
+  verifyAdmin,
+  getSupportTicketByRefId,
+);
+router.post(
+  "/support-tickets/:ticketRefId/reply",
+  protect,
+  verifyAdmin,
+  sendSupportMessage,
+);
 
 export default router;

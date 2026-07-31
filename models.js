@@ -1090,12 +1090,14 @@ export const schoolConfigurationSchema = new mongoose.Schema(
 export const supportTicketSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true },
+    guestEmail: { type: String },
     ticketRefId: { type: String, unique: true, index: true },
     source: { type: String, enum: ["in-app", "email"], default: "in-app" },
     originalMessage: String,
     category: {
       type: String,
-      enum: ["technical", "billing", "content", "other"],
+      enum: ["technical", "billing", "content", "other", "general"],
+      default: "general",
     },
     summary: String,
     severity: {

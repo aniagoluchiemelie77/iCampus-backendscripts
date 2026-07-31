@@ -2739,3 +2739,95 @@ export const getAds = async (req, res) => {
     });
   }
 };
+export const getSupportTicketByRefId = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getSupportTicketByRefIdController";
+  const action = "getSupportTicketByRefId";
+
+  try {
+    const { ticketRefId } = req.params;
+    const currentUserId = req.user.id || req.user.uid;
+    const userEmail = req.user.email;
+
+    if (!ticketRefId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Ticket reference ID parameter is required",
+      );
+      return res.status(400).json({
+        success: false,
+        message: "Ticket reference ID parameter is required",
+      });
+    }
+
+    const ticketSnapshot = await SupportTicket.where(
+      "ticketRefId",
+      "==",
+      ticketRefId,
+    )
+      .limit(1)
+      .get();
+
+    if (ticketSnapshot.empty) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Support ticket not found",
+      );
+      return res.status(404).json({
+        success: false,
+        message: "Support ticket not found",
+      });
+    }
+
+    const ticketDoc = ticketSnapshot.docs[0];
+    const ticket = {
+      id: ticketDoc.id,
+      ...ticketDoc.data(),
+    };
+
+    const isOwner =
+      ticket.userId === currentUserId || ticket.guestEmail === userEmail;
+    const isAdmin =
+      req.user.role === "admin" || req.user.role === "super_admin" || req.admin;
+
+    if (!isOwner && !isAdmin) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized access to this support ticket record",
+      );
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access to this support ticket record",
+      });
+    }
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+    return res.status(200).json({
+      success: true,
+      ticket: ticket,
+      message: "Success",
+    });
+  } catch (error) {
+    console.error("Backend getSupportTicketByRefId Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal Server Error",
+    });
+  }
+};

@@ -639,6 +639,12 @@ export const createNotification = async ({
           message ||
           `New advertisement for "${payload.advertiserName || "Unknown"}" (ID: ${payload.adId}) was created.`;
         break;
+      case "SUPPORT_MESSAGE_REPLY":
+        title = title || "Support Ticket Reply";
+        message =
+          message ||
+          `New reply added to support ticket Ref: ${payload.ticketRefId || "Unknown"}.`;
+        break;
 
       case "AD_UPDATE_ADMIN":
         title = title || "Advertisement Updated Audit";
