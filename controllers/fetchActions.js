@@ -17,6 +17,7 @@ import {
   SupportTicket,
   PostReposters,
   Comments,
+  Ads,
 } from "../tableDeclarations.js";
 import { client } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
@@ -2712,5 +2713,29 @@ export const adminFetchUserNotifications = async (req, res) => {
   } catch (error) {
     console.error("Error fetching user notifications for admin:", error);
     res.status(500).json({ message: "Server error", success: false });
+  }
+};
+export const getAds = async (req, res) => {
+  try {
+    const snapshot = await Ads.where("isActive", "==", true)
+      .orderBy("createdAt", "desc")
+      .limit(10)
+      .get();
+
+    const ads = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: ads,
+    });
+  } catch (error) {
+    console.error("Fetch Ads Error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error",
+    });
   }
 };

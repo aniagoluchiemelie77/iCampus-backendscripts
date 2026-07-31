@@ -25,6 +25,9 @@ import {
   getStationDetails,
   getTaxEntries,
   downloadTaxReport,
+  deleteAd,
+  createAd,
+  updateAd,
 } from "../controllers/adminActions.js";
 
 const router = express.Router();
@@ -91,5 +94,8 @@ router.get(
 );
 router.get("/tax-entries/fetch", protect, verifyAdmin, getTaxEntries);
 router.get("/tax-entries/download", protect, verifyAdmin, downloadTaxReport);
+router.delete("/ads/:id/delete", protect, verifyAdmin, deleteAd);
+router.post("/ads/create", protect, verifyAdmin, createAd);
+router.patch("/ads/:id/update", protect, verifyAdmin, updateAd);
 
 export default router;

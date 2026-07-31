@@ -1206,3 +1206,49 @@ export const taxStatementSchema = new mongoose.Schema(
     timestamps: true,
   },
 );
+export const advertSchema = new mongoose.Schema(
+  {
+    id: {
+      type: String,
+      required: true,
+    },
+    type: {
+      type: String,
+      enum: ["image", "video"],
+      required: true,
+      default: "image",
+    },
+    mediaUrl: {
+      type: String,
+      required: [true, "Media URL is required"],
+      trim: true,
+    },
+    targetUrl: {
+      type: String,
+      trim: true,
+    },
+    advertiserLogo: {
+      type: String,
+      required: [true, "Advertiser logo URL is required"],
+      trim: true,
+    },
+    advertiserName: {
+      type: String,
+      required: [true, "Advertiser name is required"],
+      trim: true,
+    },
+    tagline: {
+      type: String,
+      maxlength: [100, "Tagline cannot exceed 100 characters"],
+      trim: true,
+    },
+    isActive: {
+      type: Boolean,
+      default: true,
+      index: true,
+    },
+  },
+  {
+    timestamps: true,
+  },
+);

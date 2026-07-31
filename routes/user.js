@@ -21,6 +21,7 @@ import {
   fetchAllExceptionsForOngoingLecture,
   fetchCourseDetails,
   fetchAllLecturesByCourseId,
+  getAds,
 } from "../controllers/fetchActions.js";
 import { uploadCourseDetailsManually } from "../controllers/classActions.js";
 import {
@@ -159,9 +160,10 @@ router.get("/refresh-user-details", protect, refreshUserDetails);
 router.post("/courses/manual-create", protect, uploadCourseDetailsManually);
 router.post("/online-classes/create", protect, createQuickMeeting);
 router.post("/stations/register", protect, registerDropOffStation);
+router.get("/ads/fetch-active", protect, getAds);
 
 export default router;
-//Mongod summon: mongod --dbpath D:\MongoDB\data
+
 //backend summon: npx nodemon index.js
 //email: alice@icampus.ed
 //password: icampusUser01

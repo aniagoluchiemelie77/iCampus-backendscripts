@@ -195,8 +195,7 @@ export const generateUniqueCardNumber = async () => {
     ).toString();
     const formatted = `7${digits.match(/.{1,4}/g).join(" ")}`;
 
-    const querySnapshot = await ITag
-      .where("cardNumber", "==", formatted)
+    const querySnapshot = await ITag.where("cardNumber", "==", formatted)
       .limit(1)
       .get();
     if (querySnapshot.empty) {
@@ -204,7 +203,7 @@ export const generateUniqueCardNumber = async () => {
       isUnique = true;
     }
   }
-  
+
   return cardNumber;
 };
 export const generateUserUID = () => {
@@ -339,4 +338,22 @@ export function generateItagUsername(firstName, digitCount = 4) {
   const randomSuffix = Math.floor(Math.random() * (max - min + 1) + min);
 
   return `${cleanName}${randomSuffix}`;
+}
+export function generateAdId(advertiserName) {
+  const cleanName = advertiserName
+    ? advertiserName
+        .replace(/[^a-zA-Z0-9]/g, "")
+        .toUpperCase()
+        .slice(0, 4)
+    : "AD";
+
+  const now = new Date();
+  const timestamp = now
+    .toISOString()
+    .replace(/[-T:.Z]/g, "")
+    .slice(2, 12);
+
+  const randomSuffix = Math.floor(1000 + Math.random() * 9000);
+
+  return `${cleanName}-${timestamp}-${randomSuffix}`;
 }

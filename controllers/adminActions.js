@@ -11,6 +11,7 @@ import {
   Posts,
   TaxEntries,
   TaxStatements,
+  Ads,
 } from "../tableDeclarations.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { createNotification } from "../services/notification.js";
@@ -19,6 +20,7 @@ import {
   generateSchoolId,
   generatePostId,
   generateStationId,
+  generateAdId,
 } from "../utils/idGenerator.js";
 import { generateTaxStatementPDF } from "../templates/taxEntriesTemplate.js";
 import { storage } from "../config/firebaseAdmin.js";
@@ -1073,5 +1075,186 @@ export const downloadTaxReport = async (req, res) => {
       error.message,
     );
     return res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const deleteAd = async (req, res) => {
+  try {
+    if (req.admin.adminType !== "super_admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized. Super admin access required.",
+      });
+    }
+
+    const { id } = req.params;
+    const snapshot = await Ads.where("id", "==", id).limit(1).get();
+
+    if (snapshot.empty) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Advertisement not found." });
+    }
+
+    const adDocRef = snapshot.docs[0].ref;
+    const adData = snapshot.docs[0].data();
+    await adDocRef.delete();
+    await notifyAdmins(
+      { role: "super_admin" },
+      {
+        notificationId: generateNotificationId("system"),
+        category: "system",
+        actionType: "AD_DELETION_ADMIN",
+        title: "Advertisement Deletion Audit",
+        message: `Advertisement "${adData.advertiserName || "Unknown"}" (ID: ${id}) was deleted by admin ${req.admin.email || req.admin.id}.`,
+        payload: { adId: id, advertiserName: adData.advertiserName },
+      },
+      false,
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Advertisement deleted successfully.",
+    });
+  } catch (error) {
+    console.error("Delete Ad Error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error during deletion.",
+    });
+  }
+};
+export const createAd = async (req, res) => {
+  try {
+    if (req.admin.adminType !== "super_admin") {
+      return res.status(403).json({
+        success: false,
+        error: "Unauthorized. Super admin access required.",
+      });
+    }
+
+    const {
+      type,
+      mediaUrl,
+      targetUrl,
+      advertiserLogo,
+      advertiserName,
+      tagline,
+    } = req.body;
+
+    if (!advertiserName || !mediaUrl || !advertiserLogo) {
+      return res.status(400).json({
+        success: false,
+        error:
+          "Missing required fields (advertiserName, mediaUrl, advertiserLogo).",
+      });
+    }
+
+    const adId = generateAdId(advertiserName);
+
+    const newAd = {
+      id: adId,
+      type: type || "image",
+      mediaUrl,
+      targetUrl: targetUrl || "",
+      advertiserLogo,
+      advertiserName,
+      tagline: tagline || "",
+      createdAt: new Date().toISOString(),
+      createdBy: req.admin.email || req.admin.id,
+    };
+
+    await Ads.doc(adId).set(newAd);
+    await notifyAdmins(
+      { role: "super_admin" },
+      {
+        notificationId: generateNotificationId("system"),
+        category: "system",
+        actionType: "AD_CREATION_ADMIN",
+        title: "Advertisement Created Audit",
+        message: `New advertisement for "${advertiserName}" (ID: ${adId}) was created.`,
+        payload: { adId: adId, advertiserName: advertiserName },
+      },
+      false,
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: "Advertisement created successfully.",
+      data: newAd,
+    });
+  } catch (error) {
+    console.error("Create Ad Error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error during ad creation.",
+    });
+  }
+};
+export const updateAd = async (req, res) => {
+  try {
+    if (req.admin.adminType !== "super_admin") {
+      return res
+        .status(403)
+        .json({
+          success: false,
+          error: "Unauthorized. Super admin access required.",
+        });
+    }
+
+    const { id } = req.params;
+    const updateData = req.body;
+
+    const snapshot = await Ads.where("id", "==", id).limit(1).get();
+
+    if (snapshot.empty) {
+      return res
+        .status(404)
+        .json({ success: false, error: "Advertisement not found." });
+    }
+
+    const adDocRef = snapshot.docs[0].ref;
+    const existingAd = snapshot.docs[0].data();
+
+    const payload = {
+      ...updateData,
+      updatedAt: new Date().toISOString(),
+      updatedBy: req.admin.email || req.admin.id,
+    };
+    delete payload.id;
+
+    await adDocRef.update(payload);
+
+    const updatedSnapshot = await adDocRef.get();
+    const updatedAd = updatedSnapshot.data();
+
+    await notifyAdmins(
+      { role: "super_admin" },
+      {
+        notificationId: generateNotificationId("system"),
+        category: "system",
+        actionType: "AD_UPDATE_ADMIN",
+        title: "Advertisement Updated Audit",
+        message: `Advertisement "${updatedAd.advertiserName || existingAd.advertiserName}" (ID: ${id}) was updated.`,
+        payload: {
+          adId: id,
+          advertiserName: updatedAd.advertiserName || existingAd.advertiserName,
+        },
+      },
+      false,
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Advertisement updated successfully.",
+      ad: updatedAd,
+    });
+  } catch (error) {
+    console.error("Update Ad Error:", error);
+    return res
+      .status(500)
+      .json({
+        success: false,
+        error: "Internal server error during ad update.",
+      });
   }
 };

@@ -627,6 +627,25 @@ export const createNotification = async ({
           message ||
           `User ${payload.userName} upgraded to the ${payload.tier.toUpperCase()} plan.`;
         break;
+      case "AD_DELETION_ADMIN":
+        title = title || "Advertisement Deletion Audit";
+        message =
+          message ||
+          `Advertisement "${payload.advertiserName || "Unknown"}" (ID: ${payload.adId}) was deleted.`;
+        break;
+      case "AD_CREATION_ADMIN":
+        title = title || "Advertisement Created Audit";
+        message =
+          message ||
+          `New advertisement for "${payload.advertiserName || "Unknown"}" (ID: ${payload.adId}) was created.`;
+        break;
+
+      case "AD_UPDATE_ADMIN":
+        title = title || "Advertisement Updated Audit";
+        message =
+          message ||
+          `Advertisement "${payload.advertiserName || "Unknown"}" (ID: ${payload.adId}) was updated.`;
+        break;
       case "WELCOME_ADMIN":
         subject = "Welcome to the iCampus Admin Team";
         if (canSendEmail) {
