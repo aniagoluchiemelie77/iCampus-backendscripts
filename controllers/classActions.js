@@ -1,6 +1,5 @@
 import { storage, db } from "../config/firebaseAdmin.js";
 import {
-  Certificate,
   User,
   Product,
   Exceptions,
@@ -10,11 +9,9 @@ import {
   Lectures,
   Course,
   Attendance,
-  UserDownloads,
   TaxEntries,
 } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
-import { generateCertificatePDF } from "../templates/downloadsCertificateTemplate.js";
 import { generateTestAnalysisPDF } from "../templates/courseAssessmentTemplate.js";
 import {
   generateNotificationId,
@@ -69,136 +66,6 @@ const checkContentAuthorization = async (userId, course, lectureId = null) => {
     }
   }
   return false;
-};
-export const handleGenerateCertificate = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "handleGenerateCertificateController";
-  const action = "handleGenerateCertificate";
-
-  const { productId } = req.body;
-  const uid = req.user?.uid || req.user?.id;
-  const email = req.user?.email;
-
-  try {
-    const studentQuery = await User.where("uid", "==", uid).limit(1).get();
-    if (studentQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Student not found",
-      );
-      return res
-        .status(404)
-        .json({ success: false, message: "Student not found" });
-    }
-    const student = studentQuery.docs[0].data();
-    const courseQuery = await Product.where("productId", "==", productId)
-      .limit(1)
-      .get();
-    if (courseQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course product not found",
-      );
-      return res
-        .status(404)
-        .json({ success: false, message: "Course not found" });
-    }
-    const course = courseQuery.docs[0].data();
-    const lecturerIds = course.courseDetails?.lecturerIds || [];
-    let lecturers = [];
-    if (lecturerIds.length > 0) {
-      const lecturersQuery = await User.where("uid", "in", lecturerIds).get();
-      lecturersQuery.forEach((doc) => {
-        lecturers.push(doc.data());
-      });
-    }
-
-    const studentFullName =
-      `${student.firstname || ""} ${student.lastname || ""}`.trim();
-    const certId = `CERT-${productId.slice(-5)}-${uid.slice(-5)}`.toUpperCase();
-
-    const composition = {
-      certificateId: certId,
-      studentName: studentFullName,
-      courseTitle: course.title,
-      lecturers: lecturers.map((l) =>
-        `${l.firstname || ""} ${l.lastname || ""}`.trim(),
-      ),
-      institution: "iCampus",
-      logoUrl:
-        "https://res.cloudinary.com/dbdw3zftx/image/upload/v1759354003/Black_And_White_King_Logo_ydy68f.png",
-      issueDate: new Date().toLocaleDateString("en-NG"),
-    };
-
-    const pdfBuffer = await generateCertificatePDF(composition);
-    const bucket = storage.bucket();
-    const file = bucket.file(`certificates/${uid}/${certId}.pdf`);
-
-    await file.save(pdfBuffer, {
-      metadata: { contentType: "application/pdf" },
-      public: true,
-    });
-
-    const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
-    const now = new Date();
-
-    const certData = {
-      ...composition,
-      uid,
-      productId,
-      pdfUrl: firebaseUrl,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await Certificate.doc(certId).set(certData);
-
-    await createNotification({
-      notificationId: generateNotificationId("classroom"),
-      recipientId: uid,
-      category: "classroom",
-      actionType: "COURSE_COMPLETED",
-      title: "Course Completed!",
-      message: `Congratulations ${student.firstname || "Student"}! You've officially completed ${course.title}. Download your certificate now.`,
-      entityId: productId,
-      entityType: "course",
-      recipientEmail: email || student.email,
-      sendEmail: true,
-      saveToDb: true,
-      payload: {
-        userName: student.firstname,
-        productName: course.title,
-        pdfUrl: firebaseUrl,
-        productId: productId,
-      },
-    });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
-      success: true,
-      pdfUrl: firebaseUrl,
-      certificateId: certId,
-      composition,
-    });
-  } catch (error) {
-    console.error("Cert Flow Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal Server Error" });
-  }
 };
 export const submitLectureException = async (req, res) => {
   const startTime = Date.now();
@@ -611,7 +478,9 @@ export const createLectureSchedule = async (req, res) => {
     const finalPayload = req.body;
     const lecturesToCreate = [];
     const datesToCheck = [];
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -626,7 +495,10 @@ export const createLectureSchedule = async (req, res) => {
     const courseDoc = courseQuery.docs[0];
     const courseDetails = courseDoc.data();
 
-    if (!courseDetails.lecturerIds || !courseDetails.lecturerIds.includes(lecturerUid)) {
+    if (
+      !courseDetails.lecturerIds ||
+      !courseDetails.lecturerIds.includes(lecturerUid)
+    ) {
       logControllerPerformance(
         controllerName,
         action,
@@ -645,8 +517,11 @@ export const createLectureSchedule = async (req, res) => {
       datesToCheck.push(nextDate.toISOString().split("T")[0]);
     }
 
-    const existingLecturesQuery = await Lectures
-      .where("date", "in", datesToCheck)
+    const existingLecturesQuery = await Lectures.where(
+      "date",
+      "in",
+      datesToCheck,
+    )
       .where("startTime", "<", endTime)
       .where("endTime", ">", lectureStartTime)
       .get();
@@ -654,9 +529,15 @@ export const createLectureSchedule = async (req, res) => {
     let conflict = null;
     existingLecturesQuery.forEach((doc) => {
       const lec = doc.data();
-      const isPhysicalConflict = lectureType === "Physical" && location && lec.lectureType === "Physical" && lec.location === location;
+      const isPhysicalConflict =
+        lectureType === "Physical" &&
+        location &&
+        lec.lectureType === "Physical" &&
+        lec.location === location;
       const isCourseConflict = lec.courseId === courseId;
-      const isDepartmentConflict = lec.department === courseDetails.department && lec.level === courseDetails.level;
+      const isDepartmentConflict =
+        lec.department === courseDetails.department &&
+        lec.level === courseDetails.level;
 
       if (isPhysicalConflict || isCourseConflict || isDepartmentConflict) {
         conflict = lec;
@@ -702,8 +583,7 @@ export const createLectureSchedule = async (req, res) => {
 
     await batch.commit();
 
-    const studentsQuery = await User
-      .where("usertype", "==", "student")
+    const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", courseDetails.department)
       .where("level", "==", courseDetails.level)
       .get();
@@ -739,25 +619,13 @@ export const createLectureSchedule = async (req, res) => {
           sendPush: true,
           sendSocket: true,
           saveToDb: true,
-        })
+        }),
       );
     });
 
     Promise.all(notificationPromises).catch((err) =>
       console.error("Notification Error:", err),
     );
-    const lecturerQuery = await User.where("uid", "==", lecturerUid).limit(1).get();
-    if (!lecturerQuery.empty) {
-      const lecturerDocRef = lecturerQuery.docs[0].ref;
-      const lecturerData = lecturerQuery.docs[0].data();
-      const currentStats = lecturerData.monthlyStats || {};
-      
-      await lecturerDocRef.update({
-        "monthlyStats.minutesActive": (currentStats.minutesActive || 0) + 15,
-        "monthlyStats.aiQueries": (currentStats.aiQueries || 0) + 2,
-        updatedAt: now,
-      });
-    }
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(201).json({
@@ -800,7 +668,9 @@ export const createAssessment = async (req, res) => {
     let assessmentData;
     let shouldNotify = false;
     const now = new Date();
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -819,7 +689,9 @@ export const createAssessment = async (req, res) => {
     let existingAssessment = null;
 
     if (id) {
-      const assessmentQuery = await Assessment.where("id", "==", id).limit(1).get();
+      const assessmentQuery = await Assessment.where("id", "==", id)
+        .limit(1)
+        .get();
       if (!assessmentQuery.empty) {
         existingAssessment = {
           id: assessmentQuery.docs[0].id,
@@ -847,12 +719,13 @@ export const createAssessment = async (req, res) => {
       };
 
       await Assessment.doc(assessmentId).update(assessmentData);
-      assessmentData = { id: assessmentId, ...existingAssessment, ...assessmentData };
+      assessmentData = {
+        id: assessmentId,
+        ...existingAssessment,
+        ...assessmentData,
+      };
     } else {
-      assessmentId = generateAssessmentId(
-        course.courseId,
-        assessmentType,
-      );
+      assessmentId = generateAssessmentId(course.courseId, assessmentType);
 
       assessmentData = {
         id: assessmentId,
@@ -895,8 +768,7 @@ export const createAssessment = async (req, res) => {
 
       const enrolledStudentsList = [];
       for (const chunk of studentChunks) {
-        const studentsQuery = await User
-          .where("uid", "in", chunk)
+        const studentsQuery = await User.where("uid", "in", chunk)
           .where("usertype", "==", "student")
           .get();
 
@@ -905,8 +777,12 @@ export const createAssessment = async (req, res) => {
         });
       }
 
-      const formattedDate = scheduledStart ? new Date(scheduledStart).toLocaleDateString() : "";
-      const formattedTime = scheduledStart ? new Date(scheduledStart).toLocaleTimeString() : "";
+      const formattedDate = scheduledStart
+        ? new Date(scheduledStart).toLocaleDateString()
+        : "";
+      const formattedTime = scheduledStart
+        ? new Date(scheduledStart).toLocaleTimeString()
+        : "";
 
       const notificationPromises = enrolledStudentsList.map((student) =>
         createNotification({
@@ -932,11 +808,11 @@ export const createAssessment = async (req, res) => {
           sendPush: true,
           sendSocket: true,
           saveToDb: true,
-        })
+        }),
       );
 
       Promise.all(notificationPromises).catch((err) =>
-        console.error("Assessment Notification Error:", err)
+        console.error("Assessment Notification Error:", err),
       );
     }
 
@@ -964,7 +840,9 @@ export const deleteLecture = async (req, res) => {
   try {
     const { lectureId } = req.params;
     const currentUserId = req.user?.uid || req.user?.id;
-    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    const lectureQuery = await Lectures.where("id", "==", lectureId)
+      .limit(1)
+      .get();
     if (lectureQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -980,7 +858,9 @@ export const deleteLecture = async (req, res) => {
     const lecture = lectureQuery.docs[0].data();
 
     const { courseId, topicName, date, id, hostId } = lecture;
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -1023,8 +903,7 @@ export const deleteLecture = async (req, res) => {
 
       const studentsList = [];
       for (const chunk of studentChunks) {
-        const studentsQuery = await User
-          .where("uid", "in", chunk)
+        const studentsQuery = await User.where("uid", "in", chunk)
           .where("usertype", "==", "student")
           .get();
 
@@ -1085,7 +964,9 @@ export const fetchLectureAttendanceReport = async (req, res) => {
   try {
     const { lectureId } = req.params;
     const { exceptions = [] } = req.body;
-    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    const lectureQuery = await Lectures.where("id", "==", lectureId)
+      .limit(1)
+      .get();
     if (lectureQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -1099,7 +980,9 @@ export const fetchLectureAttendanceReport = async (req, res) => {
 
     const lectureDocRef = lectureQuery.docs[0].ref;
     const lecture = lectureQuery.docs[0].data();
-    const courseQuery = await Course.where("courseId", "==", lecture.courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", lecture.courseId)
+      .limit(1)
+      .get();
     const course = !courseQuery.empty ? courseQuery.docs[0].data() : null;
 
     const bucket = storage.bucket();
@@ -1111,7 +994,11 @@ export const fetchLectureAttendanceReport = async (req, res) => {
     if (exists) {
       firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
     } else {
-      const attendanceQuery = await Attendance.where("lectureId", "==", lectureId).get();
+      const attendanceQuery = await Attendance.where(
+        "lectureId",
+        "==",
+        lectureId,
+      ).get();
       const studentUids = [];
       attendanceQuery.forEach((doc) => {
         const attData = doc.data();
@@ -1175,7 +1062,9 @@ export const fetchLectureAttendanceReport = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({ message: "Internal server compilation error." });
+    return res
+      .status(500)
+      .json({ message: "Internal server compilation error." });
   }
 };
 export const getCourseFinalAttendanceSummary = async (req, res) => {
@@ -1184,7 +1073,9 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
   const action = "getCourseFinalAttendanceSummary";
   try {
     const { courseId } = req.params;
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -1197,8 +1088,7 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
     }
 
     const course = courseQuery.docs[0].data();
-    const lecturesQuery = await Lectures
-      .where("courseId", "==", courseId)
+    const lecturesQuery = await Lectures.where("courseId", "==", courseId)
       .where("status", "==", "completed")
       .get();
 
@@ -1239,8 +1129,7 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
         });
       }
     }
-    const attendanceQuery = await Attendance
-      .where("courseId", "==", courseId)
+    const attendanceQuery = await Attendance.where("courseId", "==", courseId)
       .where("status", "==", "Present")
       .get();
 
@@ -1249,14 +1138,15 @@ export const getCourseFinalAttendanceSummary = async (req, res) => {
       const att = doc.data();
       const studentId = att.studentId;
       if (studentId) {
-        studentPresenceMap[studentId] = (studentPresenceMap[studentId] || 0) + 1;
+        studentPresenceMap[studentId] =
+          (studentPresenceMap[studentId] || 0) + 1;
       }
     });
     const attendanceSummary = studentsList.map((student) => {
       const uid = student.uid;
       const lecturesAttended = studentPresenceMap[uid] || 0;
       const attendancePercentage = Number(
-        ((lecturesAttended / totalLecturesCount) * 100).toFixed(1)
+        ((lecturesAttended / totalLecturesCount) * 100).toFixed(1),
       );
 
       return {
@@ -1307,8 +1197,7 @@ export const getCourseLecturePdfDirectory = async (req, res) => {
   const action = "getCourseLecturePdfDirectory";
   try {
     const { courseId } = req.params;
-    const lecturesQuery = await Lectures
-      .where("courseId", "==", courseId)
+    const lecturesQuery = await Lectures.where("courseId", "==", courseId)
       .where("status", "==", "completed")
       .get();
 
@@ -1344,7 +1233,9 @@ export const getCourseLecturePdfDirectory = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({ message: "Internal server registry lookup error." });
+    return res
+      .status(500)
+      .json({ message: "Internal server registry lookup error." });
   }
 };
 export const compareStudentFacesWithGemini = async (req, res) => {
@@ -1479,7 +1370,9 @@ export const uploadCourseMaterial = async (req, res) => {
         .status(400)
         .json({ message: "Missing material URL parameter." });
     }
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -1519,8 +1412,7 @@ export const uploadCourseMaterial = async (req, res) => {
     });
 
     const fileName = title || materialUrl.split("/").pop() || "New Resource";
-    const studentsQuery = await User
-      .where("usertype", "==", "student")
+    const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", course.department)
       .where("level", "==", course.level)
       .get();
@@ -1538,10 +1430,10 @@ export const uploadCourseMaterial = async (req, res) => {
           message: `A new resource file has been uploaded for ${course.courseTitle || course.title}.`,
           recipientEmail: student.email,
           sendEmail: !!student.email,
-          payload: { 
+          payload: {
             userName: student.firstname,
             courseTitle: course.courseTitle || course.title,
-            course, 
+            course,
             fileName,
             materialUrl,
           },
@@ -1550,25 +1442,13 @@ export const uploadCourseMaterial = async (req, res) => {
           sendPush: true,
           sendSocket: true,
           saveToDb: true,
-        })
+        }),
       );
     });
 
     Promise.all(notificationPromises).catch((err) =>
-      console.error("Notification dispatch routine failed: ", err)
+      console.error("Notification dispatch routine failed: ", err),
     );
-    const lecturerQuery = await User.where("uid", "==", currentUserId).limit(1).get();
-    if (!lecturerQuery.empty) {
-      const lecturerDocRef = lecturerQuery.docs[0].ref;
-      const lecturerData = lecturerQuery.docs[0].data();
-      const currentStats = lecturerData.monthlyStats || {};
-
-      await lecturerDocRef.update({
-        "monthlyStats.libraryUsageSessions": (currentStats.libraryUsageSessions || 0) + 1,
-        "monthlyStats.minutesActive": (currentStats.minutesActive || 0) + 10,
-        updatedAt: now,
-      });
-    }
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -1607,7 +1487,9 @@ export const deleteCourseMaterial = async (req, res) => {
       );
       return res.status(400).json({ message: "Missing reference target URL." });
     }
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -1665,7 +1547,9 @@ export const deleteCourseMaterial = async (req, res) => {
     }
 
     const existingResources = course.resources || [];
-    const updatedResources = existingResources.filter((resUrl) => resUrl !== materialUrl);
+    const updatedResources = existingResources.filter(
+      (resUrl) => resUrl !== materialUrl,
+    );
     const now = new Date();
 
     await courseDocRef.update({
@@ -1679,8 +1563,7 @@ export const deleteCourseMaterial = async (req, res) => {
     };
 
     const fileName = materialUrl.split("/").pop() || "Resource Document";
-    const studentsQuery = await User
-      .where("usertype", "==", "student")
+    const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", updatedCourse.department)
       .where("level", "==", updatedCourse.level)
       .get();
@@ -1698,26 +1581,23 @@ export const deleteCourseMaterial = async (req, res) => {
           message: `A resource file has been removed from ${updatedCourse.courseTitle || updatedCourse.title}.`,
           recipientEmail: student.email,
           sendEmail: !!student.email,
-          payload: { 
+          payload: {
             userName: student.firstname,
             courseTitle: updatedCourse.courseTitle || updatedCourse.title,
-            course: updatedCourse, 
-            fileName, 
+            course: updatedCourse,
+            fileName,
           },
           entityId: courseId,
           entityType: "course",
           sendPush: true,
           sendSocket: true,
           saveToDb: true,
-        })
+        }),
       );
     });
 
     Promise.all(notificationPromises).catch((err) =>
-      console.error(
-        "Notification push routine failed during deletion: ",
-        err,
-      ),
+      console.error("Notification push routine failed during deletion: ", err),
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -1760,7 +1640,9 @@ export const createCourseContent = async (req, res) => {
         .status(400)
         .json({ message: "Invalid or missing topic content" });
     }
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -1801,8 +1683,7 @@ export const createCourseContent = async (req, res) => {
       courseContents: updatedContents,
       updatedAt: now,
     });
-    const studentsQuery = await User
-      .where("usertype", "==", "student")
+    const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", course.department)
       .where("level", "==", course.level)
       .get();
@@ -1829,12 +1710,12 @@ export const createCourseContent = async (req, res) => {
           sendPush: false,
           sendSocket: true,
           saveToDb: true,
-        })
+        }),
       );
     });
 
     Promise.all(notificationPromises).catch((err) =>
-      console.error("Notification Fetch Error:", err)
+      console.error("Notification Fetch Error:", err),
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -1877,7 +1758,9 @@ export const editCourseContent = async (req, res) => {
         .status(400)
         .json({ message: "Missing required update body fields" });
     }
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -1937,8 +1820,7 @@ export const editCourseContent = async (req, res) => {
       ...course,
       courseContents: updatedContents,
     };
-    const studentsQuery = await User
-      .where("usertype", "==", "student")
+    const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", updatedCourse.department)
       .where("level", "==", updatedCourse.level)
       .get();
@@ -1965,12 +1847,12 @@ export const editCourseContent = async (req, res) => {
             updatedTopic,
             courseTitle: updatedCourse.courseTitle || updatedCourse.title,
           },
-        })
+        }),
       );
     });
 
     Promise.all(notificationPromises).catch((err) =>
-      console.error("Notification Error:", err)
+      console.error("Notification Error:", err),
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -2013,7 +1895,9 @@ export const deleteCourseContent = async (req, res) => {
         .status(400)
         .json({ message: "Target element index parameter required" });
     }
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -2071,8 +1955,7 @@ export const deleteCourseContent = async (req, res) => {
       ...course,
       courseContents: updatedContents,
     };
-    const studentsQuery = await User
-      .where("usertype", "==", "student")
+    const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", updatedCourse.department)
       .where("level", "==", updatedCourse.level)
       .get();
@@ -2100,11 +1983,13 @@ export const deleteCourseContent = async (req, res) => {
             course: updatedCourse,
             courseTitle: updatedCourse.courseTitle || updatedCourse.title,
           },
-        })
+        }),
       );
     });
 
-    Promise.all(notificationPromises).catch((err) => console.error("Notification Error:", err));
+    Promise.all(notificationPromises).catch((err) =>
+      console.error("Notification Error:", err),
+    );
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -2134,7 +2019,9 @@ export const createCourseAssignment = async (req, res) => {
     const { title, description, dueDate, submissionMethod, lectureId } =
       req.body;
     const requesterUid = req.user?.uid || req.user?.id;
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -2191,8 +2078,7 @@ export const createCourseAssignment = async (req, res) => {
 
     const formattedDate = new Date(dueDate).toLocaleDateString();
 
-    const studentsQuery = await User
-      .where("usertype", "==", "student")
+    const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", course.department)
       .where("level", "==", course.level)
       .get();
@@ -2222,12 +2108,12 @@ export const createCourseAssignment = async (req, res) => {
           sendPush: true,
           sendSocket: true,
           saveToDb: true,
-        })
+        }),
       );
     });
 
     Promise.all(notificationPromises).catch((err) =>
-      console.error("Assignment Notification Dispatch Failure:", err)
+      console.error("Assignment Notification Dispatch Failure:", err),
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -2250,7 +2136,9 @@ export const deleteCourseAssignment = async (req, res) => {
   try {
     const { courseId, assignmentId } = req.params;
     const requesterUid = req.user?.uid || req.user?.id;
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -2313,8 +2201,7 @@ export const deleteCourseAssignment = async (req, res) => {
       ...course,
       assignments: updatedAssignments,
     };
-    const studentsQuery = await User
-      .where("usertype", "==", "student")
+    const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", updatedCourse.department)
       .where("level", "==", updatedCourse.level)
       .get();
@@ -2344,12 +2231,12 @@ export const deleteCourseAssignment = async (req, res) => {
           },
           entityId: assignmentId,
           entityType: "assignment",
-        })
+        }),
       );
     });
 
     Promise.all(notificationPromises).catch((err) =>
-      console.error("Wipe notification thread failed:", err)
+      console.error("Wipe notification thread failed:", err),
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -2415,14 +2302,24 @@ export const getAssessmentReport = async (req, res) => {
       logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({ success: true, downloadUrl: firebaseUrl });
     }
-    const courseQuery = await Course.where("courseId", "==", test.courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", test.courseId)
+      .limit(1)
+      .get();
     const course = courseQuery.empty ? null : courseQuery.docs[0].data();
-    const submissionsSnapshot = await TestSubmission.where("testId", "==", testId).get();
+    const submissionsSnapshot = await TestSubmission.where(
+      "testId",
+      "==",
+      testId,
+    ).get();
     const submissions = [];
     submissionsSnapshot.forEach((doc) => {
       submissions.push(doc.data());
     });
-    const enrolledStudentsQuery = await User.where("enrolledCourses", "array-contains", test.courseId).get();
+    const enrolledStudentsQuery = await User.where(
+      "enrolledCourses",
+      "array-contains",
+      test.courseId,
+    ).get();
     const enrolledStudents = [];
     enrolledStudentsQuery.forEach((doc) => {
       enrolledStudents.push(doc.data());
@@ -2520,19 +2417,19 @@ export const submitAssessment = async (req, res) => {
       const existingSubmissionQuery = await transaction.get(
         TestSubmission.where("testId", "==", testId)
           .where("studentId", "==", currentUserId)
-          .limit(1)
+          .limit(1),
       );
 
       if (!existingSubmissionQuery.empty) {
         return { error: "already_submitted" };
       }
       const userQuery = await transaction.get(
-        User.where("uid", "==", currentUserId).limit(1)
+        User.where("uid", "==", currentUserId).limit(1),
       );
       const studentUser = userQuery.empty ? null : userQuery.docs[0].data();
       const userDocRef = userQuery.empty ? null : userQuery.docs[0].ref;
       const testQuery = await transaction.get(
-        Assessment.where("id", "==", testId).limit(1)
+        Assessment.where("id", "==", testId).limit(1),
       );
       const test = testQuery.empty ? null : testQuery.docs[0].data();
 
@@ -2668,7 +2565,9 @@ export const editLectures = async (req, res) => {
     const { newDate, newStartTime, topicName, lectureType, location } =
       req.body;
     const requesterUid = req.user?.uid || req.user?.id;
-    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    const lectureQuery = await Lectures.where("id", "==", lectureId)
+      .limit(1)
+      .get();
     if (lectureQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -2682,7 +2581,9 @@ export const editLectures = async (req, res) => {
 
     const lectureDocRef = lectureQuery.docs[0].ref;
     const originalLecture = lectureQuery.docs[0].data();
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -2775,8 +2676,7 @@ export const editLectures = async (req, res) => {
       ...originalLecture,
       ...updatePayload,
     };
-    const studentsQuery = await User
-      .where("usertype", "==", "student")
+    const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", course.department)
       .where("level", "==", course.level)
       .get();
@@ -2825,7 +2725,7 @@ export const editLectures = async (req, res) => {
           sendPush: true,
           sendSocket: true,
           saveToDb: true,
-        })
+        }),
       );
     });
 
@@ -2870,7 +2770,9 @@ export const submitOnlineClassAttendance = async (req, res) => {
         .status(400)
         .json({ error: "Missing required online attendance parameters." });
     }
-    const lectureQuery = await Lectures.where("id", "==", lectureId).limit(1).get();
+    const lectureQuery = await Lectures.where("id", "==", lectureId)
+      .limit(1)
+      .get();
     if (lectureQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -2904,10 +2806,12 @@ export const submitOnlineClassAttendance = async (req, res) => {
       const attendanceQuery = await transaction.get(
         Attendance.where("studentId", "==", studentId)
           .where("lectureId", "==", lectureId)
-          .limit(1)
+          .limit(1),
       );
 
-      const existingRecord = attendanceQuery.empty ? null : attendanceQuery.docs[0].data();
+      const existingRecord = attendanceQuery.empty
+        ? null
+        : attendanceQuery.docs[0].data();
       const attendanceDocRef = attendanceQuery.empty
         ? Attendance.doc()
         : attendanceQuery.docs[0].ref;
@@ -2928,10 +2832,11 @@ export const submitOnlineClassAttendance = async (req, res) => {
 
       transaction.set(attendanceDocRef, attendanceData, { merge: true });
 
-      const wasNotPresentBefore = !existingRecord || existingRecord.status !== "Present";
+      const wasNotPresentBefore =
+        !existingRecord || existingRecord.status !== "Present";
       if (status === "Present" && wasNotPresentBefore) {
         const courseQuery = await transaction.get(
-          Course.where("courseId", "==", courseId).limit(1)
+          Course.where("courseId", "==", courseId).limit(1),
         );
         if (!courseQuery.empty) {
           const courseDocRef = courseQuery.docs[0].ref;
@@ -2958,7 +2863,7 @@ export const submitOnlineClassAttendance = async (req, res) => {
           }
         }
         const userQuery = await transaction.get(
-          User.where("uid", "==", studentId).limit(1)
+          User.where("uid", "==", studentId).limit(1),
         );
         if (!userQuery.empty) {
           const userDocRef = userQuery.docs[0].ref;
@@ -3108,9 +3013,8 @@ export const uploadCourseDetails = async (req, res) => {
     const processedCourseIds = [];
     for (const courseData of courses) {
       const cleanTitle = courseData.courseTitle.trim();
-      
-      const courseQuery = await Courses
-        .where("courseTitle", ">=", cleanTitle)
+
+      const courseQuery = await Courses.where("courseTitle", ">=", cleanTitle)
         .where("courseTitle", "<=", cleanTitle + "\uf8ff")
         .limit(1)
         .get();
@@ -3132,9 +3036,12 @@ export const uploadCourseDetails = async (req, res) => {
           });
         }
       } else {
-        courseId = generateCourseId(courseData.courseTitle, courseData.courseCode);
+        courseId = generateCourseId(
+          courseData.courseTitle,
+          courseData.courseCode,
+        );
         courseDocRef = Course.doc();
-        
+
         const newCourseData = {
           ...courseData,
           courseId,
@@ -3151,12 +3058,17 @@ export const uploadCourseDetails = async (req, res) => {
       }
       processedCourseIds.push(courseId);
     }
-    const userQuery = await User.where("uid", "==", requesterUid).limit(1).get();
+    const userQuery = await User.where("uid", "==", requesterUid)
+      .limit(1)
+      .get();
     if (!userQuery.empty) {
       const userDocRef = userQuery.docs[0].ref;
       const userData = userQuery.docs[0].data();
-      const existingEnrolled = userData.enrolledCourses || userData.coursesEnrolled || [];
-      const updatedEnrolled = Array.from(new Set([...existingEnrolled, ...processedCourseIds]));
+      const existingEnrolled =
+        userData.enrolledCourses || userData.coursesEnrolled || [];
+      const updatedEnrolled = Array.from(
+        new Set([...existingEnrolled, ...processedCourseIds]),
+      );
 
       await userDocRef.update({
         enrolledCourses: updatedEnrolled,
@@ -3179,7 +3091,9 @@ export const uploadCourseDetails = async (req, res) => {
         courseCount: courses.length,
         level: studentInfo.level,
         matricNo: studentInfo.matricNo,
-        semester: firstCourse.semester ? firstCourse.semester.toLowerCase() : "unknown",
+        semester: firstCourse.semester
+          ? firstCourse.semester.toLowerCase()
+          : "unknown",
         session: firstCourse.session || "",
       },
       entityId: requesterUid,
@@ -3238,8 +3152,7 @@ export const uploadCourseDetailsManually = async (req, res) => {
     let courseData = null;
     let assignedCourseId = null;
 
-    const codeQuery = await Course
-      .where("schoolName", "==", schoolName)
+    const codeQuery = await Course.where("schoolName", "==", schoolName)
       .where("courseCode", "==", trimmedCode)
       .limit(1)
       .get();
@@ -3249,8 +3162,7 @@ export const uploadCourseDetailsManually = async (req, res) => {
       courseData = codeQuery.docs[0].data();
       assignedCourseId = courseData.courseId;
     } else {
-      const titleQuery = await Course
-        .where("schoolName", "==", schoolName)
+      const titleQuery = await Course.where("schoolName", "==", schoolName)
         .where("courseTitle", "==", trimmedTitle)
         .limit(1)
         .get();
@@ -3319,9 +3231,10 @@ export const uploadCourseDetailsManually = async (req, res) => {
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
-      message: courseDocRef && courseData
-        ? "You have been added to this existing course curriculum successfully."
-        : "New course catalog entry generated and linked to your profile successfully.",
+      message:
+        courseDocRef && courseData
+          ? "You have been added to this existing course curriculum successfully."
+          : "New course catalog entry generated and linked to your profile successfully.",
       courseId: assignedCourseId,
     });
   } catch (error) {
@@ -3369,7 +3282,9 @@ export const handleUpcomingLectureRemindersCron = async () => {
     for (const lectureDoc of lectureQuery.docs) {
       const lecture = lectureDoc.data();
       const courseId = lecture.courseId;
-      const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+      const courseQuery = await Course.where("courseId", "==", courseId)
+        .limit(1)
+        .get();
       if (courseQuery.empty) {
         console.log(
           `[CRON_ENGINE] Skipping session ${lecture.id || lectureDoc.id}: Course context not found for courseId ${courseId}.`,
@@ -3448,83 +3363,6 @@ export const handleUpcomingLectureRemindersCron = async () => {
       "[CRON_CRITICAL_EXCEPTION] Failed executing automated reminder cycles:",
       error.message,
     );
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-  }
-};
-export const sendInactiveUserReminders = async () => {
-  const startTime = Date.now();
-  const controllerName = "sendInactiveUserRemindersController";
-  const action = "sendInactiveUserReminders";
-  try {
-    const threeDaysAgo = new Date();
-    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
-    const snapshot = await UserDownloads
-      .where("lastAccessed", "<", threeDaysAgo)
-      .get();
-
-    if (snapshot.empty) {
-      return;
-    }
-
-    const inactiveUsers = [];
-    snapshot.forEach((doc) => {
-      inactiveUsers.push({ id: doc.id, ...doc.data() });
-    });
-
-    const notificationPromises = inactiveUsers.map(async (record) => {
-      const ownedProducts = record.ownedProducts || [];
-      const activeCourse = [...ownedProducts]
-        .sort((a, b) => (b.lastWatched || 0) - (a.lastWatched || 0))
-        .find((p) => (p.progress || 0) < 100);
-
-      if (!activeCourse) return null;
-
-      try {
-        return await createNotification({
-          notificationId: generateNotificationId("reminder"),
-          recipientId: record.userId,
-          recipientEmail: record.email,
-          sendEmail: !!record.email,
-          category: "academic",
-          actionType: "LEARNING_REMINDER",
-          title: "Don't break your streak",
-          message: `It's been a few days since you accessed your course. Your progress is waiting for you!`,
-          sendEmail: false,
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-          payload: {
-            userName: record.userName || record.firstname,
-            productId: activeCourse.productId,
-            currentProgress: activeCourse.progress,
-          },
-          entityId: activeCourse.productId,
-          entityType: "product",
-        });
-      } catch (err) {
-        console.error(
-          `[REMINDER_ERR] Failed to send notification to user ${record.userId}:`,
-          err.message,
-        );
-        return null;
-      }
-    });
-
-    const results = await Promise.all(notificationPromises);
-    const sentCount = results.filter((result) => result !== null).length;
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    console.log(
-      `[REMINDER_CRON] Reminder notifications sent to ${sentCount} users.`,
-    );
-  } catch (error) {
-    console.error("[REMINDER_CONTROLLER_ERR]:", error.message);
     logControllerPerformance(
       controllerName,
       action,

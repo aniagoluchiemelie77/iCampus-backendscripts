@@ -18,7 +18,6 @@ import {
   registerLecturerMediaControlHandlers,
 } from "./liveClassControllers.js";
 import { registerAttendanceHandlers } from "./PhysicalClassControllers.js";
-import { registerPrivateChatHandlers } from "./chatController.js";
 
 let io;
 
@@ -50,8 +49,6 @@ export const init = (httpServer) => {
 
     // Physical Lectures logic
     registerAttendanceHandlers(io, socket);
-    //P2P chat
-    registerPrivateChatHandlers(io, socket);
     socket.on("disconnect", () => {
       console.log("User disconnected");
     });

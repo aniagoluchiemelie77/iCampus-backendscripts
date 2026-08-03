@@ -35,4 +35,3 @@ export const CATEGORY_ROLES = Object.freeze({
   subscription: ["super_admin"],
   store: ["super_admin", "finance"],
 });
-export const CARRY_FORWARD_WEIGHT = 0.3;

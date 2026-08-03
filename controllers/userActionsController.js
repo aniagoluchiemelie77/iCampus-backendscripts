@@ -12,7 +12,6 @@ import {
   PhoneNumberVerification,
   Message,
   Notification,
-  UserDownloads,
   SupportTicket,
   Lectures,
   DropOffStation,
@@ -58,12 +57,6 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 axiosRetry(axios, { retries: 3 });
 
 const FAQ_DATA = [
-  {
-    id: "iscore-1",
-    question: "What is the Unified iScore and how is it calculated?",
-    answer:
-      "The iScore is a comprehensive metric (capped at 100) that measures your platform engagement, performance, and reputation. It dynamically adjusts its calculation rules depending on whether you are a Student, Lecturer, or standard user. \n Reputation accounts for up to 20 points of your score. It aggregates ratings from your profile reviews.\n•  For Lecturers, points are driven by review averages and active time. \n• For students, points are calculated from your average Test Scores and lecture attendance rates.\n• For normal users, iScore relies entirely on community metrics, combining library usage and platform activity. \n You can also earn points by launching library sessions, downloading books, and interacting with the in-app AI Assistant. \n Lastly, to prevent jarring monthly jumps, iCampus uses a smoothing formula. It carries forward 30% of your previous month’s iScore and blends it with 70% of your current month’s calculated iScore.",
-  },
   {
     id: "icash-1",
     question: "What is iCash?",
@@ -1949,82 +1942,6 @@ export const updateUserProfile = async (req, res) => {
     res.status(500).json({ success: false, message: "Server Error" });
   }
 };
-export const updateDownloadedCourseViewProgress = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "updateDownloadedCourseViewProgressController";
-  const action = "updateDownloadedCourseViewProgress";
-  const { productId, progress, completedLessons, lastWatched } = req.body;
-  const userId = req.user.id;
-  try {
-    const downloadsQuery = await UserDownloads.where("userId", "==", userId)
-      .limit(1)
-      .get();
-
-    if (downloadsQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Product not found in user's library",
-      );
-      return res
-        .status(404)
-        .json({ message: "Product not found in user's library" });
-    }
-
-    const docRef = downloadsQuery.docs[0].ref;
-    const data = downloadsQuery.docs[0].data();
-    const ownedProducts = data.ownedProducts || [];
-
-    const productIndex = ownedProducts.findIndex(
-      (p) => p.productId === productId,
-    );
-
-    if (productIndex === -1) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Product not found in user's library",
-      );
-      return res
-        .status(404)
-        .json({ message: "Product not found in user's library" });
-    }
-    ownedProducts[productIndex] = {
-      ...ownedProducts[productIndex],
-      progress,
-      completedLessons,
-      lastWatched,
-    };
-
-    await docRef.update({
-      ownedProducts,
-      lastAccessed: new Date(),
-      updatedAt: new Date(),
-    });
-
-    const refreshedDoc = await docRef.get();
-    const updatedUserDownloads = {
-      id: refreshedDoc.id,
-      ...refreshedDoc.data(),
-    };
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ success: true, data: updatedUserDownloads });
-  } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    res.status(500).json({ message: "Server Error", error: error.message });
-  }
-};
 export const verifyiTagUsernameAvailability = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "verifyiTagUsernameAvailabilityController";
@@ -2075,39 +1992,6 @@ export const searchBookInLibrary = async (req, res) => {
   const searchUrl = `https://1lib.sk/s/${encodeURIComponent(q)}`;
 
   try {
-    if (userId) {
-      const today = new Date();
-      const userQuery = await User.where("uid", "==", userId).limit(1).get();
-
-      if (!userQuery.empty) {
-        const userDoc = userQuery.docs[0];
-        const userData = userDoc.data();
-        const monthlyStats = userData.monthlyStats || {};
-        const lastAccess = monthlyStats.lastLibraryAccess;
-
-        let lastAccessTime = null;
-        if (lastAccess) {
-          lastAccessTime = lastAccess.toDate
-            ? lastAccess.toDate().getTime()
-            : new Date(lastAccess).getTime();
-        }
-
-        const isNewSession =
-          !lastAccessTime || today.getTime() - lastAccessTime > 1000 * 60 * 60;
-
-        const libraryUsageSessions =
-          (monthlyStats.libraryUsageSessions || 0) + (isNewSession ? 1 : 0);
-        const booksFound = (monthlyStats.booksFound || 0) + 1;
-
-        await userDoc.ref.update({
-          "monthlyStats.libraryUsageSessions": libraryUsageSessions,
-          "monthlyStats.booksFound": booksFound,
-          "monthlyStats.lastLibraryAccess": today,
-          updatedAt: new Date(),
-        });
-      }
-    }
-
     const { data } = await axios.get(searchUrl, {
       headers: {
         "User-Agent":
@@ -2903,21 +2787,6 @@ export const aiChat = async (req, res) => {
       );
     } else {
       finalReply = aiResponse.reply;
-    }
-
-    if (uid) {
-      const userQuery = await User.where("uid", "==", uid).limit(1).get();
-      if (!userQuery.empty) {
-        const userDoc = userQuery.docs[0];
-        const userData = userDoc.data();
-        const monthlyStats = userData.monthlyStats || {};
-        const aiQueries = (monthlyStats.aiQueries || 0) + 1;
-
-        await userDoc.ref.update({
-          "monthlyStats.aiQueries": aiQueries,
-          updatedAt: new Date(),
-        });
-      }
     }
 
     logControllerPerformance(controllerName, action, startTime, "success");

@@ -1,9 +1,7 @@
 import express from "express";
-import { handleGenerateCertificate } from "../controllers/classActions.js";
 import { initiateFlwCharge } from "../controllers/paymentController.js";
 import { authLimiter, protect } from "../middleware/auth.js";
 import {
-  getDownloads,
   fetchConnections,
   fetchUserNotifications,
   fetchSingleNotification,
@@ -13,7 +11,6 @@ import {
   fetchCourseAssignments,
   fetchCourseLectures,
   fetchLectureExceptionsLecturerView,
-  fetchLeaderBoards,
   fetchBanksUsingCountryCode,
   fetchOngoingLectures,
   fetchFeaturedBooksFromLibrary,
@@ -42,7 +39,6 @@ import {
   sendPhoneNumberOTP,
   toggleFollowingUsers,
   updateUserProfile,
-  updateDownloadedCourseViewProgress,
   verifyiTagUsernameAvailability,
   searchBookInLibrary,
   searchUserUsingUidOrNameQuery,
@@ -116,7 +112,6 @@ router.post("/ai/chat", protect, aiChat);
 router.get("/check-account-state", protect, checkAccountState);
 router.get("/library/search", protect, searchBookInLibrary);
 router.get("/library/featured", protect, fetchFeaturedBooksFromLibrary);
-router.get("/fetchLeaderBoards", protect, fetchLeaderBoards);
 router.get("/search", protect, searchUserUsingUidOrNameQuery);
 router.get("/fetch-connections", protect, fetchConnections);
 router.get("/profile/search:identifier", protect, fetchProfileInformation);
@@ -137,18 +132,7 @@ router.delete("/recovery-email", protect, deleteRecoveryEmail);
 router.delete("/phone-number", protect, deletePhoneNumber);
 router.post("/verify-phone-otp", protect, verifyPhoneNumberOTP);
 router.post("/send-phone-otp", protect, sendPhoneNumberOTP);
-router.get("/downloads/fetch-all", protect, getDownloads);
 router.get("/courses/search", protect, handleUnifiedCourseSearch);
-router.patch(
-  "/downloads/update-progress",
-  protect,
-  updateDownloadedCourseViewProgress,
-);
-router.post(
-  "/downloads/generate-certificate",
-  protect,
-  handleGenerateCertificate,
-);
 router.post("/reviews/create", createReviewController);
 router.get(
   "/courses/:courseId/fetch-all-lectures",

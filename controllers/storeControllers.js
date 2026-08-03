@@ -2,7 +2,6 @@ import {
   Product,
   User,
   ProductOrder,
-  UserDownloads,
   Transactions,
   ProductImpression,
   ProductSales,
@@ -320,7 +319,6 @@ export const fetchAllProducts = async (req, res) => {
         priceInPoints: data.priceInPoints,
         mediaUrls: data.mediaUrls,
         productId: data.productId,
-        courseDetails: data.courseDetails,
         impressions: data.impressions,
         sales: data.sales,
         category: data.category,
@@ -613,7 +611,7 @@ export const initializeCheckout = async (req, res) => {
             createdAt: new Date(),
           });
         }
-        if (productData.type === "file" || productData.type === "course") {
+        if (productData.type === "file") {
           const updatedPendingSales =
             (sellerData.pendingSalesBalance || 0) + netEarnings;
           const salesIncrement =
@@ -640,34 +638,6 @@ export const initializeCheckout = async (req, res) => {
             netEarnings,
             createdAt: new Date(),
           });
-        }
-        if (productData.type === "course") {
-          const downloadQuery = await UserDownloads.where(
-            "userId",
-            "==",
-            buyerId,
-          )
-            .limit(1)
-            .get();
-          if (downloadQuery.empty) {
-            const newDownloadRef = UserDownloads.doc();
-            transaction.set(newDownloadRef, {
-              userId: buyerId,
-              ownedProducts: [productData.productId],
-              createdAt: new Date(),
-              updatedAt: new Date(),
-            });
-          } else {
-            const downloadDoc = downloadQuery.docs[0];
-            const ownedProducts = downloadDoc.data().ownedProducts || [];
-            if (!ownedProducts.includes(productData.productId)) {
-              ownedProducts.push(productData.productId);
-              transaction.update(downloadDoc.ref, {
-                ownedProducts,
-                updatedAt: new Date(),
-              });
-            }
-          }
         } else if (productData.type === "physical") {
           const currentStock = productData.amountInStock ?? 1;
           if (currentStock < item.quantity) {
@@ -1596,49 +1566,6 @@ export const saveProductController = async (req, res) => {
       }
     }
 
-    let courseDetails = null;
-    let lessons = [];
-    if (productType === "course") {
-      const rawLecturersText = req.body.additionalLecturersRaw || "";
-      let lecturerIds = [];
-
-      if (rawLecturersText.trim()) {
-        const inputNames = rawLecturersText
-          .split(/[,;\n]+/)
-          .map((name) => name.trim())
-          .filter(Boolean);
-
-        if (inputNames.length > 0) {
-          const usersSnapshot = await User.get();
-          const foundUids = new Set();
-
-          usersSnapshot.forEach((doc) => {
-            const u = doc.data();
-            const fullName = `${u.firstname || ""} ${u.lastname || ""}`.trim();
-            const matches = inputNames.some((name) => {
-              const regex = new RegExp(`^${name}$`, "i");
-              const subRegex = new RegExp(name, "i");
-              return (
-                regex.test(u.firstname) ||
-                regex.test(u.lastname) ||
-                regex.test(u.username) ||
-                subRegex.test(fullName)
-              );
-            });
-            if (matches && u.uid) {
-              foundUids.add(u.uid);
-            }
-          });
-          lecturerIds = Array.from(foundUids);
-        }
-      }
-      courseDetails = {
-        additionalLecturersRaw: rawLecturersText,
-        lecturerIds: lecturerIds,
-      };
-      lessons = req.body.lessons ? JSON.parse(req.body.lessons) : [];
-    }
-
     let physicalDetails = null;
     if (productType === "physical") {
       physicalDetails = {
@@ -1721,8 +1648,6 @@ export const saveProductController = async (req, res) => {
         productType,
         price: Number(price),
         physicalDetails,
-        courseDetails,
-        lessons,
         fileDetails,
         mediaUrls: productThumbnails,
         updatedAt: new Date(),
@@ -1771,8 +1696,6 @@ export const saveProductController = async (req, res) => {
         productType,
         price: Number(price),
         physicalDetails,
-        courseDetails,
-        lessons,
         fileDetails,
         mediaUrls: productThumbnails,
         impressions: 0,

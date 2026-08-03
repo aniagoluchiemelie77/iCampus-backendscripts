@@ -206,14 +206,6 @@ export const createPost = async (req, res) => {
       }
     });
 
-    if (req.user.usertype !== "enterprise") {
-      await authorDoc.ref.update({
-        "monthlyStats.libraryUsageSessions":
-          (author.monthlyStats?.libraryUsageSessions || 0) + 1,
-        updatedAt: new Date(),
-      });
-    }
-
     logControllerPerformance(controllerName, action, startTime, "success");
 
     res

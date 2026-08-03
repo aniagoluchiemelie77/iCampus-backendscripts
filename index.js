@@ -50,9 +50,6 @@ app.use((req, res, next) => {
     const appAuthModule = await import(
       pathToFileURL(path.join(__dirname, "routes/appAuth.js")).href
     );
-    const messageModule = await import(
-      pathToFileURL(path.join(__dirname, "routes/messages.js")).href
-    );
     const adminModule = await import(
       pathToFileURL(path.join(__dirname, "routes/admin.js")).href
     );
@@ -86,7 +83,6 @@ app.use((req, res, next) => {
     app.use("/webhooks", webhooksModule.default);
     app.use("/admins", adminModule.default);
     app.use("/v1/auth", appAuthModule.default);
-    app.use("/users/messages", messageModule.default);
     app.use("/support/tickets", ticketingModule.default);
     app.use("/user", userAccountDetailsModule.default);
     app.use("/users/student/class", studentClassModule.default);

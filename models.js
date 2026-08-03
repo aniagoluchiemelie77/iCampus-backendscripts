@@ -292,23 +292,6 @@ export const userSchema = new mongoose.Schema({
   headline: { type: String },
   uid: { type: String, index: true, required: true },
   bio: { type: String },
-  currentIScore: {
-    type: Number,
-    default: 5,
-  },
-  previousIScore: {
-    type: Number,
-    default: 5,
-  },
-  monthlyStats: {
-    minutesActive: { type: Number, default: 0 },
-    libraryUsageSessions: { type: Number, default: 0 },
-    booksFound: { type: Number, default: 0 },
-    aiQueries: { type: Number, default: 0 },
-    avgReview: { type: Number, default: 0 },
-    avgTestScore: { type: Number, default: 0 },
-    lastLibraryAccess: { type: Date },
-  },
   tier: {
     type: String,
     enum: ["free", "pro", "premium"],
@@ -480,7 +463,6 @@ export const productSchema = new mongoose.Schema({
     type: String,
     enum: [
       "Electronics",
-      "Courses",
       "Documents",
       "Fashion",
       "Stationery",
@@ -491,7 +473,7 @@ export const productSchema = new mongoose.Schema({
   },
   type: {
     type: String,
-    enum: ["physical", "course", "file"],
+    enum: ["physical", "file"],
     required: true,
   },
   category: { type: String },
@@ -512,22 +494,6 @@ export const productSchema = new mongoose.Schema({
     ],
     isNationalShippingAvailable: { type: Boolean, default: false },
     dropOffAddress: [dropOffStation],
-  },
-  courseDetails: {
-    courseId: { type: String, default: null },
-    lecturerIds: [{ type: String, default: null }],
-    duration: { type: String, default: null },
-    totalReviews: { type: Number, default: 0 },
-    studentsEnrolled: [{ type: String, default: null }],
-    totalLessons: { type: Number, default: 0 },
-    content: [
-      {
-        title: { type: String, default: null },
-        videoUrl: { type: String, default: null },
-        duration: { type: Number, default: 0 },
-        isFreePreview: { type: Boolean, default: false },
-      },
-    ],
   },
   fileDetails: {
     fileName: { type: String, default: null },
@@ -588,6 +554,25 @@ export const productSalesSchema = new mongoose.Schema({
   netEarnings: { type: Number, required: true },
   buyerId: { type: String, required: true },
   createdAt: { type: Date, default: Date.now },
+});
+export const messageSchema = new mongoose.Schema({
+  id: { type: String, required: true },
+  senderId: { type: String, required: true },
+  recipientId: { type: String, required: true },
+  text: String,
+  attachments: [
+    {
+      url: String,
+      fileType: String,
+      fileName: String,
+    },
+  ],
+  status: {
+    type: String,
+    enum: ["sent", "delivered", "seen"],
+    default: "sent",
+  },
+  timestamp: { type: Date, default: Date.now },
 });
 export const reviewSchema = new mongoose.Schema({
   reviewerId: { type: String, required: true },
@@ -990,25 +975,6 @@ export const iTagSchema = new mongoose.Schema(
   },
   { timestamps: true },
 );
-export const messageSchema = new mongoose.Schema({
-  id: { type: String, required: true },
-  senderId: { type: String, required: true },
-  recipientId: { type: String, required: true },
-  text: String,
-  attachments: [
-    {
-      url: String,
-      fileType: String,
-      fileName: String,
-    },
-  ],
-  status: {
-    type: String,
-    enum: ["sent", "delivered", "seen"],
-    default: "sent",
-  },
-  timestamp: { type: Date, default: Date.now },
-});
 export const deletedUserSchema = new mongoose.Schema({
   uid: { type: String, required: true },
   reason: { type: String },
