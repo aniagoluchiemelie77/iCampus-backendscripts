@@ -463,17 +463,18 @@ export const productSchema = new mongoose.Schema({
     type: String,
     enum: [
       "Electronics",
-      "Documents",
       "Fashion",
       "Stationery",
       "Snacks and Deserts",
       "Food",
+      "Footwears",
+      "Health & Beauty",
     ],
     required: true,
   },
   type: {
     type: String,
-    enum: ["physical", "file"],
+    enum: ["physical"],
     required: true,
   },
   category: { type: String },
@@ -494,13 +495,6 @@ export const productSchema = new mongoose.Schema({
     ],
     isNationalShippingAvailable: { type: Boolean, default: false },
     dropOffAddress: [dropOffStation],
-  },
-  fileDetails: {
-    fileName: { type: String, default: null },
-    fileSizeInMB: { type: Number, default: 0 },
-    fileFormat: { type: String, default: null },
-    fileUrl: { type: String, default: null },
-    hasPassword: { type: Boolean, default: false },
   },
   ratings: [
     {
@@ -548,7 +542,7 @@ export const productSalesSchema = new mongoose.Schema({
   sellerId: { type: String, required: true, index: true },
   productId: { type: String, required: true },
   orderId: { type: String, default: null },
-  productType: { type: String, enum: ["physical", "file", "course"] },
+  productType: { type: String, enum: ["physical"] },
   quantity: { type: Number, default: 1 },
   amountPaid: { type: Number, required: true },
   netEarnings: { type: Number, required: true },

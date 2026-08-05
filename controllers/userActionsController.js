@@ -118,12 +118,6 @@ const FAQ_DATA = [
       "If you have exhausted your free monthly allowance, you can purchase additional exceptions at a cost of 0.5 iCash each. Please note that if a lecturer disapproves or cancels a purchased exception, no refunds are issued.",
   },
   {
-    id: "iap-3",
-    question: "What happens when I buy a digital file or a course?",
-    answer:
-      "For digital files, the download URL is sent to you immediately after payment, and funds are instantly dispatched to the seller. For courses, completing the purchase grants you immediate access to your courses within your downloads section.",
-  },
-  {
     id: "icash-4",
     question: "How does the platform prevent fraud and double-spending?",
     answer:
@@ -2049,8 +2043,7 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
   const action = "searchUserUsingUidOrNameQuery";
   const { q, uid, viewerRole, viewerTier } = req.query;
 
-  const isAdmin =
-    viewerRole === "admin";
+  const isAdmin = viewerRole === "admin";
 
   try {
     let users = [];
@@ -2158,7 +2151,7 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
     );
     res.status(500).json({ message: error.message, success: false });
   }
-};;
+};
 export const checkAccountState = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "checkAccountStateController";
@@ -2314,7 +2307,7 @@ export const handleUnifiedCourseSearch = async (req, res) => {
         .join(", ");
 
       return {
-        id: course.courseId,
+        id: course.courseId || course.id,
         title: course.courseTitle,
         code: course.courseCode,
         semester: course.semester,
@@ -2329,72 +2322,10 @@ export const handleUnifiedCourseSearch = async (req, res) => {
           mappedInstructors || course.instructorName || "Course Instructor",
       };
     });
-    const productSnapshot = await Product.where("type", "==", "course").get();
-    const marketplaceCourses = [];
 
-    productSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const title = (data.title || "").toLowerCase();
-      const description = (data.description || "").toLowerCase();
-      const category = (data.category || "").toLowerCase();
-
-      if (
-        title.includes(searchTerm) ||
-        description.includes(searchTerm) ||
-        category.includes(searchTerm)
-      ) {
-        marketplaceCourses.push({ id: doc.id, ...data });
-      }
-    });
-
-    const limitedMarketplace = marketplaceCourses.slice(0, 25);
-    const normalizedPremium = await Promise.all(
-      limitedMarketplace.map(async (product) => {
-        let instructorNames = "Instructor";
-        const lecturerUids = product.courseDetails?.lecturerIds || [];
-
-        if (lecturerUids.length > 0) {
-          const discoveredUsers = [];
-          const chunks = [];
-          for (let i = 0; i < lecturerUids.length; i += 30) {
-            chunks.push(lecturerUids.slice(i, i + 30));
-          }
-
-          for (const chunk of chunks) {
-            const userSnapshot = await User.where("uid", "in", chunk).get();
-            userSnapshot.forEach((doc) => {
-              discoveredUsers.push(doc.data());
-            });
-          }
-
-          if (discoveredUsers.length > 0) {
-            instructorNames = discoveredUsers
-              .map((u) => `${u.firstname || ""} ${u.lastname || ""}`.trim())
-              .join(", ");
-          }
-        }
-
-        return {
-          id: product.productId,
-          title: product.title,
-          code: product.category || "Premium",
-          isPremiumPaid: true,
-          semester: null,
-          session: null,
-          creditLoad: null,
-          price: product.priceInPoints || 0,
-          thumbnail: product.mediaUrls?.[0] || null,
-          studentsCount: product.courseDetails?.studentsEnrolled?.length || 0,
-          isActive: product.isAvailable ?? true,
-          instructors: instructorNames,
-        };
-      }),
+    const dynamicUnifiedResults = normalizedInstitutional.sort((a, b) =>
+      a.title.localeCompare(b.title),
     );
-
-    const dynamicUnifiedResults = [
-      ...normalizedInstitutional,
-      ...normalizedPremium,
-    ].sort((a, b) => a.title.localeCompare(b.title));
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -2402,7 +2333,7 @@ export const handleUnifiedCourseSearch = async (req, res) => {
       courses: dynamicUnifiedResults,
     });
   } catch (error) {
-    console.error("Unified course search failure:", error.message);
+    console.error("Institutional course search failure:", error.message);
     logControllerPerformance(
       controllerName,
       action,
@@ -2488,50 +2419,10 @@ export const handleUnifiedResourceSearch = async (req, res) => {
         }
       });
     });
-    const productSnapshot = await Product.where("type", "==", "file")
-      .where("isAvailable", "==", true)
-      .get();
 
-    const marketplaceFiles = [];
-
-    productSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const title = (data.title || "").toLowerCase();
-      const description = (data.description || "").toLowerCase();
-      const category = (data.category || "").toLowerCase();
-      const fileName = (data.fileDetails?.fileName || "").toLowerCase();
-
-      if (
-        title.includes(searchTerm) ||
-        description.includes(searchTerm) ||
-        category.includes(searchTerm) ||
-        fileName.includes(searchTerm)
-      ) {
-        marketplaceFiles.push({ id: doc.id, ...data });
-      }
-    });
-
-    const limitedMarketplace = marketplaceFiles.slice(0, 25);
-
-    const normalizedPremium = limitedMarketplace.map((product) => {
-      return {
-        id: product.productId || product.id,
-        title: product.title,
-        url: product.fileDetails?.fileUrl || product.mediaUrls?.[0] || null,
-        format: product.fileDetails?.fileFormat || "pdf",
-        isPremiumPaid: true,
-        price: product.priceInPoints || 0,
-        metaSource: `${product.category || "Document"} • Marketplace`,
-        fileSize: product.fileDetails?.fileSizeInMB
-          ? `${product.fileDetails.fileSizeInMB} MB`
-          : null,
-      };
-    });
-
-    const unifiedResources = [
-      ...normalizedInstitutional,
-      ...normalizedPremium,
-    ].sort((a, b) => a.title.localeCompare(b.title));
+    const unifiedResources = normalizedInstitutional.sort((a, b) =>
+      a.title.localeCompare(b.title),
+    );
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -2539,7 +2430,10 @@ export const handleUnifiedResourceSearch = async (req, res) => {
       resources: unifiedResources,
     });
   } catch (error) {
-    console.error("Unified resource library lookup down: ", error.message);
+    console.error(
+      "Institutional resource library lookup down: ",
+      error.message,
+    );
     await logControllerPerformance(
       controllerName,
       action,

@@ -324,7 +324,6 @@ export const fetchAllProducts = async (req, res) => {
         category: data.category,
         description: data.description,
         ratings: data.ratings,
-        fileDetails: data.fileDetails,
         type: data.type,
         sellerId: data.sellerId,
         physicalDetails: data.physicalDetails,
@@ -611,51 +610,22 @@ export const initializeCheckout = async (req, res) => {
             createdAt: new Date(),
           });
         }
-        if (productData.type === "file") {
-          const updatedPendingSales =
-            (sellerData.pendingSalesBalance || 0) + netEarnings;
-          const salesIncrement =
-            (productData.sales || 0) + (item.quantity || 1);
-
-          transaction.update(sellerDoc.ref, {
-            pendingSalesBalance: updatedPendingSales,
-            updatedAt: new Date(),
-          });
-
-          transaction.update(productDoc.ref, {
-            sales: salesIncrement,
-            updatedAt: new Date(),
-          });
-
-          const productSaleRef = ProductSales.doc();
-          transaction.set(productSaleRef, {
-            sellerId: item.sellerId,
-            productId: item.productId,
-            productType: productData.type,
-            quantity: item.quantity,
-            amountPaid: itemTotal,
-            buyerId,
-            netEarnings,
-            createdAt: new Date(),
-          });
-        } else if (productData.type === "physical") {
-          const currentStock = productData.amountInStock ?? 1;
-          if (currentStock < item.quantity) {
-            throw new Error(
-              `Insufficient stock for ${productData.title}. Available: ${currentStock}`,
-            );
-          }
-
-          const updatedStock = currentStock - item.quantity;
-          const productUpdates = {
-            amountInStock: updatedStock,
-            updatedAt: new Date(),
-          };
-          if (updatedStock === 0) {
-            productUpdates.isAvailable = false;
-          }
-          transaction.update(productDoc.ref, productUpdates);
+        const currentStock = productData.amountInStock ?? 1;
+        if (currentStock < item.quantity) {
+          throw new Error(
+            `Insufficient stock for ${productData.title}. Available: ${currentStock}`,
+          );
         }
+
+        const updatedStock = currentStock - item.quantity;
+        const productUpdates = {
+          amountInStock: updatedStock,
+          updatedAt: new Date(),
+        };
+        if (updatedStock === 0) {
+          productUpdates.isAvailable = false;
+        }
+        transaction.update(productDoc.ref, productUpdates);
         const newOrderRef = ProductOrder.doc(orderId);
         const newOrder = {
           orderId,
@@ -667,10 +637,6 @@ export const initializeCheckout = async (req, res) => {
           quantity: item.quantity,
           status:
             productData.type === "physical" ? "pending_delivery" : "completed",
-          fileUrl:
-            productData.type === "file"
-              ? productData.fileUrl || productData.fileDetails?.fileUrl
-              : null,
           deliveryMethod: item.deliveryMethod,
           verificationQrCode: orderId,
           agentId: stationAgentId,
@@ -1610,33 +1576,6 @@ export const saveProductController = async (req, res) => {
       const productDoc = productQuery.docs[0];
       productDocRef = productDoc.ref;
       existingProductData = productDoc.data();
-
-      if (productType === "file") {
-        if (req.file) {
-          if (existingProductData.fileDetails?.url) {
-            await fs
-              .unlink(existingProductData.fileDetails.url)
-              .catch((err) =>
-                console.error("Failed to delete stale digital asset:", err),
-              );
-          }
-          fileDetails = {
-            url: req.file.path,
-            name: req.file.originalname,
-            type: req.file.mimetype,
-          };
-        } else {
-          fileDetails = existingProductData.fileDetails;
-        }
-      }
-    } else {
-      if (productType === "file" && req.file) {
-        fileDetails = {
-          url: req.file.path,
-          name: req.file.originalname,
-          type: req.file.mimetype,
-        };
-      }
     }
 
     let productData;
@@ -1648,7 +1587,6 @@ export const saveProductController = async (req, res) => {
         productType,
         price: Number(price),
         physicalDetails,
-        fileDetails,
         mediaUrls: productThumbnails,
         updatedAt: new Date(),
       };
@@ -1696,7 +1634,6 @@ export const saveProductController = async (req, res) => {
         productType,
         price: Number(price),
         physicalDetails,
-        fileDetails,
         mediaUrls: productThumbnails,
         impressions: 0,
         createdAt: new Date(),
@@ -1799,14 +1736,6 @@ export const deleteProductController = async (req, res) => {
 
       return productData;
     });
-    if (result.productType === "file" && result.fileDetails?.url) {
-      fs.unlink(result.fileDetails.url).catch((err) =>
-        console.error(
-          `Failed to delete local file asset at ${result.fileDetails.url}:`,
-          err,
-        ),
-      );
-    }
 
     const mediaThumbnails = result.mediaUrls || result.thumbnails;
     if (mediaThumbnails) {
