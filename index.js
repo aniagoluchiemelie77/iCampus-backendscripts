@@ -8,6 +8,12 @@ import { fileURLToPath } from "url";
 import { db } from "./config/firebaseAdmin.js";
 import { client as redisClient } from "./workers/reditFile.js";
 import { init as initSocket } from "./controllers/socket.js";
+import { flagSuspiciousAccounts } from "./cron/flagSuspiciousAccountsCron.js";
+import {
+  updateLecturerInfo,
+  updateStudentInfo,
+} from "./cron/checkForAlumnisCron.js";
+import { lectureReminderCron } from "./cron/lectureReminderCron.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -16,6 +22,12 @@ dotenv.config();
 const app = express();
 const httpServer = createServer(app);
 const io = initSocket(httpServer);
+
+//Cron jobs
+flagSuspiciousAccounts();
+updateStudentInfo();
+updateLecturerInfo();
+lectureReminderCron();
 
 app.use(cors());
 

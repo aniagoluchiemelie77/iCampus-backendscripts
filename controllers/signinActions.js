@@ -25,7 +25,6 @@ import {
   verifyGithubToken,
 } from "../api/foreignFetchApis.js";
 import bcrypt from "bcrypt";
-import { generateExpiryDate } from "../utils/dateHelper.js";
 import jwt from "jsonwebtoken";
 import { createNotification } from "../services/notification.js";
 import { client } from "../workers/reditFile.js";
@@ -135,7 +134,6 @@ export const signUp = async (req, res) => {
 
     if (iSCardEligible) {
       const newCardNumber = await generateUniqueCardNumber();
-      const expiryDate = await generateExpiryDate();
       const itagId = `itag_${uid}`;
 
       const newITagData = {
@@ -144,7 +142,6 @@ export const signUp = async (req, res) => {
         cardHolderName: `${firstname} ${lastname}`,
         cardNumber: newCardNumber,
         tier: "free",
-        expiryDate,
         createdAt: new Date(),
       };
       await ITag.doc(itagId).set(newITagData);

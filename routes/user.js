@@ -62,6 +62,8 @@ import {
   changePassword,
   AdminLogin,
 } from "../controllers/signinActions.js";
+import { upload } from "../workers/multerWorker.js";
+import { uploadCourseDetails } from "../controllers/classActions.js";
 
 const router = express.Router();
 
@@ -145,6 +147,12 @@ router.post("/courses/manual-create", protect, uploadCourseDetailsManually);
 router.post("/online-classes/create", protect, createQuickMeeting);
 router.post("/stations/register", protect, registerDropOffStation);
 router.get("/ads/fetch-active", protect, getAds);
+router.post(
+  "/course/extract-course-details-from-uploads",
+  protect,
+  upload.array("files"),
+  uploadCourseDetails,
+);
 
 export default router;
 

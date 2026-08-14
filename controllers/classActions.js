@@ -2915,13 +2915,42 @@ export const uploadCourseDetails = async (req, res) => {
     }
 
     const requesterUid = req.user?.uid || req.user?.id;
+    const userType = req.user?.usertype;
 
     const model = genAI.getGenerativeModel({
       model: "gemini-1.5-flash",
       generationConfig: { responseMimeType: "application/json" },
     });
 
-    const prompt = `
+    const prompt =
+      userType === "lecturer"
+        ? `
+        Extract all details from this course allocation document. 
+        It may consist of multiple pages or tables. Combine the data into one response.
+        
+        Return ONLY a valid JSON object matching this schema:
+        {
+          "departmentInfo": {
+              "schoolName": "University name from header/logo",
+              "college": "Faculty name",
+              "department": "Department",
+              "session": "e.g., 2025/2026",
+              "semester": "First" or "Second"
+          },
+          "courses": [
+            {
+              "courseCode": "e.g., GNG 113",
+              "courseTitle": "Full title",
+              "semester": "First" or "Second",
+              "session": "e.g., 2025/2026",
+              "credits": 2,
+              "level": "Level digits only if available",
+              "lecturers": ["Dr. Okogume", "Engr. Esidje"]
+            }
+          ]
+        }
+      `
+        : `
         Extract all details from this course registration document. 
         It may consist of multiple pages or images. Combine the data into one response.
         
@@ -2974,9 +3003,9 @@ export const uploadCourseDetails = async (req, res) => {
         .json({ message: "AI returned invalid JSON structure." });
     }
 
-    const { studentInfo, courses } = extraction;
+    const { studentInfo, departmentInfo, courses } = extraction;
 
-    if (!studentInfo || !courses || courses.length === 0) {
+    if (!courses || courses.length === 0) {
       logControllerPerformance(
         controllerName,
         action,
@@ -2988,29 +3017,36 @@ export const uploadCourseDetails = async (req, res) => {
         .status(422)
         .json({ message: "Failed to extract structured course records." });
     }
+    if (userType === "student") {
+      if (!studentInfo) {
+        return res
+          .status(422)
+          .json({ message: "Missing student info block in document." });
+      }
+      const submittedMatric = studentInfo.matricNo
+        ?.replace(/[^a-zA-Z0-9]/g, "")
+        .toLowerCase();
+      const userMatric = req.user?.matricNumber
+        ?.replace(/[^a-zA-Z0-9]/g, "")
+        .toLowerCase();
 
-    const submittedMatric = studentInfo.matricNo
-      ?.replace(/[^a-zA-Z0-9]/g, "")
-      .toLowerCase();
-    const userMatric = req.user?.matricNumber
-      ?.replace(/[^a-zA-Z0-9]/g, "")
-      .toLowerCase();
-
-    if (!submittedMatric || submittedMatric !== userMatric) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        `Document verification failed. Matric Number mismatch.`,
-      );
-      return res.status(403).json({
-        message: `Document verification failed. Matric Number mismatch.`,
-      });
+      if (!submittedMatric || submittedMatric !== userMatric) {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          `Document verification failed. Matric Number mismatch.`,
+        );
+        return res.status(403).json({
+          message: `Document verification failed. Matric Number mismatch.`,
+        });
+      }
     }
 
     const now = new Date();
     const processedCourseIds = [];
+
     for (const courseData of courses) {
       const cleanTitle = courseData.courseTitle.trim();
 
@@ -3028,10 +3064,44 @@ export const uploadCourseDetails = async (req, res) => {
         const existingData = doc.data();
         courseId = existingData.courseId;
 
-        const studentsEnrolled = existingData.studentsEnrolled || [];
-        if (!studentsEnrolled.includes(requesterUid)) {
+        if (userType === "student") {
+          const studentsEnrolled = existingData.studentsEnrolled || [];
+          if (!studentsEnrolled.includes(requesterUid)) {
+            await courseDocRef.update({
+              studentsEnrolled: [...studentsEnrolled, requesterUid],
+              updatedAt: now,
+            });
+          }
+        } else if (userType === "lecturer") {
+          const extractedLecturerNames = courseData.lecturers || [];
+          const resolvedLecturerIds = new Set(existingData.lecturerIds || []);
+          resolvedLecturerIds.add(requesterUid);
+
+          for (const rawName of extractedLecturerNames) {
+            const sanitizedName = rawName
+              .replace(/(dr\.|engr\.|mr\.|mrs\.|prof\.)/gi, "")
+              .trim();
+            const nameParts = sanitizedName.split(" ");
+            const lastName = nameParts[nameParts.length - 1];
+
+            if (lastName) {
+              const matchedUserQuery = await User.where(
+                "lastname",
+                ">=",
+                lastName,
+              )
+                .where("lastname", "<=", lastName + "\uf8ff")
+                .limit(1)
+                .get();
+
+              if (!matchedUserQuery.empty) {
+                resolvedLecturerIds.add(matchedUserQuery.docs[0].data().uid);
+              }
+            }
+          }
+
           await courseDocRef.update({
-            studentsEnrolled: [...studentsEnrolled, requesterUid],
+            lecturerIds: Array.from(resolvedLecturerIds),
             updatedAt: now,
           });
         }
@@ -3042,13 +3112,50 @@ export const uploadCourseDetails = async (req, res) => {
         );
         courseDocRef = Course.doc();
 
+        let initialLecturerIds = [];
+        if (userType === "lecturer") {
+          const resolvedSet = new Set([requesterUid]);
+          const extractedLecturerNames = courseData.lecturers || [];
+
+          for (const rawName of extractedLecturerNames) {
+            const sanitizedName = rawName
+              .replace(/(dr\.|engr\.|mr\.|mrs\.|prof\.)/gi, "")
+              .trim();
+            const nameParts = sanitizedName.split(" ");
+            const lastName = nameParts[nameParts.length - 1];
+
+            if (lastName) {
+              const matchedUserQuery = await User.where(
+                "lastname",
+                ">=",
+                lastName,
+              )
+                .where("lastname", "<=", lastName + "\uf8ff")
+                .limit(1)
+                .get();
+
+              if (!matchedUserQuery.empty) {
+                resolvedSet.add(matchedUserQuery.docs[0].data().uid);
+              }
+            }
+          }
+          initialLecturerIds = Array.from(resolvedSet);
+        }
+
         const newCourseData = {
           ...courseData,
           courseId,
-          schoolName: req.user?.schoolName || studentInfo.schoolName,
-          department: studentInfo.department || req.user?.department,
-          level: studentInfo.level,
-          studentsEnrolled: [requesterUid],
+          schoolName:
+            req.user?.schoolName ||
+            studentInfo?.schoolName ||
+            departmentInfo?.schoolName,
+          department:
+            studentInfo?.department ||
+            departmentInfo?.department ||
+            req.user?.department,
+          level: courseData.level || studentInfo?.level || "",
+          studentsEnrolled: userType === "student" ? [requesterUid] : [],
+          lecturerIds: initialLecturerIds,
           isActive: true,
           createdAt: now,
           updatedAt: now,
@@ -3058,25 +3165,42 @@ export const uploadCourseDetails = async (req, res) => {
       }
       processedCourseIds.push(courseId);
     }
+
+    // 3. Update User Profile Arrays
     const userQuery = await User.where("uid", "==", requesterUid)
       .limit(1)
       .get();
+
     if (!userQuery.empty) {
       const userDocRef = userQuery.docs[0].ref;
       const userData = userQuery.docs[0].data();
-      const existingEnrolled =
-        userData.enrolledCourses || userData.coursesEnrolled || [];
-      const updatedEnrolled = Array.from(
-        new Set([...existingEnrolled, ...processedCourseIds]),
-      );
 
-      await userDocRef.update({
-        enrolledCourses: updatedEnrolled,
-        updatedAt: now,
-      });
+      if (userType === "student") {
+        const existingEnrolled =
+          userData.enrolledCourses || userData.coursesEnrolled || [];
+        const updatedEnrolled = Array.from(
+          new Set([...existingEnrolled, ...processedCourseIds]),
+        );
+        await userDocRef.update({
+          enrolledCourses: updatedEnrolled,
+          updatedAt: now,
+        });
+      } else if (userType === "lecturer") {
+        const existingTeaching = userData.coursesTeaching || [];
+        const updatedTeaching = Array.from(
+          new Set([...existingTeaching, ...processedCourseIds]),
+        );
+        await userDocRef.update({
+          coursesTeaching: updatedTeaching,
+          updatedAt: now,
+        });
+      }
     }
-
     const firstCourse = courses[0] || {};
+    const targetLevel =
+      userType === "student" ? studentInfo?.level : "Departmental";
+    const documentType =
+      userType === "student" ? "course registration" : "course allocation";
     await createNotification({
       notificationId: generateNotificationId("classroom"),
       recipientId: requesterUid,
@@ -3084,17 +3208,21 @@ export const uploadCourseDetails = async (req, res) => {
       sendEmail: !!req.user?.email,
       category: "academic",
       actionType: "COURSES_EXTRACTED",
-      title: "Course Registration Synced",
-      message: `Successfully extracted ${courses.length} courses for the ${studentInfo.level}L curriculum.`,
+      title:
+        userType === "student"
+          ? "Course Registration Synced"
+          : "Course Allocation Synced",
+      message: `Successfully processed ${courses.length} courses from ${documentType} document.`,
       payload: {
-        userName: req.user?.firstname || studentInfo.studentName,
+        userName:
+          req.user?.firstname ||
+          (userType === "student" ? studentInfo?.studentName : "Lecturer"),
         courseCount: courses.length,
-        level: studentInfo.level,
-        matricNo: studentInfo.matricNo,
+        level: targetLevel,
         semester: firstCourse.semester
           ? firstCourse.semester.toLowerCase()
           : "unknown",
-        session: firstCourse.session || "",
+        session: firstCourse.session || departmentInfo?.session || "",
       },
       entityId: requesterUid,
       entityType: "user",
@@ -3106,7 +3234,6 @@ export const uploadCourseDetails = async (req, res) => {
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: `Processed ${courses.length} courses successfully.`,
-      studentName: studentInfo.studentName,
       coursesCount: courses.length,
     });
   } catch (error) {

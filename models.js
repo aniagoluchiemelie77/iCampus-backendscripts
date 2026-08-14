@@ -937,9 +937,6 @@ export const iTagSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    expiryDate: {
-      type: String,
-    },
     layoutType: {
       type: Number,
       enum: [1, 2, 3],

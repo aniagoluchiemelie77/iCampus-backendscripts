@@ -3,51 +3,56 @@ import { User } from "../tableDeclarations.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
 
-cron.schedule("*/5 * * * *", async () => {
-  const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+export const flagSuspiciousAccounts = () => {
+  cron.schedule("0 0 * * *", async () => {
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
 
-  try {
-    const querySnapshot = await User.where("isSuspended", "==", false).get();
+    try {
+      const querySnapshot = await User.where("isSuspended", "==", false).get();
 
-    if (querySnapshot.empty) return;
+      if (querySnapshot.empty) return;
 
-    for (const userDoc of querySnapshot.docs) {
-      const userDocRef = userDoc.ref;
-      const user = userDoc.data();
+      for (const userDoc of querySnapshot.docs) {
+        const userDocRef = userDoc.ref;
+        const user = userDoc.data();
 
-      if (!user.suspiciousActivity || !Array.isArray(user.suspiciousActivity)) {
-        continue;
-      }
-      const recentFlags = user.suspiciousActivity.filter((a) => {
-        const timestamp = a.timestamp?.toDate
-          ? a.timestamp.toDate()
-          : new Date(a.timestamp);
-        return timestamp >= oneHourAgo;
-      });
-
-      if (recentFlags.length > 5) {
-        await userDocRef.update({
-          isSuspended: true,
-          suspiciousActivity: [],
-          updatedAt: new Date(),
+        if (
+          !user.suspiciousActivity ||
+          !Array.isArray(user.suspiciousActivity)
+        ) {
+          continue;
+        }
+        const recentFlags = user.suspiciousActivity.filter((a) => {
+          const timestamp = a.timestamp?.toDate
+            ? a.timestamp.toDate()
+            : new Date(a.timestamp);
+          return timestamp >= oneHourAgo;
         });
 
-        await notifyAdmins(
-          { role: ["moderator", "super_admin"] },
-          {
-            notificationId: generateNotificationId("security"),
-            actionType: "ACCOUNT_SUSPENDED_SECURITY",
-            payload: {
-              userId: user.uid,
-              reason: "Excessive suspicious activity",
+        if (recentFlags.length > 3) {
+          await userDocRef.update({
+            isSuspended: true,
+            suspiciousActivity: [],
+            updatedAt: new Date(),
+          });
+
+          await notifyAdmins(
+            { role: ["moderator", "super_admin"] },
+            {
+              notificationId: generateNotificationId("security"),
+              actionType: "ACCOUNT_SUSPENDED_SECURITY",
+              payload: {
+                userId: user.uid,
+                reason: "Excessive suspicious activity",
+              },
+              senderId: "system",
             },
-            senderId: "system",
-          },
-          true,
-        );
+            true,
+          );
+        }
       }
+    } catch (error) {
+      console.error("Cron job suspension check error:", error.message);
     }
-  } catch (error) {
-    console.error("Cron job suspension check error:", error.message);
-  }
-});
+  });
+};

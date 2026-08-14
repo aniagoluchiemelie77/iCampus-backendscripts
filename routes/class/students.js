@@ -1,7 +1,6 @@
 import express from "express";
 import mongoose from "mongoose";
 import { protect } from "../../middleware/auth.js";
-import { upload } from "../../workers/multerWorker.js";
 import {
   submitLectureException,
   checkTestStatus,
@@ -18,12 +17,6 @@ import {
 const router = express.Router();
 
 router.get("/courses/fetch-my-courses", protect, fetchStudentsEnrolledCourses);
-router.post(
-  "/course/extract-course-details-from-uploads",
-  protect,
-  upload.array("files"),
-  uploadCourseDetails,
-);
 router.post("/exceptions/submit", protect, submitLectureException);
 router.post("/test/submit", protect, submitAssessment);
 router.get(
