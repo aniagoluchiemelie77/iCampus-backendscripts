@@ -3149,6 +3149,7 @@ export const uploadCourseDetails = async (req, res) => {
             req.user?.schoolName ||
             studentInfo?.schoolName ||
             departmentInfo?.schoolName,
+          schoolCode: req.user?.schoolCode || studentInfo?.schoolCode,
           department:
             studentInfo?.department ||
             departmentInfo?.department ||
@@ -3166,7 +3167,6 @@ export const uploadCourseDetails = async (req, res) => {
       processedCourseIds.push(courseId);
     }
 
-    // 3. Update User Profile Arrays
     const userQuery = await User.where("uid", "==", requesterUid)
       .limit(1)
       .get();

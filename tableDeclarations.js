@@ -5,19 +5,18 @@ export const Product = db.collection("products");
 export const User = db.collection("users");
 export const UserSessions = db.collection("usersessions");
 export const Notification = db.collection("notifications");
+//school related tables
 export const Course = db.collection("courses");
-export const CourseAssignments = db.collection("courseassignments");
-export const UserBankOrCardDetails = db.collection("usercardorbankdetails");
-export const EmailVerification = db.collection("emailverify");
+export const Exceptions = db.collection("exceptions");
+export const Assessment = db.collection("assessments");
+export const TestSubmission = db.collection("testsubmission");
+export const Attendance = db.collection("attendance");
+export const Lectures = db.collection("lectures");
 //school name is in lowercase, in frontend capitalize
 export const OperationalInstitutions = db.collection("operationalinstitutions");
-export const Exceptions = db.collection("exceptions");
-export const Lectures = db.collection("lectures");
-export const Assessment = db.collection("assessments");
-export const AssessmentQuestions = db.collection("assessmentquestions");
-export const TestSubmission = db.collection("testsubmission");
+export const UserBankOrCardDetails = db.collection("usercardorbankdetails");
+export const EmailVerification = db.collection("emailverify");
 export const Follow = db.collection("follow");
-export const Attendance = db.collection("attendance");
 export const Transactions = db.collection("transactions");
 export const PaymentMethods = db.collection("paymentmethods");
 export const ITag = db.collection("itags");

@@ -325,80 +325,270 @@ export const updateUserController = async (req, res) => {
 };
 export const getAdminMetrics = async (req, res) => {
   try {
-    const [
-      usersSnapshot,
-      transactionsSnapshot,
-      payoutsSnapshot,
-      pendingTicketsCount,
-      recentSchoolsSnapshot,
-      totalSchoolsCount,
-      recentStationsSnapshot,
-      totalStationsCount,
-      latencySnapshot,
-      taxesSnapshot,
-    ] = await Promise.all([
-      User.where("isSuspended", "==", false).get(),
-      Transactions.where("status", "==", "success").get(),
-      Payout.get(),
-      SupportTicket.where("status", "in", ["open", "pending"])
-        .get()
-        .then((snap) => snap.size),
-      OperationalInstitutions.orderBy("createdAt", "desc").limit(10).get(),
-      OperationalInstitutions.get().then((snap) => snap.size),
-      DropOffStation.orderBy("createdAt", "desc").limit(10).get(),
-      DropOffStation.get().then((snap) => snap.size),
-      ControllerLog.limit(10).get(),
-      TaxEntries.orderBy("date", "desc").limit(10).get(),
-    ]);
+    const adminType = req.admin?.adminType || req.user?.adminType;
+    const schoolCode =
+      req.admin?.schoolCode || req.user?.schoolCode || req.query?.schoolCode;
+
+    if (!adminType) {
+      return res
+        .status(403)
+        .json({ error: "Unauthorized: Missing admin type context." });
+    }
+
+    const needsUsers = [
+      "super_admin",
+      "finance",
+      "analyst",
+      "school_administrator",
+      "support",
+    ].includes(adminType);
+    const needsTransactions = ["super_admin", "finance"].includes(adminType);
+    const needsPayouts = ["super_admin", "finance"].includes(adminType);
+    const needsTickets = ["super_admin", "support"].includes(adminType);
+    const needsInstitutions = ["super_admin", "support"].includes(adminType);
+    const needsStations = ["super_admin", "support"].includes(adminType);
+    const needsLatency = ["super_admin", "analyst"].includes(adminType);
+    const needsTaxes = ["super_admin", "finance"].includes(adminType);
+    const needsSchoolMetrics =
+      adminType === "school_administrator" || adminType === "super_admin";
+
+    // Build dynamic promise array to avoid fetching irrelevant data
+    const promiseMap = {};
+
+    if (needsUsers) {
+      promiseMap.users = User.where("isSuspended", "==", false).get();
+    }
+    if (needsTransactions) {
+      promiseMap.transactions = Transactions.where(
+        "status",
+        "==",
+        "success",
+      ).get();
+    }
+    if (needsPayouts) {
+      promiseMap.payouts = Payout.get();
+    }
+    if (needsTickets) {
+      promiseMap.tickets = SupportTicket.where("status", "in", [
+        "open",
+        "pending",
+      ]).get();
+    }
+    if (needsInstitutions) {
+      promiseMap.recentSchools = OperationalInstitutions.orderBy(
+        "createdAt",
+        "desc",
+      )
+        .limit(10)
+        .get();
+      promiseMap.totalSchools = OperationalInstitutions.get();
+    }
+    if (needsStations) {
+      promiseMap.recentStations = DropOffStation.orderBy("createdAt", "desc")
+        .limit(10)
+        .get();
+      promiseMap.totalStations = DropOffStation.get();
+    }
+    if (needsLatency) {
+      promiseMap.latency = ControllerLog.limit(10).get();
+    }
+    if (needsTaxes) {
+      promiseMap.taxes = TaxEntries.orderBy("date", "desc").limit(10).get();
+    }
+
+    // Specific School Metrics collections if school_administrator is querying
+    if (needsSchoolMetrics && schoolCode) {
+      promiseMap.schoolUsers = User.where("schoolCode", "==", schoolCode).get();
+      promiseMap.schoolCourses = Course.where(
+        "schoolCode",
+        "==",
+        schoolCode,
+      ).get();
+      promiseMap.schoolAssessments = Assessment.get();
+      promiseMap.schoolTestSubs = TestSubmission.get();
+      promiseMap.schoolAttendance = Attendance.get();
+    }
+
+    // Resolve only the required promises concurrently
+    const keys = Object.keys(promiseMap);
+    const values = await Promise.all(Object.values(promiseMap));
+    const snapshots = {};
+    keys.forEach((key, index) => {
+      snapshots[key] = values[index];
+    });
+
+    let responsePayload = {};
+
+    // 1. Process School Metrics (For School Administrator & Super Admin)
+    if (needsSchoolMetrics && snapshots.schoolCourses) {
+      let verifiedStudents = 0;
+      let verifiedLecturers = 0;
+      const userMonthGrowth = {};
+      const departmentCoursesCount = {};
+      const courseIdsSet = new Set();
+
+      if (snapshots.schoolUsers) {
+        snapshots.schoolUsers.forEach((doc) => {
+          const u = doc.data();
+          const dateObj = u.createdAt?.toDate
+            ? u.createdAt.toDate()
+            : new Date(u.createdAt || Date.now());
+          const monthKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}`;
+
+          if (!userMonthGrowth[monthKey]) {
+            userMonthGrowth[monthKey] = { students: 0, lecturers: 0 };
+          }
+
+          if (u.usertype === "student" && u.isVerified) {
+            verifiedStudents++;
+            userMonthGrowth[monthKey].students++;
+          } else if (u.usertype === "lecturer" && u.isVerified) {
+            verifiedLecturers++;
+            userMonthGrowth[monthKey].lecturers++;
+          }
+        });
+      }
+
+      let assignedCoursesCount = 0;
+      let unassignedCoursesCount = 0;
+      let totalStudentEnrollments = 0;
+
+      snapshots.schoolCourses.forEach((doc) => {
+        const course = doc.data();
+        courseIdsSet.add(course.courseId);
+
+        const dept = course.department || "General";
+        departmentCoursesCount[dept] = (departmentCoursesCount[dept] || 0) + 1;
+
+        if (
+          Array.isArray(course.lecturerIds) &&
+          course.lecturerIds.length > 0
+        ) {
+          assignedCoursesCount++;
+        } else {
+          unassignedCoursesCount++;
+        }
+
+        if (Array.isArray(course.studentsEnrolled)) {
+          totalStudentEnrollments += course.studentsEnrolled.length;
+        }
+      });
+
+      let totalAssessmentsCreated = 0;
+      if (snapshots.schoolAssessments) {
+        snapshots.schoolAssessments.forEach((doc) => {
+          const assessment = doc.data();
+          if (courseIdsSet.has(assessment.courseId)) {
+            totalAssessmentsCreated++;
+          }
+        });
+      }
+
+      let totalTestSubmissions = 0;
+      if (snapshots.schoolTestSubs) {
+        snapshots.schoolTestSubs.forEach(() => {
+          totalTestSubmissions++;
+        });
+      }
+
+      let totalAttendanceLogs = 0;
+      if (snapshots.schoolAttendance) {
+        snapshots.schoolAttendance.forEach((doc) => {
+          const att = doc.data();
+          if (courseIdsSet.has(att.courseId)) {
+            totalAttendanceLogs++;
+          }
+        });
+      }
+
+      responsePayload.schoolMetrics = {
+        users: {
+          verifiedStudents,
+          verifiedLecturers,
+          onboardingGrowth: Object.keys(userMonthGrowth)
+            .sort()
+            .map((month) => ({
+              month,
+              ...userMonthGrowth[month],
+            })),
+        },
+        courses: {
+          totalActiveCourses: snapshots.schoolCourses.size,
+          departmentBreakdown: departmentCoursesCount,
+          allocationStatus: {
+            assigned: assignedCoursesCount,
+            unassigned: unassignedCoursesCount,
+          },
+          studentEnrollmentDensity: totalStudentEnrollments,
+        },
+        academics: {
+          totalAssessmentsCreated,
+          testSubmissionsCount: totalTestSubmissions,
+          attendanceSyncVolume: totalAttendanceLogs,
+        },
+      };
+
+      // If requested strictly by a school administrator, return payload immediately
+      if (adminType === "school_administrator") {
+        return res.json(responsePayload);
+      }
+    }
+
+    // 2. Process Global Platform Metrics (For Super Admin, Finance, Analyst, Support)
     let totalLiquidity = 0;
     let totalUsers = 0;
     const locationCounts = {};
 
-    usersSnapshot.forEach((doc) => {
-      const user = doc.data();
-      totalUsers += 1;
-      totalLiquidity += user.pointsBalance || 0;
-      if (Array.isArray(user.sessions)) {
-        user.sessions.forEach((session) => {
-          const loc = session.location;
-          if (loc) {
-            locationCounts[loc] = (locationCounts[loc] || 0) + 1;
-          }
-        });
-      }
-    });
+    if (snapshots.users) {
+      snapshots.users.forEach((doc) => {
+        const user = doc.data();
+        totalUsers += 1;
+        totalLiquidity += user.pointsBalance || 0;
+        if (Array.isArray(user.sessions)) {
+          user.sessions.forEach((session) => {
+            const loc = session.location;
+            if (loc) {
+              locationCounts[loc] = (locationCounts[loc] || 0) + 1;
+            }
+          });
+        }
+      });
+    }
 
     const locationStats = Object.keys(locationCounts)
       .map((loc) => ({ _id: loc, count: locationCounts[loc] }))
       .sort((a, b) => b.count - a.count)
       .slice(0, 10);
+
     const sevenDaysAgo = new Date();
     sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     const trendMap = {};
-    transactionsSnapshot.forEach((doc) => {
-      const tx = doc.data();
-      const txDate = tx.createdAt?.toDate
-        ? tx.createdAt.toDate()
-        : new Date(tx.createdAt);
+    if (snapshots.transactions) {
+      snapshots.transactions.forEach((doc) => {
+        const tx = doc.data();
+        const txDate = tx.createdAt?.toDate
+          ? tx.createdAt.toDate()
+          : new Date(tx.createdAt);
 
-      if (txDate >= sevenDaysAgo) {
-        const month = String(txDate.getMonth() + 1).padStart(2, "0");
-        const day = String(txDate.getDate()).padStart(2, "0");
-        const dateKey = `${month}-${day}`;
+        if (txDate >= sevenDaysAgo) {
+          const month = String(txDate.getMonth() + 1).padStart(2, "0");
+          const day = String(txDate.getDate()).padStart(2, "0");
+          const dateKey = `${month}-${day}`;
 
-        if (!trendMap[dateKey]) {
-          trendMap[dateKey] = { inFlow: 0, outFlow: 0 };
+          if (!trendMap[dateKey]) {
+            trendMap[dateKey] = { inFlow: 0, outFlow: 0 };
+          }
+
+          const amount = tx.amountLocal || 0;
+          if (tx.payType === "in") {
+            trendMap[dateKey].inFlow += amount;
+          } else if (tx.payType === "out") {
+            trendMap[dateKey].outFlow += amount;
+          }
         }
-
-        const amount = tx.amountLocal || 0;
-        if (tx.payType === "in") {
-          trendMap[dateKey].inFlow += amount;
-        } else if (tx.payType === "out") {
-          trendMap[dateKey].outFlow += amount;
-        }
-      }
-    });
+      });
+    }
 
     const sortedDates = Object.keys(trendMap).sort();
     const liquidityTrend = {
@@ -406,40 +596,61 @@ export const getAdminMetrics = async (req, res) => {
       inFlow: sortedDates.map((date) => trendMap[date].inFlow),
       outFlow: sortedDates.map((date) => trendMap[date].outFlow),
     };
+
     const payoutMap = {};
-    payoutsSnapshot.forEach((doc) => {
-      const payout = doc.data();
-      const status = payout.status || "unknown";
-      if (!payoutMap[status]) {
-        payoutMap[status] = { _id: status, totalAmount: 0, count: 0 };
-      }
-      payoutMap[status].totalAmount += payout.amount || 0;
-      payoutMap[status].count += 1;
-    });
+    if (snapshots.payouts) {
+      snapshots.payouts.forEach((doc) => {
+        const payout = doc.data();
+        const status = payout.status || "unknown";
+        if (!payoutMap[status]) {
+          payoutMap[status] = { _id: status, totalAmount: 0, count: 0 };
+        }
+        payoutMap[status].totalAmount += payout.amount || 0;
+        payoutMap[status].count += 1;
+      });
+    }
     const payoutStats = Object.values(payoutMap);
+
     let totalLatency = 0;
     let latencyCount = 0;
-    latencySnapshot.forEach((doc) => {
-      const log = doc.data();
-      if (typeof log.latency === "number") {
-        totalLatency += log.latency;
-        latencyCount += 1;
-      }
-    });
+    if (snapshots.latency) {
+      snapshots.latency.forEach((doc) => {
+        const log = doc.data();
+        if (typeof log.latency === "number") {
+          totalLatency += log.latency;
+          latencyCount += 1;
+        }
+      });
+    }
     const avgLatency = latencyCount > 0 ? totalLatency / latencyCount : 0;
-    const recentSchools = recentSchoolsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    const recentStations = recentStationsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    const recentTaxes = taxesSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    res.json({
+
+    const recentSchools = snapshots.recentSchools
+      ? snapshots.recentSchools.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+      : [];
+    const totalSchoolsCount = snapshots.totalSchools
+      ? snapshots.totalSchools.size
+      : 0;
+
+    const recentStations = snapshots.recentStations
+      ? snapshots.recentStations.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }))
+      : [];
+    const totalStationsCount = snapshots.totalStations
+      ? snapshots.totalStations.size
+      : 0;
+
+    const recentTaxes = snapshots.taxes
+      ? snapshots.taxes.docs.map((doc) => ({ id: doc.id, ...doc.data() }))
+      : [];
+    const pendingTicketsCount = snapshots.tickets ? snapshots.tickets.size : 0;
+
+    return res.json({
+      ...responsePayload,
       activeUsers: totalUsers,
       platformLiquidity: totalLiquidity,
       payoutStats,
@@ -462,7 +673,7 @@ export const getAdminMetrics = async (req, res) => {
     });
   } catch (error) {
     console.error("Dashboard Stats Error:", error);
-    res.status(500).json({ error: "Failed to fetch dashboard metrics" });
+    return res.status(500).json({ error: "Failed to fetch dashboard metrics" });
   }
 };
 export const getInstitutions = async (req, res) => {
@@ -1079,10 +1290,14 @@ export const downloadTaxReport = async (req, res) => {
 };
 export const deleteAd = async (req, res) => {
   try {
-    if (req.admin.adminType !== "super_admin") {
+    const adminType = req.admin?.adminType;
+    const adminId = req.admin?.uid || req.admin?.id;
+
+    if (!["super_admin", "school_administrator"].includes(adminType)) {
       return res.status(403).json({
         success: false,
-        message: "Unauthorized. Super admin access required.",
+        error:
+          "Unauthorized. Super admin or school administrator access required.",
       });
     }
 
@@ -1105,7 +1320,7 @@ export const deleteAd = async (req, res) => {
         category: "system",
         actionType: "AD_DELETION_ADMIN",
         title: "Advertisement Deletion Audit",
-        message: `Advertisement "${adData.advertiserName || "Unknown"}" (ID: ${id}) was deleted by admin ${req.admin.email || req.admin.id}.`,
+        message: `Advertisement "${adData.advertiserName || "Unknown"}" (ID: ${id}) was deleted by admin ${adminId}.`,
         payload: { adId: id, advertiserName: adData.advertiserName },
       },
       false,
@@ -1125,11 +1340,30 @@ export const deleteAd = async (req, res) => {
 };
 export const createAd = async (req, res) => {
   try {
-    if (req.admin.adminType !== "super_admin") {
+    const adminType = req.admin?.adminType;
+    const adminId = req.admin?.uid || req.admin?.id;
+
+    if (!["super_admin", "school_administrator"].includes(adminType)) {
       return res.status(403).json({
         success: false,
-        error: "Unauthorized. Super admin access required.",
+        error:
+          "Unauthorized. Super admin or school administrator access required.",
       });
+    }
+    if (adminType === "school_administrator") {
+      const existingAdsSnapshot = await Ads.where(
+        "addedBy",
+        "==",
+        adminId,
+      ).get();
+
+      if (!existingAdsSnapshot.empty) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Slot exhausted. School administrators are only permitted 1 active advertisement slot.",
+        });
+      }
     }
 
     const {
@@ -1140,6 +1374,7 @@ export const createAd = async (req, res) => {
       advertiserName,
       tagline,
     } = req.body;
+    const schoolCode = req.admin?.schoolCode;
 
     if (!advertiserName || !mediaUrl || !advertiserLogo) {
       return res.status(400).json({
@@ -1159,10 +1394,13 @@ export const createAd = async (req, res) => {
       advertiserLogo,
       advertiserName,
       tagline: tagline || "",
+      addedBy: adminId,
+      creatorType: adminType,
+      schoolCode: schoolCode || req.admin?.schoolCode || "",
+      isActive: true,
       createdAt: new Date().toISOString(),
-      createdBy: req.admin.email || req.admin.id,
+      createdBy: req.admin.email || adminId,
     };
-
     await Ads.doc(adId).set(newAd);
     await notifyAdmins(
       { role: "super_admin" },
@@ -1171,8 +1409,12 @@ export const createAd = async (req, res) => {
         category: "system",
         actionType: "AD_CREATION_ADMIN",
         title: "Advertisement Created Audit",
-        message: `New advertisement for "${advertiserName}" (ID: ${adId}) was created.`,
-        payload: { adId: adId, advertiserName: advertiserName },
+        message: `New advertisement for "${advertiserName}" (ID: ${adId}) was created by a ${adminType}.`,
+        payload: {
+          adId: adId,
+          advertiserName: advertiserName,
+          addedBy: adminId,
+        },
       },
       false,
     );
@@ -1192,10 +1434,13 @@ export const createAd = async (req, res) => {
 };
 export const updateAd = async (req, res) => {
   try {
-    if (req.admin.adminType !== "super_admin") {
+    const adminType = req.admin?.adminType;
+
+    if (!["super_admin", "school_administrator"].includes(adminType)) {
       return res.status(403).json({
         success: false,
-        error: "Unauthorized. Super admin access required.",
+        error:
+          "Unauthorized. Super admin or school administrator access required.",
       });
     }
 

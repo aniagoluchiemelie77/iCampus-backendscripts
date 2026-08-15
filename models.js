@@ -154,6 +154,7 @@ export const courseSchema = new mongoose.Schema(
     studentsEnrolled: [{ type: String, ref: "User" }],
     courseContents: [String],
     resources: [String],
+    schoolCode: { type: String },
     assignments: [assignmentSchema],
     tests: [assessmentSchema],
     price: { type: Number, default: 0 },
@@ -410,6 +411,7 @@ export const userSchema = new mongoose.Schema({
   phoneNumbers: [phoneNumberSchema],
   personaInquiryId: { type: String, default: null },
   sessions: [sessionSchema],
+  isInstitutionAdmin: { type: Boolean, default: false },
 });
 export const adminSchema = new mongoose.Schema({
   uid: { type: String, index: true, required: true, unique: true },
@@ -419,7 +421,14 @@ export const adminSchema = new mongoose.Schema({
   password: { type: String, required: true },
   adminType: {
     type: String,
-    enum: ["super_admin", "moderator", "support", "finance", "analyst"],
+    enum: [
+      "super_admin",
+      "moderator",
+      "support",
+      "finance",
+      "analyst",
+      "school_administrator",
+    ],
     required: true,
   },
   profilePic: [String],
@@ -429,6 +438,7 @@ export const adminSchema = new mongoose.Schema({
   lastAccessed: { type: Date, default: Date.now },
   sessions: [sessionSchema],
   createdAt: { type: Date, default: Date.now },
+  schoolCode: { type: String, default: null },
 });
 export const dropOffStation = new mongoose.Schema({
   id: { type: String, required: true, index: true },
@@ -626,42 +636,6 @@ export const notificationSchema = new mongoose.Schema(
     payload: { type: Object },
   },
   { timestamps: true },
-);
-export const userDownloadsSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: String,
-      required: true,
-      unique: true,
-      index: true,
-    },
-    ownedProducts: [
-      {
-        productId: String,
-        progress: {
-          type: Number,
-          default: 0,
-          min: 0,
-          max: 100,
-        },
-        completedLessons: [String],
-        lastWatched: { type: Date, default: Date.now },
-      },
-    ],
-    purchaseHistory: [
-      {
-        productId: String,
-        purchasedAt: { type: Date, default: Date.now },
-      },
-    ],
-    lastAccessed: {
-      type: Date,
-      default: Date.now,
-    },
-  },
-  {
-    timestamps: true,
-  },
 );
 export const EmailVerificationSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
@@ -1170,6 +1144,7 @@ export const advertSchema = new mongoose.Schema(
     id: {
       type: String,
       required: true,
+      unique: true,
     },
     type: {
       type: String,
@@ -1200,6 +1175,21 @@ export const advertSchema = new mongoose.Schema(
       type: String,
       maxlength: [100, "Tagline cannot exceed 100 characters"],
       trim: true,
+    },
+    addedBy: {
+      type: String,
+      required: true,
+      index: true, // Tracks the UID of the admin who created it
+    },
+    schoolCode: {
+      type: String,
+      index: true,
+    },
+    creatorType: {
+      type: String,
+      enum: ["school_administrator", "super_admin"],
+      required: true,
+      default: "super_admin",
     },
     isActive: {
       type: Boolean,

@@ -467,7 +467,7 @@ export const AdminLogin = async (req, res) => {
     const adminUid = admin.uid || admin.id;
 
     const sessionData = {
-      adminId: adminUid,
+      userId: adminUid,
       deviceId,
       deviceName,
       ipAddress: ip,
@@ -1147,7 +1147,7 @@ export const changePassword = async (req, res) => {
     notifyAdmins(
       { role: ["super_admin", "support"] },
       {
-        notificationId: generateNotificationId("admin_notification"),
+        notificationId: generateNotificationId("security"),
         actionType: isSuspicious
           ? "SUSPICIOUS_PASSWORD_CHANGE"
           : "PASSWORD_CHANGE_AUDIT",
@@ -1389,5 +1389,147 @@ export const verifyLecturer = async (req, res) => {
     return res
       .status(500)
       .json({ message: "Server error during verification", verified: false });
+  }
+};
+export const switchToInstitutionAdmin = async (req, res) => {
+  try {
+    const userId = req.user.uid || req.user.id;
+    const userSnapshot = await User.where("uid", "==", userId).limit(1).get();
+
+    if (userSnapshot.empty) {
+      return res
+        .status(404)
+        .json({ success: false, error: "User profile not found." });
+    }
+
+    const userDoc = userSnapshot.docs[0];
+    const userData = userDoc.data();
+
+    const canSwitch =
+      userData.isInstitutionAdmin === true &&
+      userData.isVerified === true &&
+      userData.usertype === "enterprise";
+
+    if (!canSwitch) {
+      return res.status(403).json({
+        success: false,
+        error:
+          "Unauthorized. You do not meet the requirements to switch to an institutional administrator dashboard.",
+      });
+    }
+
+    let adminSnapshot = await Admin.where("uid", "==", userId).limit(1).get();
+    let adminDocRef;
+    let adminData;
+
+    if (adminSnapshot.empty) {
+      const dummyPassword = await bcrypt.hash(Math.random().toString(36), 10);
+
+      adminData = {
+        uid: userId,
+        firstname: userData.organizationName || "School",
+        lastname: userData.lastname || "Admin",
+        email: userData.email,
+        password: dummyPassword,
+        adminType: "school_administrator",
+        profilePic: userData.profilePic || [],
+        country: userData.country || "Unknown",
+        isVerified: true,
+        schoolCode: userData.schoolCode || null,
+        lastAccessed: new Date(),
+        createdAt: new Date(),
+      };
+
+      await Admin.doc(userId).set(adminData);
+      adminDocRef = Admin.doc(userId);
+      adminData.id = userId;
+    } else {
+      adminDocRef = adminSnapshot.docs[0].ref;
+      adminData = {
+        id: adminSnapshot.docs[0].id,
+        ...adminSnapshot.docs[0].data(),
+      };
+
+      if (
+        adminData.adminType !== "school_administrator" &&
+        adminData.adminType !== "super_admin"
+      ) {
+        await adminDocRef.set(
+          { adminType: "school_administrator", updatedAt: new Date() },
+          { merge: true },
+        );
+        adminData.adminType = "school_administrator";
+      }
+    }
+
+    const { accessToken, refreshToken } = await generateTokens(adminData);
+
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+      .split(",")[0]
+      .trim();
+    const geo = geoip.lookup(ip);
+    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+    const deviceId = req.body.deviceId || "switch_device";
+    const deviceName = req.body.deviceName || "Web/Mobile Switch";
+
+    const sessionData = {
+      userId: userId,
+      deviceId,
+      deviceName,
+      ipAddress: ip,
+      location,
+      refreshToken,
+      lastUsed: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const existingSessionQuery = await UserSessions.where(
+      "userId",
+      "==",
+      userId,
+    )
+      .where("deviceId", "==", deviceId)
+      .limit(1)
+      .get();
+
+    if (!existingSessionQuery.empty) {
+      await existingSessionQuery.docs[0].ref.set(sessionData, { merge: true });
+    } else {
+      const sessionId = `admsess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      sessionData.sessionId = sessionId;
+      sessionData.createdAt = new Date();
+      await UserSessions.doc(sessionId).set(sessionData);
+    }
+
+    await adminDocRef.set(
+      { lastAccessed: new Date(), updatedAt: new Date() },
+      { merge: true },
+    );
+
+    const allSessionsSnapshot = await UserSessions.where(
+      "userId",
+      "==",
+      userId,
+    ).get();
+    const activeSessions = allSessionsSnapshot.docs.map((doc) => doc.data());
+
+    const safeAdmin = { ...adminData };
+    delete safeAdmin.password;
+    safeAdmin.sessions = activeSessions;
+    await verifyAndNotifyLogin(safeAdmin, req, "ADMIN_LOGIN_AUDIT");
+
+    return res.status(200).json({
+      success: true,
+      message: "Successfully switched to school administrator profile.",
+      admin: safeAdmin,
+      accessToken,
+      refreshToken,
+    });
+  } catch (error) {
+    console.error("Switch to Admin Error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error during profile switch.",
+    });
   }
 };

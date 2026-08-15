@@ -61,6 +61,7 @@ import {
   forgotPassword,
   changePassword,
   AdminLogin,
+  switchToInstitutionAdmin,
 } from "../controllers/signinActions.js";
 import { upload } from "../workers/multerWorker.js";
 import { uploadCourseDetails } from "../controllers/classActions.js";
@@ -153,6 +154,7 @@ router.post(
   upload.array("files"),
   uploadCourseDetails,
 );
+router.post("/switch-to-admin", protect, switchToInstitutionAdmin);
 
 export default router;
 
