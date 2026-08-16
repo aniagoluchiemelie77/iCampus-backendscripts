@@ -727,7 +727,7 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
     const controllerName = "joinOnlineLectureSessionController";
     const action = "joinOnlineLectureSession";
     try {
-      const { lectureId, user } = payload;
+      const { lectureId, user, hostId } = payload;
       if (!lectureId || !user || !user.uid) {
         logControllerPerformance(
           controllerName,
@@ -749,6 +749,15 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
       logControllerPerformance(controllerName, action, startTime, "success");
       await socket.join(lectureRoomId);
       await broadcastAttendeeList(io, lectureId);
+      const isHost = user.uid === hostId;
+      const announcementMessage = isHost
+        ? "Host has joined"
+        : `${user.firstname} ${user.lastname} has joined`;
+      io.to(lectureRoomId).emit("user_joined_announcement", {
+        uid: user.uid,
+        message: announcementMessage,
+        isHost,
+      });
       console.log(
         `[ATTENDANCE_ENGINE] ${user.firstname} successfully joined session: ${lectureId}`,
       );
@@ -771,9 +780,14 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
       const cachedSession = activeClassroomConnections.get(socket.id);
 
       if (cachedSession) {
-        const { lectureId, firstname } = cachedSession;
+        const { lectureId, firstname, lastname, uid } = cachedSession;
         activeClassroomConnections.delete(socket.id);
         await broadcastAttendeeList(io, lectureId);
+        io.to(`lecture_${lectureId}`).emit("user_left_announcement", {
+          uid: uid,
+          message: `${firstname} ${lastname} disconnected`,
+          isHost: false,
+        });
         console.log(
           `[ATTENDANCE_ENGINE] Connection dropped cleanly for ${firstname}. Syncing room.`,
         );
@@ -1031,9 +1045,9 @@ export const registerStudentLifecycleHandlers = (io, socket) => {
     const controllerName = "leaveOnlineLectureSessionController";
     const action = "leaveOnlineLectureSession";
     try {
-      const { lectureId, uid } = payload;
+      const { lectureId, user } = payload;
 
-      if (!lectureId || !uid) {
+      if (!lectureId || !user.uid) {
         logControllerPerformance(
           controllerName,
           action,
@@ -1053,11 +1067,19 @@ export const registerStudentLifecycleHandlers = (io, socket) => {
       socket.leave(lectureRoomId);
       await ActiveLectureState.updateOne(
         { lectureId },
-        { $pull: { wavers: { uid: uid } } },
+        { $pull: { wavers: { uid: user.uid } } },
       );
       await broadcastAttendeeList(io, lectureId);
+      const leaveMessage = `${user.firstname} ${user.lastname} has left`;
+      io.to(lectureRoomId).emit("user_left_announcement", {
+        uid: user.uid,
+        message: leaveMessage,
+        isHost: false,
+      });
 
-      console.log(`[LIFECYCLE_ENGINE] User ${uid} left lecture ${lectureId}`);
+      console.log(
+        `[LIFECYCLE_ENGINE] User ${user.uid} left lecture ${lectureId}`,
+      );
     } catch (error) {
       console.error(
         "[STUDENT_LEAVE_ERROR] Failed to process departure:",
