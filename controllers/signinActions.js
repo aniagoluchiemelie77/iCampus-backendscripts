@@ -8,9 +8,12 @@ import {
   Admin,
   UserSessions,
 } from "../tableDeclarations.js";
+import axiosRetry from "axios-retry";
+import axios from "axios";
 import { db } from "../config/firebaseAdmin.js";
 import crypto from "crypto";
 import geoip from "geoip-lite";
+
 import {
   generateNotificationId,
   generateUniqueCardNumber,
@@ -44,6 +47,7 @@ const formattedTime = now.toLocaleTimeString("en-US", {
   minute: "2-digit",
 });
 const verificationCodes = {};
+axiosRetry(axios, { retries: 3 });
 
 export const signUp = async (req, res) => {
   const startTime = Date.now();
@@ -902,7 +906,7 @@ export const forgotPassword = async (req, res) => {
         "error",
         "User not found",
       );
-      return res.status(404).json({ message: "User not found" });
+      return res.status(404).json({ message: "User with email not found" });
     }
 
     const userDoc = userSnapshot.docs[0];
