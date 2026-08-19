@@ -285,12 +285,14 @@ export const Login = async (req, res) => {
         .status(404)
         .json({ error: "Account not found. Please sign up first." });
     }
+    console.log("Step 1");
 
     const userDocRef = userSnapshot.docs[0].ref;
     const user = {
-      id: userSnapshot.docs[0].id,
+      uid: userSnapshot.docs[0].uid,
       ...userSnapshot.docs[0].data(),
     };
+    console.log("Step 2");
     if (socialProvider === "google") {
       const isValid = await verifyGoogleToken(idToken, identifier);
       if (!isValid) {
@@ -316,7 +318,9 @@ export const Login = async (req, res) => {
         return res.status(401).json({ error: "Invalid GitHub token" });
       }
     } else {
+      console.log("Step 3: Matching Password");
       const isMatch = await bcrypt.compare(password, user.password || "");
+      console.log("Step 4: Post password matching");
       if (!isMatch) {
         logControllerPerformance(
           controllerName,
@@ -328,7 +332,7 @@ export const Login = async (req, res) => {
         return res.status(401).json({ error: "Invalid password" });
       }
     }
-
+    console.log("Step 5: Post password matching");
     if (socialProvider && user.providerId !== socialProvider) {
       logControllerPerformance(
         controllerName,
@@ -341,6 +345,7 @@ export const Login = async (req, res) => {
         error: `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
       });
     }
+    console.log("Step 6: Token generation");
 
     const { accessToken, refreshToken } = await generateTokens(user);
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
