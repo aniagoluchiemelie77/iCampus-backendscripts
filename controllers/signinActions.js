@@ -319,9 +319,14 @@ export const Login = async (req, res) => {
       }
     } else {
       console.log("Step 3: Matching Password");
+      console.log("Password provided length:", password ? password.length : 0);
+      console.log("Password hash in DB exists:", !!user.password);
+
       const isMatch = await bcrypt.compare(password, user.password || "");
-      console.log("Step 4: Post password matching");
+      console.log("Step 4: Password match result (true/false):", isMatch);
+
       if (!isMatch) {
+        console.log("Password mismatch detected!");
         logControllerPerformance(
           controllerName,
           action,
@@ -331,6 +336,7 @@ export const Login = async (req, res) => {
         );
         return res.status(401).json({ error: "Invalid password" });
       }
+      console.log("Password matched successfully! Moving to Step 5...");
     }
     console.log("Step 5: Post password matching");
     if (socialProvider && user.providerId !== socialProvider) {
