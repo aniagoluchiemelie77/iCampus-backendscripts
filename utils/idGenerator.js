@@ -1,4 +1,4 @@
-import { ITag } from "../tableDeclarations.js";
+import { ITag, User } from "../tableDeclarations.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 
