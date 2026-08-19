@@ -321,8 +321,13 @@ export const Login = async (req, res) => {
       console.log("Step 3: Matching Password");
       console.log("Password provided length:", password ? password.length : 0);
       console.log("Password hash in DB exists:", !!user.password);
-
-      const isMatch = await bcrypt.compare(password, user.password || "");
+      let isMatch = false;
+      if (user.password && user.password.startsWith("$2")) {
+        isMatch = await bcrypt.compare(password, user.password);
+      } else {
+        // Fallback for plain text passwords in the database
+        isMatch = password === user.password;
+      }
       console.log("Step 4: Password match result (true/false):", isMatch);
 
       if (!isMatch) {
