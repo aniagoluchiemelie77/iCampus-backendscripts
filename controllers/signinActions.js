@@ -250,6 +250,7 @@ export const Login = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "LoginController";
   const action = "Login";
+  const credentials = req.body.credentials || req.body;
 
   const {
     identifier,
@@ -258,7 +259,10 @@ export const Login = async (req, res) => {
     deviceName,
     socialProvider,
     idToken,
-  } = req.body;
+  } = credentials;
+  if (!identifier) {
+    return res.status(400).json({ error: "Identifier is required" });
+  }
   console.log("Request Body received:", req.body);
 
   try {
@@ -369,7 +373,7 @@ export const Login = async (req, res) => {
       const sessionDocRef = existingSessionQuery.docs[0].ref;
       await sessionDocRef.set(sessionData, { merge: true });
     } else {
-      console.log("New Location login");
+      console.log("New Location");
       const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       sessionData.sessionId = sessionId;
       sessionData.createdAt = new Date();
