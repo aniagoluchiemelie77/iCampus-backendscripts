@@ -266,9 +266,11 @@ export const Login = async (req, res) => {
   console.log("Request Body received:", req.body);
 
   try {
+    console.log("Attempting to query Firestore for email:", identifier);
     const userSnapshot = await User.where("email", "==", identifier)
       .limit(1)
       .get();
+    console.log("Firestore query completed. Found docs:", userSnapshot.size);
 
     if (userSnapshot.empty) {
       logControllerPerformance(
