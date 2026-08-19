@@ -346,8 +346,16 @@ export const Login = async (req, res) => {
       });
     }
     console.log("Step 6: Token generation");
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(
+        () =>
+          reject(new Error("TOKEN_GENERATION_TIMEOUT: Function took too long")),
+        4000,
+      ),
+    );
 
     const { accessToken, refreshToken } = await generateTokens(user);
+    console.log("Step 7: Tokens generated successfully!");
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
       .split(",")[0]
       .trim();
