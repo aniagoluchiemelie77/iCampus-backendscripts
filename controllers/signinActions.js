@@ -8,6 +8,7 @@ import {
   Admin,
   UserSessions,
 } from "../tableDeclarations.js";
+import { sendEmail } from "../services/emailService.js";
 import axiosRetry from "axios-retry";
 import axios from "axios";
 import { db } from "../config/firebaseAdmin.js";
