@@ -222,6 +222,7 @@ export const generateCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
 export const generateTokens = async (user) => {
+  console.log("Token generation being called.");
   const accessToken = jwt.sign(
     { id: user.uid, email: user.email },
     process.env.JWT_SECRET,
@@ -233,13 +234,20 @@ export const generateTokens = async (user) => {
     process.env.REFRESH_TOKEN_SECRET,
     { expiresIn: "30d" },
   );
+  console.log("Step 2, post jwt token generation.");
+  const currentTokens = user.refreshTokens || [];
+  currentTokens.push(refreshToken);
 
-  // Save refresh token to DB
-  user.refreshTokens.push(refreshToken);
-  if (user.refreshTokens.length > 5) {
-    user.refreshTokens.shift();
+  if (currentTokens.length > 5) {
+    currentTokens.shift();
   }
-  await user.save();
+  console.log("Step 3");
+  await User.doc(user.uid).update({
+    refreshTokens: currentTokens,
+    updatedAt: new Date(),
+  });
+  console.log("Step 4, post jwt token generation and saving.");
+
   return { accessToken, refreshToken };
 };
 const generateReferralCode = (name, length = 7) => {
