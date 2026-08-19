@@ -258,7 +258,8 @@ export const Login = async (req, res) => {
     deviceName,
     socialProvider,
     idToken,
-  } = req.body.credentials || req.body;
+  } = req.body;
+  console.log("Request Body received:", req.body);
 
   try {
     const userSnapshot = await User.where("email", "==", identifier)
@@ -273,6 +274,7 @@ export const Login = async (req, res) => {
         "error",
         "Account not found. Please sign up first.",
       );
+      console.log("User not found in DB");
       return res
         .status(404)
         .json({ error: "Account not found. Please sign up first." });
@@ -283,8 +285,6 @@ export const Login = async (req, res) => {
       id: userSnapshot.docs[0].id,
       ...userSnapshot.docs[0].data(),
     };
-
-    // 2. Validate Authentication Tokens or Password
     if (socialProvider === "google") {
       const isValid = await verifyGoogleToken(idToken, identifier);
       if (!isValid) {
@@ -342,6 +342,7 @@ export const Login = async (req, res) => {
       .trim();
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+    console.log("Pre Login Action");
 
     // 3. Handle Separated Session Logic
     const sessionData = {
@@ -354,6 +355,7 @@ export const Login = async (req, res) => {
       lastUsed: new Date(),
       updatedAt: new Date(),
     };
+    console.log("Creating sessions");
     const existingSessionQuery = await UserSessions.where(
       "userId",
       "==",
@@ -367,6 +369,7 @@ export const Login = async (req, res) => {
       const sessionDocRef = existingSessionQuery.docs[0].ref;
       await sessionDocRef.set(sessionData, { merge: true });
     } else {
+      console.log("New Location login");
       const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       sessionData.sessionId = sessionId;
       sessionData.createdAt = new Date();
