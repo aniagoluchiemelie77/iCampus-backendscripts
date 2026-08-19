@@ -20,6 +20,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config();
 
 const app = express();
+
+app.set("trust proxy", true);
+
 const httpServer = createServer(app);
 const io = initSocket(httpServer);
 

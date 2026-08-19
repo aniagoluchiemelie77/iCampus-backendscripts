@@ -50,13 +50,12 @@ export const protect = async (req, res, next) => {
 };
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 5,
+  max: 100,
   message: {
     error:
       "Too many security-related attempts. Please try again in 15 minutes.",
   },
-  standardHeaders: true,
-  legacyHeaders: false,
+  validate: { xForwardedForHeader: false },
 });
 
 const storage = multer.diskStorage({
