@@ -26,40 +26,46 @@ const getPostStats = (post, repostersCount = 0, commentsCount = 0) => ({
   totalVotes: post.poll?.totalVotes || 0,
 });
 export const moderateContent = async (postId, content, media) => {
-  if (media?.url && media.url.length > 0) {
-    scan(media.url, content)
-      .then(async (result) => {
-        if (result?.isViolation) {
-          const postQuery = await Posts.where("postId", "==", postId)
-            .limit(1)
-            .get();
-          if (!postQuery.empty) {
-            const postDocRef = postQuery.docs[0].ref;
-            await postDocRef.update({
-              status: "hidden",
-              updatedAt: new Date(),
-            });
-          }
-
-          await notifyAdmins(
-            { role: ["moderator", "super_admin"] },
-            {
-              notificationId: generateNotificationId("social"),
-              actionType: "MODERATION_ALERT_NUDITY",
-              payload: {
-                postId: postId,
-                reason: result.flaggedCategory,
-                confidence: result.confidence,
-              },
-              senderId: "system",
-            },
-            false,
-          );
-        }
-      })
-      .catch(console.error);
-  } else {
+  if (!postId || !media?.url || media.url.length === 0) {
     return;
+  }
+
+  try {
+    const result = await scan(media.url, content);
+
+    if (result?.isViolation) {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .limit(1)
+        .get();
+
+      if (!postQuery.empty) {
+        const postDocRef = postQuery.docs[0].ref;
+        await postDocRef.update({
+          status: "hidden",
+          updatedAt: new Date(),
+        });
+      }
+
+      await notifyAdmins(
+        { role: ["moderator", "super_admin"] },
+        {
+          notificationId: generateNotificationId("social"),
+          actionType: "MODERATION_ALERT_NUDITY",
+          payload: {
+            postId: postId,
+            reason: result.flaggedCategory || "Policy Violation",
+            confidence: result.confidence || 0,
+          },
+          senderId: "system",
+        },
+        false,
+      );
+    }
+  } catch (error) {
+    console.error(
+      `Error during content moderation scan for post ${postId}:`,
+      error.message,
+    );
   }
 };
 export const createPost = async (req, res) => {
@@ -85,6 +91,7 @@ export const createPost = async (req, res) => {
     ) {
       processedMedia.url = [processedMedia.url[0]];
     }
+
     const authorQuery = await User.where("uid", "==", userId).limit(1).get();
     if (authorQuery.empty) {
       logControllerPerformance(
@@ -94,7 +101,9 @@ export const createPost = async (req, res) => {
         "error",
         "Author not found",
       );
-      return res.status(404).json({ message: "Author not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Author not found" });
     }
 
     const authorDoc = authorQuery.docs[0];
@@ -139,37 +148,45 @@ export const createPost = async (req, res) => {
 
     const mentionedUsernames = extractMentions(content || "");
     let notifiedUids = new Set();
-
+    const notificationPromises = [];
     if (mentionedUsernames.length > 0) {
       const chunks = [];
       for (let i = 0; i < mentionedUsernames.length; i += 10) {
         chunks.push(mentionedUsernames.slice(i, i + 10));
       }
 
-      for (const chunk of chunks) {
-        const mentionedQuery = await User.where("username", "in", chunk).get();
+      const mentionQueryPromises = chunks.map((chunk) =>
+        User.where("username", "in", chunk).get(),
+      );
+      const mentionSnapshots = await Promise.all(mentionQueryPromises);
+
+      mentionSnapshots.forEach((mentionedQuery) => {
         mentionedQuery.forEach((doc) => {
           const user = doc.data();
-          if (user.uid) {
+          if (user.uid && !notifiedUids.has(user.uid)) {
             notifiedUids.add(user.uid);
-            createNotification({
-              notificationId: generateNotificationId("social"),
-              recipientId: user.uid,
-              recipientEmail: user.email,
-              category: "social",
-              actionType: "POST_MENTION",
-              title: "You were mentioned",
-              message: `${authorName} mentioned you in a post.`,
-              payload: { postId: newPostData.postId, authorId: userId },
-              sendPush: true,
-              sendSocket: true,
-              saveToDb: true,
-            });
+            notificationPromises.push(
+              createNotification({
+                notificationId: generateNotificationId("social"),
+                recipientId: user.uid,
+                recipientEmail: user.email,
+                category: "social",
+                actionType: "POST_MENTION",
+                title: "You were mentioned",
+                message: `${authorName} mentioned you in a post.`,
+                payload: { postId: newPostData.postId, authorId: userId },
+                sendPush: true,
+                sendSocket: true,
+                saveToDb: true,
+              }),
+            );
           }
         });
-      }
+      });
     }
+
     const followsQuery = await Follow.where("followingId", "==", userId).get();
+    const followerIds = [];
     followsQuery.forEach((doc) => {
       const follow = doc.data();
       const followerId = follow.followerId;
@@ -179,17 +196,29 @@ export const createPost = async (req, res) => {
         followerId !== userId
       ) {
         notifiedUids.add(followerId);
-        User.where("uid", "==", followerId)
-          .limit(1)
-          .get()
-          .then((followerQuerySnap) => {
-            const followerUser = !followerQuerySnap.empty
-              ? followerQuerySnap.docs[0].data()
-              : null;
+        followerIds.push(followerId);
+      }
+    });
+
+    if (followerIds.length > 0) {
+      const userChunks = [];
+      for (let i = 0; i < followerIds.length; i += 30) {
+        userChunks.push(followerIds.slice(i, i + 30));
+      }
+
+      const followerQueryPromises = userChunks.map((chunk) =>
+        User.where("uid", "in", chunk).get(),
+      );
+      const followerSnapshots = await Promise.all(followerQueryPromises);
+
+      followerSnapshots.forEach((followerSnap) => {
+        followerSnap.forEach((doc) => {
+          const followerUser = doc.data();
+          notificationPromises.push(
             createNotification({
               notificationId: generateNotificationId("social"),
-              recipientId: followerId,
-              recipientEmail: followerUser?.email,
+              recipientId: followerUser.uid,
+              recipientEmail: followerUser.email,
               category: "social",
               actionType: "NEW_POST",
               title: `New Posts from ${authorName}`,
@@ -198,19 +227,25 @@ export const createPost = async (req, res) => {
               sendPush: true,
               sendSocket: true,
               saveToDb: true,
-            }).catch((err) =>
-              console.error("Follower notification failure:", err),
-            );
-          })
-          .catch((err) => console.error("Follower lookup failure:", err));
-      }
-    });
+            }),
+          );
+        });
+      });
+    }
+    await Promise.all(notificationPromises).catch((err) =>
+      console.error(
+        "Non-blocking notification pipeline failure in post creation:",
+        err,
+      ),
+    );
 
     logControllerPerformance(controllerName, action, startTime, "success");
 
-    res
-      .status(201)
-      .json({ message: "Posts created successfully", data: newPostData });
+    return res.status(201).json({
+      success: true,
+      message: "Posts created successfully",
+      data: newPostData,
+    });
   } catch (error) {
     console.error("Create Posts Error:", error.message);
     logControllerPerformance(
@@ -220,7 +255,7 @@ export const createPost = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 export const updatePost = async (req, res) => {
@@ -238,10 +273,13 @@ export const updatePost = async (req, res) => {
       eventMetadata,
     } = req.body;
     const userId = req.user.id || req.user.uid;
-    const postQuery = await Posts.where("postId", "==", postId)
-      .where("originalAuthor", "==", userId)
-      .limit(1)
-      .get();
+    const [postQuery, authorQuery] = await Promise.all([
+      Posts.where("postId", "==", postId)
+        .where("originalAuthor", "==", userId)
+        .limit(1)
+        .get(),
+      User.where("uid", "==", userId).limit(1).get(),
+    ]);
 
     if (postQuery.empty) {
       logControllerPerformance(
@@ -251,13 +289,18 @@ export const updatePost = async (req, res) => {
         "error",
         "Posts not found or unauthorized to edit.",
       );
-      return res
-        .status(404)
-        .json({ message: "Posts not found or unauthorized to edit." });
+      return res.status(404).json({
+        success: false,
+        message: "Posts not found or unauthorized to edit.",
+      });
     }
 
     const postDocRef = postQuery.docs[0].ref;
     const post = postQuery.docs[0].data();
+    const author = !authorQuery.empty ? authorQuery.docs[0].data() : null;
+    const authorName = author
+      ? `${author.firstname || ""} ${author.lastname || ""}`.trim()
+      : "Someone";
 
     let processedMedia = media ? { ...media } : post.media;
     if (
@@ -321,61 +364,76 @@ export const updatePost = async (req, res) => {
       poll: updatedPoll,
       updatedAt: new Date(),
     };
+    await Promise.all([
+      postDocRef.update(updatePayload),
+      moderateContent(postId, updatedContent, processedMedia).catch((err) =>
+        console.error("Moderation trigger failed during update:", err),
+      ),
+    ]);
 
-    await postDocRef.update(updatePayload);
-    const authorQuery = await User.where("uid", "==", userId).limit(1).get();
-    const author = !authorQuery.empty ? authorQuery.docs[0].data() : null;
-    const authorName = author
-      ? `${author.firstname || ""} ${author.lastname || ""}`.trim()
-      : "Someone";
-
+    const notificationPromises = [];
     const explicitUsernames = extractMentions(updatedContent || "");
+
     if (explicitUsernames.length > 0) {
       const chunks = [];
       for (let i = 0; i < explicitUsernames.length; i += 10) {
         chunks.push(explicitUsernames.slice(i, i + 10));
       }
 
-      for (const chunk of chunks) {
-        const usersToTagQuery = await User.where("username", "in", chunk).get();
+      const mentionQueryPromises = chunks.map((chunk) =>
+        User.where("username", "in", chunk).get(),
+      );
+      const mentionSnapshots = await Promise.all(mentionQueryPromises);
+
+      mentionSnapshots.forEach((usersToTagQuery) => {
         usersToTagQuery.forEach((doc) => {
           const targetUser = doc.data();
           if (targetUser.uid && targetUser.uid !== userId) {
-            createNotification({
-              notificationId: generateNotificationId("social"),
-              recipientId: targetUser.uid,
-              recipientEmail: targetUser.email,
-              category: "social",
-              actionType: "POST_MENTION",
-              title: "You were mentioned",
-              message: `${authorName} mentioned you in an updated post.`,
-              payload: { postId: post.postId, authorId: userId },
-              sendPush: true,
-              sendSocket: true,
-              saveToDb: true,
-            });
+            notificationPromises.push(
+              createNotification({
+                notificationId: generateNotificationId("social"),
+                recipientId: targetUser.uid,
+                recipientEmail: targetUser.email,
+                category: "social",
+                actionType: "POST_MENTION",
+                title: "You were mentioned",
+                message: `${authorName} mentioned you in an updated post.`,
+                payload: { postId: post.postId, authorId: userId },
+                sendPush: true,
+                sendSocket: true,
+                saveToDb: true,
+              }),
+            );
           }
         });
-      }
+      });
     }
-
-    createNotification({
-      notificationId: generateNotificationId("social"),
-      recipientId: userId,
-      recipientEmail: author?.email,
-      category: "social",
-      actionType: "POST_UPDATED",
-      title: "Posts Updated",
-      message: "Your post has been successfully updated.",
-      payload: { postId: post.postId },
-      sendPush: false,
-      sendSocket: true,
-      saveToDb: true,
-    });
+    notificationPromises.push(
+      createNotification({
+        notificationId: generateNotificationId("social"),
+        recipientId: userId,
+        recipientEmail: author?.email,
+        category: "social",
+        actionType: "POST_UPDATED",
+        title: "Posts Updated",
+        message: "Your post has been successfully updated.",
+        payload: { postId: post.postId },
+        sendPush: false,
+        sendSocket: true,
+        saveToDb: true,
+      }),
+    );
+    await Promise.all(notificationPromises).catch((err) =>
+      console.error(
+        "Non-blocking notification pipeline failure in post update:",
+        err,
+      ),
+    );
 
     logControllerPerformance(controllerName, action, startTime, "success");
 
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Posts updated successfully",
       post: { ...post, ...updatePayload },
     });
@@ -388,7 +446,7 @@ export const updatePost = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: error.message });
+    return res.status(500).json({ success: false, message: error.message });
   }
 };
 export const deletePost = async (req, res) => {
@@ -412,26 +470,33 @@ export const deletePost = async (req, res) => {
         message: "Missing required post identification parameter.",
       });
     }
+    const [result, authorQuery] = await Promise.all([
+      db.runTransaction(async (transaction) => {
+        const postQuery = await Posts.where("postId", "==", postId)
+          .where("originalAuthor", "==", userUid)
+          .limit(1)
+          .get();
 
-    const result = await db.runTransaction(async (transaction) => {
-      const postQuery = await Posts.where("postId", "==", postId)
-        .where("originalAuthor", "==", userUid)
-        .limit(1)
-        .get();
+        if (postQuery.empty) {
+          throw new Error(
+            "Posts record not found or unauthorized deletion access.",
+          );
+        }
 
-      if (postQuery.empty) {
-        throw new Error(
-          "Posts record not found or unauthorized deletion access.",
-        );
-      }
+        const postDoc = postQuery.docs[0];
+        const postData = postDoc.data();
 
-      const postDoc = postQuery.docs[0];
-      const postData = postDoc.data();
+        transaction.delete(postDoc.ref);
 
-      transaction.delete(postDoc.ref);
+        return postData;
+      }),
+      User.where("uid", "==", userUid).limit(1).get(),
+    ]);
 
-      return postData;
-    });
+    const author = !authorQuery.empty ? authorQuery.docs[0].data() : null;
+    const authorEmail = author ? author.email : req.user.email;
+    const authorName = author ? author.firstname : req.user.firstname;
+    const cleanupPromises = [];
 
     if (result.media) {
       const mediaList = Array.isArray(result.media)
@@ -467,15 +532,17 @@ export const deletePost = async (req, res) => {
                 ? decodedUrl.substring(pathStartIndex, pathEndIndex)
                 : decodedUrl.substring(pathStartIndex);
 
-            bucket
-              .file(filePath)
-              .delete()
-              .catch((err) =>
-                console.error(
-                  `Firebase file deletion failed for post media path: ${filePath}`,
-                  err,
+            cleanupPromises.push(
+              bucket
+                .file(filePath)
+                .delete()
+                .catch((err) =>
+                  console.error(
+                    `Firebase file deletion failed for post media path: ${filePath}`,
+                    err,
+                  ),
                 ),
-              );
+            );
           } catch (parseError) {
             console.error(
               `Error parsing Firebase media URL for deletion: ${url}`,
@@ -486,28 +553,27 @@ export const deletePost = async (req, res) => {
       });
     }
 
-    const authorQuery = await User.where("uid", "==", userUid).limit(1).get();
-    const author = !authorQuery.empty ? authorQuery.docs[0].data() : null;
-    const authorEmail = author ? author.email : req.user.email;
-    const authorName = author ? author.firstname : req.user.firstname;
-
-    await createNotification({
-      notificationId: generateNotificationId("social"),
-      recipientId: userUid,
-      recipientEmail: authorEmail,
-      category: "social",
-      actionType: "POST_DELETION",
-      title: "Posts Removed",
-      message: `Your post has been successfully deleted from your feed.`,
-      entityId: postId,
-      entityType: "post",
-      payload: {
-        username: authorName,
-        postId: postId,
-      },
-    }).catch((err) =>
-      console.error("Non-blocking post deletion log emission failure:", err),
+    cleanupPromises.push(
+      createNotification({
+        notificationId: generateNotificationId("social"),
+        recipientId: userUid,
+        recipientEmail: authorEmail,
+        category: "social",
+        actionType: "POST_DELETION",
+        title: "Posts Removed",
+        message: `Your post has been successfully deleted from your feed.`,
+        entityId: postId,
+        entityType: "post",
+        payload: {
+          username: authorName,
+          postId: postId,
+        },
+      }).catch((err) =>
+        console.error("Non-blocking post deletion log emission failure:", err),
+      ),
     );
+
+    await Promise.all(cleanupPromises);
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -537,6 +603,8 @@ export const deletePost = async (req, res) => {
     });
   }
 };
+
+//Start here
 export const toggleLike = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "toggleLikeController";

@@ -1,5 +1,5 @@
 import express from "express";
-import { protect } from "../middleware/auth.js";
+import { protect, idempotencyMiddleware } from "../middleware/auth.js";
 import {
   fetchAllProducts,
   getPayoutHistory,
@@ -21,40 +21,93 @@ import {
   fetchStoreProducts,
   markOrderAsDroppedOff,
 } from "../controllers/storeControllers.js";
-import { upload } from "../middleware/auth.js";
-
 
 const router = express.Router();
 
-router.get("/get-store-products", fetchStoreProducts);
-router.patch("/cart/toggle", protect, toggleCartActionController);
-router.patch("/favorites/toggle", protect, togglefavoriteActionController);
+router.get("/get-store-products", idempotencyMiddleware, fetchStoreProducts);
+router.patch(
+  "/cart/toggle",
+  protect,
+  idempotencyMiddleware,
+  toggleCartActionController,
+);
+router.patch(
+  "/favorites/toggle",
+  protect,
+  idempotencyMiddleware,
+  togglefavoriteActionController,
+);
 router.get("/fetch-all-products", protect, fetchAllProducts);
-router.delete("/cart/delete-all", protect, clearUserCart);
-router.delete("/favorites/delete-all", protect, clearFavorites);
-router.post("/favorites-to-cart/bulk-add", protect, bulkAddToCart);
-router.post("/initialize-checkout", protect, initializeCheckout);
-router.post("/orders/complete-delivery", protect, completeOrderDelivery);
+router.delete(
+  "/cart/delete-all",
+  protect,
+  idempotencyMiddleware,
+  clearUserCart,
+);
+router.delete(
+  "/favorites/delete-all",
+  protect,
+  idempotencyMiddleware,
+  clearFavorites,
+);
+router.post(
+  "/favorites-to-cart/bulk-add",
+  protect,
+  idempotencyMiddleware,
+  bulkAddToCart,
+);
+router.post(
+  "/initialize-checkout",
+  protect,
+  idempotencyMiddleware,
+  initializeCheckout,
+);
+router.post(
+  "/orders/complete-delivery",
+  protect,
+  idempotencyMiddleware,
+  completeOrderDelivery,
+);
 router.get("/orders/pending", protect, getPendingOrders);
-router.post("/orders/cancel", protect, cancelOrder);
-router.patch("/product/toggle-impressions", protect, logProductImpression);
+router.post("/orders/cancel", protect, idempotencyMiddleware, cancelOrder);
+router.patch(
+  "/product/toggle-impressions",
+  protect,
+  idempotencyMiddleware,
+  logProductImpression,
+);
 router.get("/sales/history", protect, getSellerSalesHistory);
 router.get("/payouts/fetch-history", protect, getPayoutHistory);
-router.post("/payouts/request-payout", protect, requestPayout);
+router.post(
+  "/payouts/request-payout",
+  protect,
+  idempotencyMiddleware,
+  requestPayout,
+);
 router.get("/drop-off-stations/fetch", protect, getDropOffStations);
-router.delete("/products/delete/:productId", protect, deleteProductController);
+router.delete(
+  "/products/delete/:productId",
+  protect,
+  idempotencyMiddleware,
+  deleteProductController,
+);
 router.post(
   "/products/create",
   protect,
-  upload.single("digitalAsset"),
+  idempotencyMiddleware,
   saveProductController,
 );
 router.put(
   "/products/edit/:productId",
   protect,
-  upload.single("digitalAsset"),
+  idempotencyMiddleware,
   saveProductController,
 );
-router.patch("/orders/mark-as-dropped-off", protect, markOrderAsDroppedOff);
+router.patch(
+  "/orders/mark-as-dropped-off",
+  protect,
+  idempotencyMiddleware,
+  markOrderAsDroppedOff,
+);
 
 export default router;

@@ -260,22 +260,38 @@ export const fetchStoreProducts = async (req, res) => {
   const controllerName = "fetchStoreProductsController";
   const action = "fetchStoreProducts";
   const { q, category, cursor, limit = 10 } = req.query;
-  const pageLimit = Number(limit);
+  const pageLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
 
   try {
     let queryRef = Product.where("isAvailable", "==", true);
-
-    if (category && category !== "all" && category !== "popular") {
+    const isPopular = category === "popular";
+    if (category && category !== "all" && !isPopular) {
       queryRef = queryRef.where("category", "==", category);
     }
-    const isPopular = category === "popular";
+    if (isPopular) {
+      queryRef = queryRef
+        .orderBy("favCount", "desc")
+        .orderBy("ratingsAverage", "desc");
+    } else {
+      queryRef = queryRef.orderBy("createdAt", "desc");
+    }
+    if (cursor) {
+      const cursorDoc = await Product.doc(cursor).get();
+      if (cursorDoc.exists) {
+        queryRef = queryRef.startAfter(cursorDoc);
+      }
+    }
+    const fetchLimit = q ? pageLimit * 3 : pageLimit + 1;
+    queryRef = queryRef.limit(fetchLimit);
+
     const snapshot = await queryRef.get();
     let products = [];
 
     snapshot.forEach((doc) => {
       const data = doc.data();
-      products.push({ id: doc.id, ...data });
+      products.push({ id: doc.id, productId: doc.id, ...data });
     });
+
     if (q) {
       const searchTerm = q.toLowerCase().trim();
       products = products.filter((p) => {
@@ -284,52 +300,32 @@ export const fetchStoreProducts = async (req, res) => {
         return title.includes(searchTerm) || description.includes(searchTerm);
       });
     }
-    products.sort((a, b) => {
-      if (isPopular) {
-        const favA = a.favCount || 0;
-        const favB = b.favCount || 0;
-        if (favB !== favA) return favB - favA;
-
-        const ratingA = a.ratingsAverage || 0;
-        const ratingB = b.ratingsAverage || 0;
-        return ratingB - ratingA;
-      } else {
-        const timeA = a.createdAt?.toDate
-          ? a.createdAt.toDate().getTime()
-          : new Date(a.createdAt || 0).getTime();
-        const timeB = b.createdAt?.toDate
-          ? b.createdAt.toDate().getTime()
-          : new Date(b.createdAt || 0).getTime();
-        return timeB - timeA;
-      }
-    });
-    if (cursor) {
-      const cursorIndex = products.findIndex(
-        (p) => (p.productId || p.id) === cursor,
-      );
-      if (cursorIndex !== -1) {
-        products = products.slice(cursorIndex + 1);
-      }
-    }
     const paginatedProducts = products.slice(0, pageLimit);
+    let nextCursor = null;
+    if (products.length > pageLimit) {
+      nextCursor =
+        paginatedProducts[paginatedProducts.length - 1]?.productId || null;
+    }
 
-    const nextCursor =
-      paginatedProducts.length === pageLimit
-        ? paginatedProducts[paginatedProducts.length - 1].productId ||
-          paginatedProducts[paginatedProducts.length - 1].id
-        : null;
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
-    res.json({ products: paginatedProducts, nextCursor });
+    return res.json({ products: paginatedProducts, nextCursor });
   } catch (err) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      err.message,
-    );
-    res.status(500).json({ message: err.message });
+    console.error("Fetch Store Products Error:", err);
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      );
+    }
+    return res
+      .status(500)
+      .json({ message: err.message || "Failed to fetch store items" });
   }
 };
 export const fetchAllProducts = async (req, res) => {
@@ -337,54 +333,44 @@ export const fetchAllProducts = async (req, res) => {
   const controllerName = "fetchAllProductsController";
   const action = "fetchAllProducts";
   const CACHE_KEY = "catalog:all_products";
-  try {
-    const cachedProducts = await redis.get(CACHE_KEY);
 
-    if (cachedProducts) {
+  try {
+    const cachedData = await redis.get(CACHE_KEY);
+    if (cachedData) {
       logControllerPerformance(controllerName, action, startTime, "success");
       return res.status(200).json({
         success: true,
-        products: JSON.parse(cachedProducts),
+        products: JSON.parse(cachedData),
         source: "cache",
       });
     }
-
-    const snapshot = await Product.get();
     const products = [];
+    const snapshot = await Product.get();
 
     snapshot.forEach((doc) => {
       const data = doc.data();
-      const projectedProduct = {
+      products.push({
         id: doc.id,
         title: data.title,
         isAvailable: data.isAvailable,
         priceInPoints: data.priceInPoints,
         mediaUrls: data.mediaUrls,
         productId: data.productId,
-        impressions: data.impressions,
-        sales: data.sales,
         category: data.category,
-        description: data.description,
-        ratings: data.ratings,
         type: data.type,
-        sellerId: data.sellerId,
-        physicalDetails: data.physicalDetails,
-      };
-      products.push(projectedProduct);
+      });
     });
 
-    await redis.set(CACHE_KEY, JSON.stringify(products), {
-      EX: 18000,
-    });
+    await redis.set(CACHE_KEY, JSON.stringify(products), { EX: 18000 });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       products,
       source: "database",
     });
   } catch (error) {
-    console.error("Cache/DB Error:", error.message);
+    console.error("Critical Catalog Fetch Error:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -392,41 +378,29 @@ export const fetchAllProducts = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: "Internal server error" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server unable to sync catalog" });
   }
 };
 export const clearUserCart = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "clearUserCartController";
   const action = "clearUserCart";
+
   try {
-    const userId = req.user.id || req.user.uid;
+    const userId = req.user?.id || req.user?.uid;
+    if (!userId) throw new Error("Unauthorized");
+    const userDocRef = User.doc(userId);
 
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-
-    if (userQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User not found",
-      );
-      return res.status(404).json({
-        status: false,
-        message: "User not found",
-      });
-    }
-
-    const userDoc = userQuery.docs[0];
-
-    await userDoc.ref.update({
+    await userDocRef.update({
       cart: [],
       updatedAt: new Date(),
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+
+    return res.status(200).json({
       status: true,
       message: "Cart cleared successfully",
       cart: [],
@@ -440,9 +414,10 @@ export const clearUserCart = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({
+    const statusCode = error.message === "Unauthorized" ? 401 : 500;
+    return res.status(statusCode).json({
       status: false,
-      message: "An error occurred while clearing the cart",
+      message: error.message || "An error occurred while clearing the cart",
     });
   }
 };
@@ -454,7 +429,9 @@ export const bulkAddToCart = async (req, res) => {
   const userId = req.user.id || req.user.uid;
 
   try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+    const [userQuery] = await Promise.all([
+      User.where("uid", "==", userId).limit(1).get(),
+    ]);
 
     if (userQuery.empty) {
       logControllerPerformance(
@@ -464,35 +441,29 @@ export const bulkAddToCart = async (req, res) => {
         "error",
         "User not found",
       );
-      return res.status(404).json({
-        status: false,
-        message: "User not found",
-      });
+      return res.status(404).json({ status: false, message: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
     const userData = userDoc.data();
     const currentCart = userData.cart || [];
+    const existingProductIds = new Set(currentCart.map((i) => i.productId));
+    const itemsToAdd = (items || []).filter(
+      (item) => !existingProductIds.has(item.productId),
+    );
 
-    const newCart = [...currentCart];
-    if (items && Array.isArray(items)) {
-      items.forEach((newItem) => {
-        if (!newCart.some((item) => item.productId === newItem.productId)) {
-          newCart.push(newItem);
-        }
+    if (itemsToAdd.length > 0) {
+      await userDoc.ref.update({
+        cart: [...currentCart, ...itemsToAdd],
+        updatedAt: new Date(),
       });
     }
-
-    await userDoc.ref.update({
-      cart: newCart,
-      updatedAt: new Date(),
-    });
 
     logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       status: true,
-      cart: newCart,
-      message: "Successfully moved all favorites to cart.",
+      cart: [...currentCart, ...itemsToAdd],
+      message: "Successfully added items to cart.",
     });
   } catch (error) {
     console.error("Bulk Add To Cart Error:", error.message);
@@ -503,54 +474,64 @@ export const bulkAddToCart = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({
-      status: false,
-      message: "An error occurred while adding items to cart",
-    });
+    res.status(500).json({ status: false, message: "An error occurred" });
   }
 };
 export const clearFavorites = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "clearFavoritesController";
   const action = "clearFavorites";
-  const userId = req.user.id || req.user.uid;
 
   try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+    const userId = req.user?.id || req.user?.uid;
+    if (!userId) {
+      return res.status(401).json({
+        status: false,
+        message: "Unauthorized user session",
+      });
+    }
+    const userDocRef = User.doc(userId);
+    const userSnap = await userDocRef.get();
 
-    if (userQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User not found",
-      );
+    if (!userSnap.exists) {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      }
       return res.status(404).json({
         status: false,
         message: "User not found",
       });
     }
-
-    const userDoc = userQuery.docs[0];
-
-    await userDoc.ref.update({
+    await userDocRef.update({
       favorites: [],
       updatedAt: new Date(),
     });
 
-    logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ status: true });
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    }
+
+    return res
+      .status(200)
+      .json({ status: true, message: "Favorites cleared successfully" });
   } catch (error) {
     console.error("Clear Favorites Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    res.status(500).json({
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    return res.status(500).json({
       status: false,
       message: "An error occurred while clearing favorites",
     });
@@ -563,6 +544,7 @@ export const initializeCheckout = async (req, res) => {
   const { items, totals, shippingContact } = req.body;
   const buyerId = req.user.id || req.user.uid;
   const PAYOUT_FACTOR = 1 - TAX_RATE;
+
   try {
     const processedResults = await db.runTransaction(async (transaction) => {
       const buyerQuery = await User.where("uid", "==", buyerId).limit(1).get();
@@ -581,11 +563,13 @@ export const initializeCheckout = async (req, res) => {
           "Insufficient iCash balance to complete purchase or user not found.",
         );
       }
+
       const newBuyerBalance = currentBalance - totals.grandTotal;
       transaction.update(buyerDoc.ref, {
         pointsBalance: newBuyerBalance,
         updatedAt: new Date(),
       });
+
       const buyerTxId = generateTransactionId("payment");
       const buyerTransactionRef = Transactions.doc(buyerTxId);
       const buyerTransaction = {
@@ -600,29 +584,30 @@ export const initializeCheckout = async (req, res) => {
         createdAt: new Date(),
       };
       transaction.set(buyerTransactionRef, buyerTransaction);
+      const itemPromises = items.map(async (item) => {
+        const [productQuery, sellerQuery] = await Promise.all([
+          Product.where("productId", "==", item.productId).limit(1).get(),
+          User.where("uid", "==", item.sellerId).limit(1).get(),
+        ]);
 
-      const results = [];
-      for (const item of items) {
-        const productQuery = await Product.where(
-          "productId",
-          "==",
-          item.productId,
-        )
-          .limit(1)
-          .get();
-        if (productQuery.empty) {
+        if (productQuery.empty || sellerQuery.empty) {
           throw new Error("Product or Seller info not found.");
         }
+
         const productDoc = productQuery.docs[0];
         const productData = productDoc.data();
-        const sellerQuery = await User.where("uid", "==", item.sellerId)
-          .limit(1)
-          .get();
-        if (sellerQuery.empty) {
-          throw new Error("Product or Seller info not found.");
-        }
         const sellerDoc = sellerQuery.docs[0];
         const sellerData = sellerDoc.data();
+
+        return { item, productDoc, productData, sellerDoc, sellerData };
+      });
+
+      const resolvedItems = await Promise.all(itemPromises);
+      const results = [];
+
+      for (const resolved of resolvedItems) {
+        const { item, productDoc, productData, sellerDoc, sellerData } =
+          resolved;
 
         const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
         const isDropOff = item.deliveryMethod === "drop_off";
@@ -633,6 +618,7 @@ export const initializeCheckout = async (req, res) => {
         const itemTotal = item.price * item.quantity;
         const netEarnings = itemTotal * PAYOUT_FACTOR;
         const productTaxAmount = itemTotal - netEarnings;
+
         if (productTaxAmount > 0) {
           const taxEntryId = generateTransactionId("appTax");
           const taxDocRef = TaxEntries.doc(taxEntryId);
@@ -652,6 +638,7 @@ export const initializeCheckout = async (req, res) => {
             createdAt: new Date(),
           });
         }
+
         const currentStock = productData.amountInStock ?? 1;
         if (currentStock < item.quantity) {
           throw new Error(
@@ -667,7 +654,9 @@ export const initializeCheckout = async (req, res) => {
         if (updatedStock === 0) {
           productUpdates.isAvailable = false;
         }
+
         transaction.update(productDoc.ref, productUpdates);
+
         const newOrderRef = ProductOrder.doc(orderId);
         const newOrder = {
           orderId,
@@ -702,6 +691,7 @@ export const initializeCheckout = async (req, res) => {
 
       return { processedResults: results, buyerTxId };
     });
+
     const buyerQuery = await User.where("uid", "==", buyerId).limit(1).get();
     const buyerData = !buyerQuery.empty
       ? buyerQuery.docs[0].data()
@@ -776,32 +766,42 @@ export const completeOrderDelivery = async (req, res) => {
       if (!isSeller && !isAgent) {
         throw new Error("You are not authorized to verify this delivery.");
       }
-      const productQuery = await Product.where(
-        "productId",
-        "==",
-        order.productId,
-      )
-        .limit(1)
-        .get();
+      const [productQuery, sellerQuery, buyerQuery, agentQuery] =
+        await Promise.all([
+          Product.where("productId", "==", order.productId).limit(1).get(),
+          User.where("uid", "==", order.sellerId).limit(1).get(),
+          User.where("uid", "==", order.buyerId).limit(1).get(),
+          order.deliveryMethod === "drop_off" && order.agentId
+            ? User.where("uid", "==", order.agentId).limit(1).get()
+            : Promise.resolve(null),
+        ]);
+
       if (productQuery.empty) {
         throw new Error("Product not found.");
       }
-      const productDoc = productQuery.docs[0];
-      const productData = productDoc.data();
-
-      const sellerQuery = await User.where("uid", "==", order.sellerId)
-        .limit(1)
-        .get();
       if (sellerQuery.empty) {
         throw new Error("Seller account no longer exists.");
       }
+      if (
+        order.deliveryMethod === "drop_off" &&
+        order.agentId &&
+        (!agentQuery || agentQuery.empty)
+      ) {
+        throw new Error("Drop-off agent not found.");
+      }
+
+      const productDoc = productQuery.docs[0];
+      const productData = productDoc.data();
       const sellerDoc = sellerQuery.docs[0];
       const seller = sellerDoc.data();
-
-      const buyerQuery = await User.where("uid", "==", order.buyerId)
-        .limit(1)
-        .get();
       const buyer = !buyerQuery.empty ? buyerQuery.docs[0].data() : null;
+
+      let agentDoc = null;
+      let agentData = null;
+      if (agentQuery && !agentQuery.empty) {
+        agentDoc = agentQuery.docs[0];
+        agentData = agentDoc.data();
+      }
 
       const buyerTier = buyer?.tier || "free";
       const deliveryFeeRate =
@@ -813,19 +813,8 @@ export const completeOrderDelivery = async (req, res) => {
 
       let sellerEarnings = payableAmount;
       let agentEarnings = 0;
-      let agentDoc = null;
-      let agentData = null;
 
-      if (order.deliveryMethod === "drop_off" && order.agentId) {
-        const agentQuery = await User.where("uid", "==", order.agentId)
-          .limit(1)
-          .get();
-        if (agentQuery.empty) {
-          throw new Error("Drop-off agent not found.");
-        }
-        agentDoc = agentQuery.docs[0];
-        agentData = agentDoc.data();
-
+      if (order.deliveryMethod === "drop_off" && order.agentId && agentDoc) {
         agentEarnings = deliveryFeeAmount * 0.5;
         const sellerDeliveryShare = deliveryFeeAmount * 0.5;
         sellerEarnings += sellerDeliveryShare;
@@ -847,17 +836,20 @@ export const completeOrderDelivery = async (req, res) => {
         pendingSalesBalance: updatedSellerPending,
         updatedAt: new Date(),
       });
+
       const currentSales = productData.sales || 0;
       transaction.update(productDoc.ref, {
         sales: currentSales + salesIncrement,
         updatedAt: new Date(),
       });
+
       const completedAtTime = new Date().toISOString();
       transaction.update(orderDocRef, {
         status: "completed",
         completedAt: completedAtTime,
         updatedAt: new Date(),
       });
+
       const productSaleRef = ProductSales.doc();
       transaction.set(productSaleRef, {
         sellerId: order.sellerId,
@@ -881,9 +873,10 @@ export const completeOrderDelivery = async (req, res) => {
         isSeller,
       };
     });
+
     await createNotification({
       notificationId: generateNotificationId("store"),
-      recipientId: orderId.buyerId || result.buyer?.uid, // fallback safe handling
+      recipientId: order.buyerId || result.buyer?.uid,
       category: "store",
       actionType: "ORDER_REVIEW_REQUEST",
       title: "Share your experience",
@@ -999,39 +992,34 @@ export const cancelOrder = async (req, res) => {
           "Order not found or you do not have permission to cancel it.",
         );
       }
-      const buyerQuery = await User.where("uid", "==", order.buyerId)
-        .limit(1)
-        .get();
+      const [buyerQuery, sellerQuery, productQuery] = await Promise.all([
+        User.where("uid", "==", order.buyerId).limit(1).get(),
+        User.where("uid", "==", order.sellerId).limit(1).get(),
+        Product.where("productId", "==", order.productId).limit(1).get(),
+      ]);
+
       if (buyerQuery.empty) {
         throw new Error("User not found.");
       }
-      const buyerDoc = buyerQuery.docs[0];
-      const buyer = buyerDoc.data();
-
-      const sellerQuery = await User.where("uid", "==", order.sellerId)
-        .limit(1)
-        .get();
       if (sellerQuery.empty) {
         throw new Error("Seller not found.");
       }
+
+      const buyerDoc = buyerQuery.docs[0];
+      const buyer = buyerDoc.data();
       const sellerDoc = sellerQuery.docs[0];
       const seller = sellerDoc.data();
 
-      const productQuery = await Product.where(
-        "productId",
-        "==",
-        order.productId,
-      )
-        .limit(1)
-        .get();
       const productDoc = !productQuery.empty ? productQuery.docs[0] : null;
       const productData = productDoc ? productDoc.data() : null;
       const productTitle = productData ? productData.title : "Product";
+
       const newPointsBalance = (buyer.pointsBalance || 0) + order.amountPaid;
       transaction.update(buyerDoc.ref, {
         pointsBalance: newPointsBalance,
         updatedAt: new Date(),
       });
+
       if (productDoc && productData && productData.type === "physical") {
         const currentStock = productData.amountInStock || 0;
         const refundQuantity = order.quantity || 1;
@@ -1041,7 +1029,7 @@ export const cancelOrder = async (req, res) => {
           updatedAt: new Date(),
         });
       }
-      const nowIso = new Date().toISOString();
+
       transaction.update(orderDocRef, {
         status: "cancelled",
         cancellationReason: reason,
@@ -1069,6 +1057,7 @@ export const cancelOrder = async (req, res) => {
         refundTxId,
       };
     });
+
     const currentDate = new Date();
     const formattedDate = currentDate.toLocaleDateString();
     const formattedTime = currentDate.toLocaleTimeString();
@@ -1127,19 +1116,14 @@ export const getPendingOrders = async (req, res) => {
 
   try {
     const userId = req.user.id || req.user.uid;
-
     const snapshot = await ProductOrder.where("buyerId", "==", userId)
       .where("status", "in", ["pending_delivery", "dropped_off"])
+      .orderBy("createdAt", "desc")
       .get();
 
     const orders = [];
     snapshot.forEach((doc) => {
       orders.push(doc.data());
-    });
-    orders.sort((a, b) => {
-      const timeA = new Date(a.createdAt || 0).getTime();
-      const timeB = new Date(b.createdAt || 0).getTime();
-      return timeB - timeA;
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -1165,19 +1149,15 @@ export const logProductImpression = async (req, res) => {
 
   try {
     const result = await db.runTransaction(async (transaction) => {
-      const impressionQuery = await ProductImpression.where(
-        "userId",
-        "==",
-        userId,
-      )
-        .where("productId", "==", productId)
-        .where("monthYear", "==", currentMonthYear)
-        .limit(1)
-        .get();
+      const [impressionQuery, productQuery] = await Promise.all([
+        ProductImpression.where("userId", "==", userId)
+          .where("productId", "==", productId)
+          .where("monthYear", "==", currentMonthYear)
+          .limit(1)
+          .get(),
+        Product.where("productId", "==", productId).limit(1).get(),
+      ]);
 
-      const productQuery = await Product.where("productId", "==", productId)
-        .limit(1)
-        .get();
       const productDoc = !productQuery.empty ? productQuery.docs[0] : null;
 
       if (impressionQuery.empty) {
@@ -1244,21 +1224,13 @@ export const getSellerSalesHistory = async (req, res) => {
         message: "Unauthorized: Seller ID missing",
       });
     }
-
-    const snapshot = await ProductSales.where("sellerId", "==", sellerId).get();
+    const snapshot = await ProductSales.where("sellerId", "==", sellerId)
+      .orderBy("createdAt", "desc")
+      .get();
 
     const sales = [];
     snapshot.forEach((doc) => {
       sales.push({ id: doc.id, ...doc.data() });
-    });
-    sales.sort((a, b) => {
-      const timeA = a.createdAt?.toDate
-        ? a.createdAt.toDate().getTime()
-        : new Date(a.createdAt || 0).getTime();
-      const timeB = b.createdAt?.toDate
-        ? b.createdAt.toDate().getTime()
-        : new Date(b.createdAt || 0).getTime();
-      return timeB - timeA;
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -1301,23 +1273,15 @@ export const getPayoutHistory = async (req, res) => {
         message: "User identification missing.",
       });
     }
-
-    const snapshot = await Payout.where("sellerUid", "==", userUid).get();
+    const snapshot = await Payout.where("sellerUid", "==", userUid)
+      .orderBy("createdAt", "desc")
+      .get();
 
     const history = [];
     snapshot.forEach((doc) => {
       const data = doc.data();
       const { __v, ...cleanData } = data;
       history.push({ id: doc.id, ...cleanData });
-    });
-    history.sort((a, b) => {
-      const timeA = a.createdAt?.toDate
-        ? a.createdAt.toDate().getTime()
-        : new Date(a.createdAt || 0).getTime();
-      const timeB = b.createdAt?.toDate
-        ? b.createdAt.toDate().getTime()
-        : new Date(b.createdAt || 0).getTime();
-      return timeB - timeA;
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -1391,6 +1355,7 @@ export const requestPayout = async (req, res) => {
         createdAt: new Date(),
       };
       transaction.set(payoutRef, newPayoutData);
+
       const transactionRef = Transactions.doc(transactionId);
       const newTransactionData = {
         transactionId,
@@ -1412,6 +1377,7 @@ export const requestPayout = async (req, res) => {
         transactionId,
       };
     });
+
     const currentDate = new Date();
     const formattedDate = currentDate.toLocaleDateString();
     const formattedTime = currentDate.toLocaleTimeString();
@@ -1489,7 +1455,7 @@ export const getDropOffStations = async (req, res) => {
         controllerName,
         action,
         startTime,
-        "error",
+        "success",
         "Stations fetched successfully",
       );
       return res.status(200).json({
@@ -1591,17 +1557,19 @@ export const saveProductController = async (req, res) => {
       };
     }
 
-    let fileDetails = null;
-    let existingProductData = null;
     let productDocRef = null;
+    const [productQuery, sellerQuery] = await Promise.all([
+      isEditing
+        ? Product.where("productId", "==", productId)
+            .where("sellerId", "==", userUid)
+            .limit(1)
+            .get()
+        : Promise.resolve(null),
+      User.where("uid", "==", userUid).limit(1).get(),
+    ]);
 
     if (isEditing) {
-      const productQuery = await Product.where("productId", "==", productId)
-        .where("sellerId", "==", userUid)
-        .limit(1)
-        .get();
-
-      if (productQuery.empty) {
+      if (!productQuery || productQuery.empty) {
         if (req.file) await fs.unlink(req.file.path).catch(() => {});
         logControllerPerformance(
           controllerName,
@@ -1617,8 +1585,10 @@ export const saveProductController = async (req, res) => {
 
       const productDoc = productQuery.docs[0];
       productDocRef = productDoc.ref;
-      existingProductData = productDoc.data();
     }
+
+    const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
+    const sellerName = seller ? seller.firstname : "A creator you follow";
 
     let productData;
 
@@ -1683,9 +1653,6 @@ export const saveProductController = async (req, res) => {
       };
       await productDocRef.set(productData);
     }
-    const sellerQuery = await User.where("uid", "==", userUid).limit(1).get();
-    const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
-    const sellerName = seller ? seller.firstname : "A creator you follow";
 
     processNotificationFanOut(
       userUid,
@@ -1721,7 +1688,6 @@ export const saveProductController = async (req, res) => {
       data: productData,
     });
   } catch (error) {
-    if (req.file) await fs.unlink(req.file.path).catch(() => {});
     console.error(
       "Global crash layer hit in saveProductController:",
       error.message,
@@ -1761,24 +1727,25 @@ export const deleteProductController = async (req, res) => {
         message: "Missing required product identification parameter.",
       });
     }
+    const [result, sellerQuery] = await Promise.all([
+      db.runTransaction(async (transaction) => {
+        const productQuery = await Product.where("productId", "==", productId)
+          .where("sellerId", "==", userUid)
+          .limit(1)
+          .get();
 
-    const result = await db.runTransaction(async (transaction) => {
-      const productQuery = await Product.where("productId", "==", productId)
-        .where("sellerId", "==", userUid)
-        .limit(1)
-        .get();
+        if (productQuery.empty) {
+          throw new Error("Product record not found or unauthorized access.");
+        }
 
-      if (productQuery.empty) {
-        throw new Error("Product record not found or unauthorized access.");
-      }
+        const productDoc = productQuery.docs[0];
+        const productData = productDoc.data();
+        transaction.delete(productDoc.ref);
 
-      const productDoc = productQuery.docs[0];
-      const productData = productDoc.data();
-      transaction.delete(productDoc.ref);
-
-      return productData;
-    });
-
+        return productData;
+      }),
+      User.where("uid", "==", userUid).limit(1).get(),
+    ]);
     const mediaThumbnails = result.mediaUrls || result.thumbnails;
     if (mediaThumbnails) {
       const thumbnailUrls = Array.isArray(mediaThumbnails)
@@ -1787,7 +1754,7 @@ export const deleteProductController = async (req, res) => {
 
       const bucket = storage().bucket();
 
-      thumbnailUrls.forEach((url) => {
+      const deletionPromises = thumbnailUrls.map(async (url) => {
         if (url && url.includes("firebasestorage.googleapis.com")) {
           try {
             const decodedUrl = decodeURIComponent(url);
@@ -1798,27 +1765,24 @@ export const deleteProductController = async (req, res) => {
                 ? decodedUrl.substring(pathStartIndex, pathEndIndex)
                 : decodedUrl.substring(pathStartIndex);
 
-            bucket
-              .file(filePath)
-              .delete()
-              .catch((err) =>
-                console.error(
-                  `Firebase file deletion failed for path: ${filePath}`,
-                  err,
-                ),
-              );
+            await bucket.file(filePath).delete();
           } catch (parseError) {
             console.error(
-              `Error parsing Firebase URL for deletion: ${url}`,
+              `Error parsing or deleting Firebase file for URL: ${url}`,
               parseError,
             );
           }
         }
       });
+
+      await Promise.all(deletionPromises).catch((err) =>
+        console.error(
+          "Some file deletions failed during parallel cleanup:",
+          err,
+        ),
+      );
     }
 
-    // Fetch seller info for notifications
-    const sellerQuery = await User.where("uid", "==", userUid).limit(1).get();
     const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
     const sellerEmail = seller ? seller.email : req.user.email;
     const sellerName = seller ? seller.firstname : req.user.firstname;
@@ -1893,6 +1857,19 @@ export const togglefavoriteActionController = async (req, res) => {
   const { productId } = req.body;
   const userId = req.user.id || req.user.uid;
 
+  if (!productId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Missing required productId.",
+    );
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing required productId." });
+  }
+
   try {
     const result = await db.runTransaction(async (transaction) => {
       const userQuery = await User.where("uid", "==", userId).limit(1).get();
@@ -1903,15 +1880,10 @@ export const togglefavoriteActionController = async (req, res) => {
       const userDoc = userQuery.docs[0];
       const userData = userDoc.data();
       const favorites = userData.favorites || [];
-
       const isFavorited = favorites.includes(productId);
-      let updatedFavorites;
-
-      if (isFavorited) {
-        updatedFavorites = favorites.filter((id) => id !== productId);
-      } else {
-        updatedFavorites = [...favorites, productId];
-      }
+      const updatedFavorites = isFavorited
+        ? favorites.filter((id) => id !== productId)
+        : [...favorites, productId];
 
       transaction.update(userDoc.ref, {
         favorites: updatedFavorites,
@@ -1925,7 +1897,7 @@ export const togglefavoriteActionController = async (req, res) => {
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       favorites: result.favorites,
       message: result.isFavorited
@@ -1941,7 +1913,9 @@ export const togglefavoriteActionController = async (req, res) => {
       error.message,
     );
     const statusCode = error.message === "User not found" ? 404 : 500;
-    res.status(statusCode).json({ success: false, message: error.message });
+    return res
+      .status(statusCode)
+      .json({ success: false, message: error.message });
   }
 };
 export const toggleCartActionController = async (req, res) => {
@@ -1956,6 +1930,17 @@ export const toggleCartActionController = async (req, res) => {
     quantity = 1,
   } = req.body;
   const userId = req.user.id || req.user.uid;
+
+  if (!productId || !action) {
+    logControllerPerformance(
+      controllerName,
+      controllerAction,
+      startTime,
+      "error",
+      "Missing required productId or action.",
+    );
+    return res.status(400).json({ success: false, message: "Missing required productId or action." });
+  }
 
   try {
     const result = await db.runTransaction(async (transaction) => {
@@ -2023,7 +2008,7 @@ export const toggleCartActionController = async (req, res) => {
       "success",
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       cart: result,
       message: `Cart updated successfully`,
@@ -2037,7 +2022,7 @@ export const toggleCartActionController = async (req, res) => {
       error.message,
     );
     const statusCode = error.message === "User not found" ? 404 : 500;
-    res.status(statusCode).json({ success: false, message: error.message });
+    return res.status(statusCode).json({ success: false, message: error.message });
   }
 };
 export const markOrderAsDroppedOff = async (req, res) => {
@@ -2046,6 +2031,11 @@ export const markOrderAsDroppedOff = async (req, res) => {
   const action = "markOrderAsDroppedOff";
   const { orderId } = req.body;
   const sellerId = req.user.id || req.user.uid;
+
+  if (!orderId) {
+    logControllerPerformance(controllerName, action, startTime, "error", "Missing required orderId.");
+    return res.status(400).json({ success: false, message: "Missing required orderId." });
+  }
 
   try {
     const result = await db.runTransaction(async (transaction) => {
@@ -2073,22 +2063,17 @@ export const markOrderAsDroppedOff = async (req, res) => {
         droppedOffAt: droppedOffAt,
         updatedAt: new Date(),
       });
-      const buyerQuery = await User.where("uid", "==", order.buyerId)
-        .limit(1)
-        .get();
+      const [buyerQuery, agentQuery] = await Promise.all([
+        User.where("uid", "==", order.buyerId).limit(1).get(),
+        order.agentId ? User.where("uid", "==", order.agentId).limit(1).get() : Promise.resolve(null)
+      ]);
+
       if (buyerQuery.empty) {
         throw new Error("Buyer not found.");
       }
+
       const buyer = buyerQuery.docs[0].data();
-      let agent = null;
-      if (order.agentId) {
-        const agentQuery = await User.where("uid", "==", order.agentId)
-          .limit(1)
-          .get();
-        if (!agentQuery.empty) {
-          agent = agentQuery.docs[0].data();
-        }
-      }
+      const agent = agentQuery && !agentQuery.empty ? agentQuery.docs[0].data() : null;
 
       return {
         order,
@@ -2100,41 +2085,48 @@ export const markOrderAsDroppedOff = async (req, res) => {
     const currentDate = new Date();
     const formattedDate = currentDate.toLocaleDateString();
     const formattedTime = currentDate.toLocaleTimeString();
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: result.order.buyerId,
-      recipientEmail: result.buyer.email,
-      category: "store",
-      actionType: "ORDER_DROPPED_OFF",
-      sendEmail: true,
-      payload: {
-        userName:
-          `${result.buyer.firstname || ""} ${result.buyer.lastname || ""}`.trim(),
-        productName: result.order.productName,
-        orderId: result.order.orderId,
-        stationName: result.order.selectedStation?.name || "",
-        stationAddress: result.order.selectedStation?.address || "",
-      },
-    });
-
-    if (result.order.agentId && result.agent?.email) {
-      await createNotification({
+    const notificationPromises = [
+      createNotification({
         notificationId: generateNotificationId("store"),
-        recipientId: result.order.agentId,
-        recipientEmail: result.agent.email,
+        recipientId: result.order.buyerId,
+        recipientEmail: result.buyer.email,
         category: "store",
-        actionType: "AGENT_AWAITING_PICKUP",
+        actionType: "ORDER_DROPPED_OFF",
         sendEmail: true,
         payload: {
-          agentName: result.agent.firstname || "Agent",
+          userName: `${result.buyer.firstname || ""} ${result.buyer.lastname || ""}`.trim(),
           productName: result.order.productName,
           orderId: result.order.orderId,
           stationName: result.order.selectedStation?.name || "",
-          date: formattedDate,
-          time: formattedTime,
+          stationAddress: result.order.selectedStation?.address || "",
         },
-      });
+      })
+    ];
+
+    if (result.order.agentId && result.agent?.email) {
+      notificationPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("store"),
+          recipientId: result.order.agentId,
+          recipientEmail: result.agent.email,
+          category: "store",
+          actionType: "AGENT_AWAITING_PICKUP",
+          sendEmail: true,
+          payload: {
+            agentName: result.agent.firstname || "Agent",
+            productName: result.order.productName,
+            orderId: result.order.orderId,
+            stationName: result.order.selectedStation?.name || "",
+            date: formattedDate,
+            time: formattedTime,
+          },
+        })
+      );
     }
+
+    await Promise.all(notificationPromises).catch((err) =>
+      console.error("Non-blocking notification pipeline failure in order drop-off:", err)
+    );
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -2150,13 +2142,14 @@ export const markOrderAsDroppedOff = async (req, res) => {
       "error",
       error.message,
     );
-    const statusCode = [
+    const clientErrors = [
       "Order not found.",
       "Unauthorized action.",
       "This action is only valid for station drop-offs.",
-    ].includes(error.message)
-      ? 400
-      : 500;
+      "Buyer not found.",
+      "Missing required orderId."
+    ];
+    const statusCode = clientErrors.includes(error.message) ? 400 : 500;
     return res
       .status(statusCode)
       .json({ success: false, message: error.message });

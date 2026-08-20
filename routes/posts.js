@@ -1,5 +1,5 @@
 import express from "express";
-import { protect } from "../middleware/auth.js";
+import { protect, idempotencyMiddleware } from "../middleware/auth.js";
 import {
   createPost,
   updatePost,
@@ -25,11 +25,11 @@ router.patch("/:postId/impression", protect, incrementImpressions);
 router.post("/:postId/comment", protect, addComment);
 router.patch("/:postId/comments/:commentId/like", protect, toggleCommentLike);
 router.post("/repost", protect, repost);
-router.post("/create", protect, createPost);
-router.put("/:postId/update", protect, updatePost);
+router.post("/create", protect, idempotencyMiddleware, createPost);
+router.put("/:postId/update", protect, idempotencyMiddleware, updatePost);
 router.patch("/vote", protect, pollVote);
 router.get("/:postId", protect, fetchPostUsingPostId);
-router.delete("/:postId/delete", protect, deletePost);
+router.delete("/:postId/delete", protect, idempotencyMiddleware, deletePost);
 router.get("/search", protect, searchPosts);
 
 export default router;

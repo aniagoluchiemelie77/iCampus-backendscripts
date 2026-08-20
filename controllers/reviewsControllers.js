@@ -6,7 +6,7 @@ export const fetchSellerReviews = async (req, res) => {
   const controllerName = "fetchSellerReviewsController";
   const action = "fetchSellerReviews";
   try {
-    const sellerId = req.user.id;
+    const sellerId = req.user.id || req.user.uid;
     const [productsSnapshot, sellerReviewsSnapshot] = await Promise.all([
       Product.where("sellerId", "==", sellerId).get(),
       Reviews.where("targetId", "==", sellerId)
@@ -18,6 +18,7 @@ export const fetchSellerReviews = async (req, res) => {
       const data = doc.data();
       return data.productId || doc.id;
     });
+
     let productReviewsSnapshots = [];
     if (productIds.length > 0) {
       const chunks = [];
@@ -36,6 +37,7 @@ export const fetchSellerReviews = async (req, res) => {
 
       productReviewsSnapshots = await Promise.all(reviewPromises);
     }
+
     const reviewMap = new Map();
 
     const processSnapshot = (snapshot) => {
@@ -57,6 +59,7 @@ export const fetchSellerReviews = async (req, res) => {
         : new Date(b.createdAt || 0);
       return timeB - timeA;
     });
+
     const reviewerUids = [
       ...new Set(reviews.map((r) => r.reviewerId).filter(Boolean)),
     ];
@@ -80,6 +83,7 @@ export const fetchSellerReviews = async (req, res) => {
         });
       });
     }
+
     const formattedReviews = reviews.map((review) => {
       const reviewer = userMap[review.reviewerId] || {};
       return {
@@ -95,6 +99,7 @@ export const fetchSellerReviews = async (req, res) => {
         },
       };
     });
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
