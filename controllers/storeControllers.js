@@ -39,73 +39,103 @@ const formattedTime = now.toLocaleTimeString("en-US", {
 });
 
 async function sendOrderNotifications(buyer, processedItems, transactionId) {
-  for (const {
-    order,
-    sellerEmail,
-    product,
-    fileUrl,
-    sellerId,
-  } of processedItems) {
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: sellerId,
-      recipientEmail: sellerEmail,
-      category: "store",
-      actionType: "NEW_ORDER",
-      title: "New Sale",
-      message:
-        product.type === "physical"
-          ? `Item: ${product.title}. Deliver to: ${order.selectedStation?.name || "Assigned Station"}.`
-          : `Your digital product "${product.title}" has been purchased.`,
-      entityId: order.orderId,
-      entityType: "order",
-      payload: {
-        orderId: order.orderId,
-        productName: product.title,
-        buyerName: buyer.firstname,
-        amount: order.amountPaid,
-        deliveryMethod: deliveryMethod,
-        stationName: order.selectedStation?.name,
-        stationAddress: order.selectedStation?.address,
-        buyerAddress: buyerAddress,
-        buyerPhoneNumber: buyerPhoneNumber,
-        date: formattedDate,
-        time: formattedTime,
-      },
-      sendPush: true,
-      sendEmail: true,
-      saveToDb: true,
-    });
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: buyer.uid,
-      recipientEmail: buyer.email,
-      category: "finance",
-      actionType: "MARKET_PURCHASE_DEBIT",
-      title: "Purchase Confirmed",
-      message: `Your purchase of ${product.title} was successful. ${
-        fileUrl
-          ? "Download File "
-          : "Scan your QR code at the station or to seller to complete the transaction."
-      }`,
-      entityId: order.orderId,
-      entityType: "order",
-      payload: {
-        orderId: order.orderId,
-        productName: product.title,
-        productType: product.type,
-        amount: order.amountPaid,
-        fileUrl: fileUrl,
-        userName: buyer.firstname,
-        transactionId: transactionId,
-        date: formattedDate,
-        time: formattedTime,
-      },
-      sendPush: true,
-      sendEmail: true,
-      saveToDb: true,
-    });
+  if (!Array.isArray(processedItems) || processedItems.length === 0) {
+    return;
   }
+
+  const now = new Date();
+  const formattedDate = now.toLocaleDateString();
+  const formattedTime = now.toLocaleTimeString();
+  const notificationPromises = processedItems.flatMap(
+    ({ order, sellerEmail, product, fileUrl, sellerId }) => {
+      const deliveryMethod =
+        order.deliveryMethod || order.selectedStation
+          ? "Station Pickup"
+          : "Direct";
+      const buyerAddress = buyer.address || order.buyerAddress || "";
+      const buyerPhoneNumber = buyer.phoneNumber || buyer.phone || "";
+
+      const sellerNotification =
+        typeof createNotification === "function"
+          ? createNotification({
+              notificationId:
+                typeof generateNotificationId === "function"
+                  ? generateNotificationId("store")
+                  : `NOTIF-SEL-${Date.now()}-${Math.random()}`,
+              recipientId: sellerId,
+              recipientEmail: sellerEmail,
+              category: "store",
+              actionType: "NEW_ORDER",
+              title: "New Sale",
+              message:
+                product.type === "physical"
+                  ? `Item: ${product.title}. Deliver to: ${order.selectedStation?.name || "Assigned Station"}.`
+                  : `Your digital product "${product.title}" has been purchased.`,
+              entityId: order.orderId,
+              entityType: "order",
+              payload: {
+                orderId: order.orderId,
+                productName: product.title,
+                buyerName: buyer.firstname || "Customer",
+                amount: order.amountPaid,
+                deliveryMethod,
+                stationName: order.selectedStation?.name || null,
+                stationAddress: order.selectedStation?.address || null,
+                buyerAddress,
+                buyerPhoneNumber,
+                date: formattedDate,
+                time: formattedTime,
+              },
+              sendPush: true,
+              sendEmail: true,
+              saveToDb: true,
+            }).catch((err) =>
+              console.error("Seller notification dispatch error:", err),
+            )
+          : Promise.resolve();
+
+      const buyerNotification =
+        typeof createNotification === "function"
+          ? createNotification({
+              notificationId:
+                typeof generateNotificationId === "function"
+                  ? generateNotificationId("store")
+                  : `NOTIF-BUY-${Date.now()}-${Math.random()}`,
+              recipientId: buyer.uid || buyer.id,
+              recipientEmail: buyer.email,
+              category: "finance",
+              actionType: "MARKET_PURCHASE_DEBIT",
+              title: "Purchase Confirmed",
+              message: `Your purchase of ${product.title} was successful. ${
+                fileUrl
+                  ? "Download File"
+                  : "Scan your QR code at the station or to seller to complete the transaction."
+              }`,
+              entityId: order.orderId,
+              entityType: "order",
+              payload: {
+                orderId: order.orderId,
+                productName: product.title,
+                productType: product.type,
+                amount: order.amountPaid,
+                fileUrl: fileUrl || null,
+                userName: buyer.firstname || "User",
+                transactionId,
+                date: formattedDate,
+                time: formattedTime,
+              },
+              sendPush: true,
+              sendEmail: true,
+              saveToDb: true,
+            }).catch((err) =>
+              console.error("Buyer notification dispatch error:", err),
+            )
+          : Promise.resolve();
+
+      return [sellerNotification, buyerNotification];
+    },
+  );
+  await Promise.all(notificationPromises);
 }
 async function processNotificationFanOut(
   sellerUid,
@@ -114,30 +144,35 @@ async function processNotificationFanOut(
   isEditing,
 ) {
   if (isEditing) return;
+
   try {
-    const followSnapshot = await Follow.where(
-      "followingId",
-      "==",
-      sellerUid,
-    ).get();
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString();
+    const formattedTime = now.toLocaleTimeString();
+
+    const [followSnapshot, sellerQuery] = await Promise.all([
+      Follow.where("followingId", "==", sellerUid).get(),
+      User.where("uid", "==", sellerUid).limit(1).get(),
+    ]);
+
     const followers = [];
     followSnapshot.forEach((doc) => {
       followers.push(doc.data());
     });
-    const sellerQuery = await User.where("uid", "==", sellerUid).limit(1).get();
+
     let sellerEmail = null;
     if (!sellerQuery.empty) {
       sellerEmail = sellerQuery.docs[0].data().email;
     }
 
     const notificationPromises = [];
-    const formattedDate = new Date().toLocaleDateString();
-    const formattedTime = new Date().toLocaleTimeString();
-
-    if (sellerEmail) {
+    if (sellerEmail && typeof createNotification === "function") {
       notificationPromises.push(
         createNotification({
-          notificationId: generateNotificationId("store"),
+          notificationId:
+            typeof generateNotificationId === "function"
+              ? generateNotificationId("store")
+              : `NOTIF-PUB-${Date.now()}`,
           recipientId: sellerUid,
           recipientEmail: sellerEmail,
           category: "store",
@@ -154,39 +189,45 @@ async function processNotificationFanOut(
             date: formattedDate,
             time: formattedTime,
           },
-        }),
+        }).catch((err) => console.error("Seller pub notification error:", err)),
       );
     }
-
     if (followers.length > 0) {
       const followerIds = followers.map((f) => f.followerId);
       const emailMap = new Map();
       const chunks = [];
+
       for (let i = 0; i < followerIds.length; i += 30) {
         chunks.push(followerIds.slice(i, i + 30));
       }
+      const chunkQueries = chunks.map((chunk) =>
+        User.where("uid", "in", chunk).get(),
+      );
+      const userSnapshots = await Promise.all(chunkQueries);
 
-      for (const chunk of chunks) {
-        const userSnapshot = await User.where("uid", "in", chunk).get();
+      userSnapshots.forEach((userSnapshot) => {
         userSnapshot.forEach((doc) => {
           const u = doc.data();
           if (u.uid && u.email) {
             emailMap.set(u.uid, u.email);
           }
         });
-      }
+      });
       followers.forEach((follower) => {
         const recipientEmail = emailMap.get(follower.followerId);
 
-        if (recipientEmail) {
+        if (recipientEmail && typeof createNotification === "function") {
           notificationPromises.push(
             createNotification({
-              notificationId: generateNotificationId("store"),
+              notificationId:
+                typeof generateNotificationId === "function"
+                  ? generateNotificationId("store")
+                  : `NOTIF-FOLL-${Date.now()}-${Math.random()}`,
               recipientId: follower.followerId,
               recipientEmail: recipientEmail,
               category: "store",
               actionType: "NEW_PRODUCT",
-              title: sellerName,
+              title: sellerName || "Seller",
               message: `has published a brand new item: "${product.title}"! Check it out now.`,
               entityId: product.productId,
               entityType: "product",
@@ -195,14 +236,15 @@ async function processNotificationFanOut(
                 productId: product.productId,
                 productType: product.productType,
                 productName: product.title,
-                userName: sellerName,
+                userName: sellerName || "Seller",
               },
-            }),
+            }).catch((err) =>
+              console.error("Follower fan-out notification error:", err),
+            ),
           );
         }
       });
     }
-
     if (notificationPromises.length > 0) {
       await Promise.all(notificationPromises);
     }

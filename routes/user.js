@@ -1,6 +1,10 @@
 import express from "express";
 import { initiateFlwCharge } from "../controllers/paymentController.js";
-import { authLimiter, protect } from "../middleware/auth.js";
+import {
+  authLimiter,
+  protect,
+  idempotencyMiddleware,
+} from "../middleware/auth.js";
 import {
   fetchConnections,
   fetchUserNotifications,
@@ -49,6 +53,7 @@ import {
   aiChat,
   createQuickMeeting,
   registerDropOffStation,
+  handleUnifiedResourceSearch,
 } from "../controllers/userActionsController.js";
 import {
   signUp,
@@ -68,25 +73,45 @@ import { uploadCourseDetails } from "../controllers/classActions.js";
 
 const router = express.Router();
 
-router.post("/register", signUp);
-router.post("/login", authLimiter, Login);
-router.post("/admin-login", authLimiter, AdminLogin);
-router.post("/revoke-session", protect, revokeLoggedInDeviceSession);
+router.post("/register", idempotencyMiddleware, signUp);
+router.post("/login", authLimiter, idempotencyMiddleware, Login);
+router.post("/admin-login", authLimiter, idempotencyMiddleware, AdminLogin);
+router.post(
+  "/revoke-session",
+  protect,
+  idempotencyMiddleware,
+  revokeLoggedInDeviceSession,
+);
 router.post("/refresh-token", refreshToken);
-router.post("/institutions/validate", validateInstitution);
-router.post("/verifyEmail", validateEmail);
+router.post(
+  "/institutions/validate",
+  idempotencyMiddleware,
+  validateInstitution,
+);
+router.post("/verifyEmail", idempotencyMiddleware, validateEmail);
 router.get("/institutions", fetchInstitutionByCountry);
-router.post("/verifyEmailCode", authLimiter, verifyEmailUsingCode);
-router.post("/forgotPassword", forgotPassword);
-router.post("/changePassword", changePassword);
+router.post(
+  "/verifyEmailCode",
+  authLimiter,
+  idempotencyMiddleware,
+  verifyEmailUsingCode,
+);
+router.post("/forgotPassword", idempotencyMiddleware, forgotPassword);
+router.post("/changePassword", idempotencyMiddleware, changePassword);
 router.get("/get-notifications", protect, fetchUserNotifications);
 router.get("/notifications/:id", protect, fetchSingleNotification);
 router.patch(
   "/notifications/mark-all-read",
   protect,
+  idempotencyMiddleware,
   markAllNotificationsAsRead,
 );
-router.patch("/notifications/:id/read", protect, markNotificationAsRead);
+router.patch(
+  "/notifications/:id/read",
+  protect,
+  idempotencyMiddleware,
+  markNotificationAsRead,
+);
 router.get(
   "/exceptions/course/:courseId",
   protect,
@@ -118,25 +143,76 @@ router.get("/library/featured", protect, fetchFeaturedBooksFromLibrary);
 router.get("/search", protect, searchUserUsingUidOrNameQuery);
 router.get("/fetch-connections", protect, fetchConnections);
 router.get("/profile/search:identifier", protect, fetchProfileInformation);
-router.post("/follow/toggle", protect, toggleFollowingUsers);
-router.put("/update-itag", protect, customizeItag);
+router.post(
+  "/follow/toggle",
+  protect,
+  idempotencyMiddleware,
+  toggleFollowingUsers,
+);
+router.put("/update-itag", protect, idempotencyMiddleware, customizeItag);
 router.get("/check-itag/:val", protect, verifyiTagUsernameAvailability);
-router.patch("/update-profile", protect, updateUserProfile);
+router.patch(
+  "/update-profile",
+  protect,
+  idempotencyMiddleware,
+  updateUserProfile,
+);
 router.post("/payments/initiate-charge", protect, initiateFlwCharge);
 router.get("/payments/banks/:countryCode", protect, fetchBanksUsingCountryCode);
-router.post("/block/toggle", protect, toggleBlockedUsers);
+router.post(
+  "/block/toggle",
+  protect,
+  idempotencyMiddleware,
+  toggleBlockedUsers,
+);
 router.get("/blocked-list", protect, fetchBlockedUsers);
-router.patch("/preferences/:userId", protect, patchUserPreferences);
-router.delete("/account/delete", protect, deleteAccount);
-router.post("/password/verify", protect, verifyPasswordInapp);
-router.put("/password/update", protect, createNewPasswordInApp);
-router.patch("/update-emails", protect, updateEmails);
-router.delete("/recovery-email", protect, deleteRecoveryEmail);
-router.delete("/phone-number", protect, deletePhoneNumber);
-router.post("/verify-phone-otp", protect, verifyPhoneNumberOTP);
-router.post("/send-phone-otp", protect, sendPhoneNumberOTP);
+router.patch(
+  "/preferences",
+  protect,
+  idempotencyMiddleware,
+  patchUserPreferences,
+);
+router.delete("/account/delete", protect, idempotencyMiddleware, deleteAccount);
+router.post(
+  "/password/verify",
+  protect,
+  idempotencyMiddleware,
+  verifyPasswordInapp,
+);
+router.put(
+  "/password/update",
+  protect,
+  idempotencyMiddleware,
+  createNewPasswordInApp,
+);
+router.patch("/update-emails", protect, idempotencyMiddleware, updateEmails);
+router.delete(
+  "/recovery-email",
+  protect,
+  idempotencyMiddleware,
+  deleteRecoveryEmail,
+);
+router.delete(
+  "/phone-number",
+  protect,
+  idempotencyMiddleware,
+  deletePhoneNumber,
+);
+router.post(
+  "/verify-phone-otp",
+  protect,
+  idempotencyMiddleware,
+  verifyPhoneNumberOTP,
+);
+router.post(
+  "/send-phone-otp",
+  protect,
+  idempotencyMiddleware,
+  sendPhoneNumberOTP,
+);
 router.get("/courses/search", protect, handleUnifiedCourseSearch);
-router.post("/reviews/create", createReviewController);
+router.get("/courses/resources/search", protect, handleUnifiedResourceSearch);
+router.post("/reviews/create", idempotencyMiddleware, createReviewController);
 router.get(
   "/courses/:courseId/fetch-all-lectures",
   protect,
@@ -154,10 +230,15 @@ router.post(
   upload.array("files"),
   uploadCourseDetails,
 );
-router.post("/switch-to-admin", protect, switchToInstitutionAdmin);
+router.post(
+  "/switch-to-admin",
+  protect,
+  idempotencyMiddleware,
+  switchToInstitutionAdmin,
+);
 
 export default router;
 
 //backend summon: npx nodemon index.js
-//email: alice@icampus.ed
+//email: alice@icampus.edu
 //password: icampusUser01

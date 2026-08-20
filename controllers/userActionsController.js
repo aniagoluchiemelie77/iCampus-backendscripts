@@ -180,32 +180,49 @@ export const createReviewController = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "ReviewController";
   const action = "createReview";
+
   try {
-    let reviewerId = null;
-    reviewerId = req.user?.id;
-    const authHeader = req.headers.authorization;
-    if (authHeader && authHeader.startsWith("Bearer ")) {
-      const token = authHeader.split(" ")[1];
-      try {
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        reviewerId = decoded.id || decoded.uid;
-      } catch (err) {
-        console.log(
-          "Standard token verification failed, checking payload body next...",
-        );
+    let reviewerId = req.user?.uid || req.user?.id;
+    if (!reviewerId) {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith("Bearer ")
+        ? authHeader.split(" ")[1]
+        : req.body?.token;
+
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          reviewerId = decoded.id || decoded.uid;
+        } catch (err) {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Invalid or expired authentication token",
+          );
+          return res.status(401).json({
+            success: false,
+            message: "Expired or invalid authentication token.",
+          });
+        }
       }
     }
-    if (!reviewerId && req.body.token) {
-      try {
-        const decoded = jwt.verify(req.body.token, process.env.JWT_SECRET);
-        reviewerId = decoded.id || decoded.uid;
-      } catch (err) {
-        return res.status(401).json({
-          success: false,
-          message: "Expired or invalid fallback authentication token link.",
-        });
-      }
+
+    if (!reviewerId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthenticated review submission",
+      );
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required to submit a review.",
+      });
     }
+
     const {
       targetId,
       targetType,
@@ -215,19 +232,33 @@ export const createReviewController = async (req, res) => {
       mediaUrls,
       attributes,
     } = req.body;
-    if (!targetId || !targetType || !rating) {
-      const cause = "Missing required tracking metrics";
+
+    if (!targetId || !targetType || rating === undefined || rating === null) {
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "Missing required tracking metrics",
       );
       return res.status(400).json({
         success: false,
-        message:
-          "Missing required tracking metrics (targetId, targetType, or rating rating arrays).",
+        message: "Missing required fields: targetId, targetType, and rating.",
+      });
+    }
+
+    const numericRating = Number(rating);
+    if (isNaN(numericRating) || numericRating < 1 || numericRating > 5) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid rating score",
+      );
+      return res.status(400).json({
+        success: false,
+        message: "Rating must be a valid number between 1 and 5.",
       });
     }
     let parsedMediaUrls = [];
@@ -235,6 +266,8 @@ export const createReviewController = async (req, res) => {
       try {
         parsedMediaUrls =
           typeof mediaUrls === "string" ? JSON.parse(mediaUrls) : mediaUrls;
+        if (!Array.isArray(parsedMediaUrls))
+          parsedMediaUrls = [parsedMediaUrls];
       } catch (e) {
         parsedMediaUrls = [mediaUrls];
       }
@@ -245,20 +278,22 @@ export const createReviewController = async (req, res) => {
       deliverySpeed: undefined,
       clarity: undefined,
     };
+
     if (attributes) {
       try {
         const rawAttrs =
           typeof attributes === "string" ? JSON.parse(attributes) : attributes;
         parsedAttributes = {
-          accuracy: Number(rawAttrs.accuracy) || undefined,
-          deliverySpeed: Number(rawAttrs.deliverySpeed) || undefined,
-          clarity: Number(rawAttrs.clarity) || undefined,
+          accuracy: rawAttrs?.accuracy ? Number(rawAttrs.accuracy) : undefined,
+          deliverySpeed: rawAttrs?.deliverySpeed
+            ? Number(rawAttrs.deliverySpeed)
+            : undefined,
+          clarity: rawAttrs?.clarity ? Number(rawAttrs.clarity) : undefined,
         };
       } catch (e) {
         console.error("Attributes parsing layout mismatch anomaly:", e);
       }
     }
-
     const newReviewDocRef = Reviews.doc();
     const reviewData = {
       reviewId: newReviewDocRef.id,
@@ -266,7 +301,7 @@ export const createReviewController = async (req, res) => {
       targetId,
       targetType,
       orderId: orderId || null,
-      rating: Number(rating),
+      rating: numericRating,
       comment: comment ? comment.trim() : "",
       mediaUrls: parsedMediaUrls,
       attributes: parsedAttributes,
@@ -279,6 +314,7 @@ export const createReviewController = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Reviews validation metrics published successfully.",
+      reviewId: newReviewDocRef.id,
     });
   } catch (error) {
     console.error(
@@ -304,10 +340,37 @@ export const createNewPasswordInApp = async (req, res) => {
   const controllerName = "InAppPasswordCreationController";
   const action = "createPasswordInApp";
   const { newPassword } = req.body;
+
   try {
-    const querySnapshot = await User.where("uid", "==", req.user.id)
-      .limit(1)
-      .get();
+    const userId = req.user?.uid || req.user?.id;
+    if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    if (!newPassword || newPassword.length < 6) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid password format",
+      );
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters long.",
+      });
+    }
+
+    const querySnapshot = await User.where("uid", "==", userId).limit(1).get();
 
     if (querySnapshot.empty) {
       logControllerPerformance(
@@ -326,17 +389,15 @@ export const createNewPasswordInApp = async (req, res) => {
     const user = querySnapshot.docs[0].data();
 
     const hashedPassword = await bcrypt.hash(newPassword, 10);
-
-    await userDocRef.update({
-      password: hashedPassword,
-      updatedAt: new Date(),
-    });
-
     const now = new Date();
     const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
+    const passwordUpdatePromise = userDocRef.update({
+      password: hashedPassword,
+      updatedAt: now,
+    });
 
-    await createNotification({
-      notificationId: generateNotificationId("security"),
+    const notificationPromise = createNotification({
+      notificationId: generateNotificationId("auth"),
       recipientId: user.uid,
       recipientEmail: user.email,
       recoveryEmails: user.recoveryEmails,
@@ -353,13 +414,16 @@ export const createNewPasswordInApp = async (req, res) => {
       sendPush: true,
       sendSocket: true,
       saveToDb: true,
-    });
+    }).catch((err) => console.error("Notification dispatch failed:", err));
+
+    await Promise.all([passwordUpdatePromise, notificationPromise]);
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res
+    return res
       .status(200)
       .json({ success: true, message: "Password updated successfully" });
   } catch (error) {
+    console.error("Error in createNewPasswordInApp:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -367,7 +431,7 @@ export const createNewPasswordInApp = async (req, res) => {
       "error",
       error.message,
     );
-    res
+    return res
       .status(500)
       .json({ success: false, message: "Could not update password" });
   }
@@ -377,23 +441,59 @@ export const deleteAccount = async (req, res) => {
   const controllerName = "deleteAccountController";
   const action = "deleteAccount";
 
-  const batch = db.batch();
-
   try {
-    const userUid = req.user.id;
+    const userUid = req.user?.id || req.user?.uid;
     const { reason } = req.body;
-    const userQuery = await User.where("uid", "==", userUid).limit(1).get();
 
-    if (userQuery.empty) {
-      const cause = "User not found";
+    if (!userUid) {
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "Unauthorized user context",
       );
-      throw new Error("User not found");
+      return res
+        .status(401)
+        .json({ status: false, message: "Unauthorized user context." });
+    }
+    const [
+      userQuery,
+      prefsQuery,
+      bankCardsQuery,
+      itagQuery,
+      followsAsFollower,
+      followsAsFollowing,
+      enrolledCoursesQuery,
+      lecturerCoursesQuery,
+      postsQuery,
+      postRepostersQuery,
+      commentsQuery,
+      repostsAsUserQuery,
+    ] = await Promise.all([
+      User.where("uid", "==", userUid).limit(1).get(),
+      userPrefs.where("userId", "==", userUid).get(),
+      UserBankOrCardDetails.where("userId", "==", userUid).get(),
+      ITag.where("userId", "==", userUid).get(),
+      Follow.where("followerId", "==", userUid).get(),
+      Follow.where("followingId", "==", userUid).get(),
+      Course.where("studentsEnrolled", "array-contains", userUid).get(),
+      Course.where("lecturerIds", "array-contains", userUid).get(),
+      Posts.where("originalAuthor", "==", userUid).get(),
+      PostReposters.where("uid", "==", userUid).get(),
+      Comments.where("userId", "==", userUid).get(),
+      PostReposters.where("userId", "==", userUid).get(),
+    ]);
+
+    if (userQuery.empty) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "User not found",
+      );
+      return res.status(404).json({ status: false, message: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
@@ -405,93 +505,67 @@ export const deleteAccount = async (req, res) => {
       (Date.now() - createdAtDate.getTime()) / (1000 * 60 * 60 * 24),
     );
 
-    batch.set(DeletedUser.doc(), {
-      uid: userUid,
-      reason: reason || "N/A",
-      accountAgeDays,
-      tierAtDeletion: user.tier || "standard",
-      finalBalance: user.balance || 0,
-      deletedAt: new Date(),
+    const operations = [];
+    operations.push({
+      type: "set",
+      ref: DeletedUser.doc(),
+      data: {
+        uid: userUid,
+        reason: reason || "N/A",
+        accountAgeDays,
+        tierAtDeletion: user.tier || "standard",
+        finalBalance: user.balance || 0,
+        deletedAt: new Date(),
+      },
     });
-    batch.delete(userDoc.ref);
-    const prefsQuery = await userPrefs.where("userId", "==", userUid).get();
-    prefsQuery.forEach((doc) => batch.delete(doc.ref));
-    const bankCardsQuery = await UserBankOrCardDetails.where(
-      "userId",
-      "==",
-      userUid,
-    ).get();
-    bankCardsQuery.forEach((doc) => batch.delete(doc.ref));
-    const itagQuery = await ITag.where("userId", "==", userUid).get();
-    itagQuery.forEach((doc) => batch.delete(doc.ref));
-    const followsAsFollower = await Follow.where(
-      "followerId",
-      "==",
-      userUid,
-    ).get();
-    const followsAsFollowing = await Follow.where(
-      "followingId",
-      "==",
-      userUid,
-    ).get();
-    followsAsFollower.forEach((doc) => batch.delete(doc.ref));
-    followsAsFollowing.forEach((doc) => batch.delete(doc.ref));
-    const enrolledCoursesQuery = await Course.where(
-      "studentsEnrolled",
-      "array-contains",
-      userUid,
-    ).get();
-    const lecturerCoursesQuery = await Course.where(
-      "lecturerIds",
-      "array-contains",
-      userUid,
-    ).get();
+    operations.push({ type: "delete", ref: userDoc.ref });
+    const collectDeletes = (snapshot) => {
+      snapshot.forEach((doc) =>
+        operations.push({ type: "delete", ref: doc.ref }),
+      );
+    };
+
+    collectDeletes(prefsQuery);
+    collectDeletes(bankCardsQuery);
+    collectDeletes(itagQuery);
+    collectDeletes(followsAsFollower);
+    collectDeletes(followsAsFollowing);
+    collectDeletes(postsQuery);
+    collectDeletes(postRepostersQuery);
+    collectDeletes(commentsQuery);
+    collectDeletes(repostsAsUserQuery);
 
     enrolledCoursesQuery.forEach((doc) => {
       const currentList = doc.data().studentsEnrolled || [];
-      batch.update(doc.ref, {
-        studentsEnrolled: currentList.filter((id) => id !== userUid),
+      operations.push({
+        type: "update",
+        ref: doc.ref,
+        data: { studentsEnrolled: currentList.filter((id) => id !== userUid) },
       });
     });
 
     lecturerCoursesQuery.forEach((doc) => {
       const currentList = doc.data().lecturerIds || [];
-      batch.update(doc.ref, {
-        lecturerIds: currentList.filter((id) => id !== userUid),
+      operations.push({
+        type: "update",
+        ref: doc.ref,
+        data: { lecturerIds: currentList.filter((id) => id !== userUid) },
       });
     });
-    const postsQuery = await Posts.where("originalAuthor", "==", userUid).get();
-    postsQuery.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
+    const CHUNK_SIZE = 450;
+    for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
+      const chunk = operations.slice(i, i + CHUNK_SIZE);
+      const batch = db.batch();
 
-    const postRepostersQuery = await PostReposters.where(
-      "uid",
-      "==",
-      userUid,
-    ).get();
-    postRepostersQuery.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
+      chunk.forEach((op) => {
+        if (op.type === "set") batch.set(op.ref, op.data);
+        else if (op.type === "delete") batch.delete(op.ref);
+        else if (op.type === "update") batch.update(op.ref, op.data);
+      });
 
-    const commentsQuery = await Comments.where("userId", "==", userUid).get();
-    commentsQuery.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-
-    // Also remove the deleted user's repost details from other posts or collections if applicable
-    const repostsAsUserQuery = await PostReposters.where(
-      "userId",
-      "==",
-      userUid,
-    ).get();
-    repostsAsUserQuery.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-
-    await batch.commit();
-
-    await notifyAdmins(
+      await batch.commit();
+    }
+    notifyAdmins(
       { role: ["super_admin", "support"] },
       {
         notificationId: generateNotificationId("profile"),
@@ -499,20 +573,20 @@ export const deleteAccount = async (req, res) => {
         message: `User ${userUid} has permanently deleted their account. Reason provided: ${reason || "None"}.`,
         actionType: "ACCOUNT_DELETION_ADMIN_ALERT",
         title: "User Account Deletion",
-        payload: {
-          userUid: userUid,
-          reason: reason,
-        },
+        payload: { userUid, reason },
         senderId: "system",
       },
       false,
+    ).catch((err) =>
+      console.error("Admin account deletion alert failed:", err),
     );
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res
+    return res
       .status(200)
       .json({ status: true, message: "Account deleted successfully." });
   } catch (error) {
+    console.error("Account Deletion Cleanup Failed:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -520,8 +594,7 @@ export const deleteAccount = async (req, res) => {
       "error",
       error.message,
     );
-    console.error("Cleanup Failed:", error);
-    res
+    return res
       .status(500)
       .json({ status: false, message: "Error during account deletion." });
   }
@@ -633,33 +706,58 @@ export const updateEmails = async (req, res) => {
   const controllerName = "updateEmailController";
   const action = "updateEmail";
   const { email, type } = req.body;
-  const userUid = req.user.id;
+  const userUid = req.user?.uid || req.user?.id;
+
+  if (!userUid) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ message: "Unauthorized user context.", success: false });
+  }
+
+  if (type !== "primary" && type !== "secondary") {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid update type",
+    );
+    return res
+      .status(400)
+      .json({ message: "Invalid update type", success: false });
+  }
+
+  if (!email || typeof email !== "string" || !email.includes("@")) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid email format",
+    );
+    return res.status(400).json({
+      message: "Please provide a valid email address.",
+      success: false,
+    });
+  }
 
   try {
-    if (type !== "primary" && type !== "secondary") {
-      const cause = "Invalid update type";
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        cause,
-      );
-      return res
-        .status(400)
-        .json({ message: "Invalid update type", success: false });
-    }
-
     const userQuery = await User.where("uid", "==", userUid).limit(1).get();
 
     if (userQuery.empty) {
-      const cause = "User not found";
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "User not found",
       );
       return res
         .status(404)
@@ -668,19 +766,22 @@ export const updateEmails = async (req, res) => {
 
     const userDoc = userQuery.docs[0];
     const userData = userDoc.data();
+    const sanitizedEmail = email.trim().toLowerCase();
 
     if (type === "primary") {
       await userDoc.ref.update({
-        email: email,
+        email: sanitizedEmail,
         updatedAt: new Date(),
       });
     } else if (type === "secondary") {
       const recoveryEmails = userData.recoveryEmails || [];
-      const emailExists = recoveryEmails.some((rec) => rec.email === email);
+      const emailExists = recoveryEmails.some(
+        (rec) => rec.email.toLowerCase() === sanitizedEmail,
+      );
 
       if (!emailExists) {
         recoveryEmails.push({
-          email,
+          email: sanitizedEmail,
           isVerified: true,
           addedAt: new Date(),
         });
@@ -691,9 +792,10 @@ export const updateEmails = async (req, res) => {
         });
       }
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
-      message: `${type === "primary" ? "Primary" : "Recovery"} email updated`,
+      message: `${type === "primary" ? "Primary" : "Recovery"} email updated successfully.`,
       success: true,
     });
   } catch (error) {
@@ -716,19 +818,45 @@ export const deleteRecoveryEmail = async (req, res) => {
   const controllerName = "deleteRecoveryEmailController";
   const action = "deleteRecoveryEmail";
   const { emailToDelete } = req.body;
-  const userUid = req.user.id;
+  const userUid = req.user?.uid || req.user?.id;
+
+  if (!userUid) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user context." });
+  }
+
+  if (!emailToDelete || typeof emailToDelete !== "string") {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid or missing email to delete",
+    );
+    return res.status(400).json({
+      success: false,
+      message: "Please provide a valid recovery email to delete.",
+    });
+  }
 
   try {
     const userQuery = await User.where("uid", "==", userUid).limit(1).get();
 
     if (userQuery.empty) {
-      const cause = "User not found";
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "User not found",
       );
       return res
         .status(404)
@@ -738,9 +866,26 @@ export const deleteRecoveryEmail = async (req, res) => {
     const userDoc = userQuery.docs[0];
     const userData = userDoc.data();
     const recoveryEmails = userData.recoveryEmails || [];
+    const targetEmailLower = emailToDelete.trim().toLowerCase();
+
+    const initialLength = recoveryEmails.length;
     const updatedRecoveryEmails = recoveryEmails.filter(
-      (rec) => rec.email !== emailToDelete,
+      (rec) => rec.email.toLowerCase() !== targetEmailLower,
     );
+
+    if (updatedRecoveryEmails.length === initialLength) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Recovery email not found in records",
+      );
+      return res.status(404).json({
+        success: false,
+        message: "Recovery email not found in records.",
+      });
+    }
 
     await userDoc.ref.update({
       recoveryEmails: updatedRecoveryEmails,
@@ -748,7 +893,11 @@ export const deleteRecoveryEmail = async (req, res) => {
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.json({ success: true, recoveryEmails: updatedRecoveryEmails });
+    return res.status(200).json({
+      success: true,
+      message: "Recovery email deleted successfully.",
+      recoveryEmails: updatedRecoveryEmails,
+    });
   } catch (error) {
     console.error("Error in deleteRecoveryEmail:", error);
     logControllerPerformance(
@@ -758,7 +907,7 @@ export const deleteRecoveryEmail = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
       message: "Internal server error during recovery email deletion",
     });
@@ -768,42 +917,75 @@ export const deletePhoneNumber = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "deletePhoneNumberController";
   const action = "deletePhoneNumber";
+
   try {
     const { phoneNumber } = req.body;
-    const userUid = req.user.id;
+    const userUid = req.user?.uid || req.user?.id;
 
-    if (!phoneNumber) {
-      const cause = "Phone number is required";
+    if (!userUid) {
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "Unauthorized user context",
       );
-      return res.status(400).json({ message: "Phone number is required" });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    if (!phoneNumber || typeof phoneNumber !== "string") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Phone number is required",
+      );
+      return res
+        .status(400)
+        .json({ success: false, message: "Phone number is required" });
     }
 
     const userQuery = await User.where("uid", "==", userUid).limit(1).get();
 
     if (userQuery.empty) {
-      const cause = "User not found";
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "User not found",
       );
-      return res.status(404).json({ message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
     const userData = userDoc.data();
     const phoneNumbers = userData.phoneNumbers || [];
+    const targetPhone = phoneNumber.trim();
+
+    const initialLength = phoneNumbers.length;
     const updatedPhoneNumbers = phoneNumbers.filter(
-      (phone) => phone.number !== phoneNumber,
+      (phone) => phone.number !== targetPhone,
     );
+
+    if (updatedPhoneNumbers.length === initialLength) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Phone number not found in records",
+      );
+      return res.status(404).json({
+        success: false,
+        message: "Phone number not found in user records.",
+      });
+    }
 
     await userDoc.ref.update({
       phoneNumbers: updatedPhoneNumbers,
@@ -812,6 +994,7 @@ export const deletePhoneNumber = async (req, res) => {
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
+      success: true,
       message: "Phone number deleted successfully",
       phoneNumbers: updatedPhoneNumbers,
     });
@@ -824,15 +1007,55 @@ export const deletePhoneNumber = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const toggleBlockedUsers = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "toggleBlockUsersController";
   const action = "toggleBlockUsers";
-  const { targetUserId } = req.body;
-  const userId = req.user.uid;
+  const { targetUserId, targetUid } = req.body;
+  const resolvedTargetId = targetUserId || targetUid;
+  const userId = req.user?.uid || req.user?.id;
+
+  if (!userId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ success: false, error: "Unauthorized user context." });
+  }
+
+  if (!resolvedTargetId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Target user ID is required",
+    );
+    return res
+      .status(400)
+      .json({ success: false, error: "Target user ID is required" });
+  }
+
+  if (userId === resolvedTargetId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Self-blocking attempted",
+    );
+    return res
+      .status(400)
+      .json({ success: false, error: "You cannot block yourself." });
+  }
 
   try {
     const userQuery = await User.where("uid", "==", userId).limit(1).get();
@@ -844,17 +1067,17 @@ export const toggleBlockedUsers = async (req, res) => {
         "error",
         "User not found",
       );
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ success: false, error: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
     const userData = userDoc.data();
     const blockedUsers = userData.blockedUsers || [];
-    const isBlocked = blockedUsers.includes(targetUserId);
+    const isBlocked = blockedUsers.includes(resolvedTargetId);
 
     if (isBlocked) {
       const updatedBlockedUsers = blockedUsers.filter(
-        (id) => id !== targetUserId,
+        (id) => id !== resolvedTargetId,
       );
       await userDoc.ref.update({
         blockedUsers: updatedBlockedUsers,
@@ -862,41 +1085,36 @@ export const toggleBlockedUsers = async (req, res) => {
       });
 
       logControllerPerformance(controllerName, action, startTime, "success");
-      return res.status(200).json({ action: "unblocked" });
+      return res.status(200).json({ success: true, action: "unblocked" });
     } else {
       const updatedBlockedUsers = [...blockedUsers];
-      if (!updatedBlockedUsers.includes(targetUserId)) {
-        updatedBlockedUsers.push(targetUserId);
+      if (!updatedBlockedUsers.includes(resolvedTargetId)) {
+        updatedBlockedUsers.push(resolvedTargetId);
       }
 
       await userDoc.ref.update({
         blockedUsers: updatedBlockedUsers,
         updatedAt: new Date(),
       });
+      const [forwardFollowQuery, backwardFollowQuery] = await Promise.all([
+        Follow.where("followerId", "==", userId)
+          .where("followingId", "==", resolvedTargetId)
+          .get(),
+        Follow.where("followerId", "==", resolvedTargetId)
+          .where("followingId", "==", userId)
+          .get(),
+      ]);
+
       const batch = db.batch();
-
-      const forwardFollowQuery = await Follow.where("followerId", "==", userId)
-        .where("followingId", "==", targetUserId)
-        .get();
-
       forwardFollowQuery.forEach((doc) => batch.delete(doc.ref));
-
-      const backwardFollowQuery = await Follow.where(
-        "followerId",
-        "==",
-        targetUserId,
-      )
-        .where("followingId", "==", userId)
-        .get();
-
       backwardFollowQuery.forEach((doc) => batch.delete(doc.ref));
-
       await batch.commit();
 
       logControllerPerformance(controllerName, action, startTime, "success");
-      return res.status(200).json({ action: "blocked" });
+      return res.status(200).json({ success: true, action: "blocked" });
     }
   } catch (err) {
+    console.error("Error in toggleBlockedUsers:", err);
     logControllerPerformance(
       controllerName,
       action,
@@ -904,75 +1122,103 @@ export const toggleBlockedUsers = async (req, res) => {
       "error",
       err.message,
     );
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };
 export const customizeItag = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "customizeItagController";
   const action = "customizeItag";
+
   try {
-    const userId = req.user.id;
+    const userId = req.user?.uid || req.user?.id;
     const { updates } = req.body;
 
     if (!userId) {
-      const cause = "User ID is required";
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "User ID is required",
+      );
+      return res
+        .status(400)
+        .json({ success: false, message: "User ID is required" });
+    }
+
+    if (!updates || typeof updates !== "object") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid or missing update payload",
       );
       return res.status(400).json({
         success: false,
-        message: "User ID is required",
+        message: "Valid updates payload is required.",
       });
     }
+    const sanitizedUsername = updates.username
+      ? updates.username.trim().toLowerCase()
+      : null;
 
-    const itagQuery = await ITag.where("userId", "==", userId).limit(1).get();
+    const itagQueryPromise = ITag.where("userId", "==", userId).limit(1).get();
+    const usernameQueryPromise = sanitizedUsername
+      ? ITag.where("username", "==", sanitizedUsername).get()
+      : Promise.resolve(null);
+
+    const [itagQuery, usernameQuery] = await Promise.all([
+      itagQueryPromise,
+      usernameQueryPromise,
+    ]);
 
     if (itagQuery.empty) {
-      const cause = "iTag not found";
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "iTag not found",
       );
-      return res.status(404).json({
-        success: false,
-        message: "iTag not found",
-      });
+      return res
+        .status(404)
+        .json({ success: false, message: "iTag not found" });
     }
 
     const itagDoc = itagQuery.docs[0];
-    if (updates && updates.username) {
-      const usernameQuery = await ITag.where(
-        "username",
-        "==",
-        updates.username,
-      ).get();
+
+    if (usernameQuery && !usernameQuery.empty) {
       const usernameExists = usernameQuery.docs.some(
         (doc) => doc.id !== itagDoc.id,
       );
       if (usernameExists) {
-        return res.status(400).json({
-          success: false,
-          message: "Username already exists",
-        });
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Username already exists",
+        );
+        return res
+          .status(400)
+          .json({ success: false, message: "Username already exists" });
       }
     }
 
-    const updatedData = {
+    const processedUpdates = {
       ...updates,
+      ...(sanitizedUsername ? { username: sanitizedUsername } : {}),
       updatedAt: new Date(),
     };
 
-    await itagDoc.ref.update(updatedData);
-    const refreshedDoc = await itagDoc.ref.get();
-    const updatedITag = { id: refreshedDoc.id, ...refreshedDoc.data() };
+    await itagDoc.ref.update(processedUpdates);
+    const updatedITag = {
+      id: itagDoc.id,
+      ...itagDoc.data(),
+      ...processedUpdates,
+    };
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
@@ -1000,17 +1246,43 @@ export const verifyPasswordInapp = async (req, res) => {
   const controllerName = "verifyPasswordInAppController";
   const action = "verifyPasswordInApp";
   const { password } = req.body;
-  const userId = req.user.id;
+  const userId = req.user?.uid || req.user?.id;
+
+  if (!userId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user context." });
+  }
+
+  if (!password || typeof password !== "string") {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Password is required",
+    );
+    return res
+      .status(400)
+      .json({ success: false, message: "Password is required." });
+  }
+
   try {
     const userQuery = await User.where("uid", "==", userId).limit(1).get();
     if (userQuery.empty) {
-      const cause = "User not found";
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "User not found",
       );
       return res
         .status(404)
@@ -1021,13 +1293,12 @@ export const verifyPasswordInapp = async (req, res) => {
     const user = userDoc.data();
 
     if (!user.password) {
-      const cause = "Password not set for user";
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "Password not set for user",
       );
       return res
         .status(401)
@@ -1036,21 +1307,24 @@ export const verifyPasswordInapp = async (req, res) => {
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      const cause = "Incorrect current password";
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        cause,
+        "Incorrect current password",
       );
       return res
         .status(401)
         .json({ success: false, message: "Incorrect current password" });
     }
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ success: true, message: "Password verified" });
+    return res
+      .status(200)
+      .json({ success: true, message: "Password verified" });
   } catch (error) {
+    console.error("Error in verifyPasswordInapp:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -1058,15 +1332,41 @@ export const verifyPasswordInapp = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const revokeLoggedInDeviceSession = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "revokeLoggedInDeviceController";
   const action = "revokeLoggedInDevice";
-  const userId = req.user.id;
+  const userId = req.user?.uid || req.user?.id;
   const { deviceIdToRevoke } = req.body;
+
+  if (!userId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ success: false, error: "Unauthorized user context." });
+  }
+
+  if (!deviceIdToRevoke) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Device ID to revoke is required",
+    );
+    return res
+      .status(400)
+      .json({ success: false, error: "Device ID to revoke is required." });
+  }
 
   try {
     const userQuery = await User.where("uid", "==", userId).limit(1).get();
@@ -1079,7 +1379,7 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
         "error",
         cause,
       );
-      return res.status(404).json({ error: "User not found" });
+      return res.status(404).json({ success: false, error: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
@@ -1100,19 +1400,24 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
         "error",
         cause,
       );
-      return res.status(404).json({ error: "Session not found" });
+      return res
+        .status(404)
+        .json({ success: false, error: "Session not found" });
     }
-
-    await addFlag(userId, "SESSION_REVOKED");
-
-    await userDoc.ref.update({
-      sessions: updatedSessions,
-      updatedAt: new Date(),
-    });
+    await Promise.all([
+      addFlag(userId, "SESSION_REVOKED"),
+      userDoc.ref.update({
+        sessions: updatedSessions,
+        updatedAt: new Date(),
+      }),
+    ]);
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ message: "Device logged out successfully" });
+    return res
+      .status(200)
+      .json({ success: true, message: "Device logged out successfully" });
   } catch (error) {
+    console.error("Error in revokeLoggedInDeviceSession:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -1120,15 +1425,47 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ error: "Could not revoke session" });
+    return res
+      .status(500)
+      .json({ success: false, error: "Could not revoke session" });
   }
 };
 export const patchUserPreferences = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "updateUserPreferencesController";
   const action = "updateUserPreferences";
-  const userId = req.user.id;
+  const userId = req.user?.uid || req.user?.id;
   const updateData = req.body;
+
+  if (!userId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ success: false, error: "Unauthorized user context." });
+  }
+
+  if (
+    !updateData ||
+    typeof updateData !== "object" ||
+    Array.isArray(updateData)
+  ) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid update payload",
+    );
+    return res
+      .status(400)
+      .json({ success: false, error: "Valid update payload is required." });
+  }
 
   try {
     const prefsQuery = await userPrefs
@@ -1151,17 +1488,22 @@ export const patchUserPreferences = async (req, res) => {
       ...updateData,
       updatedAt: new Date(),
     };
+
     await prefDocRef.set({ ...existingData, ...payload }, { merge: true });
-    const refreshedDoc = await prefDocRef.get();
-    const updatedPrefs = { id: refreshedDoc.id, ...refreshedDoc.data() };
+    const updatedPrefs = {
+      id: prefDocRef.id,
+      ...existingData,
+      ...payload,
+    };
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
+      success: true,
       message: "Preferences updated successfully",
       preferences: updatedPrefs,
     });
   } catch (error) {
-    console.error(error);
+    console.error("Error in patchUserPreferences:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -1169,17 +1511,47 @@ export const patchUserPreferences = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ error: "Server error updating preferences" });
+    return res
+      .status(500)
+      .json({ success: false, error: "Server error updating preferences" });
   }
 };
 export const sendPhoneNumberOTP = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "sendOtpToMobileController";
   const action = "sendOtpToMobile";
+  const { phoneNumber, channel = "whatsapp" } = req.body;
+
+  if (!phoneNumber) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Phone number is required",
+    );
+    return res
+      .status(400)
+      .json({ success: false, message: "Phone number is required." });
+  }
+
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken = process.env.TWILIO_AUTH_TOKEN;
+
+  if (!accountSid || !authToken) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Twilio credentials missing",
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: "SMS/WhatsApp service misconfigured." });
+  }
+
   const client = twilio(accountSid, authToken);
-  const { phoneNumber, channel } = req.body;
   const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
   const hashedCode = crypto.createHash("sha256").update(otpCode).digest("hex");
 
@@ -1191,6 +1563,7 @@ export const sendPhoneNumberOTP = async (req, res) => {
     )
       .limit(1)
       .get();
+
     const verificationData = {
       phoneNumber,
       code: hashedCode,
@@ -1207,15 +1580,23 @@ export const sendPhoneNumberOTP = async (req, res) => {
       await existingQuery.docs[0].ref.update(verificationData);
     }
 
-    const message = await client.messages.create({
-      from: `${channel}:${process.env.TWILIO_WHATSAPP_NUMBER}`,
+    const isWhatsApp = channel.toLowerCase() === "whatsapp";
+    const fromAddress = isWhatsApp
+      ? `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`
+      : process.env.TWILIO_PHONE_NUMBER;
+    const toAddress = isWhatsApp ? `whatsapp:${phoneNumber}` : phoneNumber;
+
+    await client.messages.create({
+      from: fromAddress,
       contentSid: process.env.TWILIO_CONTENT_SID,
       contentVariables: JSON.stringify({ 1: otpCode }),
-      to: `${channel}:${phoneNumber}`,
+      to: toAddress,
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ success: true, message: "OTP sent to WhatsApp" });
+    return res
+      .status(200)
+      .json({ success: true, message: `OTP sent to ${channel}` });
   } catch (error) {
     console.error("Twilio Error:", error);
     logControllerPerformance(
@@ -1225,9 +1606,10 @@ export const sendPhoneNumberOTP = async (req, res) => {
       "error",
       error.message,
     );
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to send WhatsApp message" });
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to send verification message",
+    });
   }
 };
 export const verifyIcashPin = async (req, res) => {
@@ -1235,7 +1617,33 @@ export const verifyIcashPin = async (req, res) => {
   const controllerName = "verifyIcashPinController";
   const action = "verifyIcashPin";
   const { pin } = req.body;
-  const userId = req.user.id;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user context." });
+  }
+
+  if (!pin || typeof pin !== "string") {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "PIN is required",
+    );
+    return res
+      .status(400)
+      .json({ success: false, message: "PIN is required." });
+  }
 
   try {
     const userQuery = await User.where("uid", "==", userId).limit(1).get();
@@ -1247,11 +1655,29 @@ export const verifyIcashPin = async (req, res) => {
         "error",
         "User not found",
       );
-      return res.status(404).json({ message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
     const user = userDoc.data();
+
+    if (user.isSuspended) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "This account is already suspended.",
+      );
+      return res.status(403).json({
+        success: false,
+        isSuspended: true,
+        message: "This account is already suspended.",
+      });
+    }
+
     let lockoutTimestamp = null;
     if (user.iCashLockoutUntil) {
       lockoutTimestamp = user.iCashLockoutUntil.toDate
@@ -1268,21 +1694,8 @@ export const verifyIcashPin = async (req, res) => {
         "Locked. Try again",
       );
       return res.status(403).json({
+        success: false,
         message: `Locked. Try again after ${moment(lockoutTimestamp).format("LT")}`,
-      });
-    }
-
-    if (user.isSuspended) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "This account is already suspended.",
-      );
-      return res.status(403).json({
-        isSuspended: true,
-        message: "This account is already suspended.",
       });
     }
 
@@ -1294,32 +1707,36 @@ export const verifyIcashPin = async (req, res) => {
         "error",
         "iCash PIN not set",
       );
-      return res.status(401).json({ message: "Invalid PIN" });
+      return res.status(401).json({ success: false, message: "Invalid PIN" });
     }
 
     const isMatch = await bcrypt.compare(pin, user.iCashPin);
     if (!isMatch) {
       const currentAttempts = (user.iCashAttempts || 0) + 1;
-      await addFlag(userId, "FAILED_PIN_ATTEMPT");
 
       if (currentAttempts >= 5) {
-        await userDoc.ref.update({
-          isSuspended: true,
-          iCashAttempts: 0,
-          updatedAt: new Date(),
-        });
-
-        await notifyAdmins(
-          { role: ["moderator", "super_admin"] },
-          {
-            notificationId: generateNotificationId("security"),
-            category: "security",
-            actionType: "ACCOUNT_SUSPENDED_SECURITY",
-            payload: { userId, reason: "Excessive failed iCash PIN attempts" },
-            senderId: "system",
-          },
-          false,
-        );
+        await Promise.all([
+          addFlag(userId, "FAILED_PIN_ATTEMPT"),
+          userDoc.ref.update({
+            isSuspended: true,
+            iCashAttempts: 0,
+            updatedAt: new Date(),
+          }),
+          notifyAdmins(
+            { role: ["moderator", "super_admin"] },
+            {
+              notificationId: generateNotificationId("security"),
+              category: "security",
+              actionType: "ACCOUNT_SUSPENDED_SECURITY",
+              payload: {
+                userId,
+                reason: "Excessive failed iCash PIN attempts",
+              },
+              senderId: "system",
+            },
+            false,
+          ),
+        ]);
 
         logControllerPerformance(
           controllerName,
@@ -1329,15 +1746,19 @@ export const verifyIcashPin = async (req, res) => {
           "Maximum attempts reached. Account suspended for security.",
         );
         return res.status(403).json({
+          success: false,
           isSuspended: true,
           message: "Maximum attempts reached. Account suspended for security.",
         });
       }
 
-      await userDoc.ref.update({
-        iCashAttempts: currentAttempts,
-        updatedAt: new Date(),
-      });
+      await Promise.all([
+        addFlag(userId, "FAILED_PIN_ATTEMPT"),
+        userDoc.ref.update({
+          iCashAttempts: currentAttempts,
+          updatedAt: new Date(),
+        }),
+      ]);
 
       logControllerPerformance(
         controllerName,
@@ -1347,11 +1768,11 @@ export const verifyIcashPin = async (req, res) => {
         "Invalid PIN.",
       );
       return res.status(401).json({
+        success: false,
         message: "Invalid PIN",
         attemptsRemaining: 5 - currentAttempts,
       });
     }
-
     await userDoc.ref.update({
       iCashAttempts: 0,
       iCashLockoutUntil: null,
@@ -1359,8 +1780,11 @@ export const verifyIcashPin = async (req, res) => {
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ success: true });
+    return res
+      .status(200)
+      .json({ success: true, message: "PIN verified successfully" });
   } catch (error) {
+    console.error("Error in verifyIcashPin:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -1368,7 +1792,7 @@ export const verifyIcashPin = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const icashPinSetup = async (req, res) => {
@@ -1376,7 +1800,34 @@ export const icashPinSetup = async (req, res) => {
   const controllerName = "icashPinSetupController";
   const action = "icashPinSetup";
   const { pin } = req.body;
-  const userId = req.user.id;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user context." });
+  }
+
+  if (!pin || typeof pin !== "string" || pin.length < 4) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid PIN format",
+    );
+    return res.status(400).json({
+      success: false,
+      message: "A valid PIN of at least 4 digits is required.",
+    });
+  }
 
   try {
     const userQuery = await User.where("uid", "==", userId).limit(1).get();
@@ -1388,7 +1839,9 @@ export const icashPinSetup = async (req, res) => {
         "error",
         "User not found",
       );
-      return res.status(404).json({ message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
@@ -1403,6 +1856,7 @@ export const icashPinSetup = async (req, res) => {
         "PIN already exists. Use the 'Reset PIN' flow to change it.",
       );
       return res.status(400).json({
+        success: false,
         message: "PIN already exists. Use the 'Reset PIN' flow to change it.",
       });
     }
@@ -1417,8 +1871,11 @@ export const icashPinSetup = async (req, res) => {
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ success: true, message: "iCash PIN secured." });
+    return res
+      .status(200)
+      .json({ success: true, message: "iCash PIN secured." });
   } catch (error) {
+    console.error("Error in icashPinSetup:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -1426,14 +1883,27 @@ export const icashPinSetup = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const requestIcashPinReset = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "requestIcashPinResetController";
   const action = "requestIcashPinReset";
-  const userId = req.user.id;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user context." });
+  }
 
   try {
     const userQuery = await User.where("uid", "==", userId).limit(1).get();
@@ -1445,23 +1915,26 @@ export const requestIcashPinReset = async (req, res) => {
         "error",
         "User not found",
       );
-      return res.status(404).json({ message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
     const user = userDoc.data();
 
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
     const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
 
     await userDoc.ref.update({
-      resetPinOTP: otp,
+      resetPinOTP: hashedOtp,
       resetPinOTPExpires: otpExpires,
       updatedAt: new Date(),
     });
 
     try {
-      const htmlContent = icashPinResetTemplate(user.firstname, otp);
+      const htmlContent = icashPinResetTemplate(user.firstname || "User", otp);
       await sendEmail({
         email: user.email,
         subject: "IMPORTANT: iCash PIN Reset Code",
@@ -1472,7 +1945,7 @@ export const requestIcashPinReset = async (req, res) => {
       logControllerPerformance(controllerName, action, startTime, "success");
       return res
         .status(200)
-        .json({ message: "OTP sent to your registered email." });
+        .json({ success: true, message: "OTP sent to your registered email." });
     } catch (err) {
       await userDoc.ref.update({
         resetPinOTP: null,
@@ -1480,6 +1953,7 @@ export const requestIcashPinReset = async (req, res) => {
         updatedAt: new Date(),
       });
 
+      console.error("Email Dispatch Error:", err);
       logControllerPerformance(
         controllerName,
         action,
@@ -1487,9 +1961,12 @@ export const requestIcashPinReset = async (req, res) => {
         "error",
         "Email could not be sent.",
       );
-      return res.status(500).json({ message: "Email could not be sent." });
+      return res
+        .status(500)
+        .json({ success: false, message: "Email could not be sent." });
     }
   } catch (error) {
+    console.error("Error in requestIcashPinReset:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -1497,7 +1974,7 @@ export const requestIcashPinReset = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const resetIcashPin = async (req, res) => {
@@ -1505,7 +1982,34 @@ export const resetIcashPin = async (req, res) => {
   const controllerName = "resetIcashPinController";
   const action = "resetIcashPin";
   const { otp, newPin } = req.body;
-  const userId = req.user.id;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Unauthorized user context",
+    );
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user context." });
+  }
+
+  if (!otp || !newPin || typeof newPin !== "string" || newPin.length < 4) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Invalid payload parameters",
+    );
+    return res.status(400).json({
+      success: false,
+      message: "OTP and a valid new PIN are required.",
+    });
+  }
 
   try {
     const userQuery = await User.where("uid", "==", userId).limit(1).get();
@@ -1515,13 +2019,16 @@ export const resetIcashPin = async (req, res) => {
         action,
         startTime,
         "error",
-        "Invalid or expired OTP.",
+        "User not found",
       );
-      return res.status(400).json({ message: "Invalid or expired OTP." });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
     const user = userDoc.data();
+
     let otpExpiresTime = null;
     if (user.resetPinOTPExpires) {
       otpExpiresTime = user.resetPinOTPExpires.toDate
@@ -1529,9 +2036,14 @@ export const resetIcashPin = async (req, res) => {
         : new Date(user.resetPinOTPExpires).getTime();
     }
 
+    const hashedInputOtp = crypto
+      .createHash("sha256")
+      .update(otp)
+      .digest("hex");
+
     if (
       !user.resetPinOTP ||
-      user.resetPinOTP !== otp ||
+      user.resetPinOTP !== hashedInputOtp ||
       !otpExpiresTime ||
       otpExpiresTime <= Date.now()
     ) {
@@ -1542,7 +2054,9 @@ export const resetIcashPin = async (req, res) => {
         "error",
         "Invalid or expired OTP.",
       );
-      return res.status(400).json({ message: "Invalid or expired OTP." });
+      return res
+        .status(400)
+        .json({ success: false, message: "Invalid or expired OTP." });
     }
 
     const suspiciousActivity = user.suspiciousActivity || [];
@@ -1557,6 +2071,7 @@ export const resetIcashPin = async (req, res) => {
           "Account security in review. Please contact support to help reset PIN.",
         );
         return res.status(403).json({
+          success: false,
           message:
             "Account security in review. Please contact support to help reset PIN.",
         });
@@ -1565,7 +2080,6 @@ export const resetIcashPin = async (req, res) => {
 
     const salt = await bcrypt.genSalt(10);
     const hashedPin = await bcrypt.hash(newPin, salt);
-
     await userDoc.ref.update({
       iCashPin: hashedPin,
       resetPinOTP: null,
@@ -1578,45 +2092,47 @@ export const resetIcashPin = async (req, res) => {
     const formattedDate = now.toLocaleDateString();
     const formattedTime = now.toLocaleTimeString();
 
-    await createNotification({
-      notificationId: generateNotificationId("security"),
-      recipientEmail: user.email,
-      recoveryEmails: user.recoveryEmails,
-      recipientId: user.uid,
-      category: "security",
-      actionType: "ICASH_PIN_RESET",
-      title: "iCash PIN Reset",
-      message: `Your iCash PIN has been successfully reset.`,
-      payload: {
-        userName: user.firstname || "iCampus User",
-        date: formattedDate,
-        time: formattedTime,
-      },
-      sendEmail: true,
-      sendPush: true,
-      sendSocket: true,
-      saveToDb: true,
-    });
-
-    await notifyAdmins(
-      { role: ["super_admin", "support"] },
-      {
+    await Promise.all([
+      createNotification({
         notificationId: generateNotificationId("security"),
-        actionType: "ICASH_PIN_RESET_AUDIT",
+        recipientEmail: user.email,
+        recoveryEmails: user.recoveryEmails,
+        recipientId: user.uid,
+        category: "security",
+        actionType: "ICASH_PIN_RESET",
+        title: "iCash PIN Reset",
+        message: `Your iCash PIN has been successfully reset.`,
         payload: {
-          userUid: user.uid,
-          userName: `${user.firstname || ""} ${user.lastname || ""}`.trim(),
+          userName: user.firstname || "iCampus User",
+          date: formattedDate,
+          time: formattedTime,
         },
-        senderId: "system",
-      },
-      false,
-    ).catch((err) => console.error("Admin audit notification failed:", err));
+        sendEmail: true,
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      }),
+      notifyAdmins(
+        { role: ["super_admin", "support"] },
+        {
+          notificationId: generateNotificationId("security"),
+          actionType: "ICASH_PIN_RESET_AUDIT",
+          payload: {
+            userUid: user.uid,
+            userName: `${user.firstname || ""} ${user.lastname || ""}`.trim(),
+          },
+          senderId: "system",
+        },
+        false,
+      ).catch((err) => console.error("Admin audit notification failed:", err)),
+    ]);
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res
+    return res
       .status(200)
       .json({ success: true, message: "PIN updated successfully." });
   } catch (error) {
+    console.error("Error in resetIcashPin:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -1624,16 +2140,43 @@ export const resetIcashPin = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const markNotificationAsRead = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "markNotificationAsReadController";
   const action = "markNotificationAsRead";
+
   try {
     const { id } = req.params;
-    const userId = req.user.uid;
+    const userId = req.user?.uid || req.user?.id;
+
+    if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    if (!id) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Notification ID required",
+      );
+      return res
+        .status(400)
+        .json({ success: false, message: "Notification ID is required." });
+    }
 
     const notificationQuery = await Notification.where(
       "notificationId",
@@ -1652,21 +2195,29 @@ export const markNotificationAsRead = async (req, res) => {
         "error",
         "Notification not found",
       );
-      return res.status(404).json({ message: "Notification not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "Notification not found" });
     }
 
     const notificationDoc = notificationQuery.docs[0];
+    const existingData = notificationDoc.data();
+    const updateTimestamp = new Date();
 
     await notificationDoc.ref.update({
       isRead: true,
-      updatedAt: new Date(),
+      updatedAt: updateTimestamp,
     });
 
-    const refreshedDoc = await notificationDoc.ref.get();
-    const notification = { id: refreshedDoc.id, ...refreshedDoc.data() };
+    const notification = {
+      id: notificationDoc.id,
+      ...existingData,
+      isRead: true,
+      updatedAt: updateTimestamp,
+    };
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "Notification marked as read",
       notification,
@@ -1680,15 +2231,29 @@ export const markNotificationAsRead = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const markAllNotificationsAsRead = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "markAllNotificationAsReadController";
   const action = "markAllNotificationAsRead";
+
   try {
-    const userId = req.user.uid;
+    const userId = req.user?.uid || req.user?.id;
+
+    if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
 
     const unreadQuery = await Notification.where("recipientId", "==", userId)
       .where("isRead", "==", false)
@@ -1702,14 +2267,16 @@ export const markAllNotificationsAsRead = async (req, res) => {
         modifiedCount: 0,
       });
     }
+
     const batches = [];
     let currentBatch = db.batch();
     let operationCount = 0;
+    const updateTimestamp = new Date();
 
     unreadQuery.docs.forEach((doc) => {
       currentBatch.update(doc.ref, {
         isRead: true,
-        updatedAt: new Date(),
+        updatedAt: updateTimestamp,
       });
       operationCount++;
 
@@ -1727,7 +2294,7 @@ export const markAllNotificationsAsRead = async (req, res) => {
     await Promise.all(batches);
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       message: "All notifications marked as read",
       modifiedCount: unreadQuery.size,
@@ -1741,7 +2308,7 @@ export const markAllNotificationsAsRead = async (req, res) => {
       "error",
       error.message,
     );
-    res
+    return res
       .status(500)
       .json({ success: false, message: "Server error updating notifications" });
   }
@@ -1750,9 +2317,23 @@ export const toggleFollowingUsers = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "toggleFollowingController";
   const action = "toggleFollowing";
+
   try {
-    const followerId = req.user.uid;
+    const followerId = req.user?.uid || req.user?.id;
     const { followingId } = req.body;
+
+    if (!followerId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
 
     if (!followingId) {
       logControllerPerformance(
@@ -1766,6 +2347,7 @@ export const toggleFollowingUsers = async (req, res) => {
         .status(400)
         .json({ success: false, message: "Missing target followingId" });
     }
+
     if (followerId === followingId) {
       logControllerPerformance(
         controllerName,
@@ -1778,15 +2360,14 @@ export const toggleFollowingUsers = async (req, res) => {
         .status(400)
         .json({ success: false, message: "You cannot follow yourself" });
     }
+    const [followQuery, targetUserQuery] = await Promise.all([
+      Follow.where("followerId", "==", followerId)
+        .where("followingId", "==", followingId)
+        .limit(1)
+        .get(),
+      User.where("uid", "==", followingId).limit(1).get(),
+    ]);
 
-    const followQuery = await Follow.where("followerId", "==", followerId)
-      .where("followingId", "==", followingId)
-      .limit(1)
-      .get();
-
-    const targetUserQuery = await User.where("uid", "==", followingId)
-      .limit(1)
-      .get();
     const targetUserData = !targetUserQuery.empty
       ? targetUserQuery.docs[0].data()
       : null;
@@ -1802,22 +2383,19 @@ export const toggleFollowingUsers = async (req, res) => {
         message: `Unfollowed ${targetFirstName} successfully`,
       });
     } else {
-      await Follow.add({
-        followerId,
-        followingId,
-        createdAt: new Date(),
-      });
+      const [, followerUserQuery] = await Promise.all([
+        Follow.add({
+          followerId,
+          followingId,
+          createdAt: new Date(),
+        }),
+        User.where("uid", "==", followerId).limit(1).get(),
+      ]);
 
-      const followerUserQuery = await User.where("uid", "==", followerId)
-        .limit(1)
-        .get();
       const followerUserData = !followerUserQuery.empty
         ? followerUserQuery.docs[0].data()
         : null;
-      const followerName = followerUserData
-        ? followerUserData.firstname
-        : "Someone";
-
+      const followerName = followerUserData?.firstname || "Someone";
       createNotification({
         notificationId: generateNotificationId("social"),
         recipientId: followingId,
@@ -1850,16 +2428,31 @@ export const toggleFollowingUsers = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const updateUserProfile = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "updateUserProfileController";
   const action = "updateUserProfile";
+
   try {
-    const userId = req.user.id;
-    const updates = req.body;
+    const userId = req.user?.id || req.user?.uid;
+    const updates = req.body || {};
+
+    if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
     const allowedUpdates = [
       "bio",
       "skills",
@@ -1899,15 +2492,20 @@ export const updateUserProfile = async (req, res) => {
     }
 
     const userDoc = userQuery.docs[0];
+    const existingUserData = userDoc.data();
+    const updateTimestamp = new Date();
 
     const payload = {
       ...filteredUpdates,
-      updatedAt: new Date(),
+      updatedAt: updateTimestamp,
     };
 
     await userDoc.ref.set(payload, { merge: true });
-    const refreshedDoc = await userDoc.ref.get();
-    const userData = refreshedDoc.data();
+
+    const mergedUserData = {
+      ...existingUserData,
+      ...payload,
+    };
 
     const {
       resetPinOTP,
@@ -1916,16 +2514,17 @@ export const updateUserProfile = async (req, res) => {
       password,
       refreshTokens,
       ...sanitizedUser
-    } = userData;
+    } = mergedUserData;
 
-    const updatedUser = { id: refreshedDoc.id, ...sanitizedUser };
+    const updatedUser = { id: userDoc.id, ...sanitizedUser };
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       data: updatedUser,
     });
   } catch (error) {
+    console.error("Error updating user profile:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -1933,20 +2532,37 @@ export const updateUserProfile = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ success: false, message: "Server Error" });
+    return res.status(500).json({ success: false, message: "Server Error" });
   }
 };
 export const verifyiTagUsernameAvailability = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "verifyiTagUsernameAvailabilityController";
   const action = "verifyiTagUsernameAvailability";
+
   try {
-    const { val } = req.params;
+    const rawVal = req.params?.val;
+
+    if (!rawVal || typeof rawVal !== "string") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing or invalid username parameter",
+      );
+      return res.status(400).json({
+        available: false,
+        message: "Missing or invalid username parameter",
+      });
+    }
+
+    const val = rawVal.trim().toLowerCase();
     const itagQuery = await ITag.where("username", "==", val).limit(1).get();
 
     if (itagQuery.empty) {
       logControllerPerformance(controllerName, action, startTime, "success");
-      return res.status(404).json({
+      return res.status(200).json({
         available: true,
         message: "iTag username available",
       });
@@ -1964,6 +2580,7 @@ export const verifyiTagUsernameAvailability = async (req, res) => {
       message: "iTag username already exists",
     });
   } catch (error) {
+    console.error("Error fetching iTag:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -1971,8 +2588,8 @@ export const verifyiTagUsernameAvailability = async (req, res) => {
       "error",
       error.message,
     );
-    console.error("Error fetching iTag:", error);
     return res.status(500).json({
+      available: false,
       message: "Server error",
     });
   }
@@ -1981,20 +2598,52 @@ export const searchBookInLibrary = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "searchBookInLibraryController";
   const action = "searchBookInLibrary";
-  const { q } = req.query;
-  const userId = req.user.id;
-  const searchUrl = `https://1lib.sk/s/${encodeURIComponent(q)}`;
 
   try {
+    const userId = req.user?.uid || req.user?.id;
+    const { q } = req.query;
+
+    if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    if (!q || typeof q !== "string" || !q.trim()) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing or invalid search query",
+      );
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing or invalid search query" });
+    }
+
+    const searchQuery = q.trim();
+    const searchUrl = `https://1lib.sk/s/${encodeURIComponent(searchQuery)}`;
+
     const { data } = await axios.get(searchUrl, {
+      timeout: 8000,
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
       },
     });
 
     const $ = cheerio.load(data);
     const books = [];
+
     $(".resItemBox").each((index, element) => {
       const row = $(element);
       const title = row.find('h3[itemprop="name"] a').text().trim();
@@ -2018,15 +2667,17 @@ export const searchBookInLibrary = async (req, res) => {
           extension: extension || "PDF",
           size: size || "N/A",
           year: year || "N/A",
-          downloadUrl: `https://1lib.sk${detailsUrl}`,
+          downloadUrl: detailsUrl?.startsWith("http")
+            ? detailsUrl
+            : `https://1lib.sk${detailsUrl}`,
         });
       }
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.json(books);
+    return res.status(200).json({ success: true, books });
   } catch (error) {
-    console.error("Scraping Error:", error.message);
+    console.error("Library Scraping Error:", error.message);
     logControllerPerformance(
       controllerName,
       action,
@@ -2034,7 +2685,9 @@ export const searchBookInLibrary = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ error: "Failed to connect to the library" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Failed to connect to the library" });
   }
 };
 export const searchUserUsingUidOrNameQuery = async (req, res) => {
@@ -2053,9 +2706,9 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
       if (!userQuery.empty) {
         users.push({ id: userQuery.docs[0].id, ...userQuery.docs[0].data() });
       }
-    } else if (q) {
+    } else if (q && typeof q === "string" && q.trim().length > 0) {
       const snapshot = await User.get();
-      const searchTerm = q.toLowerCase();
+      const searchTerm = q.trim().toLowerCase();
 
       snapshot.forEach((doc) => {
         const data = doc.data();
@@ -2140,8 +2793,11 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.json({ success: true, data: uid ? safeResults[0] : safeResults });
+    return res
+      .status(200)
+      .json({ success: true, data: uid ? safeResults[0] : safeResults });
   } catch (error) {
+    console.error("Search Users Controller Error:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -2149,17 +2805,32 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: error.message, success: false });
+    return res.status(500).json({ message: error.message, success: false });
   }
 };
 export const checkAccountState = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "checkAccountStateController";
   const action = "checkAccountState";
+
   try {
-    const userQuery = await User.where("uid", "==", req.user.uid)
-      .limit(1)
-      .get();
+    const userId = req.user?.uid || req.user?.id;
+
+    if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+
     if (userQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -2168,13 +2839,15 @@ export const checkAccountState = async (req, res) => {
         "error",
         "User not found",
       );
-      return res.status(404).json({ message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const user = userQuery.docs[0].data();
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
       user: {
         uid: user.uid,
@@ -2182,6 +2855,7 @@ export const checkAccountState = async (req, res) => {
       },
     });
   } catch (error) {
+    console.error("Check Account State Error:", error);
     logControllerPerformance(
       controllerName,
       action,
@@ -2189,23 +2863,61 @@ export const checkAccountState = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const createPersonaVerifyInquiry = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "createPersonaVerifyInquiryController";
   const action = "createPersonaVerifyInquiry";
+
   try {
-    const userId = req.user.id;
-    const { userType } = req.body;
+    const userId = req.user?.id || req.user?.uid;
+    const { userType } = req.body || {};
+
+    if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
 
     const INDIVIDUAL_TEMPLATE_ID = process.env.INDIVIDUAL_TEMPLATE_ID;
     const ENTERPRISE_TEMPLATE_ID = process.env.ENTERPRISE_TEMPLATE_ID;
+    const PERSONA_API_KEY = process.env.PERSONA_API_KEY;
+
+    if (
+      !INDIVIDUAL_TEMPLATE_ID ||
+      !ENTERPRISE_TEMPLATE_ID ||
+      !PERSONA_API_KEY
+    ) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing Persona configuration keys",
+      );
+      return res.status(500).json({
+        success: false,
+        error: "Server configuration error for verification.",
+      });
+    }
+
     const selectedTemplate =
       userType === "enterprise"
         ? ENTERPRISE_TEMPLATE_ID
         : INDIVIDUAL_TEMPLATE_ID;
+
+    const personaEnvironment =
+      process.env.PERSONA_ENV ||
+      (process.env.NODE_ENV === "production" ? "production" : "sandbox");
 
     const response = await axios.post(
       "https://withpersona.com/api/v1/inquiries",
@@ -2214,22 +2926,39 @@ export const createPersonaVerifyInquiry = async (req, res) => {
           attributes: {
             "template-id": selectedTemplate,
             "reference-id": userId,
-            environment: "sandbox",
+            environment: personaEnvironment,
           },
         },
       },
       {
+        timeout: 10000,
         headers: {
-          Authorization: `Bearer ${process.env.PERSONA_API_KEY}`,
+          Authorization: `Bearer ${PERSONA_API_KEY}`,
           Accept: "application/json",
           "Persona-Version": "2023-01-05",
           "Content-Type": "application/json",
         },
       },
     );
-    const inquiryId = response.data.data.id;
+
+    const inquiryId = response.data?.data?.id;
+
+    if (!inquiryId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid response from Persona API",
+      );
+      return res.status(502).json({
+        success: false,
+        error: "Failed to retrieve inquiry ID from verification provider.",
+      });
+    }
+
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ inquiryId });
+    return res.status(200).json({ success: true, inquiryId });
   } catch (error) {
     console.error("Persona API Error:", error.response?.data || error.message);
     logControllerPerformance(
@@ -2239,9 +2968,10 @@ export const createPersonaVerifyInquiry = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({
+    return res.status(500).json({
+      success: false,
       error: "Failed to initialize verification session",
-      details: error.response?.data?.errors,
+      details: error.response?.data?.errors || error.message,
     });
   }
 };
@@ -2249,9 +2979,14 @@ export const handleUnifiedCourseSearch = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "handleUnifiedCourseSearchController";
   const action = "handleUnifiedCourseSearch";
+
   try {
     const searchQuery = req.query.q;
-    if (!searchQuery || searchQuery.trim().length < 2) {
+    if (
+      !searchQuery ||
+      typeof searchQuery !== "string" ||
+      searchQuery.trim().length < 2
+    ) {
       return res.status(200).json({ success: true, courses: [] });
     }
 
@@ -2351,9 +3086,14 @@ export const handleUnifiedResourceSearch = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "handleUnifiedResourceSearchController";
   const action = "handleUnifiedResourceSearch";
+
   try {
     const searchQuery = req.query.q;
-    if (!searchQuery || searchQuery.trim().length < 2) {
+    if (
+      !searchQuery ||
+      typeof searchQuery !== "string" ||
+      searchQuery.trim().length < 2
+    ) {
       return res.status(200).json({ success: true, resources: [] });
     }
 
@@ -2365,13 +3105,19 @@ export const handleUnifiedResourceSearch = async (req, res) => {
       const data = doc.data();
       const courseTitle = (data.courseTitle || "").toLowerCase();
       const courseCode = (data.courseCode || "").toLowerCase();
-      const resources = data.resources || [];
+      const resources = Array.isArray(data.resources) ? data.resources : [];
+
       const hasMatchingResource = resources.some((url) => {
-        const rawFileName = url.split("/").pop() || "";
-        const cleanedFileName = decodeURIComponent(rawFileName)
-          .split("?")[0]
-          .toLowerCase();
-        return cleanedFileName.includes(searchTerm);
+        if (typeof url !== "string") return false;
+        try {
+          const rawFileName = url.split("/").pop() || "";
+          const cleanedFileName = decodeURIComponent(rawFileName)
+            .split("?")[0]
+            .toLowerCase();
+          return cleanedFileName.includes(searchTerm);
+        } catch {
+          return false;
+        }
       });
 
       if (
@@ -2387,15 +3133,22 @@ export const handleUnifiedResourceSearch = async (req, res) => {
     const normalizedInstitutional = [];
 
     limitedInstitutional.forEach((course) => {
-      const resources = course.resources || [];
+      const resources = Array.isArray(course.resources) ? course.resources : [];
       if (resources.length === 0) return;
 
       const courseTitle = course.courseTitle || "";
       const courseCode = course.courseCode || "";
 
       resources.forEach((url) => {
-        const rawFileName = url.split("/").pop() || "Untitled Material";
-        const cleanedFileName = decodeURIComponent(rawFileName).split("?")[0];
+        if (typeof url !== "string") return;
+
+        let cleanedFileName = "Untitled Material";
+        try {
+          const rawFileName = url.split("/").pop() || "Untitled Material";
+          cleanedFileName = decodeURIComponent(rawFileName).split("?")[0];
+        } catch {
+          cleanedFileName = "Untitled Material";
+        }
 
         const matchesQuery =
           courseTitle.toLowerCase().includes(searchTerm) ||
@@ -2406,11 +3159,15 @@ export const handleUnifiedResourceSearch = async (req, res) => {
           const base64Hash = Buffer.from(url)
             .toString("base64")
             .substring(0, 8);
+
+          const fileFormat =
+            url.split(".").pop()?.split("?")[0]?.toLowerCase() || "pdf";
+
           normalizedInstitutional.push({
             id: `${course.courseId || course.id}-${base64Hash}`,
             title: cleanedFileName.split("-").pop() || cleanedFileName,
             url: url,
-            format: url.split(".").pop()?.split("?")[0]?.toLowerCase() || "pdf",
+            format: fileFormat,
             isPremiumPaid: false,
             price: 0,
             metaSource: `${courseCode} • Institutional`,
@@ -2434,13 +3191,17 @@ export const handleUnifiedResourceSearch = async (req, res) => {
       "Institutional resource library lookup down: ",
       error.message,
     );
-    await logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    try {
+      await logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    } catch (logErr) {
+      console.error("Failed to log controller performance error:", logErr);
+    }
     return res.status(500).json({
       success: false,
       message: "Internal engine error resolving resource records.",
@@ -2451,10 +3212,13 @@ export const toggleTheme = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "toggleThemeController";
   const action = "toggleTheme";
-  try {
-    const { theme } = req.body;
 
-    if (!["light", "dark", "system"].includes(theme)) {
+  try {
+    const { theme } = req.body || {};
+    const sanitizedTheme =
+      typeof theme === "string" ? theme.trim().toLowerCase() : "";
+
+    if (!["light", "dark", "system"].includes(sanitizedTheme)) {
       logControllerPerformance(
         controllerName,
         action,
@@ -2463,24 +3227,43 @@ export const toggleTheme = async (req, res) => {
         "Invalid choice schema profile allocation assignment.",
       );
       return res.status(400).json({
+        success: false,
         message: "Invalid choice schema profile allocation assignment.",
       });
     }
 
-    const userId = req.user.uid;
-    const prefQuery = await userPrefs
+    const userId = req.user?.uid || req.user?.id;
+    if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+    const collectionRef =
+      typeof UserPrefs !== "undefined" ? UserPrefs : userPrefs;
+    if (!collectionRef) {
+      throw new Error("UserPrefs collection reference is not defined.");
+    }
+
+    const prefQuery = await collectionRef
       .where("userId", "==", userId)
       .limit(1)
       .get();
 
     const preferenceData = {
-      theme,
+      theme: sanitizedTheme,
       updatedAt: new Date(),
     };
 
     if (prefQuery.empty) {
       preferenceData.createdAt = new Date();
-      await UserPrefs.add({
+      await collectionRef.add({
         userId,
         ...preferenceData,
       });
@@ -2504,15 +3287,20 @@ export const toggleTheme = async (req, res) => {
     );
     return res
       .status(500)
-      .json({ message: "Internal Server Error", error: error.message });
+      .json({
+        success: false,
+        message: "Internal Server Error",
+        error: error.message,
+      });
   }
 };
 export const refreshUserDetails = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "refreshUserDetailsController";
   const action = "refreshUserDetails";
+
   try {
-    const uid = req.user.uid;
+    const uid = req.user?.uid || req.user?.id;
     if (!uid) {
       logControllerPerformance(
         controllerName,
@@ -2523,12 +3311,20 @@ export const refreshUserDetails = async (req, res) => {
       );
       return res
         .status(401)
-        .json({ message: "Unauthorized: Missing user identifier" });
+        .json({
+          success: false,
+          message: "Unauthorized: Missing user identifier",
+        });
     }
+
+    const prefCollection =
+      typeof userPrefs !== "undefined" ? userPrefs : UserPrefs;
 
     const [userQuery, prefQuery] = await Promise.all([
       User.where("uid", "==", uid).limit(1).get(),
-      userPrefs.where("uid", "==", uid).limit(1).get(),
+      prefCollection
+        ? prefCollection.where("userId", "==", uid).limit(1).get()
+        : { empty: true },
     ]);
 
     if (userQuery.empty) {
@@ -2539,7 +3335,9 @@ export const refreshUserDetails = async (req, res) => {
         "error",
         "User not found",
       );
-      return res.status(404).json({ message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
 
     const userDoc = userQuery.docs[0];
@@ -2549,7 +3347,7 @@ export const refreshUserDetails = async (req, res) => {
       userData;
 
     let theme = "light";
-    if (!prefQuery.empty) {
+    if (!prefQuery.empty && prefQuery.docs && prefQuery.docs[0]) {
       const prefData = prefQuery.docs[0].data();
       if (prefData.theme) {
         theme = prefData.theme;
@@ -2561,6 +3359,7 @@ export const refreshUserDetails = async (req, res) => {
       ...safeUserData,
       theme,
     };
+
     const { accessToken, refreshToken } = await generateTokens({
       uid,
       ...userData,
@@ -2568,6 +3367,7 @@ export const refreshUserDetails = async (req, res) => {
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
+      success: true,
       message: "Refresh successful",
       user: safeUser,
       accessToken,
@@ -2582,25 +3382,53 @@ export const refreshUserDetails = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({ message: "Internal server error" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error" });
   }
 };
 export const aiChat = async (req, res) => {
   const startTime = Date.now();
-  const controllerName = "createQuickMeetingController";
-  const action = "createQuickMeeting";
-  const { message, context, history } = req.body;
-  const uid = req.user.uid;
-  const { type, data } = context;
+  const controllerName = "aiChatController";
+  const action = "aiChat";
+
   try {
+    const { message, context = {}, history = [] } = req.body || {};
+    const uid = req.user?.uid || req.user?.id;
+
+    if (!uid) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, error: "Unauthorized user context." });
+    }
+
+    if (
+      !message ||
+      typeof message !== "string" ||
+      message.trim().length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Message content is required." });
+    }
+
+    const { type = "general", data = {} } = context;
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+
     let systemInstruction = "";
     if (type === "support") {
       systemInstruction = `You are iAssistant, the official Support AI for iCampus. 
-        Use the provided FAQ knowledge: ${JSON.stringify(FAQ_DATA)}. 
+        Use the provided FAQ knowledge: ${JSON.stringify(typeof FAQ_DATA !== "undefined" ? FAQ_DATA : {})}. 
         If the user's issue cannot be resolved via the FAQs, acknowledge the limitation 
         and state that you are escalating the issue to a human support ticket.
-        If the issue requires escalation, respond in a JSON format:
+        If the issue requires escalation, respond strictly in a valid JSON format:
           {
             "reply": "Your natural language response to the user...",
             "requiresEscalation": true,
@@ -2608,13 +3436,14 @@ export const aiChat = async (req, res) => {
             "suggestedSummary": "A very short 5- 10 words summary of the issue",
             "suggestedSeverity": "low|medium|high|critical"
           }
-          If no escalation is needed, just provide your response as plain text.
+          If no escalation is needed, just provide your response as plain text or wrapped in the same JSON structure with "requiresEscalation": false.
         `;
     } else {
       systemInstruction = `You are iAssistant, the official Academic AI Tutor for iCampus. 
       Your purpose is to help students and lecturers understand educational material. 
-      Academic Context: ${type === "course" ? `Course: ${data.courseTitle}` : type === "lecture" ? `Topic: ${data.topicName}` : "General Study"}.`;
+      Academic Context: ${type === "course" ? `Course: ${data.courseTitle || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.`;
     }
+
     const chat = model.startChat({
       history: [
         {
@@ -2627,7 +3456,7 @@ export const aiChat = async (req, res) => {
             { text: "Understood. I am ready to assist you in this context." },
           ],
         },
-        ...(history || []),
+        ...(Array.isArray(history) ? history : []),
       ],
     });
 
@@ -2635,11 +3464,17 @@ export const aiChat = async (req, res) => {
     const replyText = result.response.text();
     let finalReply;
     let aiResponse;
-    const ticketRefId = generateTicketId(uid);
+    const ticketRefId =
+      typeof generateTicketId === "function"
+        ? generateTicketId(uid)
+        : `TKT-${Date.now()}`;
     let createdTicketId = null;
 
     try {
-      aiResponse = JSON.parse(replyText);
+      const cleanedJsonText = replyText
+        .replace(/^```json\s*([\s\S]*?)\s*```$/, "$1")
+        .trim();
+      aiResponse = JSON.parse(cleanedJsonText);
     } catch (e) {
       aiResponse = { reply: replyText, requiresEscalation: false };
     }
@@ -2658,33 +3493,43 @@ export const aiChat = async (req, res) => {
         updatedAt: new Date(),
       };
 
-      const ticketDocRef = await SupportTicket.add(newTicket);
+      if (typeof SupportTicket !== "undefined" && SupportTicket.add) {
+        await SupportTicket.add(newTicket);
+      }
       createdTicketId = ticketRefId;
 
-      finalReply = aiResponse.reply + `\n\nTicket ID: ${ticketRefId}`;
+      finalReply =
+        (aiResponse.reply || replyText) + `\n\nTicket ID: ${ticketRefId}`;
 
-      await notifyAdmins(
-        { role: ["support", "super_admin"] },
-        {
-          notificationId: generateNotificationId("system"),
-          actionType: "AI_SUPPORT_ESCALATION",
-          payload: {
-            ticketId: ticketRefId,
-            userUid: uid,
-            summary: newTicket.summary,
+      if (typeof notifyAdmins === "function") {
+        await notifyAdmins(
+          { role: ["support", "super_admin"] },
+          {
+            notificationId:
+              typeof generateNotificationId === "function"
+                ? generateNotificationId("system")
+                : `NOTIF-${Date.now()}`,
+            actionType: "AI_SUPPORT_ESCALATION",
+            payload: {
+              ticketId: ticketRefId,
+              userUid: uid,
+              summary: newTicket.summary,
+            },
+            senderId: "system",
           },
-          senderId: "system",
-        },
-        false,
-      ).catch((err) =>
-        console.error("Admin escalation notification failed:", err),
-      );
+          false,
+        ).catch((err) =>
+          console.error("Admin escalation notification failed:", err),
+        );
+      }
     } else {
-      finalReply = aiResponse.reply;
+      finalReply = aiResponse.reply || replyText;
     }
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.json({ reply: finalReply, ticketId: createdTicketId });
+    return res
+      .status(200)
+      .json({ success: true, reply: finalReply, ticketId: createdTicketId });
   } catch (error) {
     console.error("AI Chat Error:", error.message);
     logControllerPerformance(
@@ -2694,42 +3539,55 @@ export const aiChat = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ error: "Failed to fetch response" });
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch response" });
   }
 };
 export const searchPosts = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "searchPostsController";
   const action = "searchPosts";
+
   try {
     const searchQuery = req.query.q;
     const userId = req.user?.id || req.user?.uid;
 
-    if (!searchQuery || searchQuery.trim().length < 2) {
+    if (
+      !searchQuery ||
+      typeof searchQuery !== "string" ||
+      searchQuery.trim().length < 2
+    ) {
       logControllerPerformance(controllerName, action, startTime, "success");
-      return res.status(200).json({ success: true, posts: [] });
+      return res.status(200).json({ success: true, count: 0, posts: [] });
     }
 
     const searchTerm = searchQuery.toLowerCase().trim();
-    const postsSnapshot = await Posts.get();
-    const matchedPosts = [];
-    const commentsSnapshot = await Comments.get();
-    const allComments = commentsSnapshot.docs.map((doc) => doc.data());
+    const [postsSnapshot, commentsSnapshot, repostersSnapshot] =
+      await Promise.all([
+        Posts.orderBy("createdAt", "desc").limit(100).get(),
+        Comments.get(),
+        PostReposters.get(),
+      ]);
 
-    const repostersSnapshot = await PostReposters.get();
+    const allComments = commentsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
     const allReposters = repostersSnapshot.docs.map((doc) => doc.data());
+    const matchedPosts = [];
 
     postsSnapshot.forEach((doc) => {
       const data = doc.data();
-      const postId = data.postId;
+      const postId = data.postId || doc.id;
 
       const content = (data.content || "").toLowerCase();
-      const comments = allComments.filter((c) => c.postId === postId);
+      const postComments = allComments.filter((c) => c.postId === postId);
       const jobTitle = (data.jobMetadata?.title || "").toLowerCase();
       const jobCompany = (data.jobMetadata?.company || "").toLowerCase();
       const eventTitle = (data.eventMetadata?.title || "").toLowerCase();
 
-      const hasMatchingComment = comments.some((c) =>
+      const hasMatchingComment = postComments.some((c) =>
         (c.comment || "").toLowerCase().includes(searchTerm),
       );
 
@@ -2743,18 +3601,13 @@ export const searchPosts = async (req, res) => {
         const repostersDetails = allReposters.filter(
           (r) => r.postId === postId,
         );
-        matchedPosts.push({ id: doc.id, ...data, comments, repostersDetails });
+        matchedPosts.push({
+          id: doc.id,
+          ...data,
+          comments: postComments,
+          repostersDetails,
+        });
       }
-    });
-
-    matchedPosts.sort((a, b) => {
-      const timeA = a.createdAt?.toDate
-        ? a.createdAt.toDate().getTime()
-        : new Date(a.createdAt || 0).getTime();
-      const timeB = b.createdAt?.toDate
-        ? b.createdAt.toDate().getTime()
-        : new Date(b.createdAt || 0).getTime();
-      return timeB - timeA;
     });
 
     const limitedPosts = matchedPosts.slice(0, 40);
@@ -2762,40 +3615,39 @@ export const searchPosts = async (req, res) => {
     const formattedPosts = await Promise.all(
       limitedPosts.map(async (post) => {
         const targetPostId = post.postId || post.id;
-        const commentsSnapshot = await Comments.where(
-          "postId",
-          "==",
-          targetPostId,
-        ).get();
-        const comments = [];
-        for (const doc of commentsSnapshot.docs) {
-          const commentData = doc.data();
-          let commentUser = null;
-          if (commentData.userId) {
-            const commentUserQuery = await User.where(
-              "uid",
-              "==",
-              commentData.userId,
-            )
-              .limit(1)
-              .get();
-            if (!commentUserQuery.empty) {
-              const cuData = commentUserQuery.docs[0].data();
-              commentUser = {
-                uid: cuData.uid,
-                firstname: cuData.firstname,
-                lastname: cuData.lastname,
-                username: cuData.username,
-                profilePic: cuData.profilePic,
-              };
+        const postComments = post.comments || [];
+        const commentsWithUsers = await Promise.all(
+          postComments.map(async (commentData) => {
+            let commentUser = null;
+            if (commentData.userId) {
+              try {
+                const commentUserQuery = await User.where(
+                  "uid",
+                  "==",
+                  commentData.userId,
+                )
+                  .limit(1)
+                  .get();
+                if (!commentUserQuery.empty) {
+                  const cuData = commentUserQuery.docs[0].data();
+                  commentUser = {
+                    uid: cuData.uid,
+                    firstname: cuData.firstname,
+                    lastname: cuData.lastname,
+                    username: cuData.username,
+                    profilePic: cuData.profilePic,
+                  };
+                }
+              } catch (err) {
+                console.error("Error fetching comment user:", err);
+              }
             }
-          }
-          comments.push({
-            ...commentData,
-            userId: commentUser || commentData.userId,
-          });
-        }
-        const commentsCount = commentsSnapshot.size;
+            return {
+              ...commentData,
+              userId: commentUser || commentData.userId,
+            };
+          }),
+        );
 
         const featuredReposter =
           typeof getPriorityReposter === "function"
@@ -2804,8 +3656,8 @@ export const searchPosts = async (req, res) => {
 
         return {
           ...post,
-          comments,
-          commentsCount,
+          comments: commentsWithUsers,
+          commentsCount: commentsWithUsers.length,
           repostsCount:
             post.repostsCount !== undefined
               ? post.repostsCount
@@ -2840,17 +3692,42 @@ export const createQuickMeeting = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "createQuickMeetingController";
   const action = "createQuickMeeting";
+
   try {
-    const preparedData = prepareLectureData(req.body);
+    const hostId = req.user?.uid || req.user?.id;
+
+    if (!hostId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user identifier" });
+    }
+
+    const preparedData =
+      typeof prepareLectureData === "function"
+        ? prepareLectureData(req.body)
+        : req.body;
     const {
       date,
       startTime: meetingStartTime,
       endTime,
       topicName,
-      lectureType,
-      location,
+      lectureType = "Online",
+      location = "",
     } = preparedData;
-    const hostId = req.user.uid;
+
+    if (!date || !meetingStartTime || !endTime || !topicName) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required meeting fields." });
+    }
+
     const lecturesQuery = await Lectures.where("hostId", "==", hostId)
       .where("date", "==", date)
       .get();
@@ -2872,11 +3749,15 @@ export const createQuickMeeting = async (req, res) => {
         "Conflict detected",
       );
       return res.status(409).json({
+        success: false,
         message: `Conflict detected! You are already scheduled for "${conflict.topicName}" at this time.`,
       });
     }
 
-    const meetingId = generateLectureId(hostId, lectureType);
+    const meetingId =
+      typeof generateLectureId === "function"
+        ? generateLectureId(hostId, lectureType)
+        : `LEC-${Date.now()}`;
     const newMeeting = {
       id: meetingId,
       hostId,
@@ -2903,28 +3784,33 @@ export const createQuickMeeting = async (req, res) => {
       month: "long",
       day: "numeric",
     });
-    const message = `Your online class session '${topicName}' is set for ${readableDate} at ${meetingStartTime}. Click here to join: ${location}`;
+    const notificationMessage = `Your online class session '${topicName}' is set for ${readableDate} at ${meetingStartTime}. Click here to join: ${location}`;
 
-    await createNotification({
-      notificationId: generateNotificationId("classroom"),
-      recipientId: hostId,
-      category: "classroom",
-      actionType: "CLASS_SCHEDULED",
-      title: "Class Scheduled",
-      message,
-      payload: {
-        topicName,
-        lectureId: meetingId,
-        location,
-        time: meetingStartTime,
-        date: readableDate,
-      },
-      entityId: meetingId,
-      entityType: "lecture",
-      sendPush: true,
-      sendSocket: true,
-      saveToDb: true,
-    });
+    if (typeof createNotification === "function") {
+      await createNotification({
+        notificationId:
+          typeof generateNotificationId === "function"
+            ? generateNotificationId("classroom")
+            : `NOTIF-${Date.now()}`,
+        recipientId: hostId,
+        category: "classroom",
+        actionType: "CLASS_SCHEDULED",
+        title: "Class Scheduled",
+        message: notificationMessage,
+        payload: {
+          topicName,
+          lectureId: meetingId,
+          location,
+          time: meetingStartTime,
+          date: readableDate,
+        },
+        entityId: meetingId,
+        entityType: "lecture",
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      });
+    }
 
     const userQuery = await User.where("uid", "==", hostId).limit(1).get();
     if (!userQuery.empty) {
@@ -2941,11 +3827,14 @@ export const createQuickMeeting = async (req, res) => {
       });
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(201).json({
+    const responseBody = {
+      success: true,
       message: "Meeting scheduled successfully",
       meeting: newMeeting,
-    });
+    };
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+    return res.status(201).json(responseBody);
   } catch (error) {
     console.error("Quick Meeting Error:", error.message);
     logControllerPerformance(
@@ -2955,48 +3844,46 @@ export const createQuickMeeting = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Internal Server Error" });
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal Server Error" });
   }
 };
 export const registerDropOffStation = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "registerDropOffStationController";
   const action = "registerDropOffStation";
-  const { name, address, images, latitude, longitude } = req.body;
-  const userId = req.user.id || req.user.uid;
-
+  
   try {
-    const stationId = generateStationId();
+    const { name, address, images, latitude, longitude } = req.body;
+    const userId = req.user?.id || req.user?.uid;
+
+    if (!userId) {
+      logControllerPerformance(controllerName, action, startTime, "error", "Unauthorized user identifier");
+      return res.status(401).json({ success: false, message: "Unauthorized user identifier" });
+    }
+
+    if (!name || !address || latitude === undefined || longitude === undefined) {
+      return res.status(400).json({ success: false, message: "Missing required station fields." });
+    }
+
+    const stationId = typeof generateStationId === 'function' ? generateStationId() : `STN-${Date.now()}`;
+    const ticketRefId = typeof generateTicketId === 'function' ? generateTicketId(userId) : `TKT-${Date.now()}`;
+    const now = new Date();
+
     const newRequest = {
       id: stationId,
       userId,
       name,
       address,
-      images,
+      images: Array.isArray(images) ? images : [],
       latitude,
       longitude,
       status: "pending",
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     };
 
-    await DropOffStation.doc(stationId).set(newRequest);
-
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: userId,
-      category: "store",
-      actionType: "STATION_REQUEST_RECEIVED",
-      title: "Drop-off Station Registeration Request Received",
-      message:
-        "Your drop-off station request has been received and is under review. Expect a reply within 5 days.",
-      payload: {
-        requestId: stationId,
-        address: newRequest.address,
-      },
-    });
-
-    const ticketRefId = generateTicketId(userId);
     const newTicket = {
       userId,
       ticketRefId,
@@ -3006,29 +3893,41 @@ export const registerDropOffStation = async (req, res) => {
       originalMessage: `User ${userId} requests to register drop-off station ${name} at ${address} with coordinates: ${latitude} ${longitude}.`,
       severity: "high",
       status: "open",
-      createdAt: new Date(),
-      updatedAt: new Date(),
+      createdAt: now,
+      updatedAt: now,
     };
-
-    await SupportTicket.add(newTicket);
-
-    await notifyAdmins(
-      { role: ["super_admin", "moderator"] },
-      {
-        notificationId: generateNotificationId("store"),
-        actionType: "NEW_STATION_REGISTRATION",
-        title: "New Station Request",
-        message: `New drop-off station "${name}" submitted by user ${userId}.`,
-        payload: { ticketRefId, requestId: stationId, name, userId },
-      },
-      true,
-    );
+    await Promise.all([
+      DropOffStation.doc(stationId).set(newRequest),
+      SupportTicket.add(newTicket),
+      typeof createNotification === 'function' ? createNotification({
+        notificationId: typeof generateNotificationId === 'function' ? generateNotificationId("store") : `NOTIF-${Date.now()}`,
+        recipientId: userId,
+        category: "store",
+        actionType: "STATION_REQUEST_RECEIVED",
+        title: "Drop-off Station Registration Request Received",
+        message: "Your drop-off station request has been received and is under review. Expect a reply within 5 days.",
+        payload: {
+          requestId: stationId,
+          address: newRequest.address,
+        },
+      }) : Promise.resolve(),
+      typeof notifyAdmins === 'function' ? notifyAdmins(
+        { role: ["super_admin", "moderator"] },
+        {
+          notificationId: typeof generateNotificationId === 'function' ? generateNotificationId("store") : `NOTIF-ADM-${Date.now()}`,
+          actionType: "NEW_STATION_REGISTRATION",
+          title: "New Station Request",
+          message: `New drop-off station "${name}" submitted by user ${userId}.`,
+          payload: { ticketRefId, requestId: stationId, name, userId },
+        },
+        true,
+      ).catch((err) => console.error("Admin notification failed:", err)) : Promise.resolve(),
+    ]);
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    return res
-      .status(201)
-      .json({ success: true, message: "Request submitted successfully" });
+    return res.status(201).json({ success: true, message: "Request submitted successfully", stationId });
   } catch (error) {
+    console.error("Register Drop-Off Station Error:", error.message);
     logControllerPerformance(
       controllerName,
       action,

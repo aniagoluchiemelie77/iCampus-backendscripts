@@ -21,14 +21,25 @@ import {
   requestIcashPinReset,
   resetIcashPin,
 } from "../controllers/userActionsController.js";
+import { idempotencyMiddleware } from "../middleware/auth.js";
 
 const router = express.Router();
 
 router.get("/my-transactions", protect, fetchUserTransactionHistory);
-router.post("/verify-icash-pin", protect, verifyIcashPin);
-router.post("/setup-icash-pin", protect, icashPinSetup);
-router.post("/request-pin-reset", protect, requestIcashPinReset);
-router.post("/reset-icash-pin", protect, resetIcashPin);
+router.post(
+  "/verify-icash-pin",
+  protect,
+  idempotencyMiddleware,
+  verifyIcashPin,
+);
+router.post("/setup-icash-pin", protect, idempotencyMiddleware, icashPinSetup);
+router.post(
+  "/request-pin-reset",
+  protect,
+  idempotencyMiddleware,
+  requestIcashPinReset,
+);
+router.post("/reset-icash-pin", protect, idempotencyMiddleware, resetIcashPin);
 router.get("/payment-methods", protect, getSavedMethods);
 router.get("/transactions/initialize-buy", protect, initializeBuy);
 router.get("/transactions/initialize-withdraw", protect, initializeWithdraw);

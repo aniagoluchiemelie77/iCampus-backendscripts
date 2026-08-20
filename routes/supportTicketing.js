@@ -5,14 +5,16 @@ import {
   adminUpdateTicketStatus,
 } from "../controllers/ticketingController.js";
 import { fetchActiveTickets } from "../controllers/fetchActions.js";
+import { idempotencyMiddleware } from "../middleware/auth.js";
 
 const router = express.Router();
 
-router.post("/create-ticket", protect, createTicket);
+router.post("/create-ticket", protect, idempotencyMiddleware, createTicket);
 router.patch(
   "/:ticketRefId/status",
   protect,
   verifyAdmin,
+  idempotencyMiddleware,
   adminUpdateTicketStatus,
 );
 router.get("/fetch-all", protect, verifyAdmin, fetchActiveTickets);

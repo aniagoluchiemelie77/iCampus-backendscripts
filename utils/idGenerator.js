@@ -185,27 +185,6 @@ export function userAccountDetailsId(length = 10) {
   }
   return result;
 }
-export const generateUniqueCardNumber = async () => {
-  let isUnique = false;
-  let cardNumber = "";
-
-  while (!isUnique) {
-    const digits = Math.floor(
-      Math.random() * 900000000000000 + 100000000000000,
-    ).toString();
-    const formatted = `7${digits.match(/.{1,4}/g).join(" ")}`;
-
-    const querySnapshot = await ITag.where("cardNumber", "==", formatted)
-      .limit(1)
-      .get();
-    if (querySnapshot.empty) {
-      cardNumber = formatted;
-      isUnique = true;
-    }
-  }
-
-  return cardNumber;
-};
 export const generateUserUID = () => {
   const randomBytes = crypto.randomBytes(12).toString("hex");
   return `iC-u-${randomBytes}`;
@@ -222,7 +201,6 @@ export const generateCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
 export const generateTokens = async (user) => {
-  console.log("Token generation being called.");
   const accessToken = jwt.sign(
     { id: user.uid, email: user.email },
     process.env.JWT_SECRET,
@@ -234,19 +212,16 @@ export const generateTokens = async (user) => {
     process.env.REFRESH_TOKEN_SECRET,
     { expiresIn: "30d" },
   );
-  console.log("Step 2, post jwt token generation.");
+
   const currentTokens = user.refreshTokens || [];
   currentTokens.push(refreshToken);
-
   if (currentTokens.length > 5) {
     currentTokens.shift();
   }
-  console.log("Step 3");
   await User.doc(user.uid).update({
     refreshTokens: currentTokens,
     updatedAt: new Date(),
   });
-  console.log("Step 4, post jwt token generation and saving.");
 
   return { accessToken, refreshToken };
 };
@@ -261,23 +236,7 @@ const generateReferralCode = (name, length = 7) => {
   }
   return `${prefix}${randomPart}`;
 };
-export const generateUniqueReferralCode = async (user) => {
-  let code;
-  let exists = true;
-  const nameToUse =
-    user.userType === "enterprise" ? user.organizationName : user.firstName;
 
-  while (exists) {
-    code = generateReferralCode(nameToUse);
-    const userWithCode = await User.findOne({ referralCode: code });
-
-    if (!userWithCode) {
-      exists = false;
-    }
-  }
-
-  return code;
-};
 export function generateSubmissionId(assessmentId, studentId = "STUD") {
   const cleanAsm = (assessmentId || "ASM-XXXX").trim().toUpperCase();
   const cleanStudent = (studentId || "STUD").trim().toUpperCase();
@@ -347,6 +306,44 @@ export function generateItagUsername(firstName, digitCount = 4) {
 
   return `${cleanName}${randomSuffix}`;
 }
+export const generateUniqueReferralCode = async (user) => {
+  let code;
+  let exists = true;
+  const nameToUse =
+    user.userType === "enterprise" ? user.organizationName : user.firstName;
+
+  while (exists) {
+    code = generateReferralCode(nameToUse);
+    const userWithCode = await User.findOne({ referralCode: code });
+
+    if (!userWithCode) {
+      exists = false;
+    }
+  }
+
+  return code;
+};
+export const generateUniqueCardNumber = async () => {
+  let isUnique = false;
+  let cardNumber = "";
+
+  while (!isUnique) {
+    const digits = Math.floor(
+      Math.random() * 900000000000000 + 100000000000000,
+    ).toString();
+    const formatted = `7${digits.match(/.{1,4}/g).join(" ")}`;
+
+    const querySnapshot = await ITag.where("cardNumber", "==", formatted)
+      .limit(1)
+      .get();
+    if (querySnapshot.empty) {
+      cardNumber = formatted;
+      isUnique = true;
+    }
+  }
+
+  return cardNumber;
+};
 export function generateAdId(advertiserName) {
   const cleanName = advertiserName
     ? advertiserName

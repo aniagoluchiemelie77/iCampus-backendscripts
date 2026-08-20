@@ -4,6 +4,8 @@ import { User, Admin } from "../tableDeclarations.js";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
 import path from "path";
+import { db } from "../config/firebaseAdmin.js";
+const IDEMPOTENCY_COLLECTION = "idempotency_keys";
 
 export const protect = async (req, res, next) => {
   let token;
@@ -100,5 +102,60 @@ export const verifyAdmin = async (req, res, next) => {
   } catch (err) {
     console.error("Admin verification error:", err);
     res.status(500).json({ error: "Server error during authorization" });
+  }
+};
+
+export const idempotencyMiddleware = async (req, res, next) => {
+  const idempotencyKey =
+    req.headers["idempotency-key"] || req.headers["X-Idempotency-Key"];
+  if (!idempotencyKey) {
+    return next();
+  }
+  const keyDocRef = db.collection(IDEMPOTENCY_COLLECTION).doc(idempotencyKey);
+
+  try {
+    const doc = await keyDocRef.get();
+
+    if (doc.exists) {
+      const data = doc.data();
+      if (data.status === "PROCESSING") {
+        return res.status(409).json({
+          error:
+            "A request with this idempotency key is already being processed. Please wait.",
+        });
+      }
+      if (data.status === "COMPLETED") {
+        console.log(`[Idempotency] Cache hit for key: ${idempotencyKey}`);
+        return res.status(data.statusCode).json(data.responseBody);
+      }
+    }
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await keyDocRef.set({
+      status: "PROCESSING",
+      createdAt: new Date(),
+      expiresAt: expiresAt,
+    });
+    const originalJson = res.json.bind(res);
+
+    res.json = async (body) => {
+      const statusCode = res.statusCode;
+      try {
+        await keyDocRef.set({
+          status: "COMPLETED",
+          statusCode: statusCode,
+          responseBody: body,
+          completedAt: new Date(),
+          expiresAt: expiresAt,
+        });
+      } catch (cacheError) {
+        console.error("[Idempotency] Failed to cache response:", cacheError);
+      }
+      return originalJson(body);
+    };
+
+    next();
+  } catch (error) {
+    console.error("[Idempotency Middleware Error]:", error);
+    next();
   }
 };

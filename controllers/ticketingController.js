@@ -14,9 +14,28 @@ export const createTicket = async (req, res) => {
 
   try {
     const { message, category } = req.body;
-    const userId = req.user.uid;
+    const userId = req.user?.uid || req.user?.id;
 
-    const ticketRefId = generateTicketRefId("technical");
+    if (!userId) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+      return res.status(401).json({ error: "Unauthorized user identifier" });
+    }
+
+    if (!message || !category) {
+      return res.status(400).json({ error: "Missing required ticket fields." });
+    }
+
+    const ticketRefId =
+      typeof generateTicketRefId === "function"
+        ? generateTicketRefId("technical")
+        : `TKT-${Date.now()}`;
+    const now = new Date();
 
     const newTicketData = {
       ticketRefId,
@@ -25,28 +44,34 @@ export const createTicket = async (req, res) => {
       originalMessage: message,
       severity: "high",
       category,
-      thread: [{ sender: userId, message, timestamp: new Date() }],
-      createdAt: new Date(),
+      thread: [{ sender: userId, message, timestamp: now }],
+      createdAt: now,
+      updatedAt: now,
     };
-    await SupportTicket.doc(ticketRefId).set(newTicketData);
 
-    await createNotification({
-      recipientId: userId,
-      category: "system",
-      actionType: "SUPPORT_TICKET_RECEIVED",
-      sendEmail: true,
-      recipientEmail: req.user.email,
-      payload: {
-        userName: req.user.name,
-        ticketRefId,
-        date: new Date().toLocaleDateString(),
-        time: new Date().toLocaleTimeString(),
-      },
-    });
+    await Promise.all([
+      SupportTicket.doc(ticketRefId).set(newTicketData),
+      typeof createNotification === "function"
+        ? createNotification({
+            recipientId: userId,
+            category: "system",
+            actionType: "SUPPORT_TICKET_RECEIVED",
+            sendEmail: true,
+            recipientEmail: req.user?.email,
+            payload: {
+              userName: req.user?.name || "User",
+              ticketRefId,
+              date: now.toLocaleDateString(),
+              time: now.toLocaleTimeString(),
+            },
+          }).catch((err) => console.error("Ticket notification error:", err))
+        : Promise.resolve(),
+    ]);
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(201).json(newTicketData);
+    return res.status(201).json(newTicketData);
   } catch (error) {
+    console.error("Create Ticket Error:", error.message);
     logControllerPerformance(
       controllerName,
       action,
@@ -54,10 +79,14 @@ export const createTicket = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ error: "Failed to create ticket" });
+    return res.status(500).json({ error: "Failed to create ticket" });
   }
 };
 export const adminUpdateTicketStatus = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "adminUpdateTicketStatusController";
+  const action = "adminUpdateTicketStatus";
+
   try {
     const { ticketRefId } = req.params;
     const { status } = req.body;
@@ -84,66 +113,98 @@ export const adminUpdateTicketStatus = async (req, res) => {
 
     const ticketDocRef = ticketSnapshot.docs[0].ref;
     const ticketData = ticketSnapshot.docs[0].data();
+    const now = new Date();
     const updatePayload = {
       status,
-      updatedAt: new Date(),
+      updatedAt: now,
     };
-    await ticketDocRef.set(updatePayload, { merge: true });
+
+    const userPromise = ticketData.userId
+      ? User.doc(ticketData.userId).get()
+      : Promise.resolve(null);
+
+    await Promise.all([
+      ticketDocRef.set(updatePayload, { merge: true }),
+      userPromise,
+    ]);
 
     const updatedTicket = { ...ticketData, ...updatePayload };
 
     if (status === "resolved") {
-      let userData = null;
-      if (ticketData.userId) {
-        const userDoc = await User.doc(ticketData.userId).get();
-        if (userDoc.exists) {
-          userData = userDoc.data();
-        }
-      }
+      const userDoc = await userPromise;
+      const userData = userDoc && userDoc.exists ? userDoc.data() : null;
 
-      const now = new Date();
       const dateString = now.toLocaleDateString();
       const timeString = now.toLocaleTimeString();
       await Promise.all([
-        createNotification({
-          notificationId: generateNotificationId("system"),
-          recipientId: ticketData.userId,
-          recipientEmail: userData?.email,
-          category: "system",
-          actionType: "SUPPORT_TICKET_RESOLVED",
-          sendEmail: true,
-          payload: {
-            userName: userData?.firstname || "User",
-            ticketRefId: ticketData.ticketRefId,
-            date: dateString,
-            time: timeString,
-          },
-        }),
-        notifyAdmins(
-          { role: ["super_admin", "support"] },
-          {
-            notificationId: generateNotificationId("admin_notification"),
-            actionType: "SUPPORT_TICKET_RESOLVED_ADMIN",
-            sendEmailFlag: false,
-            senderId: req.admin.uid,
-            payload: {
-              ticketRefId: ticketData.ticketRefId,
-              userId: ticketData.userId,
-              adminId: req.admin.uid,
-            },
-          },
-          false,
-        ),
+        typeof createNotification === "function"
+          ? createNotification({
+              notificationId:
+                typeof generateNotificationId === "function"
+                  ? generateNotificationId("system")
+                  : `NOTIF-${Date.now()}`,
+              recipientId: ticketData.userId,
+              recipientEmail: userData?.email,
+              category: "system",
+              actionType: "SUPPORT_TICKET_RESOLVED",
+              sendEmail: true,
+              payload: {
+                userName: userData?.firstname || "User",
+                ticketRefId: ticketData.ticketRefId,
+                date: dateString,
+                time: timeString,
+              },
+            }).catch((err) =>
+              console.error("Ticket resolution notification error:", err),
+            )
+          : Promise.resolve(),
+
+        typeof notifyAdmins === "function"
+          ? notifyAdmins(
+              { role: ["super_admin", "support"] },
+              {
+                notificationId:
+                  typeof generateNotificationId === "function"
+                    ? generateNotificationId("admin_notification")
+                    : `NOTIF-ADM-${Date.now()}`,
+                actionType: "SUPPORT_TICKET_RESOLVED_ADMIN",
+                sendEmailFlag: false,
+                senderId: req.admin?.uid || req.admin?.id,
+                payload: {
+                  ticketRefId: ticketData.ticketRefId,
+                  userId: ticketData.userId,
+                  adminId: req.admin?.uid || req.admin?.id,
+                },
+              },
+              false,
+            ).catch((err) =>
+              console.error("Admin ticket notification error:", err),
+            )
+          : Promise.resolve(),
       ]);
     }
-    res.status(200).json({
+
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    }
+
+    return res.status(200).json({
       success: true,
       message: `Ticket marked as ${status}`,
       ticket: updatedTicket,
     });
   } catch (error) {
     console.error("Error updating ticket status:", error);
-    res
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    return res
       .status(500)
       .json({ message: "Server error updating ticket", success: false });
   }

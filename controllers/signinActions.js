@@ -83,8 +83,29 @@ export const signUp = async (req, res) => {
     } else {
       existingUserQuery = User.where("email", "==", email);
     }
+    const uid = generateUserUID();
+    const itagusername = generateItagUsername(firstname, 5);
 
-    const existingUserSnapshot = await existingUserQuery.limit(1).get();
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+      .split(",")[0]
+      .trim();
+    const geo = geoip.lookup(ip);
+    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+
+    const isVerified =
+      usertype === "student" || usertype === "lecturer" || !!providerId;
+    const iSCardEligible = ["student", "lecturer", "otherUser"].includes(
+      usertype,
+    );
+    const [existingUserSnapshot, hashedPassword, referralCode, newCardNumber] =
+      await Promise.all([
+        existingUserQuery.limit(1).get(),
+        password && password !== "SOCIAL_AUTH"
+          ? bcrypt.hash(password, 10)
+          : Promise.resolve(null),
+        generateUniqueReferralCode(req.body),
+        iSCardEligible ? generateUniqueCardNumber() : Promise.resolve(null),
+      ]);
 
     if (!existingUserSnapshot.empty) {
       logControllerPerformance(
@@ -99,25 +120,6 @@ export const signUp = async (req, res) => {
         .json({ message: "User already exists.", success: false });
     }
 
-    const uid = generateUserUID();
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
-      .split(",")[0]
-      .trim();
-    const geo = geoip.lookup(ip);
-    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
-
-    let hashedPassword = null;
-    if (password && password !== "SOCIAL_AUTH") {
-      hashedPassword = await bcrypt.hash(password, 10);
-    }
-
-    const itagusername = generateItagUsername(firstname, 5);
-    const referralCode = await generateUniqueReferralCode(req.body);
-    const isVerified =
-      usertype === "student" || usertype === "lecturer" || providerId
-        ? true
-        : false;
-
     const newUserObj = {
       uid,
       ...req.body,
@@ -130,27 +132,7 @@ export const signUp = async (req, res) => {
       updatedAt: new Date(),
     };
     delete newUserObj.passwordConfirm;
-    await User.doc(uid).set(newUserObj);
 
-    const iSCardEligible =
-      usertype === "student" ||
-      usertype === "lecturer" ||
-      usertype === "otherUser";
-
-    if (iSCardEligible) {
-      const newCardNumber = await generateUniqueCardNumber();
-      const itagId = `itag_${uid}`;
-
-      const newITagData = {
-        userId: uid,
-        username: itagusername,
-        cardHolderName: `${firstname} ${lastname}`,
-        cardNumber: newCardNumber,
-        tier: "free",
-        createdAt: new Date(),
-      };
-      await ITag.doc(itagId).set(newITagData);
-    }
     const defaultPreferencesData = {
       userId: uid,
       theme: "light",
@@ -163,23 +145,11 @@ export const signUp = async (req, res) => {
         profile: true,
         security: true,
       },
-      channels: {
-        push: true,
-        email: true,
-        socket: true,
-      },
+      channels: { push: true, email: true, socket: true },
       language: "en",
       quietHours: { enabled: false },
       updatedAt: new Date(),
     };
-    await userPrefs.doc(uid).set(defaultPreferencesData);
-
-    const { accessToken, refreshToken } = await generateTokens({
-      uid,
-      usertype,
-      email,
-      ...newUserObj,
-    });
 
     const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const initialSession = {
@@ -189,38 +159,58 @@ export const signUp = async (req, res) => {
       deviceName,
       ipAddress: ip,
       location,
-      refreshToken,
       lastUsed: new Date(),
       createdAt: new Date(),
     };
 
-    await UserSessions.doc(sessionId).set(initialSession);
-    const safeUser = { ...newUserObj };
-    delete safeUser.password;
-    delete safeUser.iCashPin;
+    const dbWrites = [
+      User.doc(uid).set(newUserObj),
+      userPrefs.doc(uid).set(defaultPreferencesData),
+      UserSessions.doc(sessionId).set(initialSession),
+    ];
 
-    safeUser.theme = defaultPreferencesData.theme;
-    const sessionsSnapshot = await UserSessions.where(
-      "userId",
-      "==",
-      uid,
-    ).get();
-    safeUser.sessions = sessionsSnapshot.docs.map((doc) => doc.data());
-    await createNotification({
+    if (iSCardEligible && newCardNumber) {
+      const itagId = `itag_${uid}`;
+      const newITagData = {
+        userId: uid,
+        username: itagusername,
+        cardHolderName: `${firstname} ${lastname}`,
+        cardNumber: newCardNumber,
+        tier: "free",
+        createdAt: new Date(),
+      };
+      dbWrites.push(ITag.doc(itagId).set(newITagData));
+    }
+    const [_, __, ___, ____, tokens] = await Promise.all([
+      ...dbWrites,
+      generateTokens({ uid, usertype, email, ...newUserObj }),
+    ]);
+
+    const { accessToken, refreshToken } = tokens;
+    UserSessions.doc(sessionId)
+      .update({ refreshToken })
+      .catch((err) => console.error("Session token update error:", err));
+    createNotification({
       notificationId: generateNotificationId("signup"),
       recipientId: uid,
       category: "signup",
       actionType: "WELCOME_USER",
       title: "Welcome to iCampus!",
       message: `Hi ${firstname}, we're excited to have you here!`,
-      payload: {
-        userName: firstname,
-      },
+      payload: { userName: firstname },
       recipientEmail: email,
       sendEmail: true,
       sendPush: true,
       saveToDb: true,
-    });
+    }).catch((err) =>
+      console.error("Background welcome notification error:", err),
+    );
+
+    const safeUser = { ...newUserObj };
+    delete safeUser.password;
+    delete safeUser.iCashPin;
+    safeUser.theme = defaultPreferencesData.theme;
+    safeUser.sessions = [initialSession];
 
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(201).json({
@@ -239,7 +229,6 @@ export const signUp = async (req, res) => {
       "error",
       error.message,
     );
-
     return res.status(500).json({
       message: error.message || "Failed to save user",
       success: false,
@@ -263,154 +252,100 @@ export const Login = async (req, res) => {
   if (!identifier) {
     return res.status(400).json({ error: "Identifier is required" });
   }
-  console.log("Request Body received:", req.body);
 
   try {
-    console.log("Attempting to query Firestore for email:", identifier);
     const userSnapshot = await User.where("email", "==", identifier)
       .limit(1)
       .get();
-    console.log("Firestore query completed. Found docs:", userSnapshot.size);
-
     if (userSnapshot.empty) {
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        "Account not found. Please sign up first.",
+        "Account not found.",
       );
-      console.log("User not found in DB");
       return res
         .status(404)
         .json({ error: "Account not found. Please sign up first." });
     }
-    console.log("Step 1");
-
-    const userDocRef = userSnapshot.docs[0].ref;
-    const user = {
-      uid: userSnapshot.docs[0].uid,
-      ...userSnapshot.docs[0].data(),
-    };
-    console.log("Step 2");
+    const userDoc = userSnapshot.docs[0];
+    const user = { uid: userDoc.id, ...userDoc.data() };
     if (socialProvider === "google") {
       const isValid = await verifyGoogleToken(idToken, identifier);
-      if (!isValid) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid Google token",
-        );
+      if (!isValid)
         return res.status(401).json({ error: "Invalid Google token" });
-      }
     } else if (socialProvider === "github") {
       const isValid = await verifyGithubToken(idToken, identifier);
-      if (!isValid) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid GitHub token",
-        );
+      if (!isValid)
         return res.status(401).json({ error: "Invalid GitHub token" });
-      }
     } else {
-      console.log("Step 3: Matching Password");
-      console.log("Password provided length:", password ? password.length : 0);
-      console.log("Password hash in DB exists:", !!user.password);
       let isMatch = false;
       if (user.password && user.password.startsWith("$2")) {
         isMatch = await bcrypt.compare(password, user.password);
       } else {
-        // Fallback for plain text passwords in the database
         isMatch = password === user.password;
       }
-      console.log("Step 4: Password match result (true/false):", isMatch);
-
       if (!isMatch) {
-        console.log("Password mismatch detected!");
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid password",
-        );
         return res.status(401).json({ error: "Invalid password" });
       }
-      console.log("Password matched successfully! Moving to Step 5...");
     }
-    console.log("Step 5: Post password matching");
+
     if (socialProvider && user.providerId !== socialProvider) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
-      );
       return res.status(400).json({
         error: `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
       });
     }
-    console.log("Step 6: Token generation");
-    const timeoutPromise = new Promise((_, reject) =>
-      setTimeout(
-        () =>
-          reject(new Error("TOKEN_GENERATION_TIMEOUT: Function took too long")),
-        4000,
-      ),
-    );
 
-    const { accessToken, refreshToken } = await generateTokens(user);
-    console.log("Step 7: Tokens generated successfully!");
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
       .split(",")[0]
       .trim();
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
-    console.log("Pre Login Action");
 
-    // 3. Handle Separated Session Logic
     const sessionData = {
       userId: user.uid,
       deviceId,
       deviceName,
       ipAddress: ip,
       location,
-      refreshToken,
       lastUsed: new Date(),
       updatedAt: new Date(),
     };
-    console.log("Creating sessions");
-    const existingSessionQuery = await UserSessions.where(
-      "userId",
-      "==",
-      user.uid,
-    )
+    const sessionQueryPromise = UserSessions.where("userId", "==", user.uid)
       .where("deviceId", "==", deviceId)
       .limit(1)
       .get();
 
+    const allSessionsQueryPromise = UserSessions.where(
+      "userId",
+      "==",
+      user.uid,
+    ).get();
+    const prefsPromise = userPrefs.doc(user.uid).get();
+    const tokensPromise = generateTokens(user);
+
+    const [existingSessionQuery, allSessionsSnapshot, preferencesDoc, tokens] =
+      await Promise.all([
+        sessionQueryPromise,
+        allSessionsQueryPromise,
+        prefsPromise,
+        tokensPromise,
+      ]);
+
+    const { accessToken, refreshToken } = tokens;
+    sessionData.refreshToken = refreshToken;
+    const sessionOperations = [];
     if (!existingSessionQuery.empty) {
       const sessionDocRef = existingSessionQuery.docs[0].ref;
-      await sessionDocRef.set(sessionData, { merge: true });
+      sessionOperations.push(sessionDocRef.set(sessionData, { merge: true }));
     } else {
-      console.log("New Location");
       const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       sessionData.sessionId = sessionId;
       sessionData.createdAt = new Date();
-
-      await UserSessions.doc(sessionId).set(sessionData);
-
+      sessionOperations.push(UserSessions.doc(sessionId).set(sessionData));
       const now = new Date();
-      const formattedDate = now.toLocaleDateString();
-      const formattedTime = now.toLocaleTimeString();
-
-      await createNotification({
+      createNotification({
         notificationId: generateNotificationId("security"),
         recipientId: user.uid,
         recipientEmail: user.email,
@@ -421,31 +356,28 @@ export const Login = async (req, res) => {
         payload: {
           userName: user.firstname || user.firstName,
           ipAddress: ip,
-          location: location,
-          date: formattedDate,
-          time: formattedTime,
+          location,
+          date: now.toLocaleDateString(),
+          time: now.toLocaleTimeString(),
           userId: user.uid,
         },
         message: `A login was detected from ${ip} in ${location}.`,
         sendEmail: true,
         saveToDb: true,
-      });
-
-      await addFlag(user.uid, "UNRECOGNIZED_LOCATION");
+      }).catch((err) => console.error("Background notification error:", err));
+      addFlag(user.uid, "UNRECOGNIZED_LOCATION").catch((err) =>
+        console.error("Background flag error:", err),
+      );
     }
 
-    await verifyAndNotifyLogin(user, req, "USER_LOGIN_AUDIT");
-    const preferencesDoc = await userPrefs.doc(user.uid).get();
-    const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
+    await Promise.all(sessionOperations);
+    verifyAndNotifyLogin(user, req, "USER_LOGIN_AUDIT").catch((err) =>
+      console.error("Audit error:", err),
+    );
 
-    const allSessionsSnapshot = await UserSessions.where(
-      "userId",
-      "==",
-      user.uid,
-    ).get();
+    const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
     const activeSessions = allSessionsSnapshot.docs.map((doc) => doc.data());
 
-    // 5. Construct Safe User Response Payload
     const safeUser = { ...user };
     delete safeUser.password;
     delete safeUser.iCashPin;
@@ -455,7 +387,7 @@ export const Login = async (req, res) => {
     safeUser.sessions = activeSessions;
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       message: "Login successful",
       user: safeUser,
       accessToken,
@@ -470,11 +402,12 @@ export const Login = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ error: error.message || "Login error" });
+    return res.status(500).json({ error: error.message || "Login error" });
   }
 };
 export const AdminLogin = async (req, res) => {
-  const { identifier, password, deviceId, deviceName } = req.body;
+  const credentials = req.body.credentials || req.body;
+  const { identifier, password, deviceId, deviceName } = credentials;
 
   try {
     const adminSnapshot = await Admin.where("email", "==", identifier)
@@ -485,17 +418,17 @@ export const AdminLogin = async (req, res) => {
       return res.status(404).json({ error: "Admin credentials invalid." });
     }
 
-    const adminDocRef = adminSnapshot.docs[0].ref;
+    const adminDoc = adminSnapshot.docs[0];
+    const adminDocRef = adminDoc.ref;
     const admin = {
-      id: adminSnapshot.docs[0].id,
-      ...adminSnapshot.docs[0].data(),
+      id: adminDoc.id,
+      ...adminDoc.data(),
     };
     const isMatch = await bcrypt.compare(password, admin.password || "");
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
 
-    const { accessToken, refreshToken } = await generateTokens(admin);
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
       .split(",")[0]
       .trim();
@@ -510,50 +443,57 @@ export const AdminLogin = async (req, res) => {
       deviceName,
       ipAddress: ip,
       location,
-      refreshToken,
       lastUsed: new Date(),
       updatedAt: new Date(),
     };
-    const existingSessionQuery = await UserSessions.where(
-      "userId",
-      "==",
-      adminUid,
-    )
+    const sessionQueryPromise = UserSessions.where("userId", "==", adminUid)
       .where("deviceId", "==", deviceId)
       .limit(1)
       .get();
 
-    if (!existingSessionQuery.empty) {
-      const sessionDocRef = existingSessionQuery.docs[0].ref;
-      await sessionDocRef.set(sessionData, { merge: true });
-    } else {
-      const sessionId = `admsess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      sessionData.sessionId = sessionId;
-      sessionData.createdAt = new Date();
-
-      await UserSessions.doc(sessionId).set(sessionData);
-    }
-    await adminDocRef.set(
-      {
-        lastAccessed: new Date(),
-        updatedAt: new Date(),
-      },
-      { merge: true },
-    );
-
-    await verifyAndNotifyLogin(admin, req, "ADMIN_LOGIN_AUDIT");
-
-    const allSessionsSnapshot = await UserSessions.where(
+    const allSessionsQueryPromise = UserSessions.where(
       "userId",
       "==",
       adminUid,
     ).get();
+    const tokensPromise = generateTokens(admin);
+    const adminUpdatePromise = adminDocRef.set(
+      { lastAccessed: new Date(), updatedAt: new Date() },
+      { merge: true },
+    );
+
+    const [existingSessionQuery, allSessionsSnapshot, tokens, _] =
+      await Promise.all([
+        sessionQueryPromise,
+        allSessionsQueryPromise,
+        tokensPromise,
+        adminUpdatePromise,
+      ]);
+
+    const { accessToken, refreshToken } = tokens;
+    sessionData.refreshToken = refreshToken;
+    const sessionOperations = [];
+    if (!existingSessionQuery.empty) {
+      const sessionDocRef = existingSessionQuery.docs[0].ref;
+      sessionOperations.push(sessionDocRef.set(sessionData, { merge: true }));
+    } else {
+      const sessionId = `admsess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      sessionData.sessionId = sessionId;
+      sessionData.createdAt = new Date();
+      sessionOperations.push(UserSessions.doc(sessionId).set(sessionData));
+    }
+
+    await Promise.all(sessionOperations);
+    verifyAndNotifyLogin(admin, req, "ADMIN_LOGIN_AUDIT").catch((err) =>
+      console.error("Admin audit error:", err),
+    );
+
     const activeSessions = allSessionsSnapshot.docs.map((doc) => doc.data());
     const safeAdmin = { ...admin };
     delete safeAdmin.password;
     safeAdmin.sessions = activeSessions;
 
-    res.status(200).json({
+    return res.status(200).json({
       message: "Admin login successful",
       admin: safeAdmin,
       accessToken,
@@ -561,41 +501,56 @@ export const AdminLogin = async (req, res) => {
     });
   } catch (error) {
     console.error("Admin Login Error:", error);
-    res.status(500).json({ error: "Internal server error during login" });
+    return res
+      .status(500)
+      .json({ error: "Internal server error during login" });
   }
 };
 export const refreshToken = async (req, res) => {
   const { refreshToken } = req.body;
-  if (!refreshToken)
+  if (!refreshToken) {
     return res.status(401).json({ message: "Refresh Token Required" });
+  }
 
   try {
-    const sessionSnapshot = await UserSessions.where(
-      "refreshToken",
-      "==",
-      refreshToken,
-    )
-      .limit(1)
-      .get();
-
-    if (sessionSnapshot.empty)
-      return res.status(403).json({ message: "Invalid Refresh Token" });
-
-    const sessionData = sessionSnapshot.docs[0].data();
-    const userId = sessionData.userId;
-
-    const userDoc = await User.doc(userId).get();
-    if (!userDoc.exists)
-      return res
-        .status(403)
-        .json({ message: "User not found for this session" });
-
-    const user = userDoc.data();
     jwt.verify(
       refreshToken,
       process.env.REFRESH_TOKEN_SECRET,
-      (err, decoded) => {
-        if (err) return res.status(403).json({ message: "Token Expired" });
+      async (err, decoded) => {
+        if (err) {
+          return res.status(403).json({ message: "Token Expired or Invalid" });
+        }
+        const sessionSnapshotPromise = UserSessions.where(
+          "refreshToken",
+          "==",
+          refreshToken,
+        )
+          .limit(1)
+          .get();
+
+        const sessionSnapshot = await sessionSnapshotPromise;
+        if (sessionSnapshot.empty) {
+          return res
+            .status(403)
+            .json({ message: "Invalid Refresh Token Session" });
+        }
+
+        const sessionData = sessionSnapshot.docs[0].data();
+        const userId = sessionData.userId;
+
+        const userDoc = await User.doc(userId).get();
+        if (!userDoc.exists) {
+          return res
+            .status(403)
+            .json({ message: "User not found for this session" });
+        }
+
+        const user = userDoc.data();
+        sessionSnapshot.docs[0].ref
+          .update({ lastUsed: new Date() })
+          .catch((err) =>
+            console.error("Session timestamp update error:", err),
+          );
 
         const newAccessToken = jwt.sign(
           { id: user.uid || userId, email: user.email },
@@ -603,12 +558,12 @@ export const refreshToken = async (req, res) => {
           { expiresIn: "15m" },
         );
 
-        res.json({ accessToken: newAccessToken });
+        return res.json({ accessToken: newAccessToken });
       },
     );
   } catch (e) {
     console.error("Refresh Token Error:", e.message);
-    res.status(500).json({ message: "Server Error" });
+    return res.status(500).json({ message: "Server Error" });
   }
 };
 export const fetchInstitutionByCountry = async (req, res) => {
@@ -630,9 +585,8 @@ export const fetchInstitutionByCountry = async (req, res) => {
       return res.status(400).json({ message: "Country is required" });
     }
 
-    const normalizedCountry = country.trim();
+    const normalizedCountry = country.trim().toLowerCase();
     const cacheKey = `institutions:${normalizedCountry}`;
-
     try {
       const cached = await client.get(cacheKey);
       if (cached) {
@@ -640,19 +594,15 @@ export const fetchInstitutionByCountry = async (req, res) => {
         return res.json({ cached: true, ...JSON.parse(cached) });
       }
     } catch (err) {
-      console.error("Redis Cache Error:", err.message);
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
+      console.warn(
+        "Redis Cache Warning (Proceeding without cache):",
         err.message,
       );
     }
-
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
     const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=universities+in+${encodeURIComponent(normalizedCountry)}&key=${apiKey}`;
-    const response = await axios.get(url);
+
+    const response = await axios.get(url, { timeout: 5000 });
 
     if (
       response.data.status !== "OK" &&
@@ -668,13 +618,13 @@ export const fetchInstitutionByCountry = async (req, res) => {
       throw new Error(`Google API Error: ${response.data.status}`);
     }
 
-    const institutions = response.data.results.map((item) => ({
+    const institutions = (response.data.results || []).map((item) => ({
       name: item.name,
       address: item.formatted_address,
       place_id: item.place_id,
       rating: item.rating || 0,
       user_ratings_total: item.user_ratings_total || 0,
-      location: item.geometry.location,
+      location: item.geometry?.location || null,
       photos: item.photos ? item.photos[0].photo_reference : null,
       types: item.types,
     }));
@@ -684,8 +634,12 @@ export const fetchInstitutionByCountry = async (req, res) => {
       source: "google_places",
       institutions,
     };
+    client
+      .setEx(cacheKey, 86400, JSON.stringify(responsePayload))
+      .catch((cacheErr) =>
+        console.error("Redis setEx error:", cacheErr.message),
+      );
 
-    await client.setEx(cacheKey, 3600, JSON.stringify(responsePayload));
     logControllerPerformance(controllerName, action, startTime, "success");
     return res.json(responsePayload);
   } catch (error) {
@@ -721,18 +675,41 @@ export const validateInstitution = async (req, res) => {
 
     const trimmedSchoolName = schoolName.trim();
     const targetNormalized = trimmedSchoolName.toLowerCase();
-    const snapshot = await OperationalInstitutions.get();
+    const cacheKey = `institution:validate:${targetNormalized}`;
+    try {
+      const cached = await client.get(cacheKey);
+      if (cached) {
+        logControllerPerformance(controllerName, action, startTime, "success");
+        return res.status(200).json({ cached: true, ...JSON.parse(cached) });
+      }
+    } catch (cacheErr) {
+      console.warn("Redis Cache Warning:", cacheErr.message);
+    }
+    const institutionSnapshot = await OperationalInstitutions.where(
+      "schoolName",
+      "==",
+      trimmedSchoolName,
+    )
+      .limit(1)
+      .get();
 
     let institution = null;
-    snapshot.docs.forEach((doc) => {
-      const data = doc.data();
-      if (
-        data.schoolName &&
-        data.schoolName.trim().toLowerCase() === targetNormalized
-      ) {
-        institution = { id: doc.id, ...data };
-      }
-    });
+
+    if (!institutionSnapshot.empty) {
+      const doc = institutionSnapshot.docs[0];
+      institution = { id: doc.id, ...doc.data() };
+    } else {
+      const allSnapshot = await OperationalInstitutions.get();
+      allSnapshot.docs.forEach((doc) => {
+        const data = doc.data();
+        if (
+          data.schoolName &&
+          data.schoolName.trim().toLowerCase() === targetNormalized
+        ) {
+          institution = { id: doc.id, ...data };
+        }
+      });
+    }
 
     if (!institution) {
       logControllerPerformance(
@@ -740,7 +717,7 @@ export const validateInstitution = async (req, res) => {
         action,
         startTime,
         "error",
-        "iCampus not yet operational in this institution. Student/Lecturer verification is unavailable.",
+        "iCampus not yet operational in this institution.",
       );
       return res.status(404).json({
         verified: false,
@@ -749,15 +726,21 @@ export const validateInstitution = async (req, res) => {
       });
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    const responsePayload = {
       message: "Institution verified",
       schoolName: institution.schoolName,
       schoolCode: institution.schoolCode,
       verified: true,
-      logo: institution.logo,
-    });
+      logo: institution.logo || null,
+    };
+    client
+      .setEx(cacheKey, 86400, JSON.stringify(responsePayload))
+      .catch((err) => console.error("Redis setEx error:", err.message));
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+    return res.status(200).json(responsePayload);
   } catch (error) {
+    console.error("Institution Validation Error:", error.message);
     logControllerPerformance(
       controllerName,
       action,
@@ -765,7 +748,7 @@ export const validateInstitution = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Server error" });
+    return res.status(500).json({ message: "Server error" });
   }
 };
 export const validateEmail = async (req, res) => {
@@ -785,37 +768,30 @@ export const validateEmail = async (req, res) => {
       );
       return res.status(400).json({ message: "Email is required" });
     }
-
+    const normalizedEmail = email.trim().toLowerCase();
     const code = Math.floor(100000 + Math.random() * 900000).toString();
     const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-
-    const snapshot = await EmailVerification.where("email", "==", email)
-      .limit(1)
-      .get();
+    const docId = `ver_${crypto.createHash("md5").update(normalizedEmail).digest("hex")}`;
+    const docRef = EmailVerification.doc(docId);
+    const existingDoc = await docRef.get();
 
     const verificationPayload = {
-      email,
+      email: normalizedEmail,
       code: hashedCode,
       expiresAt,
       updatedAt: new Date(),
     };
 
-    if (!snapshot.empty) {
-      // Update existing document
-      const docRef = snapshot.docs[0].ref;
-      await docRef.set(verificationPayload, { merge: true });
-    } else {
-      // Create a new document with an auto-generated or email-hashed ID
-      const docId = `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    if (!existingDoc.exists) {
       verificationPayload.createdAt = new Date();
-      await EmailVerification.doc(docId).set(verificationPayload);
     }
+    await docRef.set(verificationPayload, { merge: true });
 
     const notificationJob = {
       notificationId: generateNotificationId("auth"),
-      recipientEmail: email,
-      category: "security",
+      recipientEmail: normalizedEmail,
+      category: "auth",
       actionType: "EMAIL_VERIFICATION",
       title: "Verify your Email",
       message: `Your verification code is ${code}. It expires in 15 minutes.`,
@@ -824,7 +800,6 @@ export const validateEmail = async (req, res) => {
       sendPush: false,
       saveToDb: false,
     };
-
     await createNotification(notificationJob);
 
     logControllerPerformance(controllerName, action, startTime, "success");
@@ -859,18 +834,19 @@ export const verifyEmailUsingCode = async (req, res) => {
         "error",
         "Email and code are required",
       );
-      return res.status(400).json({ message: "Email and code are required" });
+      return res
+        .status(400)
+        .json({ message: "Email and code are required", verified: false });
     }
 
+    const normalizedEmail = email.trim().toLowerCase();
     const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
     const now = new Date();
+    const docId = `ver_${crypto.createHash("md5").update(normalizedEmail).digest("hex")}`;
+    const docRef = EmailVerification.doc(docId);
+    const docSnapshot = await docRef.get();
 
-    const snapshot = await EmailVerification.where("email", "==", email)
-      .where("code", "==", hashedCode)
-      .limit(1)
-      .get();
-
-    if (snapshot.empty) {
+    if (!docSnapshot.exists) {
       logControllerPerformance(
         controllerName,
         action,
@@ -883,15 +859,28 @@ export const verifyEmailUsingCode = async (req, res) => {
         .json({ message: "No verification request found", verified: false });
     }
 
-    const docRef = snapshot.docs[0].ref;
-    const record = snapshot.docs[0].data();
+    const record = docSnapshot.data();
+    if (record.code !== hashedCode) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid verification code",
+      );
+      return res
+        .status(400)
+        .json({ message: "Invalid verification code", verified: false });
+    }
 
     const expiresAt = record.expiresAt.toDate
       ? record.expiresAt.toDate()
       : new Date(record.expiresAt);
 
     if (expiresAt < now) {
-      await docRef.delete();
+      docRef
+        .delete()
+        .catch((err) => console.error("Error deleting expired token:", err));
 
       logControllerPerformance(
         controllerName,
@@ -910,7 +899,7 @@ export const verifyEmailUsingCode = async (req, res) => {
     return res.status(200).json({
       message: "Email verified successfully",
       verified: true,
-      email,
+      email: normalizedEmail,
     });
   } catch (error) {
     console.error("verifyEmailCode error:", error.message);
@@ -931,7 +920,29 @@ export const forgotPassword = async (req, res) => {
 
   try {
     const { email } = req.body;
-    const userSnapshot = await User.where("email", "==", email).limit(1).get();
+    if (!email) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Email is required",
+      );
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const userQueryPromise = User.where("email", "==", normalizedEmail)
+      .limit(1)
+      .get();
+    const docId = `ver_${crypto.createHash("md5").update(normalizedEmail).digest("hex")}`;
+    const verificationDocRef = EmailVerification.doc(docId);
+    const verificationDocPromise = verificationDocRef.get();
+
+    const [userSnapshot, verificationDocSnapshot] = await Promise.all([
+      userQueryPromise,
+      verificationDocPromise,
+    ]);
     if (userSnapshot.empty) {
       logControllerPerformance(
         controllerName,
@@ -946,16 +957,8 @@ export const forgotPassword = async (req, res) => {
     const userDoc = userSnapshot.docs[0];
     const user = { id: userDoc.id, ...userDoc.data() };
 
-    const existingRecordSnapshot = await EmailVerification.where(
-      "email",
-      "==",
-      email,
-    )
-      .limit(1)
-      .get();
-
-    if (!existingRecordSnapshot.empty) {
-      const existingRecord = existingRecordSnapshot.docs[0].data();
+    if (verificationDocSnapshot.exists) {
+      const existingRecord = verificationDocSnapshot.data();
       const updatedAtValue = existingRecord.updatedAt
         ? existingRecord.updatedAt.toDate
           ? existingRecord.updatedAt.toDate().getTime()
@@ -971,9 +974,9 @@ export const forgotPassword = async (req, res) => {
           "error",
           "Please wait before requesting another code.",
         );
-        return res.status(429).json({
-          message: "Please wait before requesting another code.",
-        });
+        return res
+          .status(429)
+          .json({ message: "Please wait before requesting another code." });
       }
     }
 
@@ -991,24 +994,21 @@ export const forgotPassword = async (req, res) => {
     });
 
     const verificationPayload = {
-      email,
+      email: normalizedEmail,
       code: hashedCode,
       expiresAt,
       updatedAt: new Date(),
     };
 
-    if (!existingRecordSnapshot.empty) {
-      const docRef = existingRecordSnapshot.docs[0].ref;
-      await docRef.set(verificationPayload, { merge: true });
-    } else {
-      const docId = `ver_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    if (!verificationDocSnapshot.exists) {
       verificationPayload.createdAt = new Date();
-      await EmailVerification.doc(docId).set(verificationPayload);
     }
+    await verificationDocRef.set(verificationPayload, { merge: true });
+
     await createNotification({
       notificationId: generateNotificationId("security"),
       recipientId: user.uid || user.id,
-      recipientEmail: email,
+      recipientEmail: normalizedEmail,
       category: "security",
       actionType: "PASSWORD_RESET_CODE",
       title: "Password Reset Code",
@@ -1025,9 +1025,9 @@ export const forgotPassword = async (req, res) => {
     });
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({
+    return res.status(200).json({
       message: "Verification code sent, check your email",
-      email,
+      email: normalizedEmail,
     });
   } catch (error) {
     console.error("Forgot Password Error:", error.message);
@@ -1038,7 +1038,7 @@ export const forgotPassword = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Internal Server Error" });
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const changePassword = async (req, res) => {
@@ -1047,37 +1047,13 @@ export const changePassword = async (req, res) => {
   const action = "changePassword";
   const { email, password, confirmPassword } = req.body;
 
-  const verificationSnapshot = await EmailVerification.where(
-    "email",
-    "==",
-    email,
-  )
-    .limit(1)
-    .get();
-  const record = !verificationSnapshot.empty
-    ? verificationSnapshot.docs[0].data()
-    : null;
-
-  if (!record || !record.verified) {
+  if (!email || !password || !confirmPassword || password !== confirmPassword) {
     logControllerPerformance(
       controllerName,
       action,
       startTime,
       "error",
-      "Email not verified for password reset",
-    );
-    return res
-      .status(403)
-      .json({ message: "Email not verified for password reset" });
-  }
-
-  if (!password || !confirmPassword || password !== confirmPassword) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      "Passwords do not match or are missing",
+      "Invalid inputs or passwords do not match",
     );
     return res
       .status(400)
@@ -1085,13 +1061,37 @@ export const changePassword = async (req, res) => {
   }
 
   try {
-    const rawIp =
-      req.headers["x-forwarded-for"] || req.socket.remoteAddress || "";
-    const ip = rawIp.split(",")[0].trim();
-    const geo = geoip.lookup(ip);
-    const currentCountry = geo ? geo.country : "Unknown";
+    const normalizedEmail = email.trim().toLowerCase();
+    const verificationDocId = `ver_${crypto.createHash("md5").update(normalizedEmail).digest("hex")}`;
+    const verificationDocRef = EmailVerification.doc(verificationDocId);
 
-    const userSnapshot = await User.where("email", "==", email).limit(1).get();
+    const verificationPromise = verificationDocRef.get();
+    const userQueryPromise = User.where("email", "==", normalizedEmail)
+      .limit(1)
+      .get();
+    const hashedPasswordPromise = bcrypt.hash(password, 10);
+
+    const [verificationDoc, userSnapshot, hashedPassword] = await Promise.all([
+      verificationPromise,
+      userQueryPromise,
+      hashedPasswordPromise,
+    ]);
+
+    const record = verificationDoc.exists ? verificationDoc.data() : null;
+
+    if (!record || !record.verified) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Email not verified for password reset",
+      );
+      return res
+        .status(403)
+        .json({ message: "Email not verified for password reset" });
+    }
+
     if (userSnapshot.empty) {
       logControllerPerformance(
         controllerName,
@@ -1103,9 +1103,16 @@ export const changePassword = async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    const userDocRef = userSnapshot.docs[0].ref;
-    const userData = userSnapshot.docs[0].data();
-    const userId = userData.uid || userSnapshot.docs[0].id;
+    const userDoc = userSnapshot.docs[0];
+    const userDocRef = userDoc.ref;
+    const userData = userDoc.data();
+    const userId = userData.uid || userDoc.id;
+    const rawIp =
+      req.headers["x-forwarded-for"] || req.socket.remoteAddress || "";
+    const ip = rawIp.split(",")[0].trim();
+    const geo = geoip.lookup(ip);
+    const currentCountry = geo ? geo.country : "Unknown";
+
     const sessionsSnapshot = await UserSessions.where(
       "userId",
       "==",
@@ -1128,26 +1135,23 @@ export const changePassword = async (req, res) => {
     const isSuspicious =
       lastKnownLocation && !lastKnownLocation.includes(currentCountry);
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const sessionBatch = UserSessions.firestore.batch();
+    sessionsSnapshot.docs.forEach((doc) => {
+      sessionBatch.delete(doc.ref);
+    });
 
-    await userDocRef.set(
-      {
-        password: hashedPassword,
-        updatedAt: new Date(),
-      },
+    const userUpdatePromise = userDocRef.set(
+      { password: hashedPassword, updatedAt: new Date() },
       { merge: true },
     );
+    const deleteVerificationPromise = verificationDocRef.delete();
+    const commitSessionsPromise = sessionBatch.commit();
 
-    const batch = UserSessions.firestore.batch();
-    sessionsSnapshot.docs.forEach((doc) => {
-      batch.delete(doc.ref);
-    });
-    await batch.commit();
-
-    if (!verificationSnapshot.empty) {
-      await verificationSnapshot.docs[0].ref.delete();
-    }
-
+    await Promise.all([
+      userUpdatePromise,
+      deleteVerificationPromise,
+      commitSessionsPromise,
+    ]);
     const now = new Date();
     const formattedDate = now.toLocaleDateString("en-US", {
       month: "short",
@@ -1160,7 +1164,7 @@ export const changePassword = async (req, res) => {
       hour12: true,
     });
 
-    await createNotification({
+    createNotification({
       notificationId: generateNotificationId("security"),
       recipientId: userId,
       recipientEmail: userData.email,
@@ -1180,7 +1184,7 @@ export const changePassword = async (req, res) => {
       sendPush: true,
       sendSocket: true,
       saveToDb: true,
-    });
+    }).catch((err) => console.error("Notification dispatch failed:", err));
 
     notifyAdmins(
       { role: ["super_admin", "support"] },
@@ -1202,7 +1206,7 @@ export const changePassword = async (req, res) => {
     ).catch((err) => console.error("Admin audit failed:", err));
 
     logControllerPerformance(controllerName, action, startTime, "success");
-    res.status(200).json({ message: "Password changed successfully" });
+    return res.status(200).json({ message: "Password changed successfully" });
   } catch (error) {
     console.error("Password change error:", error.message);
     logControllerPerformance(
@@ -1212,7 +1216,7 @@ export const changePassword = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).json({ message: "Internal server error" });
+    return res.status(500).json({ message: "Internal server error" });
   }
 };
 export const verifyStudent = async (req, res) => {
@@ -1220,6 +1224,19 @@ export const verifyStudent = async (req, res) => {
   const controllerName = "verifyStudentController";
   const action = "verifyStudent";
   const { school_id, matriculation_number } = req.body;
+
+  if (!school_id || !matriculation_number) {
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      "Missing school ID or matriculation number",
+    );
+    return res
+      .status(400)
+      .json({ message: "School ID and matriculation number are required" });
+  }
 
   try {
     const schoolConfigSnapshot = await SchoolConfiguration.where(
@@ -1245,32 +1262,38 @@ export const verifyStudent = async (req, res) => {
 
     const schoolConfig = schoolConfigSnapshot.docs[0].data();
 
-    if (!schoolConfig.isOperational) {
+    if (
+      !schoolConfig.isOperational ||
+      !schoolConfig.externalApiConfig?.endpoint
+    ) {
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        "iCampus is not active at this institution.",
+        "iCampus is not active or improperly configured.",
       );
       return res
         .status(400)
         .json({ message: "iCampus is not active at this institution." });
     }
-    const schoolApiResponse = await fetch(
-      schoolConfig.externalApiConfig.endpoint,
-      {
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    let schoolApiResponse;
+    try {
+      schoolApiResponse = await fetch(schoolConfig.externalApiConfig.endpoint, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
           "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
         },
-        body: JSON.stringify({
-          student_id: matriculation_number,
-          role: "student",
-        }),
-      },
-    );
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!schoolApiResponse.ok) {
       logControllerPerformance(
@@ -1288,7 +1311,7 @@ export const verifyStudent = async (req, res) => {
     const schoolStudent = await schoolApiResponse.json();
     logControllerPerformance(controllerName, action, startTime, "success");
 
-    return res.json({
+    return res.status(200).json({
       firstname: schoolStudent.first_name,
       lastname: schoolStudent.last_name,
       department: schoolStudent.faculty_dept,
@@ -1300,16 +1323,21 @@ export const verifyStudent = async (req, res) => {
       isVerified: true,
     });
   } catch (err) {
-    console.error("External institutional verification failed:", err.message);
+    const errorMessage =
+      err.name === "AbortError"
+        ? "External school verification timed out."
+        : err.message;
+    console.error("External institutional verification failed:", errorMessage);
+
     logControllerPerformance(
       controllerName,
       action,
       startTime,
       "error",
-      err.message,
+      errorMessage,
     );
     return res
-      .status(500)
+      .status(err.name === "AbortError" ? 504 : 500)
       .json({ message: "Unable to reach school verification system." });
   }
 };
@@ -1357,7 +1385,10 @@ export const verifyLecturer = async (req, res) => {
 
     const schoolConfig = schoolConfigSnapshot.docs[0].data();
 
-    if (!schoolConfig.isOperational) {
+    if (
+      !schoolConfig.isOperational ||
+      !schoolConfig.externalApiConfig?.endpoint
+    ) {
       logControllerPerformance(
         controllerName,
         action,
@@ -1370,20 +1401,22 @@ export const verifyLecturer = async (req, res) => {
         verified: false,
       });
     }
-    const portalResponse = await fetch(
-      schoolConfig.externalApiConfig.endpoint,
-      {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    let portalResponse;
+    try {
+      portalResponse = await fetch(schoolConfig.externalApiConfig.endpoint, {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
           "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
         },
-        body: JSON.stringify({
-          staff_id: incomingStaffId,
-          role: "lecturer",
-        }),
-      },
-    );
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!portalResponse.ok) {
       logControllerPerformance(
@@ -1395,44 +1428,57 @@ export const verifyLecturer = async (req, res) => {
       );
       return res.status(404).json({
         message: "Instructor credentials not found in school records",
+        verified: false,
       });
     }
+
     const externalLecturer = await portalResponse.json();
-    const lecturerData = {
+    logControllerPerformance(controllerName, action, startTime, "success");
+
+    return res.status(200).json({
       firstname: externalLecturer.first_name,
       lastname: externalLecturer.last_name,
       department: externalLecturer.department,
       staff_id: externalLecturer.staff_id,
       schoolAvatarUrl: externalLecturer.profile_picture_url,
       email: externalLecturer.email,
-    };
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.json({
-      firstname: lecturerData.firstname,
-      lastname: lecturerData.lastname,
-      department: lecturerData.department,
-      staff_id: lecturerData.staff_id,
       isVerified: true,
     });
   } catch (err) {
-    console.error("Lecturer Verification error:", err.message);
+    const errorMessage =
+      err.name === "AbortError"
+        ? "External school verification timed out."
+        : err.message;
+    console.error("Lecturer Verification error:", errorMessage);
+
     logControllerPerformance(
       controllerName,
       action,
       startTime,
       "error",
-      err.message,
+      errorMessage,
     );
     return res
-      .status(500)
+      .status(err.name === "AbortError" ? 504 : 500)
       .json({ message: "Server error during verification", verified: false });
   }
 };
 export const switchToInstitutionAdmin = async (req, res) => {
   try {
-    const userId = req.user.uid || req.user.id;
-    const userSnapshot = await User.where("uid", "==", userId).limit(1).get();
+    const userId = req.user?.uid || req.user?.id;
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Unauthorized user context." });
+    }
+    const userQueryPromise = User.where("uid", "==", userId).limit(1).get();
+    const adminDocRef = Admin.doc(userId);
+    const adminDocPromise = adminDocRef.get();
+
+    const [userSnapshot, adminDocSnapshot] = await Promise.all([
+      userQueryPromise,
+      adminDocPromise,
+    ]);
 
     if (userSnapshot.empty) {
       return res
@@ -1455,14 +1501,11 @@ export const switchToInstitutionAdmin = async (req, res) => {
           "Unauthorized. You do not meet the requirements to switch to an institutional administrator dashboard.",
       });
     }
-
-    let adminSnapshot = await Admin.where("uid", "==", userId).limit(1).get();
-    let adminDocRef;
     let adminData;
+    const adminUpdates = {};
 
-    if (adminSnapshot.empty) {
+    if (!adminDocSnapshot.exists) {
       const dummyPassword = await bcrypt.hash(Math.random().toString(36), 10);
-
       adminData = {
         uid: userId,
         firstname: userData.organizationName || "School",
@@ -1477,38 +1520,39 @@ export const switchToInstitutionAdmin = async (req, res) => {
         lastAccessed: new Date(),
         createdAt: new Date(),
       };
-
-      await Admin.doc(userId).set(adminData);
-      adminDocRef = Admin.doc(userId);
+      await adminDocRef.set(adminData);
       adminData.id = userId;
     } else {
-      adminDocRef = adminSnapshot.docs[0].ref;
       adminData = {
-        id: adminSnapshot.docs[0].id,
-        ...adminSnapshot.docs[0].data(),
+        id: adminDocSnapshot.id,
+        ...adminDocSnapshot.data(),
       };
 
       if (
         adminData.adminType !== "school_administrator" &&
         adminData.adminType !== "super_admin"
       ) {
-        await adminDocRef.set(
-          { adminType: "school_administrator", updatedAt: new Date() },
-          { merge: true },
-        );
-        adminData.adminType = "school_administrator";
+        adminUpdates.adminType = "school_administrator";
       }
     }
 
-    const { accessToken, refreshToken } = await generateTokens(adminData);
+    adminUpdates.lastAccessed = new Date();
+    adminUpdates.updatedAt = new Date();
 
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+    const ip = (
+      req.headers["x-forwarded-for"] ||
+      req.socket.remoteAddress ||
+      ""
+    )
       .split(",")[0]
       .trim();
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
-    const deviceId = req.body.deviceId || "switch_device";
-    const deviceName = req.body.deviceName || "Web/Mobile Switch";
+    const deviceId = req.body?.deviceId || "switch_device";
+    const deviceName = req.body?.deviceName || "Web/Mobile Switch";
+
+    const sessionDocId = `admsess_${userId}_${deviceId}`;
+    const sessionDocRef = UserSessions.doc(sessionDocId);
 
     const sessionData = {
       userId: userId,
@@ -1516,45 +1560,39 @@ export const switchToInstitutionAdmin = async (req, res) => {
       deviceName,
       ipAddress: ip,
       location,
-      refreshToken,
       lastUsed: new Date(),
       updatedAt: new Date(),
     };
 
-    const existingSessionQuery = await UserSessions.where(
-      "userId",
-      "==",
-      userId,
-    )
-      .where("deviceId", "==", deviceId)
-      .limit(1)
-      .get();
+    const sessionCheckPromise = sessionDocRef.get();
+    const tokensPromise = generateTokens({ ...adminData, ...adminUpdates });
 
-    if (!existingSessionQuery.empty) {
-      await existingSessionQuery.docs[0].ref.set(sessionData, { merge: true });
-    } else {
-      const sessionId = `admsess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      sessionData.sessionId = sessionId;
+    const [sessionDoc, tokensResult] = await Promise.all([
+      sessionCheckPromise,
+      tokensPromise,
+    ]);
+
+    const { accessToken, refreshToken } = tokensResult;
+    sessionData.refreshToken = refreshToken;
+
+    if (!sessionDoc.exists) {
       sessionData.createdAt = new Date();
-      await UserSessions.doc(sessionId).set(sessionData);
     }
 
-    await adminDocRef.set(
-      { lastAccessed: new Date(), updatedAt: new Date() },
-      { merge: true },
-    );
+    const sessionWritePromise = sessionDocRef.set(sessionData, { merge: true });
+    const adminWritePromise = adminDocRef.set(adminUpdates, { merge: true });
+    const allSessionsPromise = UserSessions.where("userId", "==", userId).get();
 
-    const allSessionsSnapshot = await UserSessions.where(
-      "userId",
-      "==",
-      userId,
-    ).get();
+    await Promise.all([sessionWritePromise, adminWritePromise]);
+    const allSessionsSnapshot = await allSessionsPromise;
     const activeSessions = allSessionsSnapshot.docs.map((doc) => doc.data());
 
-    const safeAdmin = { ...adminData };
+    const safeAdmin = { ...adminData, ...adminUpdates };
     delete safeAdmin.password;
     safeAdmin.sessions = activeSessions;
-    await verifyAndNotifyLogin(safeAdmin, req, "ADMIN_LOGIN_AUDIT");
+    verifyAndNotifyLogin(safeAdmin, req, "ADMIN_LOGIN_AUDIT").catch((err) =>
+      console.error("Admin login audit notification failed:", err),
+    );
 
     return res.status(200).json({
       success: true,
