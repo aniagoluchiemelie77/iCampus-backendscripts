@@ -7,9 +7,9 @@ export const EXCEPTION_COST_IN_ICASH = 0.5;
 export const EXCEPTION_LECTURER_DIVIDEND_IN_ICASH = 0.4;
 export const USD_EQUIVALENCE_OF_1_ICASH = 0.74;
 export const EXCEPTION_ACCOUNT_LIMITS = Object.freeze({
-  free: 1,
-  pro: 2,
-  premium: 3,
+  free: 2,
+  pro: 3,
+  premium: 4,
 });
 export const DELIVERY_FEES = Object.freeze({
   free: {
