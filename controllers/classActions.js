@@ -34,6 +34,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import axios from "axios";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
+import { setImmediate } from "timers";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
@@ -76,7 +77,21 @@ export const submitLectureException = async (req, res) => {
     const { courseId, lectureId, reason, reasonCategory, courseInfo } =
       req.body;
     const studentId = req.user?.uid || req.user?.id;
-    const userQuery = await User.where("uid", "==", studentId).limit(1).get();
+    const now = new Date();
+
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
+    const [userQuery, lectureQuery, monthlyExceptionsQuery] = await Promise.all(
+      [
+        User.where("uid", "==", studentId).limit(1).get(),
+        Lectures.where("id", "==", lectureId).limit(1).get(),
+        Exceptions.where("studentId", "==", studentId)
+          .where("createdAt", ">=", startOfMonth)
+          .get(),
+      ],
+    );
+
     if (userQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -90,26 +105,12 @@ export const submitLectureException = async (req, res) => {
 
     const userDocRef = userQuery.docs[0].ref;
     const user = userQuery.docs[0].data();
-    const lectureQuery = await Lectures.where("id", "==", lectureId)
-      .limit(1)
-      .get();
+
     let lectureTopic = "Lecture";
     if (!lectureQuery.empty) {
       const lectureData = lectureQuery.docs[0].data();
       lectureTopic = lectureData.topicName || lectureData.title || "Lecture";
     }
-
-    const startOfMonth = new Date();
-    startOfMonth.setDate(1);
-    startOfMonth.setHours(0, 0, 0, 0);
-
-    const monthlyExceptionsQuery = await Exceptions.where(
-      "studentId",
-      "==",
-      studentId,
-    )
-      .where("createdAt", ">=", startOfMonth)
-      .get();
 
     const monthlyCount = monthlyExceptionsQuery.size;
     const userLimit = EXCEPTION_ACCOUNT_LIMITS[user.tier] || 1;
@@ -117,7 +118,6 @@ export const submitLectureException = async (req, res) => {
     let chargedAmount = 0;
 
     const currentBalance = user.iCashBalance ?? user.pointsBalance ?? 0;
-    const now = new Date();
 
     await db.runTransaction(async (t) => {
       if (isPaidRequest) {
@@ -134,6 +134,7 @@ export const submitLectureException = async (req, res) => {
           pointsBalance: newBalance,
           updatedAt: now,
         });
+
         const senderTransactionId = generateTransactionId("payment");
         const txRef = Transactions.doc(senderTransactionId);
         t.set(txRef, {
@@ -183,31 +184,39 @@ export const submitLectureException = async (req, res) => {
       ? `Your exception for ${courseInfo.courseTitle} was received. ${EXCEPTION_COST_IN_ICASH} iCash has been deducted.`
       : `Your free exception for ${courseInfo.courseTitle} was successfully submitted.`;
 
-    await createNotification({
-      notificationId: generateNotificationId("classroom"),
-      recipientId: user.uid,
-      category: "finance",
-      actionType: "EXCEPTION_SUBMITTED",
-      title: "Exception Submitted",
-      message: notificationMessage,
-      saveToDb: true,
-      payload: {
-        exceptionId: generateExceptionId(courseId, lectureId),
-        newBalance: updatedBalance,
-        courseTitle: courseInfo.courseTitle,
-        lectureTitle: lectureTopic,
-      },
-      sendEmail: false,
-      sendPush: true,
-      sendSocket: true,
-    });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(201).json({
       success: true,
       message: "Exception submitted successfully",
       newBalance: updatedBalance,
       charged: chargedAmount > 0,
+    });
+    setImmediate(async () => {
+      try {
+        await createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: user.uid,
+          category: "finance",
+          actionType: "EXCEPTION_SUBMITTED",
+          title: "Exception Submitted",
+          message: notificationMessage,
+          saveToDb: true,
+          payload: {
+            exceptionId: generateExceptionId(courseId, lectureId),
+            newBalance: updatedBalance,
+            courseTitle: courseInfo.courseTitle,
+            lectureTitle: lectureTopic,
+          },
+          sendEmail: false,
+          sendPush: true,
+          sendSocket: true,
+        });
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgError) {
+        console.error(
+          "Background task error in submitLectureException:",
+          bgError,
+        );
+      }
     });
   } catch (error) {
     logControllerPerformance(
@@ -231,9 +240,13 @@ export const checkTestStatus = async (req, res) => {
   try {
     const { assessmentId } = req.params;
     const studentId = req.user?.uid || req.user?.id;
-    const assessmentQuery = await Assessment.where("id", "==", assessmentId)
-      .limit(1)
-      .get();
+    const [assessmentQuery, submissionQuery] = await Promise.all([
+      Assessment.where("id", "==", assessmentId).limit(1).get(),
+      TestSubmission.where("testId", "==", assessmentId)
+        .where("studentId", "==", studentId)
+        .limit(1)
+        .get(),
+    ]);
 
     if (assessmentQuery.empty) {
       logControllerPerformance(
@@ -248,18 +261,12 @@ export const checkTestStatus = async (req, res) => {
 
     const testDoc = assessmentQuery.docs[0];
     const test = { id: testDoc.id, ...testDoc.data() };
-    const submissionQuery = await TestSubmission.where(
-      "testId",
-      "==",
-      assessmentId,
-    )
-      .where("studentId", "==", studentId)
-      .limit(1)
-      .get();
-
     const hasSubmitted = !submissionQuery.empty;
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
     return res.status(200).json({
       hasSubmitted: hasSubmitted,
       test: test,
@@ -286,6 +293,7 @@ export const manageExceptions = async (req, res) => {
     const { id } = req.params;
     const { status } = req.body;
     const currentLecturerUid = req.user?.uid || req.user?.id;
+
     const exceptionQuery = await Exceptions.where("id", "==", id)
       .limit(1)
       .get();
@@ -336,6 +344,7 @@ export const manageExceptions = async (req, res) => {
           const totalCharged = studentPaymentTx.amountICash;
           const lecturerShare = 0.4;
           const appTaxShare = totalCharged - lecturerShare;
+
           const lecturerQuery = await User.where(
             "uid",
             "==",
@@ -374,9 +383,9 @@ export const manageExceptions = async (req, res) => {
               createdAt: now,
               updatedAt: now,
             });
+
             const taxEntryId = generateTransactionId("appTax");
             const taxDocRef = TaxEntries.doc(taxEntryId);
-
             t.set(taxDocRef, {
               transactionReference: `EXC-REF-${id}`,
               taxType: "exception_tax",
@@ -398,49 +407,55 @@ export const manageExceptions = async (req, res) => {
         updatedAt: now,
       });
     });
+    setImmediate(async () => {
+      try {
+        const [studentQuery, lectureQuery] = await Promise.all([
+          User.where("uid", "==", exception.studentId).limit(1).get(),
+          Lectures.where("id", "==", exception.lectureId).limit(1).get(),
+        ]);
 
-    const studentQuery = await User.where("uid", "==", exception.studentId)
-      .limit(1)
-      .get();
-    const lectureQuery = await Lectures.where("id", "==", exception.lectureId)
-      .limit(1)
-      .get();
+        let studentEmail = "";
+        let studentUid = exception.studentId;
+        if (!studentQuery.empty) {
+          const studentData = studentQuery.docs[0].data();
+          studentEmail = studentData.email;
+          studentUid = studentData.uid;
+        }
 
-    let studentEmail = "";
-    let studentUid = exception.studentId;
-    if (!studentQuery.empty) {
-      const studentData = studentQuery.docs[0].data();
-      studentEmail = studentData.email;
-      studentUid = studentData.uid;
-    }
+        let lectureTopicName = "your course";
+        if (!lectureQuery.empty) {
+          const lectureData = lectureQuery.docs[0].data();
+          lectureTopicName =
+            lectureData.topicName || lectureData.title || "your course";
+        }
 
-    let lectureTopicName = "your course";
-    if (!lectureQuery.empty) {
-      const lectureData = lectureQuery.docs[0].data();
-      lectureTopicName =
-        lectureData.topicName || lectureData.title || "your course";
-    }
-
-    await createNotification({
-      notificationId: generateNotificationId("classroom"),
-      recipientId: studentUid,
-      category: "classroom",
-      actionType: "EXCEPTION_UPDATED",
-      title: `Exception ${status === "approved" ? "Approved" : "Rejected"}`,
-      message: `Your lecture exception request for ${lectureTopicName} has been ${status}.`,
-      recipientEmail: studentEmail,
-      sendEmail: !!studentEmail,
-      sendPush: true,
-      sendSocket: true,
-      saveToDb: true,
-      payload: {
-        exceptionId: id,
-        status,
-        courseTitle: exception.courseInfo?.courseTitle,
-      },
+        await createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: studentUid,
+          category: "classroom",
+          actionType: "EXCEPTION_UPDATED",
+          title: `Exception ${status === "approved" ? "Approved" : "Rejected"}`,
+          message: `Your lecture exception request for ${lectureTopicName} has been ${status}.`,
+          recipientEmail: studentEmail,
+          sendEmail: !!studentEmail,
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+          payload: {
+            exceptionId: id,
+            status,
+            courseTitle: exception.courseInfo?.courseTitle,
+          },
+        });
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgError) {
+        console.error(
+          "Background notification error in manageExceptions:",
+          bgError,
+        );
+      }
     });
 
-    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: `Exception ${status} successfully.`,
@@ -476,8 +491,8 @@ export const createLectureSchedule = async (req, res) => {
 
     const lecturerUid = req.user?.uid || req.user?.id;
     const finalPayload = req.body;
-    const lecturesToCreate = [];
     const datesToCheck = [];
+
     const courseQuery = await Course.where("courseId", "==", courseId)
       .limit(1)
       .get();
@@ -582,52 +597,55 @@ export const createLectureSchedule = async (req, res) => {
     });
 
     await batch.commit();
+    setImmediate(async () => {
+      try {
+        const studentsQuery = await User.where("usertype", "==", "student")
+          .where("department", "==", courseDetails.department)
+          .where("level", "==", courseDetails.level)
+          .get();
 
-    const studentsQuery = await User.where("usertype", "==", "student")
-      .where("department", "==", courseDetails.department)
-      .where("level", "==", courseDetails.level)
-      .get();
+        const notificationPromises = [];
+        studentsQuery.forEach((doc) => {
+          const student = doc.data();
+          notificationPromises.push(
+            createNotification({
+              notificationId: generateNotificationId("classroom"),
+              recipientId: student.uid,
+              category: "academic",
+              actionType: "LECTURE_SCHEDULED",
+              title: "New Lecture Scheduled",
+              message: `A new ${lectureType} session for ${topicName} has been set.`,
+              recipientEmail: student.email,
+              sendEmail: !!student.email,
+              payload: {
+                userName: student.firstname,
+                topicName: topicName,
+                courseId: courseId,
+                lectureId: createdLecturesList[0].id,
+                lectureType: lectureType,
+                location: location,
+                time: lectureStartTime,
+                date:
+                  datesToCheck.length > 1
+                    ? `${datesToCheck[0]} (Repeats for ${repeatWeeks} weeks)`
+                    : datesToCheck[0],
+              },
+              entityId: createdLecturesList[0].id,
+              entityType: "lecture",
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            }),
+          );
+        });
 
-    const notificationPromises = [];
-    studentsQuery.forEach((doc) => {
-      const student = doc.data();
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "academic",
-          actionType: "LECTURE_SCHEDULED",
-          title: "New Lecture Scheduled",
-          message: `A new ${lectureType} session for ${topicName} has been set.`,
-          recipientEmail: student.email,
-          sendEmail: !!student.email,
-          payload: {
-            userName: student.firstname,
-            topicName: topicName,
-            courseId: courseId,
-            lectureId: createdLecturesList[0].id,
-            lectureType: lectureType,
-            location: location,
-            time: lectureStartTime,
-            date:
-              datesToCheck.length > 1
-                ? `${datesToCheck[0]} (Repeats for ${repeatWeeks} weeks)`
-                : datesToCheck[0],
-          },
-          entityId: createdLecturesList[0].id,
-          entityType: "lecture",
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-        }),
-      );
+        await Promise.all(notificationPromises);
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgErr) {
+        console.error("Background schedule notification error:", bgErr);
+      }
     });
 
-    Promise.all(notificationPromises).catch((err) =>
-      console.error("Notification Error:", err),
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(201).json({
       message: "Lectures scheduled successfully",
       count: createdLecturesList.length,
@@ -668,6 +686,7 @@ export const createAssessment = async (req, res) => {
     let assessmentData;
     let shouldNotify = false;
     const now = new Date();
+
     const courseQuery = await Course.where("courseId", "==", courseId)
       .limit(1)
       .get();
@@ -754,69 +773,80 @@ export const createAssessment = async (req, res) => {
 
       if (isPublished) shouldNotify = true;
     }
-
     if (
       shouldNotify &&
       course.studentsEnrolled &&
       course.studentsEnrolled.length > 0
     ) {
-      const enrolledUids = course.studentsEnrolled;
-      const studentChunks = [];
-      for (let i = 0; i < enrolledUids.length; i += 10) {
-        studentChunks.push(enrolledUids.slice(i, i + 10));
-      }
+      setImmediate(async () => {
+        try {
+          const enrolledUids = course.studentsEnrolled;
+          const studentChunks = [];
+          for (let i = 0; i < enrolledUids.length; i += 10) {
+            studentChunks.push(enrolledUids.slice(i, i + 10));
+          }
 
-      const enrolledStudentsList = [];
-      for (const chunk of studentChunks) {
-        const studentsQuery = await User.where("uid", "in", chunk)
-          .where("usertype", "==", "student")
-          .get();
+          const enrolledStudentsList = [];
+          for (const chunk of studentChunks) {
+            const studentsQuery = await User.where("uid", "in", chunk)
+              .where("usertype", "==", "student")
+              .get();
+            studentsQuery.forEach((doc) => {
+              enrolledStudentsList.push(doc.data());
+            });
+          }
 
-        studentsQuery.forEach((doc) => {
-          enrolledStudentsList.push(doc.data());
-        });
-      }
+          const formattedDate = scheduledStart
+            ? new Date(scheduledStart).toLocaleDateString()
+            : "";
+          const formattedTime = scheduledStart
+            ? new Date(scheduledStart).toLocaleTimeString()
+            : "";
 
-      const formattedDate = scheduledStart
-        ? new Date(scheduledStart).toLocaleDateString()
-        : "";
-      const formattedTime = scheduledStart
-        ? new Date(scheduledStart).toLocaleTimeString()
-        : "";
+          const notificationPromises = enrolledStudentsList.map((student) =>
+            createNotification({
+              notificationId: generateNotificationId("classroom"),
+              recipientId: student.uid,
+              category: "classroom",
+              actionType: "TEST_CREATED",
+              title: "New Assessment Posted",
+              message: `A new test "${title}" has been posted for ${course.courseCode || course.title}.`,
+              recipientEmail: student.email,
+              sendEmail: !!student.email,
+              payload: {
+                userName: student.firstname,
+                courseTitle: course.courseTitle || course.title,
+                testTitle: title,
+                dueDate,
+                date: formattedDate,
+                time: formattedTime,
+                course,
+              },
+              entityId: assessmentId,
+              entityType: "assessment",
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            }),
+          );
 
-      const notificationPromises = enrolledStudentsList.map((student) =>
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "TEST_CREATED",
-          title: "New Assessment Posted",
-          message: `A new test "${title}" has been posted for ${course.courseCode || course.title}.`,
-          recipientEmail: student.email,
-          sendEmail: !!student.email,
-          payload: {
-            userName: student.firstname,
-            courseTitle: course.courseTitle || course.title,
-            testTitle: title,
-            dueDate,
-            date: formattedDate,
-            time: formattedTime,
-            course,
-          },
-          entityId: assessmentId,
-          entityType: "assessment",
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-        }),
-      );
-
-      Promise.all(notificationPromises).catch((err) =>
-        console.error("Assessment Notification Error:", err),
-      );
+          await Promise.all(notificationPromises);
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        } catch (err) {
+          console.error("Assessment Background Notification Error:", err);
+        }
+      });
+    } else {
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(existingAssessment ? 200 : 201).json({
       message: isPublished ? "Assessment Published" : "Draft Synced",
       data: assessmentData,
@@ -840,6 +870,7 @@ export const deleteLecture = async (req, res) => {
   try {
     const { lectureId } = req.params;
     const currentUserId = req.user?.uid || req.user?.id;
+
     const lectureQuery = await Lectures.where("id", "==", lectureId)
       .limit(1)
       .get();
@@ -892,55 +923,67 @@ export const deleteLecture = async (req, res) => {
           "Access denied. You do not have permissions to cancel this specific lecture slot.",
       });
     }
+
     await lectureDocRef.delete();
-
     if (course.studentsEnrolled && course.studentsEnrolled.length > 0) {
-      const enrolledUids = course.studentsEnrolled;
-      const studentChunks = [];
-      for (let i = 0; i < enrolledUids.length; i += 10) {
-        studentChunks.push(enrolledUids.slice(i, i + 10));
-      }
+      setImmediate(async () => {
+        try {
+          const enrolledUids = course.studentsEnrolled;
+          const studentChunks = [];
+          for (let i = 0; i < enrolledUids.length; i += 10) {
+            studentChunks.push(enrolledUids.slice(i, i + 10));
+          }
 
-      const studentsList = [];
-      for (const chunk of studentChunks) {
-        const studentsQuery = await User.where("uid", "in", chunk)
-          .where("usertype", "==", "student")
-          .get();
+          const studentsList = [];
+          for (const chunk of studentChunks) {
+            const studentsQuery = await User.where("uid", "in", chunk)
+              .where("usertype", "==", "student")
+              .get();
+            studentsQuery.forEach((doc) => {
+              studentsList.push(doc.data());
+            });
+          }
 
-        studentsQuery.forEach((doc) => {
-          studentsList.push(doc.data());
-        });
-      }
+          const notificationPromises = studentsList.map((student) =>
+            createNotification({
+              notificationId: generateNotificationId("classroom"),
+              recipientId: student.uid,
+              category: "classroom",
+              actionType: "LECTURE_CANCELLED",
+              title: "Lecture Cancelled",
+              message: `The lecture "${topicName}" scheduled for ${date} has been cancelled.`,
+              recipientEmail: student.email,
+              sendEmail: !!student.email,
+              payload: {
+                courseId: courseId,
+                lectureId: id,
+                course,
+              },
+              entityId: id,
+              entityType: "lecture",
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            }),
+          );
 
-      const notificationPromises = studentsList.map((student) =>
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "LECTURE_CANCELLED",
-          title: "Lecture Cancelled",
-          message: `The lecture "${topicName}" scheduled for ${date} has been cancelled.`,
-          recipientEmail: student.email,
-          sendEmail: !!student.email,
-          payload: {
-            courseId: courseId,
-            lectureId: id,
-            course,
-          },
-          entityId: id,
-          entityType: "lecture",
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-        }),
-      );
-
-      Promise.all(notificationPromises).catch((err) =>
-        console.error("Delete Notification Error:", err),
-      );
+          await Promise.all(notificationPromises);
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        } catch (err) {
+          console.error("Delete Notification Background Error:", err);
+        }
+      });
+    } else {
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       success: true,
       message: "Lecture successfully cancelled and enrolled students notified.",
@@ -964,9 +1007,11 @@ export const fetchLectureAttendanceReport = async (req, res) => {
   try {
     const { lectureId } = req.params;
     const { exceptions = [] } = req.body;
+
     const lectureQuery = await Lectures.where("id", "==", lectureId)
       .limit(1)
       .get();
+
     if (lectureQuery.empty) {
       logControllerPerformance(
         controllerName,
@@ -980,15 +1025,16 @@ export const fetchLectureAttendanceReport = async (req, res) => {
 
     const lectureDocRef = lectureQuery.docs[0].ref;
     const lecture = lectureQuery.docs[0].data();
-    const courseQuery = await Course.where("courseId", "==", lecture.courseId)
-      .limit(1)
-      .get();
-    const course = !courseQuery.empty ? courseQuery.docs[0].data() : null;
-
     const bucket = storage.bucket();
     const filePath = `attendance/${lecture.courseId}/Report-${lectureId}.pdf`;
     const file = bucket.file(filePath);
-    const [exists] = await file.exists();
+
+    const [courseQuery, [exists]] = await Promise.all([
+      Course.where("courseId", "==", lecture.courseId).limit(1).get(),
+      file.exists(),
+    ]);
+
+    const course = !courseQuery.empty ? courseQuery.docs[0].data() : null;
     let firebaseUrl = "";
 
     if (exists) {
@@ -1006,15 +1052,19 @@ export const fetchLectureAttendanceReport = async (req, res) => {
           studentUids.push(attData.studentId);
         }
       });
+
       const presentStudents = [];
       if (studentUids.length > 0) {
         const studentChunks = [];
         for (let i = 0; i < studentUids.length; i += 10) {
           studentChunks.push(studentUids.slice(i, i + 10));
         }
+        const userQueryPromises = studentChunks.map((chunk) =>
+          User.where("uid", "in", chunk).get(),
+        );
+        const userQueryResults = await Promise.all(userQueryPromises);
 
-        for (const chunk of studentChunks) {
-          const usersQuery = await User.where("uid", "in", chunk).get();
+        userQueryResults.forEach((usersQuery) => {
           usersQuery.forEach((doc) => {
             const userData = doc.data();
             presentStudents.push({
@@ -1025,7 +1075,7 @@ export const fetchLectureAttendanceReport = async (req, res) => {
               uid: userData.uid,
             });
           });
-        }
+        });
       }
 
       const pdfBuffer = await generateAttendancePDF({
@@ -1047,7 +1097,10 @@ export const fetchLectureAttendanceReport = async (req, res) => {
       });
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
     return res.status(200).json({
       success: true,
       message: "Attendance sheet compiled successfully!",
@@ -1065,177 +1118,6 @@ export const fetchLectureAttendanceReport = async (req, res) => {
     return res
       .status(500)
       .json({ message: "Internal server compilation error." });
-  }
-};
-export const getCourseFinalAttendanceSummary = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "getCourseFinalAttendanceSummaryController";
-  const action = "getCourseFinalAttendanceSummary";
-  try {
-    const { courseId } = req.params;
-    const courseQuery = await Course.where("courseId", "==", courseId)
-      .limit(1)
-      .get();
-    if (courseQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course context not found.",
-      );
-      return res.status(404).json({ message: "Course context not found." });
-    }
-
-    const course = courseQuery.docs[0].data();
-    const lecturesQuery = await Lectures.where("courseId", "==", courseId)
-      .where("status", "==", "completed")
-      .get();
-
-    let totalLecturesCount = 0;
-    lecturesQuery.forEach((doc) => {
-      const lec = doc.data();
-      if (lec.lectureType !== "Recorded") {
-        totalLecturesCount++;
-      }
-    });
-
-    if (totalLecturesCount === 0) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "No live lectures recorded yet.",
-      );
-      return res
-        .status(200)
-        .json({ message: "No live lectures recorded yet.", summary: [] });
-    }
-
-    const studentsEnrolled = course.studentsEnrolled || [];
-    let studentsList = [];
-
-    if (studentsEnrolled.length > 0) {
-      const studentChunks = [];
-      for (let i = 0; i < studentsEnrolled.length; i += 10) {
-        studentChunks.push(studentsEnrolled.slice(i, i + 10));
-      }
-
-      for (const chunk of studentChunks) {
-        const usersQuery = await Users.where("uid", "in", chunk).get();
-        usersQuery.forEach((doc) => {
-          studentsList.push(doc.data());
-        });
-      }
-    }
-    const attendanceQuery = await Attendance.where("courseId", "==", courseId)
-      .where("status", "==", "Present")
-      .get();
-
-    const studentPresenceMap = {};
-    attendanceQuery.forEach((doc) => {
-      const att = doc.data();
-      const studentId = att.studentId;
-      if (studentId) {
-        studentPresenceMap[studentId] =
-          (studentPresenceMap[studentId] || 0) + 1;
-      }
-    });
-    const attendanceSummary = studentsList.map((student) => {
-      const uid = student.uid;
-      const lecturesAttended = studentPresenceMap[uid] || 0;
-      const attendancePercentage = Number(
-        ((lecturesAttended / totalLecturesCount) * 100).toFixed(1),
-      );
-
-      return {
-        uid: student.uid,
-        firstname: student.firstname || "",
-        lastname: student.lastname || "",
-        matricNumber: student.matricNumber || "",
-        department: student.department || "",
-        lecturesAttended,
-        totalLectures: totalLecturesCount,
-        attendancePercentage,
-      };
-    });
-    attendanceSummary.sort((a, b) => {
-      if (a.matricNumber < b.matricNumber) return -1;
-      if (a.matricNumber > b.matricNumber) return 1;
-      return 0;
-    });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
-      success: true,
-      courseCode: course.courseCode,
-      courseTitle: course.courseTitle || course.title,
-      totalLecturesHeld: totalLecturesCount,
-      data: attendanceSummary,
-    });
-  } catch (error) {
-    console.error(
-      "End of Semester Analytics Aggregation Error:",
-      error.message,
-    );
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    return res
-      .status(500)
-      .json({ message: "Failed to generate course grading summary sheet." });
-  }
-};
-export const getCourseLecturePdfDirectory = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "getCourseLecturePdfDirectoryController";
-  const action = "getCourseLecturePdfDirectory";
-  try {
-    const { courseId } = req.params;
-    const lecturesQuery = await Lectures.where("courseId", "==", courseId)
-      .where("status", "==", "completed")
-      .get();
-
-    let lectureHistory = [];
-    lecturesQuery.forEach((doc) => {
-      const data = doc.data();
-      lectureHistory.push({
-        id: data.id || doc.id,
-        topicName: data.topicName,
-        date: data.date,
-        startTime: data.startTime,
-        pdfUrl: data.pdfUrl,
-        getAttendanceMode: data.getAttendanceMode,
-      });
-    });
-    lectureHistory.sort((a, b) => {
-      if (a.date > b.date) return -1;
-      if (a.date < b.date) return 1;
-      return 0;
-    });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
-      success: true,
-      history: lectureHistory,
-    });
-  } catch (error) {
-    console.error("Fetch Directory Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    return res
-      .status(500)
-      .json({ message: "Internal server registry lookup error." });
   }
 };
 export const compareStudentFacesWithGemini = async (req, res) => {
@@ -1315,7 +1197,9 @@ export const compareStudentFacesWithGemini = async (req, res) => {
     const validationResult = JSON.parse(aiOutputText);
 
     if (validationResult.verified === true) {
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
       return res.status(200).json({
         verified: true,
         message: "Identity confirmed successfully.",
@@ -1328,7 +1212,6 @@ export const compareStudentFacesWithGemini = async (req, res) => {
         "error",
         validationResult.reason || "Facial signature mismatch.",
       );
-
       return res.status(401).json({
         verified: false,
         message: validationResult.reason || "Facial signature mismatch.",
@@ -1370,6 +1253,7 @@ export const uploadCourseMaterial = async (req, res) => {
         .status(400)
         .json({ message: "Missing material URL parameter." });
     }
+
     const courseQuery = await Course.where("courseId", "==", courseId)
       .limit(1)
       .get();
@@ -1410,47 +1294,51 @@ export const uploadCourseMaterial = async (req, res) => {
       resources: updatedResources,
       updatedAt: now,
     });
+    setImmediate(async () => {
+      try {
+        const studentsQuery = await User.where("usertype", "==", "student")
+          .where("department", "==", course.department)
+          .where("level", "==", course.level)
+          .get();
 
-    const fileName = title || materialUrl.split("/").pop() || "New Resource";
-    const studentsQuery = await User.where("usertype", "==", "student")
-      .where("department", "==", course.department)
-      .where("level", "==", course.level)
-      .get();
+        const fileName =
+          title || materialUrl.split("/").pop() || "New Resource";
+        const notificationPromises = [];
+        studentsQuery.forEach((doc) => {
+          const student = doc.data();
+          notificationPromises.push(
+            createNotification({
+              notificationId: generateNotificationId("classroom"),
+              recipientId: student.uid,
+              category: "classroom",
+              actionType: "MATERIAL_UPLOADED",
+              title: "New Study Material",
+              message: `A new resource file has been uploaded for ${course.courseTitle || course.title}.`,
+              recipientEmail: student.email,
+              sendEmail: !!student.email,
+              payload: {
+                userName: student.firstname,
+                courseTitle: course.courseTitle || course.title,
+                course,
+                fileName,
+                materialUrl,
+              },
+              entityId: courseId,
+              entityType: "course",
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            }),
+          );
+        });
 
-    const notificationPromises = [];
-    studentsQuery.forEach((doc) => {
-      const student = doc.data();
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "MATERIAL_UPLOADED",
-          title: "New Study Material",
-          message: `A new resource file has been uploaded for ${course.courseTitle || course.title}.`,
-          recipientEmail: student.email,
-          sendEmail: !!student.email,
-          payload: {
-            userName: student.firstname,
-            courseTitle: course.courseTitle || course.title,
-            course,
-            fileName,
-            materialUrl,
-          },
-          entityId: courseId,
-          entityType: "course",
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-        }),
-      );
+        await Promise.all(notificationPromises);
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (err) {
+        console.error("Notification dispatch routine failed: ", err);
+      }
     });
 
-    Promise.all(notificationPromises).catch((err) =>
-      console.error("Notification dispatch routine failed: ", err),
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Material added successfully",
     });
@@ -1487,6 +1375,7 @@ export const deleteCourseMaterial = async (req, res) => {
       );
       return res.status(400).json({ message: "Missing reference target URL." });
     }
+
     const courseQuery = await Course.where("courseId", "==", courseId)
       .limit(1)
       .get();
@@ -1520,29 +1409,17 @@ export const deleteCourseMaterial = async (req, res) => {
         .status(403)
         .json({ message: "Action Denied. Access authorization mismatch." });
     }
-
     try {
       const encodedFilePath = materialUrl.split("/o/")[1]?.split("?")[0];
       if (encodedFilePath) {
         const filePath = decodeURIComponent(encodedFilePath);
         const bucket = storage.bucket();
-
         await bucket.file(filePath).delete();
-        console.log(
-          `Successfully purged asset from storage bucket: ${filePath}`,
-        );
       }
     } catch (storageError) {
       console.error(
         "Firebase Storage Cleanup Failed (Link may be orphaned):",
         storageError,
-      );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        storageError.message || storageError,
       );
     }
 
@@ -1561,46 +1438,52 @@ export const deleteCourseMaterial = async (req, res) => {
       ...course,
       resources: updatedResources,
     };
+    setImmediate(async () => {
+      try {
+        const studentsQuery = await User.where("usertype", "==", "student")
+          .where("department", "==", updatedCourse.department)
+          .where("level", "==", updatedCourse.level)
+          .get();
 
-    const fileName = materialUrl.split("/").pop() || "Resource Document";
-    const studentsQuery = await User.where("usertype", "==", "student")
-      .where("department", "==", updatedCourse.department)
-      .where("level", "==", updatedCourse.level)
-      .get();
+        const fileName = materialUrl.split("/").pop() || "Resource Document";
+        const notificationPromises = [];
+        studentsQuery.forEach((doc) => {
+          const student = doc.data();
+          notificationPromises.push(
+            createNotification({
+              notificationId: generateNotificationId("classroom"),
+              recipientId: student.uid,
+              category: "classroom",
+              actionType: "MATERIAL_DELETED",
+              title: "Study Material Removed",
+              message: `A resource file has been removed from ${updatedCourse.courseTitle || updatedCourse.title}.`,
+              recipientEmail: student.email,
+              sendEmail: !!student.email,
+              payload: {
+                userName: student.firstname,
+                courseTitle: updatedCourse.courseTitle || updatedCourse.title,
+                course: updatedCourse,
+                fileName,
+              },
+              entityId: courseId,
+              entityType: "course",
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            }),
+          );
+        });
 
-    const notificationPromises = [];
-    studentsQuery.forEach((doc) => {
-      const student = doc.data();
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "MATERIAL_DELETED",
-          title: "Study Material Removed",
-          message: `A resource file has been removed from ${updatedCourse.courseTitle || updatedCourse.title}.`,
-          recipientEmail: student.email,
-          sendEmail: !!student.email,
-          payload: {
-            userName: student.firstname,
-            courseTitle: updatedCourse.courseTitle || updatedCourse.title,
-            course: updatedCourse,
-            fileName,
-          },
-          entityId: courseId,
-          entityType: "course",
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-        }),
-      );
+        await Promise.all(notificationPromises);
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (err) {
+        console.error(
+          "Notification push routine failed during deletion: ",
+          err,
+        );
+      }
     });
 
-    Promise.all(notificationPromises).catch((err) =>
-      console.error("Notification push routine failed during deletion: ", err),
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Material permanently deleted",
       resources: updatedCourse.resources,
@@ -1629,12 +1512,14 @@ export const createCourseContent = async (req, res) => {
     const requesterUid = req.user?.uid || req.user?.id;
 
     if (!topic || typeof topic !== "string") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid or missing topic content",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid or missing topic content",
+        ),
       );
       return res
         .status(400)
@@ -1644,12 +1529,14 @@ export const createCourseContent = async (req, res) => {
       .limit(1)
       .get();
     if (courseQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
       );
       return res.status(404).json({ message: "Course not found" });
     }
@@ -1663,78 +1550,84 @@ export const createCourseContent = async (req, res) => {
       lectureId,
     );
     if (!isAuthorized) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized Access",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized Access",
+        ),
       );
-      return res.status(403).json({
-        message: "Unauthorized Access",
-      });
+      return res.status(403).json({ message: "Unauthorized Access" });
     }
 
     const existingContents = course.courseContents || [];
     const updatedContents = [...existingContents, topic];
     const now = new Date();
-
     await courseDocRef.update({
       courseContents: updatedContents,
       updatedAt: now,
     });
-    const studentsQuery = await User.where("usertype", "==", "student")
-      .where("department", "==", course.department)
-      .where("level", "==", course.level)
-      .get();
-
-    const notificationPromises = [];
-    studentsQuery.forEach((doc) => {
-      const student = doc.data();
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "CONTENT_ADDED",
-          title: "New Topic Added",
-          message: `A new topic "${topic}" was added to ${course.courseCode}.`,
-          recipientEmail: student.email,
-          sendEmail: !!student.email,
-          payload: {
-            userName: student.firstname,
-            courseId: course.courseId,
-            topic,
-            courseTitle: course.courseTitle || course.title,
-          },
-          sendPush: false,
-          sendSocket: true,
-          saveToDb: true,
-        }),
-      );
-    });
-
-    Promise.all(notificationPromises).catch((err) =>
-      console.error("Notification Fetch Error:", err),
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       message: "Topic added successfully",
       updatedContents: updatedContents,
     });
+    setImmediate(async () => {
+      try {
+        const studentsQuery = await User.where("usertype", "==", "student")
+          .where("department", "==", course.department)
+          .where("level", "==", course.level)
+          .get();
+
+        const notificationPromises = studentsQuery.docs.map((doc) => {
+          const student = doc.data();
+          return createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "CONTENT_ADDED",
+            title: "New Topic Added",
+            message: `A new topic "${topic}" was added to ${course.courseCode}.`,
+            recipientEmail: student.email,
+            sendEmail: !!student.email,
+            payload: {
+              userName: student.firstname,
+              courseId: course.courseId,
+              topic,
+              courseTitle: course.courseTitle || course.title,
+            },
+            sendPush: false,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+
+        await Promise.allSettled(notificationPromises);
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgError) {
+        console.error(
+          "Background Notification Error (Create Content):",
+          bgError.message,
+        );
+      }
+    });
   } catch (error) {
     console.error("Add Content Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
-    return res
-      .status(500)
-      .json({ message: "Server error processing your request" });
+    if (!res.headersSent) {
+      return res
+        .status(500)
+        .json({ message: "Server error processing your request" });
+    }
   }
 };
 export const editCourseContent = async (req, res) => {
@@ -1747,27 +1640,32 @@ export const editCourseContent = async (req, res) => {
     const requesterUid = req.user?.uid || req.user?.id;
 
     if (typeof index !== "number" || !updatedTopic) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing required update body fields",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required update body fields",
+        ),
       );
       return res
         .status(400)
         .json({ message: "Missing required update body fields" });
     }
+
     const courseQuery = await Course.where("courseId", "==", courseId)
       .limit(1)
       .get();
     if (courseQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
       );
       return res.status(404).json({ message: "Course not found" });
     }
@@ -1781,26 +1679,28 @@ export const editCourseContent = async (req, res) => {
       lectureId,
     );
     if (!isAuthorized) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized Access",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized Access",
+        ),
       );
-      return res.status(403).json({
-        message: "Unauthorized Access",
-      });
+      return res.status(403).json({ message: "Unauthorized Access" });
     }
 
     const courseContents = course.courseContents || [];
     if (index < 0 || index >= courseContents.length) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Target topic position index out of bounds",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Target topic position index out of bounds",
+        ),
       );
       return res
         .status(400)
@@ -1816,62 +1716,67 @@ export const editCourseContent = async (req, res) => {
       updatedAt: now,
     });
 
-    const updatedCourse = {
-      ...course,
-      courseContents: updatedContents,
-    };
-    const studentsQuery = await User.where("usertype", "==", "student")
-      .where("department", "==", updatedCourse.department)
-      .where("level", "==", updatedCourse.level)
-      .get();
-
-    const notificationPromises = [];
-    studentsQuery.forEach((doc) => {
-      const student = doc.data();
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "CONTENT_MUTATED",
-          title: "Course Syllabus Updated",
-          message: `A topic in ${updatedCourse.courseCode} has been edited to "${updatedTopic}".`,
-          recipientEmail: student.email,
-          sendEmail: false,
-          sendPush: false,
-          sendSocket: true,
-          saveToDb: true,
-          payload: {
-            userName: student.firstname,
-            course: updatedCourse,
-            updatedTopic,
-            courseTitle: updatedCourse.courseTitle || updatedCourse.title,
-          },
-        }),
-      );
-    });
-
-    Promise.all(notificationPromises).catch((err) =>
-      console.error("Notification Error:", err),
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    const updatedCourse = { ...course, courseContents: updatedContents };
+    res.status(200).json({
       message: "Topic updated successfully",
       updatedContents: updatedCourse.courseContents,
     });
+
+    setImmediate(async () => {
+      try {
+        const studentsQuery = await User.where("usertype", "==", "student")
+          .where("department", "==", updatedCourse.department)
+          .where("level", "==", updatedCourse.level)
+          .get();
+
+        const notificationPromises = studentsQuery.docs.map((doc) => {
+          const student = doc.data();
+          return createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "CONTENT_MUTATED",
+            title: "Course Syllabus Updated",
+            message: `A topic in ${updatedCourse.courseCode} has been edited to "${updatedTopic}".`,
+            recipientEmail: student.email,
+            sendEmail: false,
+            sendPush: false,
+            sendSocket: true,
+            saveToDb: true,
+            payload: {
+              userName: student.firstname,
+              course: updatedCourse,
+              updatedTopic,
+              courseTitle: updatedCourse.courseTitle || updatedCourse.title,
+            },
+          });
+        });
+
+        await Promise.allSettled(notificationPromises);
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgError) {
+        console.error(
+          "Background Notification Error (Edit Content):",
+          bgError.message,
+        );
+      }
+    });
   } catch (error) {
     console.error("Edit Content Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
-    return res
-      .status(500)
-      .json({ message: "Server error updating curriculum topic" });
+    if (!res.headersSent) {
+      return res
+        .status(500)
+        .json({ message: "Server error updating curriculum topic" });
+    }
   }
 };
 export const deleteCourseContent = async (req, res) => {
@@ -1884,27 +1789,32 @@ export const deleteCourseContent = async (req, res) => {
     const requesterUid = req.user?.uid || req.user?.id;
 
     if (typeof index !== "number") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Target element index parameter required",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Target element index parameter required",
+        ),
       );
       return res
         .status(400)
         .json({ message: "Target element index parameter required" });
     }
+
     const courseQuery = await Course.where("courseId", "==", courseId)
       .limit(1)
       .get();
     if (courseQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
       );
       return res.status(404).json({ message: "Course not found" });
     }
@@ -1918,24 +1828,28 @@ export const deleteCourseContent = async (req, res) => {
       lectureId,
     );
     if (!isAuthorized) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized Access",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized Access",
+        ),
       );
       return res.status(403).json({ message: "Unauthorized Access" });
     }
 
     const courseContents = course.courseContents || [];
     if (index < 0 || index >= courseContents.length) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Target position index out of array bounds",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Target position index out of array bounds",
+        ),
       );
       return res
         .status(400)
@@ -1951,201 +1865,93 @@ export const deleteCourseContent = async (req, res) => {
       updatedAt: now,
     });
 
-    const updatedCourse = {
-      ...course,
-      courseContents: updatedContents,
-    };
-    const studentsQuery = await User.where("usertype", "==", "student")
-      .where("department", "==", updatedCourse.department)
-      .where("level", "==", updatedCourse.level)
-      .get();
+    const updatedCourse = { ...course, courseContents: updatedContents };
 
-    const notificationPromises = [];
-    studentsQuery.forEach((doc) => {
-      const student = doc.data();
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "CONTENT_DELETION",
-          title: "Syllabus Content Removed",
-          message: `"${removedTopic}" was removed from the course plan of ${updatedCourse.courseCode}.`,
-          recipientEmail: student.email,
-          sendEmail: false,
-          sendPush: false,
-          sendSocket: true,
-          saveToDb: true,
-          payload: {
-            userName: student.firstname,
-            courseId: updatedCourse.courseId,
-            removedTopic,
-            course: updatedCourse,
-            courseTitle: updatedCourse.courseTitle || updatedCourse.title,
-          },
-        }),
-      );
-    });
-
-    Promise.all(notificationPromises).catch((err) =>
-      console.error("Notification Error:", err),
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       message: "Topic removed successfully",
       updatedContents: updatedCourse.courseContents,
     });
+
+    setImmediate(async () => {
+      try {
+        const studentsQuery = await User.where("usertype", "==", "student")
+          .where("department", "==", updatedCourse.department)
+          .where("level", "==", updatedCourse.level)
+          .get();
+
+        const notificationPromises = studentsQuery.docs.map((doc) => {
+          const student = doc.data();
+          return createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            category: "classroom",
+            actionType: "CONTENT_DELETION",
+            title: "Syllabus Content Removed",
+            message: `"${removedTopic}" was removed from the course plan of ${updatedCourse.courseCode}.`,
+            recipientEmail: student.email,
+            sendEmail: false,
+            sendPush: false,
+            sendSocket: true,
+            saveToDb: true,
+            payload: {
+              userName: student.firstname,
+              courseId: updatedCourse.courseId,
+              removedTopic,
+              course: updatedCourse,
+              courseTitle: updatedCourse.courseTitle || updatedCourse.title,
+            },
+          });
+        });
+
+        await Promise.allSettled(notificationPromises);
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgError) {
+        console.error(
+          "Background Notification Error (Delete Content):",
+          bgError.message,
+        );
+      }
+    });
   } catch (error) {
     console.error("Delete Content Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    return res
-      .status(500)
-      .json({ message: "Server error processing array removal operation" });
-  }
-};
-export const createCourseAssignment = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "createCourseAssignmentController";
-  const action = "createCourseAssignment";
-  try {
-    const { courseId } = req.params;
-    const { title, description, dueDate, submissionMethod, lectureId } =
-      req.body;
-    const requesterUid = req.user?.uid || req.user?.id;
-    const courseQuery = await Course.where("courseId", "==", courseId)
-      .limit(1)
-      .get();
-    if (courseQuery.empty) {
+    setImmediate(() =>
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        "Course not found",
-      );
-      return res.status(404).json({ message: "Course not found" });
+        error.message,
+      ),
+    );
+    if (!res.headersSent) {
+      return res
+        .status(500)
+        .json({ message: "Server error processing array removal operation" });
     }
-
-    const courseDocRef = courseQuery.docs[0].ref;
-    const course = courseQuery.docs[0].data();
-
-    const isAuthorized = await checkContentAuthorization(
-      requesterUid,
-      course,
-      lectureId,
-    );
-    if (!isAuthorized) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized Access",
-      );
-      return res.status(403).json({
-        message: "Unauthorized Access",
-      });
-    }
-
-    const assignmentId = generateAssignmentId(courseId);
-    const newAssignment = {
-      assignmentId,
-      title,
-      description,
-      dueDate: new Date(dueDate),
-      submissionMethod,
-      lectureId,
-      courseId,
-      fileUrl: req.file ? req.file.path : null,
-      submissions: [],
-    };
-
-    const existingAssignments = course.assignments || [];
-    const updatedAssignments = [...existingAssignments, newAssignment];
-    const now = new Date();
-
-    await courseDocRef.update({
-      assignments: updatedAssignments,
-      updatedAt: now,
-    });
-
-    const formattedDate = new Date(dueDate).toLocaleDateString();
-
-    const studentsQuery = await User.where("usertype", "==", "student")
-      .where("department", "==", course.department)
-      .where("level", "==", course.level)
-      .get();
-
-    const notificationPromises = [];
-    studentsQuery.forEach((doc) => {
-      const student = doc.data();
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "ASSIGNMENT_CREATED",
-          title: "New Assignment",
-          message: `New assignment uploaded for ${course.courseTitle || course.title}: "${title}". Due: ${formattedDate}`,
-          recipientEmail: student.email,
-          sendEmail: !!student.email,
-          payload: {
-            userName: student.firstname,
-            course: { ...course, assignments: updatedAssignments },
-            assignmentId,
-            assignmentTitle: title,
-            dueDate: formattedDate,
-          },
-          entityId: assignmentId,
-          entityType: "assignment",
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-        }),
-      );
-    });
-
-    Promise.all(notificationPromises).catch((err) =>
-      console.error("Assignment Notification Dispatch Failure:", err),
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(201).json(updatedAssignments);
-  } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    return res.status(500).json({ message: error.message });
   }
 };
 export const deleteCourseAssignment = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "deleteCourseAssignmentController";
   const action = "deleteCourseAssignment";
+
   try {
     const { courseId, assignmentId } = req.params;
     const requesterUid = req.user?.uid || req.user?.id;
+
     const courseQuery = await Course.where("courseId", "==", courseId)
       .limit(1)
       .get();
+
     if (courseQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
       );
       return res.status(404).json({ message: "Course not found" });
     }
@@ -2159,12 +1965,14 @@ export const deleteCourseAssignment = async (req, res) => {
     );
 
     if (!targetAssignment) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Target assignment not found within this course profile",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Target assignment not found within this course profile",
+        ),
       );
       return res.status(404).json({
         message: "Target assignment not found within this course profile",
@@ -2176,13 +1984,16 @@ export const deleteCourseAssignment = async (req, res) => {
       course,
       targetAssignment.lectureId,
     );
+
     if (!isAuthorized) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized Access",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized Access",
+        ),
       );
       return res.status(403).json({ message: "Unauthorized Access" });
     }
@@ -2192,65 +2003,77 @@ export const deleteCourseAssignment = async (req, res) => {
     );
     const now = new Date();
 
-    await courseDocRef.update({
-      assignments: updatedAssignments,
-      updatedAt: now,
-    });
-
     const updatedCourse = {
       ...course,
       assignments: updatedAssignments,
     };
-    const studentsQuery = await User.where("usertype", "==", "student")
-      .where("department", "==", updatedCourse.department)
-      .where("level", "==", updatedCourse.level)
-      .get();
+    const [studentsQuery] = await Promise.all([
+      User.where("usertype", "==", "student")
+        .where("department", "==", updatedCourse.department)
+        .where("level", "==", updatedCourse.level)
+        .get(),
+      courseDocRef.update({
+        assignments: updatedAssignments,
+        updatedAt: now,
+      }),
+    ]);
 
-    const notificationPromises = [];
-    studentsQuery.forEach((doc) => {
-      const student = doc.data();
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          category: "classroom",
-          actionType: "ASSIGNMENT_REMOVED",
-          title: "Assignment Cancelled",
-          message: `The assignment "${targetAssignment.title}" has been removed by the instructor.`,
-          recipientEmail: student.email,
-          sendEmail: false,
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-          payload: {
-            userName: student.firstname,
-            course: updatedCourse,
-            assignmentId,
-            title: targetAssignment.title,
-            courseTitle: updatedCourse.courseTitle || updatedCourse.title,
-          },
-          entityId: assignmentId,
-          entityType: "assignment",
+    const students = studentsQuery.docs.map((doc) => doc.data());
+
+    if (students.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < students.length; i += 30) {
+        chunks.push(students.slice(i, i + 30));
+      }
+
+      Promise.all(
+        chunks.map(async (chunk) => {
+          const chunkPromises = chunk.map((student) =>
+            createNotification({
+              notificationId: generateNotificationId("classroom"),
+              recipientId: student.uid,
+              category: "classroom",
+              actionType: "ASSIGNMENT_REMOVED",
+              title: "Assignment Cancelled",
+              message: `The assignment "${targetAssignment.title}" has been removed by the instructor.`,
+              recipientEmail: student.email,
+              sendEmail: false,
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+              payload: {
+                userName: student.firstname,
+                course: updatedCourse,
+                assignmentId,
+                title: targetAssignment.title,
+                courseTitle: updatedCourse.courseTitle || updatedCourse.title,
+              },
+              entityId: assignmentId,
+              entityType: "assignment",
+            }),
+          );
+          await Promise.all(chunkPromises);
         }),
-      );
-    });
+      ).catch((err) => console.error("Wipe notification thread failed:", err));
+    }
 
-    Promise.all(notificationPromises).catch((err) =>
-      console.error("Wipe notification thread failed:", err),
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
     );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
     return res.status(200).json({
       message: "Assignment deleted successfully",
       assignments: updatedCourse.assignments,
     });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    console.error("Delete Assignment Error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     return res.status(500).json({ message: error.message });
   }
@@ -2266,26 +2089,29 @@ export const getAssessmentReport = async (req, res) => {
     const { testId } = req.params;
     const testQuery = await Assessment.where("id", "==", testId).limit(1).get();
     if (testQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Assessment not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Assessment not found",
+        ),
       );
       return res.status(404).json({ error: "Assessment not found" });
     }
 
     const test = testQuery.docs[0].data();
-
     const isPastDue = new Date() > new Date(test.dueDate);
     if (!isPastDue) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Analysis is only available after the due date.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Analysis is only available after the due date.",
+        ),
       );
       return res
         .status(403)
@@ -2299,35 +2125,31 @@ export const getAssessmentReport = async (req, res) => {
 
     if (exists) {
       const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
       return res.status(200).json({ success: true, downloadUrl: firebaseUrl });
     }
-    const courseQuery = await Course.where("courseId", "==", test.courseId)
-      .limit(1)
-      .get();
-    const course = courseQuery.empty ? null : courseQuery.docs[0].data();
-    const submissionsSnapshot = await TestSubmission.where(
-      "testId",
-      "==",
-      testId,
-    ).get();
-    const submissions = [];
-    submissionsSnapshot.forEach((doc) => {
-      submissions.push(doc.data());
-    });
-    const enrolledStudentsQuery = await User.where(
-      "enrolledCourses",
-      "array-contains",
-      test.courseId,
-    ).get();
-    const enrolledStudents = [];
-    enrolledStudentsQuery.forEach((doc) => {
-      enrolledStudents.push(doc.data());
-    });
 
-    const submittedIds = submissions.map((s) => s.studentId);
+    // Execute independent reads in parallel
+    const [courseQuery, submissionsSnapshot, enrolledStudentsQuery] =
+      await Promise.all([
+        Course.where("courseId", "==", test.courseId).limit(1).get(),
+        TestSubmission.where("testId", "==", testId).get(),
+        User.where("enrolledCourses", "array-contains", test.courseId).get(),
+      ]);
+
+    const course = courseQuery.empty ? null : courseQuery.docs[0].data();
+
+    const submissions = [];
+    submissionsSnapshot.forEach((doc) => submissions.push(doc.data()));
+
+    const enrolledStudents = [];
+    enrolledStudentsQuery.forEach((doc) => enrolledStudents.push(doc.data()));
+
+    const submittedIds = new Set(submissions.map((s) => s.studentId));
     const absentees = enrolledStudents
-      .filter((student) => !submittedIds.includes(student.uid))
+      .filter((student) => !submittedIds.has(student.uid))
       .map((student) => ({
         matricNumber: student.matricNumber || "N/A",
         studentName:
@@ -2355,36 +2177,35 @@ export const getAssessmentReport = async (req, res) => {
       test,
       submissions,
       absentees,
-      analytics: {
-        topPerformers,
-        passedCount,
-        failedCount,
-        passRate,
-      },
+      analytics: { topPerformers, passedCount, failedCount, passRate },
     };
 
     const pdfBuffer = await generateTestAnalysisPDF(reportData);
+
+    // Save file in background / async pipeline while keeping the client response snappy
     await file.save(pdfBuffer, {
-      metadata: {
-        contentType: "application/pdf",
-      },
+      metadata: { contentType: "application/pdf" },
       public: true,
     });
 
     const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     return res.status(200).json({
       downloadUrl: firebaseUrl,
       assessmentAnalytics: reportData,
     });
   } catch (error) {
     console.error("PDF Handler Exception Error: ", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     return res.status(500).json({
       error: "Error generating or processing assessment analysis report",
@@ -2401,12 +2222,14 @@ export const submitAssessment = async (req, res) => {
     const currentUserId = req.user?.uid || req.user?.id;
 
     if (!testId || !answers) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing required submission data.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required submission data.",
+        ),
       );
       return res
         .status(400)
@@ -2414,23 +2237,24 @@ export const submitAssessment = async (req, res) => {
     }
 
     const result = await db.runTransaction(async (transaction) => {
-      const existingSubmissionQuery = await transaction.get(
-        TestSubmission.where("testId", "==", testId)
-          .where("studentId", "==", currentUserId)
-          .limit(1),
+      const [existingSubmissionQuery, userQuery, testQuery] = await Promise.all(
+        [
+          transaction.get(
+            TestSubmission.where("testId", "==", testId)
+              .where("studentId", "==", currentUserId)
+              .limit(1),
+          ),
+          transaction.get(User.where("uid", "==", currentUserId).limit(1)),
+          transaction.get(Assessment.where("id", "==", testId).limit(1)),
+        ],
       );
 
       if (!existingSubmissionQuery.empty) {
         return { error: "already_submitted" };
       }
-      const userQuery = await transaction.get(
-        User.where("uid", "==", currentUserId).limit(1),
-      );
+
       const studentUser = userQuery.empty ? null : userQuery.docs[0].data();
       const userDocRef = userQuery.empty ? null : userQuery.docs[0].ref;
-      const testQuery = await transaction.get(
-        Assessment.where("id", "==", testId).limit(1),
-      );
       const test = testQuery.empty ? null : testQuery.docs[0].data();
 
       const rawSelfieStatus = proctoringData?.entrySelfieUrl || "";
@@ -2493,12 +2317,14 @@ export const submitAssessment = async (req, res) => {
     });
 
     if (result.error === "already_submitted") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "You have already submitted this test.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "You have already submitted this test.",
+        ),
       );
       return res
         .status(403)
@@ -2506,35 +2332,7 @@ export const submitAssessment = async (req, res) => {
     }
 
     const { isImpersonator, isFlagged, customSubmissionId, test } = result;
-
-    await createNotification({
-      notificationId: generateNotificationId("classroom"),
-      recipientId: currentUserId,
-      recipientEmail: req.user?.email,
-      sendEmail: !!req.user?.email,
-      category: "academic",
-      actionType: isImpersonator ? "TEST_FRAUD_BLOCKED" : "TEST_SUBMITTED",
-      title: isImpersonator ? "Submission Flagged!" : "Assessment Submitted!",
-      message: isImpersonator
-        ? `Your submission for "${test?.title || "the assessment"}" failed biometric verification. System security response logs have been populated.`
-        : `Your submission for "${test?.title || "the assessment"}" has been received successfully.`,
-      payload: {
-        userName: req.user?.firstname,
-        testId,
-        submissionId: customSubmissionId,
-        isFlagged,
-        actionEnforced: isImpersonator ? "SCORE_NULLIFIED" : "RECORDED",
-        title: test?.title,
-      },
-      entityId: testId,
-      entityType: "assessment",
-      sendPush: true,
-      sendSocket: true,
-      saveToDb: true,
-    });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(201).json({
+    res.status(201).json({
       success: !isImpersonator,
       message: isImpersonator
         ? "Submission rejected due to high-risk validation failure."
@@ -2542,18 +2340,60 @@ export const submitAssessment = async (req, res) => {
       submissionId: customSubmissionId,
       flagged: isFlagged,
     });
+    setImmediate(async () => {
+      try {
+        await createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: currentUserId,
+          recipientEmail: req.user?.email,
+          sendEmail: !!req.user?.email,
+          category: "academic",
+          actionType: isImpersonator ? "TEST_FRAUD_BLOCKED" : "TEST_SUBMITTED",
+          title: isImpersonator
+            ? "Submission Flagged!"
+            : "Assessment Submitted!",
+          message: isImpersonator
+            ? `Your submission for "${test?.title || "the assessment"}" failed biometric verification. System security response logs have been populated.`
+            : `Your submission for "${test?.title || "the assessment"}" has been received successfully.`,
+          payload: {
+            userName: req.user?.firstname,
+            testId,
+            submissionId: customSubmissionId,
+            isFlagged,
+            actionEnforced: isImpersonator ? "SCORE_NULLIFIED" : "RECORDED",
+            title: test?.title,
+          },
+          entityId: testId,
+          entityType: "assessment",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        });
+
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgError) {
+        console.error(
+          "Background Notification/Telemetry Dispatch Failure:",
+          bgError.message,
+        );
+      }
+    });
   } catch (error) {
     console.error("Submission Error Engine Exception:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
-    return res
-      .status(500)
-      .json({ message: "Internal Server Error", error: error.message });
+    if (!res.headersSent) {
+      return res
+        .status(500)
+        .json({ message: "Internal Server Error", error: error.message });
+    }
   }
 };
 export const editLectures = async (req, res) => {
@@ -2565,36 +2405,39 @@ export const editLectures = async (req, res) => {
     const { newDate, newStartTime, topicName, lectureType, location } =
       req.body;
     const requesterUid = req.user?.uid || req.user?.id;
-    const lectureQuery = await Lectures.where("id", "==", lectureId)
-      .limit(1)
-      .get();
+    const [lectureQuery, courseQuery] = await Promise.all([
+      Lectures.where("id", "==", lectureId).limit(1).get(),
+      Course.where("courseId", "==", courseId).limit(1).get(),
+    ]);
+
     if (lectureQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Lecture not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Lecture not found",
+        ),
       );
       return res.status(404).json({ message: "Lecture not found" });
     }
 
-    const lectureDocRef = lectureQuery.docs[0].ref;
-    const originalLecture = lectureQuery.docs[0].data();
-    const courseQuery = await Course.where("courseId", "==", courseId)
-      .limit(1)
-      .get();
     if (courseQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Associated course not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Associated course not found",
+        ),
       );
       return res.status(404).json({ message: "Associated course not found" });
     }
 
+    const lectureDocRef = lectureQuery.docs[0].ref;
+    const originalLecture = lectureQuery.docs[0].data();
     const course = courseQuery.docs[0].data();
 
     const lecturerIds = course.lecturerIds || [];
@@ -2602,12 +2445,14 @@ export const editLectures = async (req, res) => {
     const isLectureHost = originalLecture.hostId === requesterUid;
 
     if (!isCourseLecturer && !isLectureHost) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Access denied",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Access denied",
+        ),
       );
       return res.status(403).json({
         success: false,
@@ -2663,7 +2508,7 @@ export const editLectures = async (req, res) => {
     const updatePayload = {
       topicName: topicName || originalLecture.topicName,
       lectureType: resolvedLectureType,
-      location: resolvedLectureType === "Physical" ? location : null, // Wipe venue data if shifted online
+      location: resolvedLectureType === "Physical" ? location : null,
       date: newDate || originalLecture.date,
       startTime: newStartTime || originalLecture.startTime,
       status: updatedStatus,
@@ -2676,78 +2521,86 @@ export const editLectures = async (req, res) => {
       ...originalLecture,
       ...updatePayload,
     };
+
     const studentsQuery = await User.where("usertype", "==", "student")
       .where("department", "==", course.department)
       .where("level", "==", course.level)
       .get();
 
     const changeListString = changes.join(", ");
-    const notificationPromises = [];
-
-    studentsQuery.forEach((doc) => {
-      const student = doc.data();
-      let updateDetailsMessage = `The details for your lecture "${updatePayload.topicName}" have been updated (${changeListString}).`;
-      if (isDateChanged || isTimeChanged) {
-        updateDetailsMessage = `The lecture "${updatePayload.topicName}" has been rescheduled to ${updatePayload.date} at ${updatePayload.startTime}.`;
-      } else if (
-        isLocationChanged &&
-        updatePayload.lectureType === "Physical"
-      ) {
-        updateDetailsMessage = `The venue for "${updatePayload.topicName}" has been updated to ${updatePayload.location}.`;
-      } else if (isTypeChanged) {
-        updateDetailsMessage = `The delivery format for "${updatePayload.topicName}" has changed to ${updatePayload.lectureType}.`;
-      }
-
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: student.uid,
-          recipientEmail: student.email,
-          sendEmail: !!student.email,
-          category: "classroom",
-          actionType: primaryActionType,
-          title: `Lecture Update: ${course.courseId || course.courseCode}`,
-          message: updateDetailsMessage,
-          payload: {
-            userName: student.firstname || student.firstName,
-            topicName: updatePayload.topicName,
-            newDate: updatePayload.date,
-            newTime: updatePayload.startTime,
-            lectureType: updatePayload.lectureType,
-            location: updatePayload.location,
-            courseId: courseId,
-            lectureId: lectureId,
-            changedAttributes: changes,
-            course,
-          },
-          entityId: lectureId,
-          entityType: "lecture",
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-        }),
-      );
-    });
-
-    Promise.all(notificationPromises).catch((err) =>
-      console.error("Notify Error:", err),
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       message: `Lecture modified successfully. Notification sent with type: ${primaryActionType}`,
       updatedLecture,
     });
+    setImmediate(async () => {
+      try {
+        const notificationPromises = [];
+
+        studentsQuery.forEach((doc) => {
+          const student = doc.data();
+          let updateDetailsMessage = `The details for your lecture "${updatePayload.topicName}" have been updated (${changeListString}).`;
+          if (isDateChanged || isTimeChanged) {
+            updateDetailsMessage = `The lecture "${updatePayload.topicName}" has been rescheduled to ${updatePayload.date} at ${updatePayload.startTime}.`;
+          } else if (
+            isLocationChanged &&
+            updatePayload.lectureType === "Physical"
+          ) {
+            updateDetailsMessage = `The venue for "${updatePayload.topicName}" has been updated to ${updatePayload.location}.`;
+          } else if (isTypeChanged) {
+            updateDetailsMessage = `The delivery format for "${updatePayload.topicName}" has changed to ${updatePayload.lectureType}.`;
+          }
+
+          notificationPromises.push(
+            createNotification({
+              notificationId: generateNotificationId("classroom"),
+              recipientId: student.uid,
+              recipientEmail: student.email,
+              sendEmail: !!student.email,
+              category: "classroom",
+              actionType: primaryActionType,
+              title: `Lecture Update: ${course.courseId || course.courseCode}`,
+              message: updateDetailsMessage,
+              payload: {
+                userName: student.firstname || student.firstName,
+                topicName: updatePayload.topicName,
+                newDate: updatePayload.date,
+                newTime: updatePayload.startTime,
+                lectureType: updatePayload.lectureType,
+                location: updatePayload.location,
+                courseId: courseId,
+                lectureId: lectureId,
+                changedAttributes: changes,
+                course,
+              },
+              entityId: lectureId,
+              entityType: "lecture",
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            }),
+          );
+        });
+
+        await Promise.all(notificationPromises);
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgErr) {
+        console.error("Background Edit Lecture Error:", bgErr);
+      }
+    });
   } catch (error) {
     console.error("Update Handler Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
-    return res.status(500).json({ message: "Internal Server Error" });
+    if (!res.headersSent) {
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
   }
 };
 export const submitOnlineClassAttendance = async (req, res) => {
@@ -2759,49 +2612,54 @@ export const submitOnlineClassAttendance = async (req, res) => {
     const studentId = req.user?.uid || req.user?.id;
 
     if (!lectureId || !courseId || !status) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing required online attendance parameters.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required online attendance parameters.",
+        ),
       );
       return res
         .status(400)
         .json({ error: "Missing required online attendance parameters." });
     }
+
     const lectureQuery = await Lectures.where("id", "==", lectureId)
       .limit(1)
       .get();
     if (lectureQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Lecture not found.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Lecture not found.",
+        ),
       );
       return res.status(404).json({ error: "Lecture not found." });
     }
 
     const lecture = lectureQuery.docs[0].data();
-
     const gracePeriod = 60 * 60 * 1000;
     const currentTime = new Date();
     const expiryTime = new Date(lecture.endTime).getTime() + gracePeriod;
 
     if (currentTime.getTime() > expiryTime) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Submission window closed",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Submission window closed",
+        ),
       );
-      return res.status(403).json({
-        error: "Submission window closed",
-      });
+      return res.status(403).json({ error: "Submission window closed" });
     }
+
     await db.runTransaction(async (transaction) => {
       const attendanceQuery = await transaction.get(
         Attendance.where("studentId", "==", studentId)
@@ -2835,9 +2693,11 @@ export const submitOnlineClassAttendance = async (req, res) => {
       const wasNotPresentBefore =
         !existingRecord || existingRecord.status !== "Present";
       if (status === "Present" && wasNotPresentBefore) {
-        const courseQuery = await transaction.get(
-          Course.where("courseId", "==", courseId).limit(1),
-        );
+        const [courseQuery, userQuery] = await Promise.all([
+          transaction.get(Course.where("courseId", "==", courseId).limit(1)),
+          transaction.get(User.where("uid", "==", studentId).limit(1)),
+        ]);
+
         if (!courseQuery.empty) {
           const courseDocRef = courseQuery.docs[0].ref;
           const courseData = courseQuery.docs[0].data();
@@ -2862,9 +2722,7 @@ export const submitOnlineClassAttendance = async (req, res) => {
             });
           }
         }
-        const userQuery = await transaction.get(
-          User.where("uid", "==", studentId).limit(1),
-        );
+
         if (!userQuery.empty) {
           const userDocRef = userQuery.docs[0].ref;
           const userData = userQuery.docs[0].data();
@@ -2878,20 +2736,23 @@ export const submitOnlineClassAttendance = async (req, res) => {
         }
       }
     });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     return res.status(200).json({
       success: true,
       message: "Attendance recorded successfully at end of class session.",
     });
   } catch (err) {
     console.error("iCampus Backend Error:", err.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      err.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      ),
     );
     return res
       .status(500)
@@ -2904,12 +2765,14 @@ export const uploadCourseDetails = async (req, res) => {
   const action = "uploadCourseDetails";
   try {
     if (!req.files || req.files.length === 0) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "No files uploaded",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "No files uploaded",
+        ),
       );
       return res.status(400).json({ message: "No files uploaded" });
     }
@@ -2991,12 +2854,14 @@ export const uploadCourseDetails = async (req, res) => {
     try {
       extraction = JSON.parse(result.response.text());
     } catch (e) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "AI returned invalid JSON structure.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "AI returned invalid JSON structure.",
+        ),
       );
       return res
         .status(422)
@@ -3006,17 +2871,20 @@ export const uploadCourseDetails = async (req, res) => {
     const { studentInfo, departmentInfo, courses } = extraction;
 
     if (!courses || courses.length === 0) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Failed to extract structured course records.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Failed to extract structured course records.",
+        ),
       );
       return res
         .status(422)
         .json({ message: "Failed to extract structured course records." });
     }
+
     if (userType === "student") {
       if (!studentInfo) {
         return res
@@ -3031,15 +2899,17 @@ export const uploadCourseDetails = async (req, res) => {
         .toLowerCase();
 
       if (!submittedMatric || submittedMatric !== userMatric) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          `Document verification failed. Matric Number mismatch.`,
+        setImmediate(() =>
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Document verification failed. Matric Number mismatch.",
+          ),
         );
         return res.status(403).json({
-          message: `Document verification failed. Matric Number mismatch.`,
+          message: "Document verification failed. Matric Number mismatch.",
         });
       }
     }
@@ -3196,56 +3066,205 @@ export const uploadCourseDetails = async (req, res) => {
         });
       }
     }
+
     const firstCourse = courses[0] || {};
     const targetLevel =
       userType === "student" ? studentInfo?.level : "Departmental";
     const documentType =
       userType === "student" ? "course registration" : "course allocation";
-    await createNotification({
-      notificationId: generateNotificationId("classroom"),
-      recipientId: requesterUid,
-      recipientEmail: req.user?.email,
-      sendEmail: !!req.user?.email,
-      category: "academic",
-      actionType: "COURSES_EXTRACTED",
-      title:
-        userType === "student"
-          ? "Course Registration Synced"
-          : "Course Allocation Synced",
-      message: `Successfully processed ${courses.length} courses from ${documentType} document.`,
-      payload: {
-        userName:
-          req.user?.firstname ||
-          (userType === "student" ? studentInfo?.studentName : "Lecturer"),
-        courseCount: courses.length,
-        level: targetLevel,
-        semester: firstCourse.semester
-          ? firstCourse.semester.toLowerCase()
-          : "unknown",
-        session: firstCourse.session || departmentInfo?.session || "",
-      },
-      entityId: requesterUid,
-      entityType: "user",
-      sendPush: true,
-      sendSocket: true,
-      saveToDb: true,
-    }).catch((err) => console.error("Notification Dispatch Error:", err));
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       message: `Processed ${courses.length} courses successfully.`,
       coursesCount: courses.length,
     });
+    setImmediate(async () => {
+      try {
+        await createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: requesterUid,
+          recipientEmail: req.user?.email,
+          sendEmail: !!req.user?.email,
+          category: "academic",
+          actionType: "COURSES_EXTRACTED",
+          title:
+            userType === "student"
+              ? "Course Registration Synced"
+              : "Course Allocation Synced",
+          message: `Successfully processed ${courses.length} courses from ${documentType} document.`,
+          payload: {
+            userName:
+              req.user?.firstname ||
+              (userType === "student" ? studentInfo?.studentName : "Lecturer"),
+            courseCount: courses.length,
+            level: targetLevel,
+            semester: firstCourse.semester
+              ? firstCourse.semester.toLowerCase()
+              : "unknown",
+            session: firstCourse.session || departmentInfo?.session || "",
+          },
+          entityId: requesterUid,
+          entityType: "user",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        });
+
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (err) {
+        console.error("Background Notification Dispatch Error:", err);
+      }
+    });
   } catch (error) {
     console.error("Extraction Route Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
-    return res.status(500).json({ message: "Internal Server Error" });
+    if (!res.headersSent) {
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
+  }
+};
+export const createCourseAssignment = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createCourseAssignmentController";
+  const action = "createCourseAssignment";
+
+  try {
+    const { courseId } = req.params;
+    const { title, description, dueDate, submissionMethod, lectureId } =
+      req.body;
+    const requesterUid = req.user?.uid || req.user?.id;
+
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
+
+    if (courseQuery.empty) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
+
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
+
+    const isAuthorized = await checkContentAuthorization(
+      requesterUid,
+      course,
+      lectureId,
+    );
+
+    if (!isAuthorized) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized Access",
+        ),
+      );
+      return res.status(403).json({
+        message: "Unauthorized Access",
+      });
+    }
+
+    const assignmentId = generateAssignmentId(courseId);
+    const newAssignment = {
+      assignmentId,
+      title,
+      description,
+      dueDate: new Date(dueDate),
+      submissionMethod,
+      lectureId,
+      courseId,
+      fileUrl: req.file ? req.file.path : null,
+      submissions: [],
+    };
+
+    const existingAssignments = course.assignments || [];
+    const updatedAssignments = [...existingAssignments, newAssignment];
+    const now = new Date();
+    const formattedDate = new Date(dueDate).toLocaleDateString();
+    const [studentsQuery] = await Promise.all([
+      User.where("usertype", "==", "student")
+        .where("department", "==", course.department)
+        .where("level", "==", course.level)
+        .get(),
+      courseDocRef.update({
+        assignments: updatedAssignments,
+        updatedAt: now,
+      }),
+    ]);
+
+    const students = studentsQuery.docs.map((doc) => doc.data());
+
+    if (students.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < students.length; i += 30) {
+        chunks.push(students.slice(i, i + 30));
+      }
+      Promise.all(
+        chunks.map(async (chunk) => {
+          const chunkPromises = chunk.map((student) =>
+            createNotification({
+              notificationId: generateNotificationId("classroom"),
+              recipientId: student.uid,
+              category: "classroom",
+              actionType: "ASSIGNMENT_CREATED",
+              title: "New Assignment",
+              message: `New assignment uploaded for ${course.courseTitle || course.title}: "${title}". Due: ${formattedDate}`,
+              recipientEmail: student.email,
+              sendEmail: !!student.email,
+              payload: {
+                userName: student.firstname,
+                course: { ...course, assignments: updatedAssignments },
+                assignmentId,
+                assignmentTitle: title,
+                dueDate: formattedDate,
+              },
+              entityId: assignmentId,
+              entityType: "assignment",
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            }),
+          );
+          await Promise.all(chunkPromises);
+        }),
+      ).catch((err) =>
+        console.error("Assignment Notification Dispatch Failure:", err),
+      );
+    }
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    return res.status(201).json(updatedAssignments);
+  } catch (error) {
+    console.error("Create Assignment Error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    return res.status(500).json({ message: error.message });
   }
 };
 export const uploadCourseDetailsManually = async (req, res) => {
@@ -3260,12 +3279,14 @@ export const uploadCourseDetailsManually = async (req, res) => {
     const department = req.user?.department;
 
     if (!courseTitle || !courseCode) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course Title or Code is required.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course Title or Code is required.",
+        ),
       );
       return res
         .status(400)
@@ -3278,27 +3299,25 @@ export const uploadCourseDetailsManually = async (req, res) => {
     let courseDocRef = null;
     let courseData = null;
     let assignedCourseId = null;
-
-    const codeQuery = await Course.where("schoolName", "==", schoolName)
-      .where("courseCode", "==", trimmedCode)
-      .limit(1)
-      .get();
+    const [codeQuery, titleQuery] = await Promise.all([
+      Course.where("schoolName", "==", schoolName)
+        .where("courseCode", "==", trimmedCode)
+        .limit(1)
+        .get(),
+      Course.where("schoolName", "==", schoolName)
+        .where("courseTitle", "==", trimmedTitle)
+        .limit(1)
+        .get(),
+    ]);
 
     if (!codeQuery.empty) {
       courseDocRef = codeQuery.docs[0].ref;
       courseData = codeQuery.docs[0].data();
       assignedCourseId = courseData.courseId;
-    } else {
-      const titleQuery = await Course.where("schoolName", "==", schoolName)
-        .where("courseTitle", "==", trimmedTitle)
-        .limit(1)
-        .get();
-
-      if (!titleQuery.empty) {
-        courseDocRef = titleQuery.docs[0].ref;
-        courseData = titleQuery.docs[0].data();
-        assignedCourseId = courseData.courseId;
-      }
+    } else if (!titleQuery.empty) {
+      courseDocRef = titleQuery.docs[0].ref;
+      courseData = titleQuery.docs[0].data();
+      assignedCourseId = courseData.courseId;
     }
 
     if (courseDocRef && courseData) {
@@ -3340,6 +3359,7 @@ export const uploadCourseDetailsManually = async (req, res) => {
 
       await courseDocRef.set(newCourseData);
     }
+
     const userQuery = await User.where("uid", "==", uid).limit(1).get();
     if (!userQuery.empty) {
       const userDocRef = userQuery.docs[0].ref;
@@ -3356,7 +3376,9 @@ export const uploadCourseDetailsManually = async (req, res) => {
       }
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     return res.status(200).json({
       message:
         courseDocRef && courseData
@@ -3366,12 +3388,14 @@ export const uploadCourseDetailsManually = async (req, res) => {
     });
   } catch (error) {
     console.error("Manual Course Creation Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     return res.status(500).json({ message: "Internal Server Error" });
   }
@@ -3428,21 +3452,26 @@ export const handleUpcomingLectureRemindersCron = async () => {
         );
         continue;
       }
+
       const batchSize = 30;
       const enrolledStudents = [];
-
+      const userQueryPromises = [];
       for (let i = 0; i < studentUids.length; i += batchSize) {
         const batchIds = studentUids.slice(i, i + batchSize);
-        const userQuery = await User.where("uid", "in", batchIds).get();
+        userQueryPromises.push(User.where("uid", "in", batchIds).get());
+      }
 
+      const userQuerySnapshots = await Promise.all(userQueryPromises);
+      userQuerySnapshots.forEach((userQuery) => {
         userQuery.forEach((doc) => {
           const userData = doc.data();
           enrolledStudents.push({
             uid: userData.uid,
             firstname: userData.firstname,
+            email: userData.email,
           });
         });
-      }
+      });
 
       const notificationPromises = enrolledStudents.map(async (student) => {
         try {
@@ -3480,7 +3509,9 @@ export const handleUpcomingLectureRemindersCron = async () => {
 
       await Promise.all(notificationPromises);
 
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
       console.log(
         `[CRON_SUCCESS] Dispatched reminders for ${courseData.courseCode} - "${lecture.topicName}" to ${enrolledStudents.length} students.`,
       );
@@ -3490,12 +3521,14 @@ export const handleUpcomingLectureRemindersCron = async () => {
       "[CRON_CRITICAL_EXCEPTION] Failed executing automated reminder cycles:",
       error.message,
     );
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
   }
 };
@@ -3506,14 +3539,18 @@ export const getCourseGradebook = async (req, res) => {
   const { courseId } = req.params;
 
   try {
-    const courseQuery = await Course.where("courseId", "==", courseId).limit(1).get();
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
     if (courseQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
       );
       return res.status(404).json({ message: "Course not found" });
     }
@@ -3524,21 +3561,53 @@ export const getCourseGradebook = async (req, res) => {
     const testIds = tests.map((t) => t.id).filter(Boolean);
 
     if (studentsEnrolled.length === 0) {
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
       return res.status(200).json({ success: true, data: [] });
     }
+
     const batchSize = 30;
     const studentsMap = new Map();
 
+    // Parallelize user batch fetches
+    const userPromises = [];
     for (let i = 0; i < studentsEnrolled.length; i += batchSize) {
       const batchIds = studentsEnrolled.slice(i, i + batchSize);
-      const usersQuery = await User.where("uid", "in", batchIds).get();
+      userPromises.push(User.where("uid", "in", batchIds).get());
+    }
+
+    // Parallelize test submission batch fetches
+    const subPromises = [];
+    if (testIds.length > 0) {
+      for (let i = 0; i < testIds.length; i += batchSize) {
+        const batchTestIds = testIds.slice(i, i + batchSize);
+        subPromises.push(
+          TestSubmission.where("testId", "in", batchTestIds).get(),
+        );
+      }
+    }
+
+    // Fetch attendance, exceptions, users, and submissions concurrently
+    const [
+      userSnapshots,
+      attendanceSnapshot,
+      subSnapshots,
+      exceptionsSnapshot,
+    ] = await Promise.all([
+      Promise.all(userPromises),
+      Attendance.where("courseId", "==", courseId).get(),
+      Promise.all(subPromises),
+      Exceptions.where("courseId", "==", courseId).get(),
+    ]);
+
+    userSnapshots.forEach((usersQuery) => {
       usersQuery.forEach((doc) => {
         const uData = doc.data();
         studentsMap.set(uData.uid, uData);
       });
-    }
-    const attendanceSnapshot = await Attendance.where("courseId", "==", courseId).get();
+    });
+
     const attendanceByStudent = new Map();
     attendanceSnapshot.forEach((doc) => {
       const att = doc.data();
@@ -3548,22 +3617,19 @@ export const getCourseGradebook = async (req, res) => {
       }
       attendanceByStudent.get(sId).push(att);
     });
+
     const testSubmissionsByStudent = new Map();
-    if (testIds.length > 0) {
-      for (let i = 0; i < testIds.length; i += batchSize) {
-        const batchTestIds = testIds.slice(i, i + batchSize);
-        const subSnapshot = await TestSubmission.where("testId", "in", batchTestIds).get();
-        subSnapshot.forEach((doc) => {
-          const sub = doc.data();
-          const sId = sub.studentId;
-          if (!testSubmissionsByStudent.has(sId)) {
-            testSubmissionsByStudent.set(sId, []);
-          }
-          testSubmissionsByStudent.get(sId).push(sub);
-        });
-      }
-    }
-    const exceptionsSnapshot = await Exceptions.where("courseId", "==", courseId).get();
+    subSnapshots.forEach((subSnapshot) => {
+      subSnapshot.forEach((doc) => {
+        const sub = doc.data();
+        const sId = sub.studentId;
+        if (!testSubmissionsByStudent.has(sId)) {
+          testSubmissionsByStudent.set(sId, []);
+        }
+        testSubmissionsByStudent.get(sId).push(sub);
+      });
+    });
+
     const exceptionsByStudent = new Map();
     exceptionsSnapshot.forEach((doc) => {
       const ex = doc.data();
@@ -3573,9 +3639,8 @@ export const getCourseGradebook = async (req, res) => {
       }
       exceptionsByStudent.get(sId).push(ex);
     });
-    const gradebookData = [];
 
-    for (const studentId of studentsEnrolled) {
+    const gradebookData = studentsEnrolled.map((studentId) => {
       const student = studentsMap.get(studentId) || {
         uid: studentId,
         firstname: "",
@@ -3594,11 +3659,11 @@ export const getCourseGradebook = async (req, res) => {
       const exceptions = exceptionsByStudent.get(studentId) || [];
 
       const presentAttendanceCount = attendanceRecords.filter(
-        (rec) => rec.status === "Present"
+        (rec) => rec.status === "Present",
       ).length;
 
       const approvedExceptionsCount = exceptions.filter(
-        (ex) => ex.status === "approved"
+        (ex) => ex.status === "approved",
       ).length;
 
       const attendanceSum = presentAttendanceCount + approvedExceptionsCount;
@@ -3611,7 +3676,7 @@ export const getCourseGradebook = async (req, res) => {
         ...exceptions,
       ];
 
-      gradebookData.push({
+      return {
         _id: student.uid || studentId,
         studentName,
         matricNumber,
@@ -3621,19 +3686,23 @@ export const getCourseGradebook = async (req, res) => {
         testSum,
         exceptions,
         allActivities,
-      });
-    }
+      };
+    });
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     return res.status(200).json({ success: true, data: gradebookData });
   } catch (error) {
     console.error("Gradebook Engine Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     return res.status(500).json({ message: error.message });
   }

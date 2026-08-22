@@ -1,5 +1,5 @@
 import express from "express";
-import { protect } from "../../middleware/auth.js";
+import { protect, idempotencyMiddleware } from "../../middleware/auth.js";
 import {
   manageExceptions,
   createLectureSchedule,
@@ -30,18 +30,31 @@ router.get("/lectures/timeline", protect, fetchLecturersLecturesTimeline);
 router.post(
   "/courses/addCourseContent/:courseId",
   protect,
+  idempotencyMiddleware,
   createCourseContent,
 );
-router.put("/courses/editCourseContent/:courseId", protect, editCourseContent);
+router.put(
+  "/courses/editCourseContent/:courseId",
+  protect,
+  idempotencyMiddleware,
+  editCourseContent,
+);
 router.delete(
   "/courses/deleteCourseContent/:courseId",
   protect,
+  idempotencyMiddleware,
   deleteCourseContent,
 );
-router.post("/courses/uploadMaterial/:courseId", protect, uploadCourseMaterial);
+router.post(
+  "/courses/uploadMaterial/:courseId",
+  protect,
+  idempotencyMiddleware,
+  uploadCourseMaterial,
+);
 router.delete(
   "/courses/deleteMaterial/:courseId",
   protect,
+  idempotencyMiddleware,
   deleteCourseMaterial,
 );
 router.post("/courses/:courseId/assignments", protect, createCourseAssignment);
@@ -50,13 +63,24 @@ router.delete(
   protect,
   deleteCourseAssignment,
 );
-router.patch("/exceptions/:id/status", protect, manageExceptions);
+router.patch(
+  "/exceptions/:id/status",
+  protect,
+  idempotencyMiddleware,
+  manageExceptions,
+);
 router.post(
   "/courses/:courseId/lectures/createSchedule",
   protect,
+  idempotencyMiddleware,
   createLectureSchedule,
 );
-router.post("/courses/:courseId/assessments", protect, createAssessment);
+router.post(
+  "/courses/:courseId/assessments",
+  protect,
+  idempotencyMiddleware,
+  createAssessment,
+);
 router.get(
   "/courses/:courseId/assessments",
   protect,
@@ -66,12 +90,19 @@ router.get("/tests/:testId/analysis-data", protect, getAssessmentReport);
 router.put(
   "/courses/:courseId/lectures/:lectureId/edit",
   protect,
+  idempotencyMiddleware,
   editLectures,
 );
-router.delete("/lectures/:lectureId", protect, deleteLecture);
+router.delete(
+  "/lectures/:lectureId",
+  protect,
+  idempotencyMiddleware,
+  deleteLecture,
+);
 router.post(
   "/lectures/:lectureId/report",
   protect,
+  idempotencyMiddleware,
   fetchLectureAttendanceReport,
 );
 router.get(

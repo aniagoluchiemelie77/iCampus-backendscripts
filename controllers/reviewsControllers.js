@@ -1,12 +1,30 @@
 import { Product, Reviews, User } from "../tableDeclarations.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+import { setImmediate } from "timers";
 
 export const fetchSellerReviews = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchSellerReviewsController";
   const action = "fetchSellerReviews";
+
   try {
-    const sellerId = req.user.id || req.user.uid;
+    const sellerId = req.user?.id || req.user?.uid;
+
+    if (!sellerId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized seller context",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized seller context." });
+    }
+
     const [productsSnapshot, sellerReviewsSnapshot] = await Promise.all([
       Product.where("sellerId", "==", sellerId).get(),
       Reviews.where("targetId", "==", sellerId)
@@ -100,20 +118,25 @@ export const fetchSellerReviews = async (req, res) => {
       };
     });
 
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       data: formattedReviews,
     });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
   } catch (error) {
     console.error("Error fetching seller reviews:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
     return res.status(500).json({
       success: false,
       message: "Internal server error",

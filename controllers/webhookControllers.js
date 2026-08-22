@@ -6,6 +6,7 @@ import {
   SupportTicket,
 } from "../tableDeclarations.js";
 import { admin } from "../config/firebaseAdmin.js";
+import { setImmediate } from "timers";
 import {
   generateTransactionId,
   generateNotificationId,
@@ -38,70 +39,80 @@ export const personaVerifyConfirmation = async (req, res) => {
     return res.status(401).send("Invalid Persona signature");
   }
   res.status(200).send("Webhook accepted");
-  try {
-    const { data } = req.body;
-    const eventType = data.attributes.name;
-    const payload = data.relationships.object.data;
+  setImmediate(async () => {
+    try {
+      const { data } = req.body;
+      const eventType = data?.attributes?.name;
+      const payload = data?.relationships?.object?.data;
 
-    if (eventType === "inquiry.completed") {
-      const inquiryId = payload.id;
-      const referenceId =
-        data.attributes.payload.data.attributes["reference-id"];
+      if (eventType === "inquiry.completed" && payload) {
+        const inquiryId = payload.id;
+        const referenceId =
+          data?.attributes?.payload?.data?.attributes?.["reference-id"];
 
-      if (referenceId) {
-        const querySnapshot = await User.where("uid", "==", referenceId)
-          .limit(1)
-          .get();
+        if (referenceId) {
+          const querySnapshot = await User.where("uid", "==", referenceId)
+            .limit(1)
+            .get();
 
-        if (!querySnapshot.empty) {
-          const userDocSnap = querySnapshot.docs[0];
-          const userDocRef = userDocSnap.ref;
-          const userData = userDocSnap.data();
-          await userDocRef.update({
-            isVerified: true,
-            personaInquiryId: inquiryId,
-            updatedAt: new Date(),
-          });
-          await createNotification({
-            notificationId: generateNotificationId("profile"),
-            recipientId: referenceId,
-            category: "profile",
-            actionType: "VERIFICATION_SUCCESS",
-            title: "Identity Verified",
-            message: "Your identity has been successfully verified!",
-          });
-          await notifyAdmins(
-            { role: ["super_admin", "support"] },
-            {
+          if (!querySnapshot.empty) {
+            const userDocSnap = querySnapshot.docs[0];
+            const userDocRef = userDocSnap.ref;
+            const userData = userDocSnap.data();
+            const updatePromise = userDocRef.update({
+              isVerified: true,
+              personaInquiryId: inquiryId,
+              updatedAt: new Date(),
+            });
+
+            const userNotificationPromise = createNotification({
               notificationId: generateNotificationId("profile"),
+              recipientId: referenceId,
               category: "profile",
-              actionType: "USER_VERIFICATION_AUDIT",
-              title: "User Identity Verified",
-              message: `User ${userData.firstname || "Unknown"} (${referenceId}) has completed ID verification.`,
-              payload: { referenceId, inquiryId },
-            },
-            false,
-          );
+              actionType: "VERIFICATION_SUCCESS",
+              title: "Identity Verified",
+              message: "Your identity has been successfully verified!",
+            });
 
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success",
-          );
+            const adminNotificationPromise = notifyAdmins(
+              { role: ["super_admin", "support"] },
+              {
+                notificationId: generateNotificationId("profile"),
+                category: "profile",
+                actionType: "USER_VERIFICATION_AUDIT",
+                title: "User Identity Verified",
+                message: `User ${userData.firstname || "Unknown"} (${referenceId}) has completed ID verification.`,
+                payload: { referenceId, inquiryId },
+              },
+              false,
+            );
+
+            await Promise.all([
+              updatePromise,
+              userNotificationPromise,
+              adminNotificationPromise,
+            ]);
+
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success",
+            );
+          }
         }
       }
+    } catch (error) {
+      console.error("Webhook processing error:", error.message);
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
     }
-  } catch (error) {
-    console.error("Webhook processing error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-  }
+  });
 };
 export const handleFlutterwaveWebhook = async (req, res) => {
   const startTime = Date.now();
@@ -121,130 +132,139 @@ export const handleFlutterwaveWebhook = async (req, res) => {
     return res.status(401).end();
   }
   res.status(200).end();
-  try {
-    const { event, data } = req.body;
+  setImmediate(async () => {
+    try {
+      const { event, data } = req.body;
 
-    if (event === "charge.completed" && data.status === "successful") {
-      const { userId, type, methodType, iCashAmount } = data.meta;
+      if (event === "charge.completed" && data?.status === "successful") {
+        const { userId, type, methodType, iCashAmount } = data.meta || {};
 
-      if (type === "icash_purchase") {
-        const iCashToCredit = Math.floor(iCashAmount);
-        const querySnapshot = await User.where("uid", "==", userId)
-          .limit(1)
-          .get();
-        if (!querySnapshot.empty) {
-          const userDocSnap = querySnapshot.docs[0];
-          const userDocRef = userDocSnap.ref;
-          const userData = userDocSnap.data();
+        const tasks = [];
+        if (type === "icash_purchase" && userId) {
+          const iCashToCredit = Math.floor(iCashAmount || 0);
 
-          await userDocRef.update({
-            pointsBalance: admin.firestore.FieldValue.increment(iCashToCredit),
-            updatedAt: new Date(),
-          });
+          tasks.push(
+            (async () => {
+              const querySnapshot = await User.where("uid", "==", userId)
+                .limit(1)
+                .get();
+              if (querySnapshot.empty) return;
 
-          const transactionId = generateTransactionId("buy");
-          await Transactions.doc(transactionId).set({
-            transactionId,
-            userId,
-            type: "buy",
-            currency: data.currency,
-            amountLocal: data.amount,
-            amountICash: iCashToCredit,
-            status: "success",
-            payType: "in",
-            title: `${iCashToCredit} iCash purchased`,
-            reference: data.tx_ref,
-            createdAt: new Date(),
-          });
-
-          await createNotification({
-            notificationId: generateNotificationId("finance"),
-            recipientId: userId,
-            recipientEmail: userData.email,
-            category: "finance",
-            actionType: "ICASH_PURCHASE",
-            title: "iCash Purchase Successful",
-            message: `${methodType} payment made for ${iCashToCredit} iCash is successful.`,
-            payload: {
-              userName: userData.firstname,
-              amountLocal: data.amount,
-              amountICash: iCashToCredit,
-              currency: data.currency,
-              transactionId,
-            },
-            sendEmail: true,
-            sendPush: true,
-          });
-
-          await notifyAdmins(
-            { role: ["finance", "super_admin"] },
-            {
-              notificationId: generateNotificationId("finance"),
-              category: "finance",
-              actionType: "ICASH_PURCHASE_ADMIN",
-              title: "Finance Audit: New Purchase",
-              message: `User ${userId} purchased ${iCashToCredit} iCash.`,
-              payload: {
-                userId,
-                amountICash: iCashToCredit,
-                txRef: data.tx_ref,
-              },
-            },
-            false,
-          );
-
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success",
-          );
-        }
-      }
-      const paymentToken = data.card?.token || data.account?.token;
-      if (paymentToken) {
-        const methodQuerySnapshot = await PaymentMethods.where(
-          "paymentToken",
-          "==",
-          paymentToken,
-        )
-          .limit(1)
-          .get();
-
-        if (methodQuerySnapshot.empty) {
-          await PaymentMethods.add({
-            userId: data.meta.userId,
-            method: data.payment_type === "card" ? "card" : "bank",
-            paymentToken,
-            lastFourDigits:
-              data.card?.last4digits || data.account?.account_number?.slice(-4),
-            cardBrand: data.card?.issuer,
-            bankName: data.account?.bank_name,
-            bankAccNumber: data.account?.account_number,
-            expiryMonth: data.card?.expiry_month,
-            expiryYear: data.card?.expiry_year,
-            billingAddressDetails: data.meta.address
-              ? {
-                  street: data.meta.address,
-                  city: data.meta.city,
-                  zip: data.meta.zip,
-                }
-              : undefined,
-            createdAt: new Date(),
-          });
-
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success",
+              const userDocSnap = querySnapshot.docs[0];
+              const userDocRef = userDocSnap.ref;
+              const userData = userDocSnap.data();
+              const transactionId = generateTransactionId("buy");
+              await Promise.all([
+                userDocRef.update({
+                  pointsBalance:
+                    admin.firestore.FieldValue.increment(iCashToCredit),
+                  updatedAt: new Date(),
+                }),
+                Transactions.doc(transactionId).set({
+                  transactionId,
+                  userId,
+                  type: "buy",
+                  currency: data.currency,
+                  amountLocal: data.amount,
+                  amountICash: iCashToCredit,
+                  status: "success",
+                  payType: "in",
+                  title: `${iCashToCredit} iCash purchased`,
+                  reference: data.tx_ref,
+                  createdAt: new Date(),
+                }),
+                createNotification({
+                  notificationId: generateNotificationId("finance"),
+                  recipientId: userId,
+                  recipientEmail: userData.email,
+                  category: "finance",
+                  actionType: "ICASH_PURCHASE",
+                  title: "iCash Purchase Successful",
+                  message: `${methodType || "Card"} payment made for ${iCashToCredit} iCash is successful.`,
+                  payload: {
+                    userName: userData.firstname,
+                    amountLocal: data.amount,
+                    amountICash: iCashToCredit,
+                    currency: data.currency,
+                    transactionId,
+                  },
+                  sendEmail: true,
+                  sendPush: true,
+                }),
+                notifyAdmins(
+                  { role: ["finance", "super_admin"] },
+                  {
+                    notificationId: generateNotificationId("finance"),
+                    category: "finance",
+                    actionType: "ICASH_PURCHASE_ADMIN",
+                    title: "Finance Audit: New Purchase",
+                    message: `User ${userId} purchased ${iCashToCredit} iCash.`,
+                    payload: {
+                      userId,
+                      amountICash: iCashToCredit,
+                      txRef: data.tx_ref,
+                    },
+                  },
+                  false,
+                ),
+              ]);
+            })(),
           );
         }
+        const paymentToken = data.card?.token || data.account?.token;
+        if (paymentToken && data?.meta?.userId) {
+          tasks.push(
+            (async () => {
+              const methodQuerySnapshot = await PaymentMethods.where(
+                "paymentToken",
+                "==",
+                paymentToken,
+              )
+                .limit(1)
+                .get();
+
+              if (methodQuerySnapshot.empty) {
+                await PaymentMethods.add({
+                  userId: data.meta.userId,
+                  method: data.payment_type === "card" ? "card" : "bank",
+                  paymentToken,
+                  lastFourDigits:
+                    data.card?.last4digits ||
+                    data.account?.account_number?.slice(-4),
+                  cardBrand: data.card?.issuer,
+                  bankName: data.account?.bank_name,
+                  bankAccNumber: data.account?.account_number,
+                  expiryMonth: data.card?.expiry_month,
+                  expiryYear: data.card?.expiry_year,
+                  billingAddressDetails: data.meta.address
+                    ? {
+                        street: data.meta.address,
+                        city: data.meta.city,
+                        zip: data.meta.zip,
+                      }
+                    : undefined,
+                  createdAt: new Date(),
+                });
+              }
+            })(),
+          );
+        }
+
+        await Promise.all(tasks);
+
+        logControllerPerformance(controllerName, action, startTime, "success");
       }
+    } catch (error) {
+      console.error("Flutterwave Webhook Error:", error);
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
     }
-  } catch (error) {
-    console.error("Flutterwave Webhook Error:", error);
-  }
+  });
 };
 export const handlePostmarkInboundSupportTickets = async (req, res) => {
   const startTime = Date.now();
@@ -253,6 +273,18 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
 
   try {
     const { ToFull, From, Subject, TextBody, MessageID } = req.body;
+
+    if (!ToFull || ToFull.length === 0 || !From) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required email headers",
+      );
+      return res.status(400).send("Bad Request: Missing recipient or sender");
+    }
+
     const recipient = ToFull[0].Email.toLowerCase();
 
     let userId;
@@ -261,79 +293,92 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
     if (recipient.includes("+")) {
       userId = recipient.split("+")[1].split("@")[0];
     } else {
-      // General support email main (e.g., support@inbound.useicampus.io) for outsiders
       userId = `EXT_${From.replace(/[^a-zA-Z0-9]/g, "_")}`;
       isExternal = true;
     }
-
-    const querySnapshot = await SupportTicket.where("userId", "==", userId)
-      .where("status", "!=", "closed")
-      .orderBy("status")
-      .orderBy("createdAt", "desc")
-      .limit(1)
-      .get();
-
-    let ticketData;
-    let ticketRefId;
-
-    if (!querySnapshot.empty) {
-      const ticketDocSnap = querySnapshot.docs[0];
-      const ticketDocRef = ticketDocSnap.ref;
-      ticketData = ticketDocSnap.data();
-      ticketRefId = ticketData.ticketRefId;
-
-      await ticketDocRef.update({
-        thread: admin.firestore.FieldValue.arrayUnion({
-          sender: From,
-          message: TextBody,
-          timestamp: new Date(),
-        }),
-        updatedAt: new Date(),
-      });
-    } else {
-      ticketRefId = generateTicketRefId(isExternal ? "general" : "technical");
-      ticketData = {
-        userId,
-        guestEmail: isExternal ? From : null,
-        ticketRefId,
-        source: "email",
-        severity: isExternal ? "medium" : "high",
-        status: "open",
-        originalMessage: TextBody,
-        summary: Subject || "Inbound Support Inquiry",
-        thread: [
-          {
-            sender: From,
-            message: TextBody,
-            timestamp: new Date(),
-          },
-        ],
-        createdAt: new Date(),
-      };
-
-      await SupportTicket.doc(ticketRefId).set(ticketData);
-    }
-
-    if (!isExternal) {
-      await createNotification({
-        recipientId: userId,
-        category: "system",
-        actionType: "SUPPORT_TICKET_RECEIVED",
-        sendEmail: true,
-        recipientEmail: From,
-        payload: {
-          userName: "User",
-          ticketRefId: ticketRefId,
-          date: new Date().toLocaleDateString(),
-          time: new Date().toLocaleTimeString(),
-        },
-      });
-    }
-
-    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).send("Webhook Processed Successfully");
+    setImmediate(async () => {
+      try {
+        const querySnapshot = await SupportTicket.where("userId", "==", userId)
+          .where("status", "!=", "closed")
+          .orderBy("status")
+          .orderBy("createdAt", "desc")
+          .limit(1)
+          .get();
+
+        let ticketData;
+        let ticketRefId;
+
+        if (!querySnapshot.empty) {
+          const ticketDocSnap = querySnapshot.docs[0];
+          const ticketDocRef = ticketDocSnap.ref;
+          ticketData = ticketDocSnap.data();
+          ticketRefId = ticketData.ticketRefId;
+
+          await ticketDocRef.update({
+            thread: admin.firestore.FieldValue.arrayUnion({
+              sender: From,
+              message: TextBody,
+              timestamp: new Date(),
+            }),
+            updatedAt: new Date(),
+          });
+        } else {
+          ticketRefId = generateTicketRefId(
+            isExternal ? "general" : "technical",
+          );
+          ticketData = {
+            userId,
+            guestEmail: isExternal ? From : null,
+            ticketRefId,
+            source: "email",
+            severity: isExternal ? "medium" : "high",
+            status: "open",
+            originalMessage: TextBody,
+            summary: Subject || "Inbound Support Inquiry",
+            thread: [
+              {
+                sender: From,
+                message: TextBody,
+                timestamp: new Date(),
+              },
+            ],
+            createdAt: new Date(),
+          };
+
+          await SupportTicket.doc(ticketRefId).set(ticketData);
+        }
+
+        if (!isExternal) {
+          await createNotification({
+            recipientId: userId,
+            category: "system",
+            actionType: "SUPPORT_TICKET_RECEIVED",
+            sendEmail: true,
+            recipientEmail: From,
+            payload: {
+              userName: "User",
+              ticketRefId: ticketRefId,
+              date: new Date().toLocaleDateString(),
+              time: new Date().toLocaleTimeString(),
+            },
+          });
+        }
+
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgError) {
+        console.error("Postmark Webhook Background Error:", bgError.message);
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          bgError.message,
+        );
+      }
+    });
   } catch (error) {
-    console.error("Postmark Webhook Error:", error.message);
+    console.error("Postmark Webhook Initial Error:", error.message);
     logControllerPerformance(
       controllerName,
       action,
@@ -341,18 +386,50 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
       "error",
       error.message,
     );
-    res.status(500).send("Internal Server Error");
+    if (!res.headersSent) {
+      res.status(500).send("Internal Server Error");
+    }
   }
 };
 export const handleQstashInboundEmailJobs = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "qstashInboundEmailJobsController";
   const action = "qstashInboundEmailJobs";
+
   try {
     const jobData = req.body;
-    await createNotification(jobData);
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({ success: true });
+
+    if (!jobData) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing job data payload",
+      );
+      return res
+        .status(400)
+        .json({ success: false, error: "Missing job data payload" });
+    }
+    res.status(200).json({ success: true });
+    setImmediate(async () => {
+      try {
+        await createNotification(jobData);
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgError) {
+        console.error(
+          "Error processing email job from QStash (Background):",
+          bgError.message,
+        );
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          bgError.message,
+        );
+      }
+    });
   } catch (error) {
     console.error("Error processing email job from QStash:", error.message);
     logControllerPerformance(
@@ -362,6 +439,8 @@ export const handleQstashInboundEmailJobs = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({ error: error.message });
+    if (!res.headersSent) {
+      return res.status(500).json({ error: error.message });
+    }
   }
 };

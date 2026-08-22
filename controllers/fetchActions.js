@@ -21,6 +21,7 @@ import {
 import { client } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
+import { setImmediate } from "timers";
 import axiosRetry from "axios-retry";
 import axios from "axios";
 import * as cheerio from "cheerio";
@@ -44,12 +45,14 @@ export const fetchConnections = async (req, res) => {
     ).get();
 
     if (connectionsSnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "success",
-        "No connections found.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success",
+          "No connections found.",
+        ),
       );
       return res.json({ success: true, data: [] });
     }
@@ -59,27 +62,30 @@ export const fetchConnections = async (req, res) => {
     );
 
     if (!followingUids.length) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "success",
-        "No connections found.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success",
+          "No connections found.",
+        ),
       );
       return res.json({ success: true, data: [] });
     }
+
     const chunks = [];
     for (let i = 0; i < followingUids.length; i += 30) {
       chunks.push(followingUids.slice(i, i + 30));
     }
+    const userResults = await Promise.all(
+      chunks.map((chunk) => User.where("uid", "in", chunk).get()),
+    );
 
-    const userPromises = chunks.map(async (chunk) => {
-      const userSnapshot = await User.where("uid", "in", chunk).get();
-      return userSnapshot.docs.map((doc) => doc.data());
-    });
+    const users = userResults.flatMap((userSnapshot) =>
+      userSnapshot.docs.map((doc) => doc.data()),
+    );
 
-    const userResults = await Promise.all(userPromises);
-    const users = userResults.flat();
     const formattedConnections = users.map((u) => ({
       uid: u.uid,
       username: u.username,
@@ -90,16 +96,20 @@ export const fetchConnections = async (req, res) => {
       profilePic: u.profilePic || "",
     }));
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.json({ success: true, data: formattedConnections });
   } catch (error) {
     console.error("fetchConnections Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ success: false, message: error.message });
   }
@@ -108,7 +118,6 @@ export const fetchUserTransactionHistory = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchUserTransactionHistoryController";
   const action = "fetchUserTransactionHistory";
-
   try {
     const userId = req.user.uid;
     const page = parseInt(req.query.page) || 1;
@@ -128,7 +137,9 @@ export const fetchUserTransactionHistory = async (req, res) => {
     const startIndex = (page - 1) * limit;
     const transactions = allDocs.slice(startIndex, startIndex + limit);
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
 
     res.status(200).json({
       success: true,
@@ -141,12 +152,14 @@ export const fetchUserTransactionHistory = async (req, res) => {
       },
     });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: error.message });
   }
@@ -155,7 +168,6 @@ export const fetchUserTransactionStats = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchUserTransactionStatsController";
   const action = "fetchUserTransactionStats";
-
   try {
     const userId = req.user.uid;
     let { month, year } = req.query;
@@ -172,12 +184,14 @@ export const fetchUserTransactionStats = async (req, res) => {
       targetMonth < 1 ||
       targetMonth > 12
     ) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid month or year parameter values provided.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid month or year parameter values provided.",
+        ),
       );
       return res.status(400).json({
         success: false,
@@ -187,6 +201,7 @@ export const fetchUserTransactionStats = async (req, res) => {
 
     const start = new Date(targetYear, targetMonth - 1, 1);
     const end = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
     const querySnapshot = await Transactions.where("userId", "==", userId)
       .where("createdAt", ">=", start)
       .where("createdAt", "<=", end)
@@ -205,11 +220,13 @@ export const fetchUserTransactionStats = async (req, res) => {
       const payType = tx.payType || "unknown";
       const amount = tx.amountICash || 0;
       flowMap[payType] = (flowMap[payType] || 0) + amount;
+
       const txDate = tx.createdAt?.toDate
         ? tx.createdAt.toDate()
         : new Date(tx.createdAt);
       const txMonth = txDate.getMonth() + 1;
       monthlyMap[txMonth] = (monthlyMap[txMonth] || 0) + amount;
+
       if (
         tx.payType === "out" &&
         tx.type === "p2p_sent" &&
@@ -223,10 +240,12 @@ export const fetchUserTransactionStats = async (req, res) => {
         recipientMap[recipientId].total += amount;
       }
     });
+
     const flow = Object.keys(flowMap).map((key) => ({
       _id: key,
       total: flowMap[key],
     }));
+
     const monthly = Object.keys(monthlyMap).map((key) => ({
       _id: parseInt(key, 10),
       total: monthlyMap[key],
@@ -264,13 +283,11 @@ export const fetchUserTransactionStats = async (req, res) => {
       });
     }
 
-    const result = {
-      flow,
-      topRecipients,
-      monthly,
-    };
+    const result = { flow, topRecipients, monthly };
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json({
       success: true,
       period: { month: targetMonth, year: targetYear },
@@ -278,12 +295,14 @@ export const fetchUserTransactionStats = async (req, res) => {
     });
   } catch (e) {
     console.error("Aggregation crash in fetchUserTransactionStats:", e.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      e.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        e.message,
+      ),
     );
     res.status(500).json({ success: false, error: e.message });
   }
@@ -292,11 +311,8 @@ export const fetchItagByUsername = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchItagByUsernameController";
   const action = "fetchItagByUsername";
-
   try {
     const { username } = req.params;
-    let isPremium;
-    let isUser;
     const querySnapshot = await ITag.where(
       "username",
       "==",
@@ -306,12 +322,14 @@ export const fetchItagByUsername = async (req, res) => {
       .get();
 
     if (querySnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        ),
       );
       return res.status(404).json({ message: "User not found" });
     }
@@ -320,10 +338,12 @@ export const fetchItagByUsername = async (req, res) => {
     const maskedNumber = iTagData.cardNumber
       ? iTagData.cardNumber.replace(/\d(?=\d{4})/g, "*")
       : "";
-    isPremium = iTagData.tier === "premium";
-    isUser = iTagData.userId === req.user.id;
+    const isPremium = iTagData.tier === "premium";
+    const isUser = iTagData.userId === req.user.id;
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
 
     res.status(200).json({
       userId: iTagData.userId,
@@ -336,12 +356,14 @@ export const fetchItagByUsername = async (req, res) => {
       isUser,
     });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      "Internal Server Error",
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Internal Server Error",
+      ),
     );
     res.status(500).json({ message: "Internal Server Error" });
   }
@@ -350,23 +372,26 @@ export const fetchUserNotifications = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchUserNotificationsController";
   const action = "fetchUserNotifications";
-
   try {
     const userId = req.user.id;
     const { limit = "50", offset = "0", unread, category } = req.query;
 
     if (!userId) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing userId",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing userId",
+        ),
       );
       return res.status(400).json({ message: "Missing userId" });
     }
+
     let recipientQuery = Notification.where("recipientId", "==", userId);
     let publicQuery = Notification.where("isPublic", "==", true);
+
     if (unread === "true") {
       recipientQuery = recipientQuery.where("isRead", "==", false);
       publicQuery = publicQuery.where("isRead", "==", false);
@@ -375,11 +400,11 @@ export const fetchUserNotifications = async (req, res) => {
       recipientQuery = recipientQuery.where("category", "==", category);
       publicQuery = publicQuery.where("category", "==", category);
     }
-
     const [recipientSnapshot, publicSnapshot] = await Promise.all([
       recipientQuery.get(),
       publicQuery.get(),
     ]);
+
     const notificationMap = new Map();
     recipientSnapshot.docs.forEach((doc) => {
       notificationMap.set(doc.id, { id: doc.id, ...doc.data() });
@@ -389,17 +414,14 @@ export const fetchUserNotifications = async (req, res) => {
     });
 
     let allNotifications = Array.from(notificationMap.values());
-    allNotifications.sort((a, b) => {
-      const timeA = a.createdAt?.toMillis
-        ? a.createdAt.toMillis()
-        : new Date(a.createdAt).getTime();
-      const timeB = b.createdAt?.toMillis
-        ? b.createdAt.toMillis()
-        : new Date(b.createdAt).getTime();
-      return timeB - timeA;
-    });
-    const groupMap = new Map();
+    const getTime = (notif) =>
+      notif.createdAt?.toMillis
+        ? notif.createdAt.toMillis()
+        : new Date(notif.createdAt).getTime();
 
+    allNotifications.sort((a, b) => getTime(b) - getTime(a));
+
+    const groupMap = new Map();
     allNotifications.forEach((notif) => {
       const actionType = notif.actionType || "unknown";
       const payload = notif.payload || {};
@@ -412,42 +434,25 @@ export const fetchUserNotifications = async (req, res) => {
       const groupKey = `${actionType}_${entityId}`;
 
       if (!groupMap.has(groupKey)) {
-        groupMap.set(groupKey, {
-          latest: notif,
-          count: 0,
-        });
+        groupMap.set(groupKey, { latest: notif, count: 0 });
       }
-
-      const groupEntry = groupMap.get(groupKey);
-      groupEntry.count += 1;
+      groupMap.get(groupKey).count += 1;
     });
-    const processedNotifications = [];
 
+    const processedNotifications = [];
     groupMap.forEach(({ latest, count }) => {
       const payload = latest.payload || {};
       const primaryUser = payload.username || payload.firstname || "Someone";
       const othersCount = Math.max(0, count - 1);
 
-      const updatedNotification = {
+      processedNotifications.push({
         ...latest,
-        payload: {
-          ...payload,
-          primaryUser,
-          othersCount,
-        },
-      };
+        payload: { ...payload, primaryUser, othersCount },
+      });
+    });
 
-      processedNotifications.push(updatedNotification);
-    });
-    processedNotifications.sort((a, b) => {
-      const timeA = a.createdAt?.toMillis
-        ? a.createdAt.toMillis()
-        : new Date(a.createdAt).getTime();
-      const timeB = b.createdAt?.toMillis
-        ? b.createdAt.toMillis()
-        : new Date(b.createdAt).getTime();
-      return timeB - timeA;
-    });
+    processedNotifications.sort((a, b) => getTime(b) - getTime(a));
+
     const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
     const parsedLimit = Math.max(parseInt(limit, 10) || 50, 1);
 
@@ -456,16 +461,20 @@ export const fetchUserNotifications = async (req, res) => {
       parsedOffset + parsedLimit,
     );
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json({ notifications, success: true });
   } catch (error) {
     console.error("Error fetching notifications:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: "Server error", success: false });
   }
@@ -474,7 +483,6 @@ export const fetchSingleNotification = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchSingleNotificationController";
   const action = "fetchSingleNotification";
-
   try {
     const { id } = req.params;
     const userId = req.user.uid;
@@ -484,12 +492,14 @@ export const fetchSingleNotification = async (req, res) => {
       .get();
 
     if (querySnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Notification not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Notification not found",
+        ),
       );
       return res.status(404).json({
         message: "Notification not found",
@@ -500,7 +510,11 @@ export const fetchSingleNotification = async (req, res) => {
     const docRef = querySnapshot.docs[0].ref;
     const notificationData = querySnapshot.docs[0].data();
     if (!notificationData.isRead) {
-      await docRef.update({ isRead: true });
+      docRef
+        .update({ isRead: true })
+        .catch((err) =>
+          console.error("Failed to mark notification as read:", err.message),
+        );
       notificationData.isRead = true;
     }
 
@@ -509,19 +523,23 @@ export const fetchSingleNotification = async (req, res) => {
       ...notificationData,
     };
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json({
       success: true,
       notification,
     });
   } catch (error) {
     console.error("Error fetching single notification:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({
       success: false,
@@ -538,6 +556,7 @@ export const fetchProfileInformation = async (req, res) => {
     const { identifier } = req.params;
     const viewerUid = req.user.uid;
     const { viewerTier, viewerRole, viewerFirstname } = req.query;
+
     const targetUserSnapshot = await User.where(
       Filter.or(
         Filter.where("uid", "==", identifier),
@@ -550,12 +569,14 @@ export const fetchProfileInformation = async (req, res) => {
       .get();
 
     if (targetUserSnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        ),
       );
       return res
         .status(404)
@@ -566,6 +587,7 @@ export const fetchProfileInformation = async (req, res) => {
     const { password, refreshTokens, iCashPin, ...targetUser } =
       rawTargetUserData;
     const targetUid = targetUser.uid;
+
     const viewerDoc = await User.doc(viewerUid).get();
     const viewerData = viewerDoc.exists ? viewerDoc.data() : null;
 
@@ -577,12 +599,14 @@ export const fetchProfileInformation = async (req, res) => {
     );
 
     if (isBlockedByViewer || isViewerBlockedByTarget) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User not found or you have restricted access to this profile.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found or you have restricted access to this profile.",
+        ),
       );
       return res.status(403).json({
         success: false,
@@ -599,9 +623,11 @@ export const fetchProfileInformation = async (req, res) => {
       for (let i = 0; i < uids.length; i += 30) {
         chunks.push(uids.slice(i, i + 30));
       }
-      const promises = chunks.map(async (chunk) => {
-        const snap = await User.where("uid", "in", chunk).get();
-        return snap.docs.map((doc) => {
+      const results = await Promise.all(
+        chunks.map((chunk) => User.where("uid", "in", chunk).get()),
+      );
+      return results.flatMap((snap) =>
+        snap.docs.map((doc) => {
           const u = doc.data();
           return {
             firstname: u.firstname,
@@ -613,10 +639,8 @@ export const fetchProfileInformation = async (req, res) => {
             usertype: u.usertype,
             organizationName: u.organizationName,
           };
-        });
-      });
-      const results = await Promise.all(promises);
-      return results.flat();
+        }),
+      );
     };
 
     const attachCommentsAndCountsToPosts = async (postsList) => {
@@ -625,13 +649,12 @@ export const fetchProfileInformation = async (req, res) => {
       return Promise.all(
         postsList.map(async (post) => {
           const targetPostId = post.postId;
-          const commentsSnapshot = await Comments.where(
-            "postId",
-            "==",
-            targetPostId,
-          ).get();
-          const comments = [];
-          for (const doc of commentsSnapshot.docs) {
+          const [commentsSnapshot, repostersSnapshot] = await Promise.all([
+            Comments.where("postId", "==", targetPostId).get(),
+            PostReposters.where("postId", "==", targetPostId).get(),
+          ]);
+
+          const commentUserPromises = commentsSnapshot.docs.map(async (doc) => {
             const commentData = doc.data();
             let commentUser = null;
             if (commentData.userId) {
@@ -653,16 +676,13 @@ export const fetchProfileInformation = async (req, res) => {
                 };
               }
             }
-            comments.push({
+            return {
               ...commentData,
               userId: commentUser || commentData.userId,
-            });
-          }
-          const repostersSnapshot = await PostReposters.where(
-            "postId",
-            "==",
-            targetPostId,
-          ).get();
+            };
+          });
+
+          const comments = await Promise.all(commentUserPromises);
           const repostersCount = repostersSnapshot.size;
           const commentsCount = commentsSnapshot.size;
 
@@ -685,21 +705,19 @@ export const fetchProfileInformation = async (req, res) => {
       for (let i = 0; i < postIds.length; i += 30) {
         chunks.push(postIds.slice(i, i + 30));
       }
-      const promises = chunks.map(async (chunk) => {
-        const snap = await Posts.where("postId", "in", chunk).get();
-        return snap.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-      });
-      const results = await Promise.all(promises);
-      const posts = results.flat();
-      const sortedPosts = posts.sort((a, b) => {
-        const timeA = a.createdAt?.toMillis
-          ? a.createdAt.toMillis()
-          : new Date(a.createdAt).getTime();
-        const timeB = b.createdAt?.toMillis
-          ? b.createdAt.toMillis()
-          : new Date(b.createdAt).getTime();
-        return timeB - timeA;
-      });
+      const results = await Promise.all(
+        chunks.map((chunk) => Posts.where("postId", "in", chunk).get()),
+      );
+      const posts = results.flatMap((snap) =>
+        snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+      );
+
+      const getTime = (p) =>
+        p.createdAt?.toMillis
+          ? p.createdAt.toMillis()
+          : new Date(p.createdAt).getTime();
+
+      const sortedPosts = posts.sort((a, b) => getTime(b) - getTime(a));
       return await attachCommentsAndCountsToPosts(sortedPosts);
     };
 
@@ -738,7 +756,6 @@ export const fetchProfileInformation = async (req, res) => {
       fetchUsersByUids(followingIds),
     ]);
 
-    // Format Courses
     const courses = coursesSnap
       ? coursesSnap.docs.map((doc) => {
           const c = doc.data();
@@ -763,27 +780,23 @@ export const fetchProfileInformation = async (req, res) => {
       ...doc.data(),
     }));
 
-    const formattedAuthoredPosts =
-      await attachCommentsAndCountsToPosts(authoredPosts);
-
-    const repostPostIds = repostsSnap.docs.map((doc) => doc.data().postId);
-    const originalRepostedPosts = await fetchPostsByIds(repostPostIds);
+    const [formattedAuthoredPosts, originalRepostedPosts] = await Promise.all([
+      attachCommentsAndCountsToPosts(authoredPosts),
+      fetchPostsByIds(repostsSnap.docs.map((doc) => doc.data().postId)),
+    ]);
 
     const formattedReposts = originalRepostedPosts.map((post) => ({
       ...post,
       isRepost: true,
     }));
 
+    const getTime = (item) =>
+      item.createdAt?.toMillis
+        ? item.createdAt.toMillis()
+        : new Date(item.createdAt).getTime();
+
     const userPosts = [...formattedAuthoredPosts, ...formattedReposts].sort(
-      (a, b) => {
-        const timeA = a.createdAt?.toMillis
-          ? a.createdAt.toMillis()
-          : new Date(a.createdAt).getTime();
-        const timeB = b.createdAt?.toMillis
-          ? b.createdAt.toMillis()
-          : new Date(b.createdAt).getTime();
-        return timeB - timeA;
-      },
+      (a, b) => getTime(b) - getTime(a),
     );
 
     const iTagData = !iTagSnap.empty ? iTagSnap.docs[0].data() : null;
@@ -824,19 +837,23 @@ export const fetchProfileInformation = async (req, res) => {
       likesCount: targetUser.likes?.length || 0,
     };
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json({
       success: true,
       data: profileData,
     });
   } catch (error) {
     console.error("Comprehensive Profile Fetch Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ success: false, message: "Server error" });
   }
@@ -845,17 +862,18 @@ export const fetchBlockedUsers = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchBlockedUsersController";
   const action = "fetchBlockedUsers";
-
   try {
     const userDoc = await User.doc(req.user.uid).get();
 
     if (!userDoc.exists) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        ),
       );
       return res.status(404).json({ error: "User not found" });
     }
@@ -864,17 +882,23 @@ export const fetchBlockedUsers = async (req, res) => {
     const blockedIds = userData.blockedUsers || [];
 
     if (blockedIds.length === 0) {
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
       return res.status(200).json([]);
     }
+
     const chunks = [];
     for (let i = 0; i < blockedIds.length; i += 30) {
       chunks.push(blockedIds.slice(i, i + 30));
     }
 
-    const userPromises = chunks.map(async (chunk) => {
-      const userSnapshot = await User.where("uid", "in", chunk).get();
-      return userSnapshot.docs.map((doc) => {
+    const userResults = await Promise.all(
+      chunks.map((chunk) => User.where("uid", "in", chunk).get()),
+    );
+
+    const blockedList = userResults.flatMap((userSnapshot) =>
+      userSnapshot.docs.map((doc) => {
         const u = doc.data();
         return {
           uid: u.uid,
@@ -885,21 +909,22 @@ export const fetchBlockedUsers = async (req, res) => {
           tier: u.tier || "",
           organizationName: u.organizationName || "",
         };
-      });
-    });
+      }),
+    );
 
-    const userResults = await Promise.all(userPromises);
-    const blockedList = userResults.flat();
-
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json(blockedList);
   } catch (err) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      err.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      ),
     );
     res.status(500).json({ error: err.message });
   }
@@ -915,16 +940,20 @@ export const fetchLectureExceptions = async (req, res) => {
     const userRole = req.user.usertype;
 
     if (!courseId) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "courseId is required",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "courseId is required",
+        ),
       );
       return res.status(400).json({ message: "courseId is required" });
     }
+
     let exceptionsQuery = Exceptions.where("courseId", "==", courseId);
+
     if (userRole === "student") {
       exceptionsQuery = exceptionsQuery.where("studentId", "==", userId);
     } else if (userRole === "lecturer") {
@@ -934,12 +963,14 @@ export const fetchLectureExceptions = async (req, res) => {
         .get();
 
       if (courseSnapshot.empty) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Access denied. You do not teach this course.",
+        setImmediate(() =>
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Access denied. You do not teach this course.",
+          ),
         );
         return res.status(403).json({
           success: false,
@@ -947,35 +978,41 @@ export const fetchLectureExceptions = async (req, res) => {
         });
       }
     } else {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user type",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user type",
+        ),
       );
       return res.status(403).json({ message: "Unauthorized user type" });
     }
-    const snapshot = await exceptionsQuery.orderBy("createdAt", "desc").get();
 
+    const snapshot = await exceptionsQuery.orderBy("createdAt", "desc").get();
     const exceptions = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json({
       success: true,
       count: exceptions.length,
       exceptions,
     });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: error.message });
   }
@@ -995,12 +1032,14 @@ export const fetchCourseAssignments = async (req, res) => {
       .get();
 
     if (courseSnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
       );
       return res.status(404).json({ message: "Course not found" });
     }
@@ -1008,19 +1047,24 @@ export const fetchCourseAssignments = async (req, res) => {
     const courseData = courseSnapshot.docs[0].data();
     const assignments = courseData.assignments || [];
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json(assignments);
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: error.message });
   }
 };
+// Start
 export const fetchCourseLectures = async (req, res) => {
   const controllerStartTime = Date.now();
   const controllerName = "fetchCourseLecturesController";
@@ -1033,12 +1077,14 @@ export const fetchCourseLectures = async (req, res) => {
       .get();
 
     if (lectureSnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        controllerStartTime,
-        "error",
-        "Lectures session not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          controllerStartTime,
+          "error",
+          "Lectures session not found",
+        ),
       );
       return res.status(404).json({ error: "Lectures session not found" });
     }
@@ -1051,12 +1097,13 @@ export const fetchCourseLectures = async (req, res) => {
       ? lectureData.startTime.toDate()
       : new Date(lectureData.startTime);
 
-    let currentStatus = lectureData.status;
-
-    if (currentStatus === "scheduled" && now >= lectureStartTime) {
-      currentStatus = "ongoing";
-      await lectureDoc.ref.update({ status: "ongoing" });
+    if (lectureData.status === "scheduled" && now >= lectureStartTime) {
       lectureData.status = "ongoing";
+      lectureDoc.ref
+        .update({ status: "ongoing" })
+        .catch((err) =>
+          console.error("Failed to update lecture status:", err.message),
+        );
     }
 
     const responseLecture = {
@@ -1064,21 +1111,25 @@ export const fetchCourseLectures = async (req, res) => {
       ...lectureData,
     };
 
-    logControllerPerformance(
-      controllerName,
-      action,
-      controllerStartTime,
-      "success",
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        controllerStartTime,
+        "success",
+      ),
     );
     res.json(responseLecture);
   } catch (err) {
     console.error("Fetch lecture error:", err.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      controllerStartTime,
-      "error",
-      err.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        controllerStartTime,
+        "error",
+        err.message,
+      ),
     );
     res
       .status(500)
@@ -1093,39 +1144,44 @@ export const fetchLectureExceptionsLecturerView = async (req, res) => {
   try {
     const { courseId } = req.params;
     const userId = req.user.id || req.user.uid;
+
     const courseSnapshot = await Course.where("courseId", "==", courseId)
       .limit(1)
       .get();
 
     if (courseSnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
       );
       return res.status(404).json({ message: "Course not found" });
     }
 
     const courseData = courseSnapshot.docs[0].data();
     const lecturerIds = courseData.lecturerIds || [];
-
     const isLecturer = lecturerIds.some((id) => String(id) === String(userId));
 
     if (!isLecturer) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Access Denied: You are not authorized to view this course's exceptions",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Access Denied: You are not authorized to view this course's exceptions",
+        ),
       );
       return res.status(403).json({
         message:
           "Access Denied: You are not authorized to view this course's exceptions",
       });
     }
+
     const exceptionsSnapshot = await Exceptions.where(
       "courseId",
       "==",
@@ -1139,26 +1195,30 @@ export const fetchLectureExceptionsLecturerView = async (req, res) => {
       ...doc.data(),
     }));
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json(exceptions);
   } catch (error) {
     console.error("Error fetching lecture exceptions:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: "Failed to fetch course exceptions" });
   }
 };
+//End
 export const fetchBanksUsingCountryCode = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchBanksUsingCountryCodeController";
   const action = "fetchBanksUsingCountryCode";
   const { countryCode } = req.params;
-
   try {
     const flwResponse = await fetch(
       `https://api.flutterwave.com/v3/banks/${countryCode}`,
@@ -1169,15 +1229,19 @@ export const fetchBanksUsingCountryCode = async (req, res) => {
       },
     );
     const data = await flwResponse.json();
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(flwResponse.status).json(data);
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ status: "error", message: "Failed to fetch banks" });
   }
@@ -1195,12 +1259,10 @@ export const fetchOngoingLectures = async (req, res) => {
     ]);
 
     const courseIdSet = new Set();
-
     enrolledCoursesSnap.docs.forEach((doc) => {
       const data = doc.data();
       if (data.courseId) courseIdSet.add(data.courseId);
     });
-
     taughtCoursesSnap.docs.forEach((doc) => {
       const data = doc.data();
       if (data.courseId) courseIdSet.add(data.courseId);
@@ -1209,33 +1271,38 @@ export const fetchOngoingLectures = async (req, res) => {
     const enrolledOrTaughtCourseIds = Array.from(courseIdSet);
 
     if (enrolledOrTaughtCourseIds.length === 0) {
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
       return res.status(200).json({ ongoing: false });
     }
-    let ongoingLectureDoc = null;
-    let foundCourseData = null;
 
     const chunks = [];
     for (let i = 0; i < enrolledOrTaughtCourseIds.length; i += 30) {
       chunks.push(enrolledOrTaughtCourseIds.slice(i, i + 30));
     }
 
-    for (const chunk of chunks) {
-      const lectureSnap = await Lectures.where("status", "==", "ongoing")
-        .where("courseId", "in", chunk)
-        .limit(1)
-        .get();
+    const lectureSnaps = await Promise.all(
+      chunks.map((chunk) =>
+        Lectures.where("status", "==", "ongoing")
+          .where("courseId", "in", chunk)
+          .limit(1)
+          .get(),
+      ),
+    );
 
-      if (!lectureSnap.empty) {
-        ongoingLectureDoc = lectureSnap.docs[0];
+    let ongoingLectureDoc = null;
+    for (const snap of lectureSnaps) {
+      if (!snap.empty) {
+        ongoingLectureDoc = snap.docs[0];
         break;
       }
     }
 
     if (ongoingLectureDoc) {
       const lectureData = ongoingLectureDoc.data();
-
       let populatedCourse = null;
+
       if (lectureData.courseId) {
         const courseSnap = await Course.where(
           "courseId",
@@ -1258,23 +1325,29 @@ export const fetchOngoingLectures = async (req, res) => {
         courseId: populatedCourse || lectureData.courseId,
       };
 
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
       return res.status(200).json({
         ongoing: true,
         lecture: formattedLecture,
       });
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json({ ongoing: false });
   } catch (err) {
     console.error("Error fetching ongoing lecture:", err.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      err.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      ),
     );
     res.status(500).json({ error: err.message });
   }
@@ -1283,13 +1356,12 @@ export const fetchFeaturedBooksFromLibrary = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchFeaturedBooksFromLibraryController";
   const action = "fetchFeaturedBooksFromLibrary";
-
   try {
     const rawDept = req.query.department;
     const department =
       rawDept && rawDept.trim().length > 0 ? rawDept.trim() : null;
     const BASE_URL = "https://1lib.sk";
-    let targetUrl = department
+    const targetUrl = department
       ? `${BASE_URL}/s/${encodeURIComponent(department)}`
       : `${BASE_URL}/popular.php`;
 
@@ -1341,20 +1413,26 @@ export const fetchFeaturedBooksFromLibrary = async (req, res) => {
     });
 
     if (featuredBooks.length === 0) {
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
       return res.json(getFallbackBooks());
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.json(featuredBooks);
   } catch (error) {
     console.error("Featured Scrape Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.json(getFallbackBooks());
   }
@@ -1363,7 +1441,6 @@ export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchCourseDetailsForOngoingLectureController";
   const action = "fetchCourseDetailsForOngoingLecture";
-
   try {
     const { courseId } = req.params;
     const courseSnapshot = await Course.where("courseId", "==", courseId)
@@ -1371,12 +1448,14 @@ export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
       .get();
 
     if (courseSnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
       );
       return res.status(404).json({ message: "Course not found" });
     }
@@ -1387,16 +1466,20 @@ export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
       ...courseDoc.data(),
     };
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json(course);
   } catch (error) {
     console.error("Fetch Course Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: "Internal server error" });
   }
@@ -1405,7 +1488,6 @@ export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllExceptionsForOngoingLectureController";
   const action = "fetchAllExceptionsForOngoingLecture";
-
   try {
     const { lectureId } = req.params;
     const snapshot = await Exceptions.where("lectureId", "==", lectureId)
@@ -1417,15 +1499,19 @@ export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
       ...doc.data(),
     }));
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json(exceptions);
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: "Failed to fetch course exceptions" });
   }
@@ -1434,7 +1520,6 @@ export const fetchCourseDetails = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchCourseDetailsController";
   const action = "fetchCourseDetails";
-
   try {
     const { courseId } = req.params;
     const userId = req.user.uid;
@@ -1449,12 +1534,14 @@ export const fetchCourseDetails = async (req, res) => {
       .get();
 
     if (courseSnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Course not found or you do not have permission to view it.",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found or you do not have permission to view it.",
+        ),
       );
       return res.status(404).json({
         success: false,
@@ -1468,8 +1555,9 @@ export const fetchCourseDetails = async (req, res) => {
       ...courseDoc.data(),
     };
 
-    logControllerPerformance(controllerName, action, startTime, "success");
-
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     return res.status(200).json({
       success: true,
       data: course,
@@ -1479,12 +1567,14 @@ export const fetchCourseDetails = async (req, res) => {
       `Error fetching course ${req.params.courseId}:`,
       error.message,
     );
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     return res.status(500).json({
       success: false,
@@ -1497,7 +1587,6 @@ export const fetchStudentsLecturesTimeline = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchStudentsLecturesTimelineController";
   const action = "fetchStudentsLecturesTimeline";
-
   try {
     const studentId = req.user.uid;
     const enrolledCoursesSnapshot = await Course.where(
@@ -1521,9 +1610,12 @@ export const fetchStudentsLecturesTimeline = async (req, res) => {
       .filter((id) => id !== undefined && id !== null);
 
     if (courseIds.length === 0) {
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
       return res.status(200).json({ success: true, data: [] });
     }
+
     const chunks = [];
     for (let i = 0; i < courseIds.length; i += 30) {
       chunks.push(courseIds.slice(i, i + 30));
@@ -1574,15 +1666,19 @@ export const fetchStudentsLecturesTimeline = async (req, res) => {
       };
     });
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json({ success: true, data: decoratedLectures });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: error.message });
   }
@@ -1591,7 +1687,6 @@ export const fetchAllCourseAssessments = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllCourseAssessmentsController";
   const action = "fetchAllCourseAssessments";
-
   try {
     const { courseId } = req.params;
     const snapshot = await Assessment.where("courseId", "==", courseId)
@@ -1607,19 +1702,23 @@ export const fetchAllCourseAssessments = async (req, res) => {
       };
     });
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json({
       success: true,
       count: assessments.length,
       data: assessments,
     });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: error.message });
   }
@@ -1628,18 +1727,19 @@ export const fetchAllLecturesByCourseId = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllLecturesByCourseIdController";
   const action = "fetchAllLecturesByCourseId";
-
   try {
     const { courseId } = req.params;
     const snapshot = await Lectures.where("courseId", "==", courseId).get();
 
     if (snapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "No lectures found for this course",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "No lectures found for this course",
+        ),
       );
       return res
         .status(404)
@@ -1651,16 +1751,20 @@ export const fetchAllLecturesByCourseId = async (req, res) => {
       ...doc.data(),
     }));
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.json(lectures);
   } catch (err) {
     console.error("Fetch course lectures error:", err.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      err.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      ),
     );
     res
       .status(500)
@@ -1671,7 +1775,6 @@ export const fetchLecturersLecturesTimeline = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchLecturersLecturesTimelineController";
   const action = "fetchLecturersLecturesTimeline";
-
   try {
     const lecturerId = req.user.uid;
     const taughtCoursesSnapshot = await Course.where(
@@ -1695,22 +1798,27 @@ export const fetchLecturersLecturesTimeline = async (req, res) => {
       .filter((id) => id !== undefined && id !== null);
 
     if (courseIds.length === 0) {
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
       return res.status(200).json({ success: true, data: [] });
     }
+
     const chunks = [];
     for (let i = 0; i < courseIds.length; i += 30) {
       chunks.push(courseIds.slice(i, i + 30));
     }
-    const lecturePromises = chunks.map(async (chunk) => {
-      const snap = await Lectures.where("courseId", "in", chunk).get();
-      return snap.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-    });
 
-    const lectureResults = await Promise.all(lecturePromises);
+    const lectureResults = await Promise.all(
+      chunks.map(async (chunk) => {
+        const snap = await Lectures.where("courseId", "in", chunk).get();
+        return snap.docs.map((doc) => ({
+          id: doc.id,
+          ...doc.data(),
+        }));
+      }),
+    );
+
     const allLectures = lectureResults.flat();
 
     const filteredLectures = allLectures
@@ -1735,6 +1843,7 @@ export const fetchLecturersLecturesTimeline = async (req, res) => {
           : new Date(b.startTime).getTime();
         return timeA - timeB;
       });
+
     const decoratedLectures = filteredLectures.map((lecture) => {
       const courseInfo = taughtCourses.find(
         (c) => c.courseId === lecture.courseId,
@@ -1746,15 +1855,19 @@ export const fetchLecturersLecturesTimeline = async (req, res) => {
       };
     });
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json({ success: true, data: decoratedLectures });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: error.message });
   }
@@ -1763,24 +1876,26 @@ export const getTransactionById = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getTransactionByIdController";
   const action = "getTransactionById";
-
   try {
     const { transactionId } = req.params;
     const currentUserId = req.user.id || req.user.uid;
 
     if (!transactionId) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Transaction ID parameter is required",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Transaction ID parameter is required",
+        ),
       );
       return res.status(400).json({
         success: false,
         message: "Transaction ID parameter is required",
       });
     }
+
     const transactionSnapshot = await Transactions.where(
       "transactionId",
       "==",
@@ -1790,12 +1905,14 @@ export const getTransactionById = async (req, res) => {
       .get();
 
     if (transactionSnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Transaction detail not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Transaction detail not found",
+        ),
       );
       return res.status(404).json({
         success: false,
@@ -1814,12 +1931,14 @@ export const getTransactionById = async (req, res) => {
     const isRecipient = transaction.metadata?.recipientId === currentUserId;
 
     if (!isOwner && !isSender && !isRecipient) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized access to this transaction record",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized access to this transaction record",
+        ),
       );
       return res.status(403).json({
         success: false,
@@ -1827,7 +1946,9 @@ export const getTransactionById = async (req, res) => {
       });
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     return res.status(200).json({
       success: true,
       data: transaction,
@@ -1835,12 +1956,14 @@ export const getTransactionById = async (req, res) => {
     });
   } catch (error) {
     console.error("Backend getTransactionById Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     return res.status(500).json({
       success: false,
@@ -1852,7 +1975,6 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
-
   try {
     const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user.uid;
@@ -1882,15 +2004,19 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
 
     const paginatedCourses = allCourses.slice(skip, skip + limitNum);
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json(paginatedCourses);
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: "Error fetching your courses" });
   }
@@ -1915,20 +2041,25 @@ export const fetchLecturerEnrolledCourses = async (req, res) => {
       .skip(skip)
       .limit(limitNum)
       .lean();
+
     const results = courses.map((course) => ({
       ...course,
     }));
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json(results);
   } catch (error) {
     console.error("Lecturer Fetch Courses Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     res.status(500).json({ message: "Error fetching lecturer courses" });
   }
@@ -1937,10 +2068,8 @@ export const fetchAllAdmins = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllAdminsController";
   const action = "fetchAllAdmins";
-
   try {
     const snapshot = await Admin.get();
-
     const admins = snapshot.docs.map((doc) => {
       const data = doc.data();
       return {
@@ -1955,20 +2084,27 @@ export const fetchAllAdmins = async (req, res) => {
     });
 
     console.log(`Admin ${req.admin.uid} fetched the administrator list.`);
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.status(200).json(admins);
   } catch (err) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      err.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      ),
     );
     res.status(500).json({ error: "Failed to fetch administrator list" });
   }
 };
 export const getNotifications = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getNotificationsController";
+  const action = "getNotifications";
   try {
     const { category, page = 1, limit = 20 } = req.query;
     const adminType = req.admin.adminType;
@@ -1998,9 +2134,13 @@ export const getNotifications = async (req, res) => {
       skip,
       skip + limitNum,
     );
-    const recipientIds = paginatedNotifications
-      .map((n) => n.recipientId)
-      .filter((id) => id !== undefined && id !== null);
+    const recipientIds = [
+      ...new Set(
+        paginatedNotifications
+          .map((n) => n.recipientId)
+          .filter((id) => id !== undefined && id !== null),
+      ),
+    ];
 
     const userTypeMap = new Map();
 
@@ -2010,18 +2150,19 @@ export const getNotifications = async (req, res) => {
         chunks.push(recipientIds.slice(i, i + 30));
       }
 
-      const userPromises = chunks.map(async (chunk) => {
-        const userSnap = await User.where("uid", "in", chunk).get();
-        userSnap.docs.forEach((doc) => {
-          const userData = doc.data();
-          if (userData.uid) {
-            userTypeMap.set(userData.uid, userData.usertype || "unknown");
-          }
-        });
-      });
-
-      await Promise.all(userPromises);
+      await Promise.all(
+        chunks.map(async (chunk) => {
+          const userSnap = await User.where("uid", "in", chunk).get();
+          userSnap.docs.forEach((doc) => {
+            const userData = doc.data();
+            if (userData.uid) {
+              userTypeMap.set(userData.uid, userData.usertype || "unknown");
+            }
+          });
+        }),
+      );
     }
+
     const notifications = paginatedNotifications.map((notification) => ({
       ...notification,
       recipientUserType: notification.recipientId
@@ -2047,7 +2188,6 @@ export const fetchPosts = async (req, res) => {
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const isInitialLoad = !cursorScore;
   const userId = req.user?.uid || req.user?.id;
-
   try {
     let cachedPosts = null;
     if (isInitialLoad && typeof client !== "undefined" && client.get) {
@@ -2068,51 +2208,66 @@ export const fetchPosts = async (req, res) => {
         id: doc.id,
         ...doc.data(),
       }));
+
       const authorIds = [
         ...new Set(rawPosts.map((p) => p.originalAuthor).filter(Boolean)),
       ];
       const postIds = rawPosts.map((p) => p.id);
+
       const authorMap = new Map();
+      const repostersMap = new Map();
+
+      const fetchTasks = [];
+
       if (authorIds.length > 0) {
         const authorChunks = [];
         for (let i = 0; i < authorIds.length; i += 30) {
           authorChunks.push(authorIds.slice(i, i + 30));
         }
 
-        const authorPromises = authorChunks.map(async (chunk) => {
-          const userSnap = await User.where("uid", "in", chunk).get();
-          userSnap.docs.forEach((doc) => {
-            const userData = doc.data();
-            const { password, iCashPin, ...safeData } = userData;
-            authorMap.set(userData.uid || doc.id, safeData);
-          });
-        });
-        await Promise.all(authorPromises);
+        fetchTasks.push(
+          Promise.all(
+            authorChunks.map(async (chunk) => {
+              const userSnap = await User.where("uid", "in", chunk).get();
+              userSnap.docs.forEach((doc) => {
+                const userData = doc.data();
+                const { password, iCashPin, ...safeData } = userData;
+                authorMap.set(userData.uid || doc.id, safeData);
+              });
+            }),
+          ),
+        );
       }
-      const repostersMap = new Map();
+
       if (postIds.length > 0) {
         const reposterChunks = [];
         for (let i = 0; i < postIds.length; i += 30) {
           reposterChunks.push(postIds.slice(i, i + 30));
         }
 
-        const reposterPromises = reposterChunks.map(async (chunk) => {
-          const repSnap = await PostReposters.where(
-            "postId",
-            "in",
-            chunk,
-          ).get();
-          repSnap.docs.forEach((doc) => {
-            const repData = doc.data();
-            const pId = repData.postId;
-            if (!repostersMap.has(pId)) {
-              repostersMap.set(pId, []);
-            }
-            repostersMap.get(pId).push({ id: doc.id, ...repData });
-          });
-        });
-        await Promise.all(reposterPromises);
+        fetchTasks.push(
+          Promise.all(
+            reposterChunks.map(async (chunk) => {
+              const repSnap = await PostReposters.where(
+                "postId",
+                "in",
+                chunk,
+              ).get();
+              repSnap.docs.forEach((doc) => {
+                const repData = doc.data();
+                const pId = repData.postId;
+                if (!repostersMap.has(pId)) {
+                  repostersMap.set(pId, []);
+                }
+                repostersMap.get(pId).push({ id: doc.id, ...repData });
+              });
+            }),
+          ),
+        );
       }
+
+      await Promise.all(fetchTasks);
+
       const calculatedPosts = rawPosts.map((post) => {
         const authorDetails = authorMap.get(post.originalAuthor) || {};
         const repostersDetails = repostersMap.get(post.id) || [];
@@ -2149,6 +2304,7 @@ export const fetchPosts = async (req, res) => {
       filteredPosts.sort((a, b) => b.rankingScore - a.rankingScore);
       posts = filteredPosts.slice(0, limit);
     }
+
     const processedPosts = await Promise.all(
       posts.map(async (post) => {
         const targetPostId = post.postId || post.id;
@@ -2157,34 +2313,46 @@ export const fetchPosts = async (req, res) => {
           "==",
           targetPostId,
         ).get();
-        const comments = [];
-        for (const doc of commentsSnapshot.docs) {
+
+        const commentUserIds = [];
+        const commentDocsData = commentsSnapshot.docs.map((doc) => {
           const commentData = doc.data();
-          let commentUser = null;
-          if (commentData.userId) {
-            const commentUserQuery = await User.where(
-              "uid",
-              "==",
-              commentData.userId,
-            )
-              .limit(1)
-              .get();
-            if (!commentUserQuery.empty) {
-              const cuData = commentUserQuery.docs[0].data();
-              commentUser = {
-                uid: cuData.uid,
-                firstname: cuData.firstname,
-                lastname: cuData.lastname,
-                username: cuData.username,
-                profilePic: cuData.profilePic,
-              };
-            }
+          if (commentData.userId) commentUserIds.push(commentData.userId);
+          return { id: doc.id, ...commentData };
+        });
+
+        const commentUserMap = new Map();
+        if (commentUserIds.length > 0) {
+          const uniqueCommentUserIds = [...new Set(commentUserIds)];
+          const userChunks = [];
+          for (let i = 0; i < uniqueCommentUserIds.length; i += 30) {
+            userChunks.push(uniqueCommentUserIds.slice(i, i + 30));
           }
-          comments.push({
-            ...commentData,
-            userId: commentUser || commentData.userId,
-          });
+
+          await Promise.all(
+            userChunks.map(async (chunk) => {
+              const userSnap = await User.where("uid", "in", chunk).get();
+              userSnap.docs.forEach((doc) => {
+                const cuData = doc.data();
+                if (cuData.uid) {
+                  commentUserMap.set(cuData.uid, {
+                    uid: cuData.uid,
+                    firstname: cuData.firstname,
+                    lastname: cuData.lastname,
+                    username: cuData.username,
+                    profilePic: cuData.profilePic,
+                  });
+                }
+              });
+            }),
+          );
         }
+
+        const comments = commentDocsData.map((commentData) => ({
+          ...commentData,
+          userId: commentUserMap.get(commentData.userId) || commentData.userId,
+        }));
+
         const commentsCount = commentsSnapshot.size;
 
         return {
@@ -2207,16 +2375,20 @@ export const fetchPosts = async (req, res) => {
       posts.length === limit ? posts[posts.length - 1].rankingScore : null;
 
     const responseData = { posts: processedPosts, nextCursor };
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     res.json(responseData);
   } catch (err) {
     console.error("Feed error:", err.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      err.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      ),
     );
     res.status(500).json({ error: err.message });
   }
@@ -2225,7 +2397,6 @@ export const fetchActiveTickets = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const cursor = req.query.cursor;
-
     let queryRef = SupportTicket.where("status", "not-in", [
       "closed",
       "resolved",
@@ -2314,6 +2485,7 @@ export const adminFetchUserNotifications = async (req, res) => {
       id: doc.id,
       ...doc.data(),
     }));
+
     allNotifications.sort((a, b) => {
       const timeA = a.createdAt?.toMillis
         ? a.createdAt.toMillis()
@@ -2323,6 +2495,7 @@ export const adminFetchUserNotifications = async (req, res) => {
         : new Date(b.createdAt || 0).getTime();
       return timeB - timeA;
     });
+
     const groupMap = new Map();
 
     for (const notification of allNotifications) {
@@ -2347,6 +2520,7 @@ export const adminFetchUserNotifications = async (req, res) => {
         group.count += 1;
       }
     }
+
     const aggregatedNotifications = [];
     for (const [, group] of groupMap.entries()) {
       const latest = group.latest;
@@ -2366,6 +2540,7 @@ export const adminFetchUserNotifications = async (req, res) => {
 
       aggregatedNotifications.push(enrichedNotification);
     }
+
     aggregatedNotifications.sort((a, b) => {
       const timeA = a.createdAt?.toMillis
         ? a.createdAt.toMillis()
@@ -2375,6 +2550,7 @@ export const adminFetchUserNotifications = async (req, res) => {
         : new Date(b.createdAt || 0).getTime();
       return timeB - timeA;
     });
+
     const parsedOffset = Math.max(parseInt(offset), 0);
     const parsedLimit = Math.max(parseInt(limit), 1);
 
@@ -2417,26 +2593,26 @@ export const getSupportTicketByRefId = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getSupportTicketByRefIdController";
   const action = "getSupportTicketByRefId";
-
   try {
     const { ticketRefId } = req.params;
     const currentUserId = req.user.id || req.user.uid;
     const userEmail = req.user.email;
 
     if (!ticketRefId) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Ticket reference ID parameter is required",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Ticket reference ID parameter is required",
+        ),
       );
       return res.status(400).json({
         success: false,
         message: "Ticket reference ID parameter is required",
       });
     }
-
     const ticketSnapshot = await SupportTicket.where(
       "ticketRefId",
       "==",
@@ -2446,12 +2622,14 @@ export const getSupportTicketByRefId = async (req, res) => {
       .get();
 
     if (ticketSnapshot.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Support ticket not found",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Support ticket not found",
+        ),
       );
       return res.status(404).json({
         success: false,
@@ -2471,12 +2649,14 @@ export const getSupportTicketByRefId = async (req, res) => {
       req.user.role === "admin" || req.user.role === "super_admin" || req.admin;
 
     if (!isOwner && !isAdmin) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized access to this support ticket record",
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized access to this support ticket record",
+        ),
       );
       return res.status(403).json({
         success: false,
@@ -2484,7 +2664,9 @@ export const getSupportTicketByRefId = async (req, res) => {
       });
     }
 
-    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
     return res.status(200).json({
       success: true,
       ticket: ticket,
@@ -2492,12 +2674,14 @@ export const getSupportTicketByRefId = async (req, res) => {
     });
   } catch (error) {
     console.error("Backend getSupportTicketByRefId Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
     );
     return res.status(500).json({
       success: false,

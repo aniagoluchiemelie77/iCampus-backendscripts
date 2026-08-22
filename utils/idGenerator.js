@@ -1,6 +1,8 @@
 import { ITag, User } from "../tableDeclarations.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
+import { promisify } from "util";
+const signJwt = promisify(jwt.sign);
 
 export function generateNotificationId(category) {
   const now = new Date();
@@ -201,24 +203,28 @@ export const generateCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
 export const generateTokens = async (user) => {
-  const accessToken = jwt.sign(
-    { id: user.uid, email: user.email },
-    process.env.JWT_SECRET,
-    { expiresIn: "30m" },
-  );
+  const userId = user?.uid || user?.id;
 
-  const refreshToken = jwt.sign(
-    { id: user.uid },
-    process.env.REFRESH_TOKEN_SECRET,
-    { expiresIn: "30d" },
-  );
-
-  const currentTokens = user.refreshTokens || [];
+  if (!userId) {
+    throw new Error("Invalid user object provided for token generation.");
+  }
+  const [accessToken, refreshToken] = await Promise.all([
+    signJwt({ id: userId, email: user.email }, process.env.JWT_SECRET, {
+      expiresIn: "30m",
+    }),
+    signJwt({ id: userId }, process.env.REFRESH_TOKEN_SECRET, {
+      expiresIn: "30d",
+    }),
+  ]);
+  const currentTokens = Array.isArray(user.refreshTokens)
+    ? [...user.refreshTokens]
+    : [];
   currentTokens.push(refreshToken);
+
   if (currentTokens.length > 5) {
     currentTokens.shift();
   }
-  await User.doc(user.uid).update({
+  await User.doc(userId).update({
     refreshTokens: currentTokens,
     updatedAt: new Date(),
   });
@@ -307,18 +313,32 @@ export function generateItagUsername(firstName, digitCount = 4) {
   return `${cleanName}${randomSuffix}`;
 }
 export const generateUniqueReferralCode = async (user) => {
+  const nameToUse =
+    user?.userType === "enterprise" ? user?.organizationName : user?.firstName;
+
   let code;
   let exists = true;
-  const nameToUse =
-    user.userType === "enterprise" ? user.organizationName : user.firstName;
+  let attempts = 0;
+  const maxAttempts = 5;
 
-  while (exists) {
-    code = generateReferralCode(nameToUse);
-    const userWithCode = await User.findOne({ referralCode: code });
+  while (exists && attempts < maxAttempts) {
+    attempts++;
+    code = generateReferralCode(nameToUse, attempts > 1 ? attempts : undefined);
+
+    const userWithCode = await User.findOne({ referralCode: code })
+      .select("_id")
+      .lean();
 
     if (!userWithCode) {
       exists = false;
     }
+  }
+  if (exists) {
+    const randomSuffix = Math.random()
+      .toString(36)
+      .substring(2, 8)
+      .toUpperCase();
+    code = `${generateReferralCode(nameToUse)}_${randomSuffix}`;
   }
 
   return code;
@@ -326,20 +346,35 @@ export const generateUniqueReferralCode = async (user) => {
 export const generateUniqueCardNumber = async () => {
   let isUnique = false;
   let cardNumber = "";
+  let attempts = 0;
+  const maxAttempts = 5;
 
-  while (!isUnique) {
+  while (!isUnique && attempts < maxAttempts) {
+    attempts++;
     const digits = Math.floor(
       Math.random() * 900000000000000 + 100000000000000,
     ).toString();
+
     const formatted = `7${digits.match(/.{1,4}/g).join(" ")}`;
 
     const querySnapshot = await ITag.where("cardNumber", "==", formatted)
       .limit(1)
       .get();
+
     if (querySnapshot.empty) {
       cardNumber = formatted;
       isUnique = true;
     }
+  }
+  if (!isUnique) {
+    const timestampSuffix = Date.now().toString().slice(-4);
+    const randomSuffix = Math.floor(Math.random() * 90) + 10;
+    const digits = Math.floor(
+      Math.random() * 9000000000000 + 1000000000000,
+    ).toString();
+
+    const rawDigits = `${digits}${timestampSuffix}${randomSuffix}`.slice(0, 15);
+    cardNumber = `7${rawDigits.match(/.{1,4}/g).join(" ")}`;
   }
 
   return cardNumber;

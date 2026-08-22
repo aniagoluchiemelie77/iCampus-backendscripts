@@ -1,5 +1,9 @@
 import express from "express";
-import { protect, verifyAdmin } from "../middleware/auth.js";
+import {
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+} from "../middleware/auth.js";
 import {
   fetchAllAdmins,
   getNotifications,
@@ -35,9 +39,27 @@ import {
 const router = express.Router();
 
 router.get("/fetch-all", protect, verifyAdmin, fetchAllAdmins);
-router.post("/create", protect, verifyAdmin, createAdmin);
-router.put("/:uid/update", protect, verifyAdmin, updateAdmin);
-router.delete("/:uid/delete", protect, verifyAdmin, deleteAdmin);
+router.post(
+  "/create",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  createAdmin,
+);
+router.put(
+  "/:uid/update",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  updateAdmin,
+);
+router.delete(
+  "/:uid/delete",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  deleteAdmin,
+);
 router.get("/get-notifications", protect, verifyAdmin, getNotifications);
 router.get("/fetch-user/:userId", protect, verifyAdmin, adminFetchUserDetails);
 router.get(
@@ -50,9 +72,16 @@ router.post(
   "/support/send-notification",
   protect,
   verifyAdmin,
+  idempotencyMiddleware,
   adminSendTicketNotification,
 );
-router.patch("/edit-users/:uid", protect, verifyAdmin, updateUserController);
+router.patch(
+  "/edit-users/:uid",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  updateUserController,
+);
 router.get("/get-overview", protect, verifyAdmin, getAdminMetrics);
 router.get("/get-institutions", protect, verifyAdmin, getInstitutions);
 router.get("/get-drop-off-stations", protect, verifyAdmin, getDropOffStations);
@@ -60,26 +89,42 @@ router.delete(
   "/institutions/:id/delete",
   protect,
   verifyAdmin,
+  idempotencyMiddleware,
   deleteInstitution,
 );
 router.delete(
   "/stations/:id/delete",
   protect,
   verifyAdmin,
+  idempotencyMiddleware,
   deleteDropOffStation,
 );
-router.post("/institutions/create", protect, verifyAdmin, createInstitution);
+router.post(
+  "/institutions/create",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  createInstitution,
+);
 router.patch(
   "/institutions/:id/update",
   protect,
   verifyAdmin,
+  idempotencyMiddleware,
   updateInstitution,
 );
-router.post("/stations/create", protect, verifyAdmin, createStation);
+router.post(
+  "/stations/create",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  createStation,
+);
 router.patch(
   "/stations/:stationId/update",
   protect,
   verifyAdmin,
+  idempotencyMiddleware,
   updateStation,
 );
 router.get(
@@ -96,9 +141,27 @@ router.get(
 );
 router.get("/tax-entries/fetch", protect, verifyAdmin, getTaxEntries);
 router.get("/tax-entries/download", protect, verifyAdmin, downloadTaxReport);
-router.delete("/ads/:id/delete", protect, verifyAdmin, deleteAd);
-router.post("/ads/create", protect, verifyAdmin, createAd);
-router.patch("/ads/:id/update", protect, verifyAdmin, updateAd);
+router.delete(
+  "/ads/:id/delete",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  deleteAd,
+);
+router.post(
+  "/ads/create",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  createAd,
+);
+router.patch(
+  "/ads/:id/update",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  updateAd,
+);
 router.get(
   "/support-tickets/:ticketRefId/fetch",
   protect,
@@ -109,6 +172,7 @@ router.post(
   "/support-tickets/:ticketRefId/reply",
   protect,
   verifyAdmin,
+  idempotencyMiddleware,
   sendSupportMessage,
 );
 

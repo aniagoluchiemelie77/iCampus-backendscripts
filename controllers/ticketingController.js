@@ -6,6 +6,7 @@ import {
 } from "../utils/idGenerator.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+import { setImmediate } from "timers";
 
 export const createTicket = async (req, res) => {
   const startTime = Date.now();
@@ -48,28 +49,38 @@ export const createTicket = async (req, res) => {
       createdAt: now,
       updatedAt: now,
     };
+    await SupportTicket.doc(ticketRefId).set(newTicketData);
+    res.status(201).json(newTicketData);
+    setImmediate(() => {
+      Promise.all([
+        typeof createNotification === "function"
+          ? createNotification({
+              recipientId: userId,
+              category: "system",
+              actionType: "SUPPORT_TICKET_RECEIVED",
+              sendEmail: true,
+              recipientEmail: req.user?.email,
+              payload: {
+                userName: req.user?.name || "User",
+                ticketRefId,
+                date: now.toLocaleDateString(),
+                time: now.toLocaleTimeString(),
+              },
+            }).catch((err) => console.error("Ticket notification error:", err))
+          : Promise.resolve(),
 
-    await Promise.all([
-      SupportTicket.doc(ticketRefId).set(newTicketData),
-      typeof createNotification === "function"
-        ? createNotification({
-            recipientId: userId,
-            category: "system",
-            actionType: "SUPPORT_TICKET_RECEIVED",
-            sendEmail: true,
-            recipientEmail: req.user?.email,
-            payload: {
-              userName: req.user?.name || "User",
-              ticketRefId,
-              date: now.toLocaleDateString(),
-              time: now.toLocaleTimeString(),
-            },
-          }).catch((err) => console.error("Ticket notification error:", err))
-        : Promise.resolve(),
-    ]);
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(201).json(newTicketData);
+        Promise.resolve().then(() => {
+          if (typeof logControllerPerformance === "function") {
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success",
+            );
+          }
+        }),
+      ]);
+    });
   } catch (error) {
     console.error("Create Ticket Error:", error.message);
     logControllerPerformance(
@@ -82,6 +93,7 @@ export const createTicket = async (req, res) => {
     return res.status(500).json({ error: "Failed to create ticket" });
   }
 };
+
 export const adminUpdateTicketStatus = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "adminUpdateTicketStatusController";
@@ -118,27 +130,31 @@ export const adminUpdateTicketStatus = async (req, res) => {
       status,
       updatedAt: now,
     };
-
-    const userPromise = ticketData.userId
-      ? User.doc(ticketData.userId).get()
-      : Promise.resolve(null);
-
-    await Promise.all([
+    const [_, userDoc] = await Promise.all([
       ticketDocRef.set(updatePayload, { merge: true }),
-      userPromise,
+      ticketData.userId
+        ? User.doc(ticketData.userId).get()
+        : Promise.resolve(null),
     ]);
 
     const updatedTicket = { ...ticketData, ...updatePayload };
+    res.status(200).json({
+      success: true,
+      message: `Ticket marked as ${status}`,
+      ticket: updatedTicket,
+    });
 
-    if (status === "resolved") {
-      const userDoc = await userPromise;
+    setImmediate(() => {
       const userData = userDoc && userDoc.exists ? userDoc.data() : null;
-
       const dateString = now.toLocaleDateString();
       const timeString = now.toLocaleTimeString();
-      await Promise.all([
-        typeof createNotification === "function"
-          ? createNotification({
+
+      const backgroundTasks = [];
+
+      if (status === "resolved") {
+        if (typeof createNotification === "function") {
+          backgroundTasks.push(
+            createNotification({
               notificationId:
                 typeof generateNotificationId === "function"
                   ? generateNotificationId("system")
@@ -156,11 +172,13 @@ export const adminUpdateTicketStatus = async (req, res) => {
               },
             }).catch((err) =>
               console.error("Ticket resolution notification error:", err),
-            )
-          : Promise.resolve(),
+            ),
+          );
+        }
 
-        typeof notifyAdmins === "function"
-          ? notifyAdmins(
+        if (typeof notifyAdmins === "function") {
+          backgroundTasks.push(
+            notifyAdmins(
               { role: ["super_admin", "support"] },
               {
                 notificationId:
@@ -179,19 +197,25 @@ export const adminUpdateTicketStatus = async (req, res) => {
               false,
             ).catch((err) =>
               console.error("Admin ticket notification error:", err),
-            )
-          : Promise.resolve(),
-      ]);
-    }
+            ),
+          );
+        }
+      }
 
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    }
+      if (typeof logControllerPerformance === "function") {
+        backgroundTasks.push(
+          Promise.resolve().then(() =>
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success",
+            ),
+          ),
+        );
+      }
 
-    return res.status(200).json({
-      success: true,
-      message: `Ticket marked as ${status}`,
-      ticket: updatedTicket,
+      Promise.all(backgroundTasks);
     });
   } catch (error) {
     console.error("Error updating ticket status:", error);

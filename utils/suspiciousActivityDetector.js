@@ -8,20 +8,19 @@ export const verifyAndNotifyLogin = async (
   req,
   actionType = "LOGIN_AUDIT",
 ) => {
-  const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
-    .split(",")[0]
-    .trim();
+  const userId = user.uid || user.id;
+  const [ip, sessionsSnapshot] = await Promise.all([
+    Promise.resolve(
+      (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "")
+        .split(",")[0]
+        .trim()
+    ),
+    UserSessions.where("userId", "==", userId).get(),
+  ]);
   const geo = geoip.lookup(ip);
   const currentLocation = geo ? `${geo.city}, ${geo.country}` : "Unknown";
   const currentCountry = geo?.country || "Unknown";
 
-  const userId = user.uid || user.id;
-
-  const sessionsSnapshot = await UserSessions.where(
-    "userId",
-    "==",
-    userId,
-  ).get();
   const userSessions = sessionsSnapshot.docs.map((doc) => doc.data());
 
   const isSuspicious =
@@ -47,10 +46,19 @@ export const verifyAndNotifyLogin = async (
     },
     senderId: "system",
   };
-
-  return notifyAdmins(
-    { role: ["super_admin", "support"] },
-    params,
-    isSuspicious,
-  );
+  return new Promise((resolve, reject) => {
+    setImmediate(async () => {
+      try {
+        const result = await notifyAdmins(
+          { role: ["super_admin", "support"] },
+          params,
+          isSuspicious,
+        );
+        resolve(result);
+      } catch (error) {
+        console.error("[LOGIN_AUDIT_ERROR] Failed to dispatch admin notification:", error.message);
+        resolve(null); 
+      }
+    });
+  });
 };

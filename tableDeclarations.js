@@ -3,16 +3,14 @@ import { db } from "./config/firebaseAdmin.js";
 export const Posts = db.collection("posts");
 export const Product = db.collection("products");
 export const User = db.collection("users");
-export const UserSessions = db.collection("usersessions");
-export const Notification = db.collection("notifications");
-//school related tables
 export const Course = db.collection("courses");
 export const Exceptions = db.collection("exceptions");
 export const Assessment = db.collection("assessments");
 export const TestSubmission = db.collection("testsubmission");
 export const Attendance = db.collection("attendance");
 export const Lectures = db.collection("lectures");
-//school name is in lowercase, in frontend capitalize
+export const UserSessions = db.collection("usersessions");
+export const Notification = db.collection("notifications");
 export const OperationalInstitutions = db.collection("operationalinstitutions");
 export const UserBankOrCardDetails = db.collection("usercardorbankdetails");
 export const EmailVerification = db.collection("emailverify");

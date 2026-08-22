@@ -142,7 +142,7 @@ router.get("/library/search", protect, searchBookInLibrary);
 router.get("/library/featured", protect, fetchFeaturedBooksFromLibrary);
 router.get("/search", protect, searchUserUsingUidOrNameQuery);
 router.get("/fetch-connections", protect, fetchConnections);
-router.get("/profile/search:identifier", protect, fetchProfileInformation);
+router.get("/profile/search/:identifier", protect, fetchProfileInformation);
 router.post(
   "/follow/toggle",
   protect,
@@ -157,7 +157,12 @@ router.patch(
   idempotencyMiddleware,
   updateUserProfile,
 );
-router.post("/payments/initiate-charge", protect, initiateFlwCharge);
+router.post(
+  "/payments/initiate-charge",
+  protect,
+  idempotencyMiddleware,
+  initiateFlwCharge,
+);
 router.get("/payments/banks/:countryCode", protect, fetchBanksUsingCountryCode);
 router.post(
   "/block/toggle",
@@ -220,13 +225,19 @@ router.get(
 );
 router.put("/preferences/toggleTheme", protect, toggleTheme);
 router.get("/refresh-user-details", protect, refreshUserDetails);
-router.post("/courses/manual-create", protect, uploadCourseDetailsManually);
+router.post(
+  "/courses/manual-create",
+  protect,
+  idempotencyMiddleware,
+  uploadCourseDetailsManually,
+);
 router.post("/online-classes/create", protect, createQuickMeeting);
 router.post("/stations/register", protect, registerDropOffStation);
 router.get("/ads/fetch-active", protect, getAds);
 router.post(
   "/course/extract-course-details-from-uploads",
   protect,
+  idempotencyMiddleware,
   upload.array("files"),
   uploadCourseDetails,
 );
@@ -239,6 +250,6 @@ router.post(
 
 export default router;
 
-//backend summon: npx nodemon index.js
+//npx nodemon index.js
 //email: alice@icampus.edu
 //password: icampusUser01

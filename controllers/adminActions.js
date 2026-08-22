@@ -13,6 +13,7 @@ import {
   TaxStatements,
   Ads,
 } from "../tableDeclarations.js";
+import { setImmediate } from "timers";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { createNotification } from "../services/notification.js";
 import {
@@ -51,138 +52,168 @@ export const deleteAdmin = async (req, res) => {
     if (requester.uid === uid) {
       return res.status(400).json({ error: "You cannot remove yourself." });
     }
+
     const adminRef = Admin.doc(uid);
     const adminDoc = await adminRef.get();
+
     if (!adminDoc.exists) {
       return res.status(404).json({ error: "Admin not found." });
     }
+
     const adminData = adminDoc.data();
     await adminRef.delete();
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("profile"),
-        category: "profile",
-        actionType: "ADMIN_DELETED",
-        senderId: req.admin.uid,
-        title: "Administrator Removed",
-        message: `Admin ${deletedAdmin.firstname} was removed by ${req.admin.firstname}.`,
-        payload: {
-          deletedUid: uid,
-          removedBy: req.admin.firstname,
-        },
-      },
-      false,
-    );
-
     res.status(200).json({ message: "Admin removed successfully." });
+    setImmediate(() => {
+      notifyAdmins(
+        { role: "super_admin" },
+        {
+          notificationId: generateNotificationId("profile"),
+          category: "profile",
+          actionType: "ADMIN_DELETED",
+          senderId: requester.uid,
+          title: "Administrator Removed",
+          message: `Admin ${adminData?.firstname || "Unknown"} was removed by ${requester.firstname}.`,
+          payload: {
+            deletedUid: uid,
+            removedBy: requester.firstname,
+          },
+        },
+        false,
+      ).catch((err) => console.error("Background notification error:", err));
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("deleteAdmin Error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
 };
 export const createAdmin = async (req, res) => {
-  if (req.admin.adminType !== "super_admin")
+  if (req.admin?.adminType !== "super_admin") {
     return res.status(403).json({ error: "Unauthorized" });
+  }
 
   try {
+    const adminRef = req.body.uid ? Admin.doc(req.body.uid) : Admin.doc();
+    const generatedUid = req.body.uid || adminRef.id;
+
     const adminData = {
       ...req.body,
+      uid: generatedUid,
       createdAt: new Date(),
     };
-    const adminRef = adminData.uid ? Admin.doc(adminData.uid) : Admin.doc();
-    if (!adminData.uid) {
-      adminData.uid = adminRef.id;
-    }
     await adminRef.set(adminData);
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("profile"),
-        category: "profile",
-        actionType: "NEW_ADMIN_CREATED",
-        title: "New Admin Added",
-        message: `${req.admin.firstname} created a new admin account: ${newAdmin.firstname}.`,
-        senderId: req.admin.uid,
-        payload: { newAdminUid: newAdmin.uid },
-      },
-      false,
-    );
-    await notifyAdmins(
-      { uids: [newAdmin.uid] },
-      {
-        notificationId: generateNotificationId("profile"),
-        category: "profile",
-        actionType: "WELCOME_ADMIN",
-        title: "Welcome to iCampus Admin",
-        message: `Your administrator account has been created by ${req.admin.firstname}.`,
-        senderId: req.admin.uid,
-        payload: {
-          adminName: newAdmin.firstname,
-          creatorName: req.admin.firstname,
-        },
-      },
-      true,
-    );
-
-    res.status(201).json({ message: "Admin created successfully" });
+    res
+      .status(201)
+      .json({ message: "Admin created successfully", uid: generatedUid });
+    setImmediate(() => {
+      Promise.all([
+        notifyAdmins(
+          { role: "super_admin" },
+          {
+            notificationId: generateNotificationId("profile"),
+            category: "profile",
+            actionType: "NEW_ADMIN_CREATED",
+            title: "New Admin Added",
+            message: `${req.admin.firstname} created a new admin account: ${adminData.firstname || "New Admin"}.`,
+            senderId: req.admin.uid,
+            payload: { newAdminUid: generatedUid },
+          },
+          false,
+        ),
+        notifyAdmins(
+          { uids: [generatedUid] },
+          {
+            notificationId: generateNotificationId("profile"),
+            category: "profile",
+            actionType: "WELCOME_ADMIN",
+            title: "Welcome to iCampus Admin",
+            message: `Your administrator account has been created by ${req.admin.firstname}.`,
+            senderId: req.admin.uid,
+            payload: {
+              adminName: adminData.firstname || "Admin",
+              creatorName: req.admin.firstname,
+            },
+          },
+          true,
+        ),
+      ]).catch((err) =>
+        console.error("Background admin creation notifications failed:", err),
+      );
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("createAdmin Error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
 };
 export const updateAdmin = async (req, res) => {
-  if (req.admin.adminType !== "super_admin")
+  if (req.admin?.adminType !== "super_admin") {
     return res.status(403).json({ error: "Unauthorized" });
+  }
 
   try {
     const { uid } = req.params;
     const adminRef = Admin.doc(uid);
     const adminDoc = await adminRef.get();
+
     if (!adminDoc.exists) {
       return res.status(404).json({ error: "Admin not found." });
     }
 
-    const currentData = adminDoc.data();
     const updateData = {
       ...req.body,
       updatedAt: new Date(),
     };
-
     await adminRef.set(updateData, { merge: true });
     const updatedDoc = await adminRef.get();
     const updated = updatedDoc.data();
-    await notifyAdmins(
-      { uids: [uid] },
-      {
-        notificationId: generateNotificationId("profile"),
-        category: "profile",
-        actionType: "ADMIN_PROFILE_UPDATED",
-        title: "Account Updated",
-        message: `Your administrator account profile has been updated by ${req.admin.firstname}.`,
-        senderId: req.admin.uid,
-        payload: { updatedFields: Object.keys(req.body) },
-      },
-      false,
-    );
-
-    if (req.body.adminType) {
-      await notifyAdmins(
-        { role: "super_admin" },
-        {
-          notificationId: generateNotificationId("profile"),
-          category: "profile",
-          actionType: "ADMIN_PERMISSIONS_CHANGED",
-          title: "Permissions Modified",
-          message: `Admin ${updated.firstname} role was changed to ${req.body.adminType} by ${req.admin.firstname}.`,
-          senderId: req.admin.uid,
-          payload: { targetUid: uid, newRole: req.body.adminType },
-        },
-        false,
-      );
-    }
-
     res.status(200).json(updated);
+    setImmediate(() => {
+      const tasks = [
+        notifyAdmins(
+          { uids: [uid] },
+          {
+            notificationId: generateNotificationId("profile"),
+            category: "profile",
+            actionType: "ADMIN_PROFILE_UPDATED",
+            title: "Account Updated",
+            message: `Your administrator account profile has been updated by ${req.admin.firstname}.`,
+            senderId: req.admin.uid,
+            payload: { updatedFields: Object.keys(req.body) },
+          },
+          false,
+        ),
+      ];
+
+      if (req.body.adminType) {
+        tasks.push(
+          notifyAdmins(
+            { role: "super_admin" },
+            {
+              notificationId: generateNotificationId("profile"),
+              category: "profile",
+              actionType: "ADMIN_PERMISSIONS_CHANGED",
+              title: "Permissions Modified",
+              message: `Admin ${updated?.firstname || "User"} role was changed to ${req.body.adminType} by ${req.admin.firstname}.`,
+              senderId: req.admin.uid,
+              payload: { targetUid: uid, newRole: req.body.adminType },
+            },
+            false,
+          ),
+        );
+      }
+
+      Promise.all(tasks).catch((err) =>
+        console.error("Background update notifications failed:", err),
+      );
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error("updateAdmin Error:", err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
 };
 export const adminSendTicketNotification = async (req, res) => {
@@ -196,13 +227,10 @@ export const adminSendTicketNotification = async (req, res) => {
         message: "Message and recipientId are required.",
       });
     }
-    const ticketQuery = await SupportTicket.where(
-      "ticketRefId",
-      "==",
-      ticketRefId,
-    )
-      .limit(1)
-      .get();
+    const [ticketQuery, userDoc] = await Promise.all([
+      SupportTicket.where("ticketRefId", "==", ticketRefId).limit(1).get(),
+      User.doc(recipientId).get(),
+    ]);
 
     if (ticketQuery.empty) {
       return res.status(404).json({
@@ -210,36 +238,42 @@ export const adminSendTicketNotification = async (req, res) => {
         message: "Ticket not found.",
       });
     }
+
     const ticketDoc = ticketQuery.docs[0];
     const ticketRef = ticketDoc.ref;
     const ticketData = ticketDoc.data();
-    const userDoc = await User.doc(recipientId).get();
     const userData = userDoc.exists ? userDoc.data() : null;
 
-    const notification = await createNotification({
-      notificationId: generateNotificationId("system"),
-      recipientId: recipientId,
-      recipientEmail: userData?.email,
-      category: category || "system",
-      actionType: "SUPPORT_TICKET_REPLY",
-      title: title || `Update on Ticket #${ticketRefId}`,
-      message: message,
-      sendEmail: true,
-      payload: {
-        userName: userData?.firstname || "User",
-        ticketRefId,
-        adminMessage: message,
-        date: formattedDate,
-        time: formattedTime,
-      },
-    });
+    const now = new Date();
+    const formattedDate = now.toLocaleDateString();
+    const formattedTime = now.toLocaleTimeString();
+
     const updatedTicketData = {
       ...ticketData,
       status: "pending",
-      updatedAt: new Date(),
+      updatedAt: now,
     };
+    const [notification] = await Promise.all([
+      createNotification({
+        notificationId: generateNotificationId("system"),
+        recipientId: recipientId,
+        recipientEmail: userData?.email,
+        category: category || "system",
+        actionType: "SUPPORT_TICKET_REPLY",
+        title: title || `Update on Ticket #${ticketRefId}`,
+        message: message,
+        sendEmail: true,
+        payload: {
+          userName: userData?.firstname || "User",
+          ticketRefId,
+          adminMessage: message,
+          date: formattedDate,
+          time: formattedTime,
+        },
+      }),
+      ticketRef.set(updatedTicketData, { merge: true }),
+    ]);
 
-    await ticketRef.set(updatedTicketData, { merge: true });
     return res.status(200).json({
       success: true,
       message: "Notification sent and ticket status updated to pending.",
@@ -257,7 +291,6 @@ export const adminSendTicketNotification = async (req, res) => {
 export const updateUserController = async (req, res) => {
   const { uid } = req.params;
   const updateData = req.body;
-
   const requestingAdmin = req.admin;
   const authorizedRoles = ["super_admin", "support"];
 
@@ -286,6 +319,7 @@ export const updateUserController = async (req, res) => {
     "schoolName",
     "current_level",
   ];
+
   const filteredData = {};
   Object.keys(updateData).forEach((key) => {
     if (allowedUpdates.includes(key)) {
@@ -303,12 +337,14 @@ export const updateUserController = async (req, res) => {
         message: "User not found.",
       });
     }
+
     const finalUpdatePayload = {
       ...filteredData,
       updatedAt: new Date(),
     };
     await userRef.set(finalUpdatePayload, { merge: true });
     const updatedUserDoc = await userRef.get();
+
     const updatedUser = { uid, ...updatedUserDoc.data() };
     return res.status(200).json({
       success: true,
@@ -352,7 +388,6 @@ export const getAdminMetrics = async (req, res) => {
     const needsSchoolMetrics =
       adminType === "school_administrator" || adminType === "super_admin";
 
-    // Build dynamic promise array to avoid fetching irrelevant data
     const promiseMap = {};
 
     if (needsUsers) {
@@ -396,7 +431,6 @@ export const getAdminMetrics = async (req, res) => {
       promiseMap.taxes = TaxEntries.orderBy("date", "desc").limit(10).get();
     }
 
-    // Specific School Metrics collections if school_administrator is querying
     if (needsSchoolMetrics && schoolCode) {
       promiseMap.schoolUsers = User.where("schoolCode", "==", schoolCode).get();
       promiseMap.schoolCourses = Course.where(
@@ -409,7 +443,6 @@ export const getAdminMetrics = async (req, res) => {
       promiseMap.schoolAttendance = Attendance.get();
     }
 
-    // Resolve only the required promises concurrently
     const keys = Object.keys(promiseMap);
     const values = await Promise.all(Object.values(promiseMap));
     const snapshots = {};
@@ -419,7 +452,6 @@ export const getAdminMetrics = async (req, res) => {
 
     let responsePayload = {};
 
-    // 1. Process School Metrics (For School Administrator & Super Admin)
     if (needsSchoolMetrics && snapshots.schoolCourses) {
       let verifiedStudents = 0;
       let verifiedLecturers = 0;
@@ -528,13 +560,11 @@ export const getAdminMetrics = async (req, res) => {
         },
       };
 
-      // If requested strictly by a school administrator, return payload immediately
       if (adminType === "school_administrator") {
         return res.json(responsePayload);
       }
     }
 
-    // 2. Process Global Platform Metrics (For Super Admin, Finance, Analyst, Support)
     let totalLiquidity = 0;
     let totalUsers = 0;
     const locationCounts = {};
@@ -681,18 +711,18 @@ export const getInstitutions = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
+
     const [snapshot, totalCountSnapshot] = await Promise.all([
       OperationalInstitutions.orderBy("createdAt", "desc").get(),
       OperationalInstitutions.get(),
     ]);
-    const totalDocs = totalCountSnapshot.size;
+
     const allInstitutions = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
 
     const paginatedInstitutions = allInstitutions.slice(skip, skip + limit);
-
     res.json(paginatedInstitutions);
   } catch (error) {
     console.error("Get Institutions Error:", error);
@@ -709,14 +739,13 @@ export const getDropOffStations = async (req, res) => {
       DropOffStation.orderBy("createdAt", "desc").get(),
       DropOffStation.get(),
     ]);
-    const totalDocs = totalCountSnapshot.size;
+
     const allStations = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
 
     const paginatedStations = allStations.slice(skip, skip + limit);
-
     res.json(paginatedStations);
   } catch (error) {
     console.error("Get Drop-Off Stations Error:", error);
@@ -725,76 +754,99 @@ export const getDropOffStations = async (req, res) => {
 };
 export const deleteInstitution = async (req, res) => {
   try {
-    if (req.admin.adminType !== "super_admin")
+    if (req.admin?.adminType !== "super_admin") {
       return res.status(403).json({ error: "Unauthorized" });
+    }
 
     const { id } = req.params;
     const snapshot = await OperationalInstitutions.where("id", "==", id)
       .limit(1)
       .get();
+
     if (snapshot.empty) {
       return res.status(404).json({ message: "Institution not found." });
     }
+
     const docRef = snapshot.docs[0].ref;
     const result = snapshot.docs[0].data();
     await docRef.delete();
-
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("social"),
-        category: "social",
-        actionType: "ADMIN_INSTITUTION_DELETED",
-        title: "Institution Deleted",
-        message: `Institution ${result.schoolName} was deleted by admin ${req.user.uid}.`,
-        payload: { schoolName: result.schoolName },
-      },
-      false,
-    );
-
     res.json({ success: true, message: "Institution deleted successfully." });
+    setImmediate(() => {
+      notifyAdmins(
+        { role: "super_admin" },
+        {
+          notificationId: generateNotificationId("social"),
+          category: "social",
+          actionType: "ADMIN_INSTITUTION_DELETED",
+          title: "Institution Deleted",
+          message: `Institution ${result?.schoolName || "Unknown"} was deleted by admin ${req.user?.uid || req.admin?.uid || "System"}.`,
+          payload: { schoolName: result?.schoolName },
+        },
+        false,
+      ).catch((err) =>
+        console.error(
+          "Background institution deletion notification failed:",
+          err,
+        ),
+      );
+    });
   } catch (error) {
-    res.status(500).json({ message: "Internal server error." });
+    console.error("deleteInstitution Error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Internal server error." });
+    }
   }
 };
 export const deleteDropOffStation = async (req, res) => {
   try {
-    if (req.admin.adminType !== "super_admin")
+    if (req.admin?.adminType !== "super_admin") {
       return res.status(403).json({ error: "Unauthorized" });
+    }
 
     const { id } = req.params;
     const snapshot = await DropOffStation.where("id", "==", id).limit(1).get();
 
-    if (snapshot.empty)
+    if (snapshot.empty) {
       return res.status(404).json({ message: "Drop-off station not found." });
+    }
+
     const stationDocRef = snapshot.docs[0].ref;
     const station = snapshot.docs[0].data();
     await stationDocRef.delete();
-
-    await createNotification({
-      recipientId: station.agentId,
-      category: "system",
-      actionType: "STATION_DELETION",
-      title: "Station Removed",
-      message: `Your drop-off station "${station.name}" has been removed from the platform. Please contact the support team to rectify this, if action not done with your consent.`,
-      payload: { stationName: station.name },
-    });
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("store"),
-        category: "store",
-        actionType: "STATION_DELETION_ADMIN",
-        title: "Station Deletion Audit",
-        message: `Station "${station.name}" ( by Agent: ${station.agentId}) was deleted.`,
-        payload: { stationName: station.name, agentId: station.agentId },
-      },
-      false,
-    );
-
     res.json({ success: true, message: "Station deleted successfully." });
+    setImmediate(() => {
+      Promise.all([
+        createNotification({
+          recipientId: station?.agentId,
+          category: "system",
+          actionType: "STATION_DELETION",
+          title: "Station Removed",
+          message: `Your drop-off station "${station?.name || "Station"}" has been removed from the platform. Please contact the support team to rectify this, if action not done with your consent.`,
+          payload: { stationName: station?.name },
+        }),
+        notifyAdmins(
+          { role: "super_admin" },
+          {
+            notificationId: generateNotificationId("store"),
+            category: "store",
+            actionType: "STATION_DELETION_ADMIN",
+            title: "Station Deletion Audit",
+            message: `Station "${station?.name || "Station"}" (by Agent: ${station?.agentId || "Unknown"}) was deleted.`,
+            payload: { stationName: station?.name, agentId: station?.agentId },
+          },
+          false,
+        ),
+      ]).catch((err) =>
+        console.error("Background station deletion notifications failed:", err),
+      );
+    });
   } catch (error) {
-    res.status(500).json({ message: "Internal server error during deletion." });
+    console.error("deleteDropOffStation Error:", error);
+    if (!res.headersSent) {
+      res
+        .status(500)
+        .json({ message: "Internal server error during deletion." });
+    }
   }
 };
 export const createInstitution = async (req, res) => {
@@ -809,21 +861,25 @@ export const createInstitution = async (req, res) => {
     isOperational,
     countryCode,
   } = req.body;
+
   try {
-    if (req.admin.adminType !== "super_admin")
+    if (req.admin.adminType !== "super_admin") {
       return res.status(403).json({ error: "Unauthorized" });
+    }
 
     const adminUserId = process.env.APP_USERID;
     const schoolId = generateSchoolId(schoolName);
+    const newPostId = generatePostId();
+    const now = new Date();
+
     const institutionData = {
       id: schoolId,
       schoolName,
       contactEmail,
       schoolCode: schoolId,
       logo,
-      createdAt: new Date(),
+      createdAt: now,
     };
-    await OperationalInstitutions.doc(schoolId).set(institutionData);
 
     const configData = {
       schoolId,
@@ -834,23 +890,9 @@ export const createInstitution = async (req, res) => {
       verificationMethod,
       externalApiConfig,
       ssoConfig,
-      createdAt: new Date(),
+      createdAt: now,
     };
-    await SchoolConfiguration.doc(schoolId).set(configData);
 
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("social"),
-        category: "social",
-        actionType: "ADMIN_INSTITUTION_CREATED",
-        title: "New Institution Joined",
-        message: `${schoolName} has officially joined iCampus.`,
-        payload: { schoolId, schoolName },
-      },
-      false,
-    );
-    const newPostId = generatePostId();
     const welcomePostData = {
       postId: newPostId,
       originalAuthor: adminUserId,
@@ -861,44 +903,69 @@ export const createInstitution = async (req, res) => {
       },
       content: `Welcome to iCampus, ${schoolName}! Students and lecturers from this institution can now sign up and join our community.`,
       postType: "media",
-      createdAt: new Date(),
+      createdAt: now,
     };
-    await Posts.doc(newPostId).set(welcomePostData);
-
-    if (req.io) {
-      req.io.emit("new_post", welcomePostData);
-    }
-
+    await Promise.all([
+      OperationalInstitutions.doc(schoolId).set(institutionData),
+      SchoolConfiguration.doc(schoolId).set(configData),
+      Posts.doc(newPostId).set(welcomePostData),
+    ]);
     res.status(201).json({ success: true, institution: institutionData });
+    setImmediate(() => {
+      if (req.io) {
+        req.io.emit("new_post", welcomePostData);
+      }
+
+      notifyAdmins(
+        { role: "super_admin" },
+        {
+          notificationId: generateNotificationId("social"),
+          category: "social",
+          actionType: "ADMIN_INSTITUTION_CREATED",
+          title: "New Institution Joined",
+          message: `${schoolName} has officially joined iCampus.`,
+          payload: { schoolId, schoolName },
+        },
+        false,
+      ).catch((err) =>
+        console.error(
+          "Background institution creation notification failed:",
+          err,
+        ),
+      );
+    });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error("Create Institution Error:", error);
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: error.message });
+    }
   }
 };
 export const updateInstitution = async (req, res) => {
   const { id } = req.params;
   const updateData = req.body;
-
   try {
-    if (req.admin.adminType !== "super_admin")
+    if (req.admin.adminType !== "super_admin") {
       return res.status(403).json({ error: "Unauthorized" });
-
-    const instSnapshot = await OperationalInstitutions.where("id", "==", id)
-      .limit(1)
-      .get();
-    const configSnapshot = await SchoolConfiguration.where("schoolId", "==", id)
-      .limit(1)
-      .get();
+    }
+    const [instSnapshot, configSnapshot] = await Promise.all([
+      OperationalInstitutions.where("id", "==", id).limit(1).get(),
+      SchoolConfiguration.where("schoolId", "==", id).limit(1).get(),
+    ]);
 
     if (instSnapshot.empty || configSnapshot.empty) {
       return res.status(404).json({ message: "Institution not found." });
     }
+
     const instRef = instSnapshot.docs[0].ref;
     const configRef = configSnapshot.docs[0].ref;
+    const now = new Date();
+
     const updatedSchoolData = {
       schoolName: updateData.name,
       contactEmail: updateData.contactEmail,
       logo: updateData.logo,
-      updatedAt: new Date(),
+      updatedAt: now,
     };
 
     const updatedConfigData = {
@@ -909,38 +976,46 @@ export const updateInstitution = async (req, res) => {
       verificationMethod: updateData.verificationMethod,
       ssoConfig: updateData.ssoConfig,
       externalApiConfig: updateData.externalApiConfig,
-      updatedAt: new Date(),
+      updatedAt: now,
     };
     await Promise.all([
       instRef.set(updatedSchoolData, { merge: true }),
       configRef.set(updatedConfigData, { merge: true }),
     ]);
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("social"),
-        category: "social",
-        actionType: "ADMIN_INSTITUTION_UPDATED",
-        title: "Institution Updated",
-        message: `Settings for "${updateData.name}" have been modified.`,
-        payload: { schoolId: id, schoolName: updateData.name },
-      },
-      false,
-    );
-
     res.status(200).json({ success: true, data: updatedSchoolData });
+    setImmediate(() => {
+      notifyAdmins(
+        { role: "super_admin" },
+        {
+          notificationId: generateNotificationId("social"),
+          category: "social",
+          actionType: "ADMIN_INSTITUTION_UPDATED",
+          title: "Institution Updated",
+          message: `Settings for "${updateData.name}" have been modified.`,
+          payload: { schoolId: id, schoolName: updateData.name },
+        },
+        false,
+      ).catch((err) =>
+        console.error(
+          "Background institution update notification failed:",
+          err,
+        ),
+      );
+    });
   } catch (error) {
     console.error("Update Error:", error);
-    res.status(500).json({ message: "Failed to update institution." });
+    if (!res.headersSent) {
+      res.status(500).json({ message: "Failed to update institution." });
+    }
   }
 };
 export const createStation = async (req, res) => {
   const { name, address, contactPerson, latitude, longitude, agentId, images } =
     req.body;
-
   try {
-    if (req.admin.adminType !== "super_admin")
+    if (req.admin.adminType !== "super_admin") {
       return res.status(403).json({ error: "Unauthorized" });
+    }
 
     const stationId = generateStationId();
     const stationData = {
@@ -954,53 +1029,58 @@ export const createStation = async (req, res) => {
       images,
       createdAt: new Date(),
     };
+
     await DropOffStation.doc(stationId).set(stationData);
-    await createNotification({
-      recipientId: agentId,
-      category: "system",
-      actionType: "STATION_CREATED",
-      title: "New Station Assigned",
-      message: `A new drop-off station "${name}" has been assigned to your account.`,
-      payload: { stationId, stationName: name },
-    });
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("store"),
-        category: "store",
-        actionType: "STATION_CREATED_ADMIN",
-        title: "Station Creation Audit",
-        message: `Station "${name}" was created for Agent: ${agentId}.`,
-        payload: { stationId, stationName: name, agentId },
-      },
-      false,
-    );
     res.status(201).json({ success: true, station: stationData });
+    setImmediate(() => {
+      Promise.all([
+        createNotification({
+          recipientId: agentId,
+          category: "system",
+          actionType: "STATION_CREATED",
+          title: "New Station Assigned",
+          message: `A new drop-off station "${name}" has been assigned to your account.`,
+          payload: { stationId, stationName: name },
+        }),
+        notifyAdmins(
+          { role: "super_admin" },
+          {
+            notificationId: generateNotificationId("store"),
+            category: "store",
+            actionType: "STATION_CREATED_ADMIN",
+            title: "Station Creation Audit",
+            message: `Station "${name}" was created for Agent: ${agentId}.`,
+            payload: { stationId, stationName: name, agentId },
+          },
+          false,
+        ),
+      ]).catch((err) =>
+        console.error("Background station creation notifications failed:", err),
+      );
+    });
   } catch (error) {
     console.error("Station Creation Error:", error);
-    res
-      .status(500)
-      .json({ success: false, message: "Failed to create station." });
+    if (!res.headersSent) {
+      res
+        .status(500)
+        .json({ success: false, message: "Failed to create station." });
+    }
   }
 };
 export const updateStation = async (req, res) => {
   const { stationId: id } = req.params;
   const updateData = req.body;
-
   try {
-    if (req.admin.adminType !== "super_admin")
+    if (req.admin.adminType !== "super_admin") {
       return res.status(403).json({ error: "Unauthorized" });
-
+    }
     const snapshot = await DropOffStation.where("id", "==", id).limit(1).get();
-
     if (snapshot.empty) {
       return res
         .status(404)
         .json({ success: false, message: "Station not found." });
     }
-
     const stationDocRef = snapshot.docs[0].ref;
-    const existingStationData = snapshot.docs[0].data();
     const finalUpdatePayload = {
       ...updateData,
       updatedAt: new Date(),
@@ -1008,64 +1088,77 @@ export const updateStation = async (req, res) => {
     await stationDocRef.set(finalUpdatePayload, { merge: true });
     const updatedSnapshot = await stationDocRef.get();
     const updatedStation = { id, ...updatedSnapshot.data() };
-
-    await createNotification({
-      recipientId: updatedStation.agentId,
-      category: "system",
-      actionType: "STATION_UPDATED",
-      title: "Station Details Updated",
-      message: `Your station "${updatedStation.name}" details has been updated by iCampus administrators, please notify our support if you did not authorize this action.`,
-      payload: { stationId: id, stationName: updatedStation.name },
-    });
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("store"),
-        category: "store",
-        actionType: "STATION_UPDATED_ADMIN",
-        title: "Station Update Audit",
-        message: `Station "${updatedStation.name}" (ID: ${id}) was updated.`,
-        payload: { stationId: id, agentId: updatedStation.agentId },
-      },
-      false,
-    );
-
     res.status(200).json({ success: true, station: updatedStation });
+    setImmediate(() => {
+      Promise.all([
+        createNotification({
+          recipientId: updatedStation.agentId,
+          category: "system",
+          actionType: "STATION_UPDATED",
+          title: "Station Details Updated",
+          message: `Your station "${updatedStation.name}" details has been updated by iCampus administrators, please notify our support if you did not authorize this action.`,
+          payload: { stationId: id, stationName: updatedStation.name },
+        }),
+        notifyAdmins(
+          { role: "super_admin" },
+          {
+            notificationId: generateNotificationId("store"),
+            category: "store",
+            actionType: "STATION_UPDATED_ADMIN",
+            title: "Station Update Audit",
+            message: `Station "${updatedStation.name}" (ID: ${id}) was updated.`,
+            payload: { stationId: id, agentId: updatedStation.agentId },
+          },
+          false,
+        ),
+      ]).catch((err) =>
+        console.error("Background station update notifications failed:", err),
+      );
+    });
   } catch (error) {
     console.error("Station Update Error:", error);
-    res.status(500).json({ success: false, message: "Server error." });
+    if (!res.headersSent) {
+      res.status(500).json({ success: false, message: "Server error." });
+    }
   }
 };
 export const getInstitutionDetails = async (req, res) => {
-  const { schoolId } = req.params;
-  const [studentsSnapshot, lecturersSnapshot, schoolSnapshot] =
-    await Promise.all([
-      User.where("schoolCode", "==", schoolId)
-        .where("role", "==", "student")
-        .get(),
-      User.where("schoolCode", "==", schoolId)
-        .where("role", "==", "lecturer")
-        .get(),
-      OperationalInstitutions.where("schoolCode", "==", schoolId)
-        .limit(1)
-        .get(),
-    ]);
+  try {
+    const { schoolId } = req.params;
+    const [studentsSnapshot, lecturersSnapshot, schoolSnapshot] =
+      await Promise.all([
+        User.where("schoolCode", "==", schoolId)
+          .where("role", "==", "student")
+          .get(),
+        User.where("schoolCode", "==", schoolId)
+          .where("role", "==", "lecturer")
+          .get(),
+        OperationalInstitutions.where("schoolCode", "==", schoolId)
+          .limit(1)
+          .get(),
+      ]);
 
-  if (schoolSnapshot.empty) {
+    if (schoolSnapshot.empty) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Institution not found." });
+    }
+
+    const schoolData = schoolSnapshot.docs[0].data();
+
+    return res.json({
+      schoolName: schoolData.schoolName,
+      contactEmail: schoolData.contactEmail,
+      logo: schoolData.logo,
+      studentCount: studentsSnapshot.size,
+      lecturerCount: lecturersSnapshot.size,
+    });
+  } catch (error) {
+    console.error("Get Institution Details Error:", error);
     return res
-      .status(404)
-      .json({ success: false, message: "Institution not found." });
+      .status(500)
+      .json({ success: false, message: "Failed to retrieve details." });
   }
-
-  const schoolData = schoolSnapshot.docs[0].data();
-
-  res.json({
-    schoolName: schoolData.schoolName,
-    contactEmail: schoolData.contactEmail,
-    logo: schoolData.logo,
-    studentCount: studentsSnapshot.size,
-    lecturerCount: lecturersSnapshot.size,
-  });
 };
 export const getStationDetails = async (req, res) => {
   const { stationId } = req.params;
@@ -1080,14 +1173,12 @@ export const getStationDetails = async (req, res) => {
     }
 
     const station = stationSnapshot.docs[0].data();
-    let agentData = null;
-    if (station.agentId) {
-      const agentDoc = await User.doc(station.agentId).get();
-      if (agentDoc.exists) {
-        agentData = agentDoc.data();
-      }
-    }
-    res.json({
+    const agentDoc = station.agentId
+      ? await User.doc(station.agentId).get()
+      : null;
+    let agentData = agentDoc && agentDoc.exists ? agentDoc.data() : null;
+
+    return res.json({
       stationName: station.name,
       address: station.address,
       agent: agentData
@@ -1103,7 +1194,8 @@ export const getStationDetails = async (req, res) => {
         : null,
     });
   } catch (error) {
-    res.status(500).json({ message: "Server error" });
+    console.error("Get Station Details Error:", error);
+    return res.status(500).json({ message: "Server error" });
   }
 };
 export const getTaxEntries = async (req, res) => {
@@ -1111,8 +1203,8 @@ export const getTaxEntries = async (req, res) => {
     let { page = 1, limit = 10 } = req.query;
     page = parseInt(page);
     limit = parseInt(limit);
-    let query = TaxEntries.orderBy("date", "desc");
-    const snapshot = await query.get();
+
+    const snapshot = await TaxEntries.orderBy("date", "desc").get();
     const totalDocs = snapshot.size;
     const totalPages = Math.ceil(totalDocs / limit) || 1;
     const paginatedDocs = snapshot.docs.slice((page - 1) * limit, page * limit);
@@ -1181,6 +1273,10 @@ export const downloadTaxReport = async (req, res) => {
       Date.UTC(parseInt(year), parseInt(month), 0, 23, 59, 59, 999),
     );
 
+    const bucket = storage.bucket();
+    const filePath = `tax-statements/iCampus/TaxReport-${year}-${month}.pdf`;
+    const file = bucket.file(filePath);
+
     const statementQuery = await TaxStatements.where("startDate", "==", start)
       .where("endDate", "==", end)
       .limit(1)
@@ -1189,10 +1285,6 @@ export const downloadTaxReport = async (req, res) => {
     let firebaseUrl;
     let totalTaxAmount = 0;
     let pdfBuffer;
-
-    const bucket = storage.bucket();
-    const filePath = `tax-statements/iCampus/TaxReport-${year}-${month}.pdf`;
-    const file = bucket.file(filePath);
 
     if (!statementQuery.empty) {
       const existingStatement = statementQuery.docs[0].data();
@@ -1248,33 +1340,39 @@ export const downloadTaxReport = async (req, res) => {
         createdAt: new Date(),
       });
     }
+
     const monthName = start.toLocaleString("en-US", { month: "long" });
-    const emailHtml = taxReportEmailTemplate(
-      monthName,
-      year,
-      totalTaxAmount,
-      firebaseUrl,
-    );
-    await sendEmail({
-      to: adminEmail || process.env.POSTMARK_SENDER_SIGNATURE,
-      subject: `iCampus Tax Report: ${monthName} ${year}`,
-      text: `The iCampus tax report for ${monthName} ${year} has been generated. Total Tax: ${totalTaxAmount} iCash.`,
-      html: emailHtml,
-      attachments: [
-        {
-          filename: `iCampus_Tax_Report_${year}_${month}.pdf`,
-          content: pdfBuffer,
-          contentType: "application/pdf",
-        },
-      ],
-    });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: "Tax report generated successfully and emailed.",
       pdfUrl: firebaseUrl,
+    });
+
+    logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(async () => {
+      try {
+        const emailHtml = taxReportEmailTemplate(
+          monthName,
+          year,
+          totalTaxAmount,
+          firebaseUrl,
+        );
+        await sendEmail({
+          to: adminEmail || process.env.POSTMARK_SENDER_SIGNATURE,
+          subject: `iCampus Tax Report: ${monthName} ${year}`,
+          text: `The iCampus tax report for ${monthName} ${year} has been generated. Total Tax: ${totalTaxAmount} iCash.`,
+          html: emailHtml,
+          attachments: [
+            {
+              filename: `iCampus_Tax_Report_${year}_${month}.pdf`,
+              content: pdfBuffer,
+              contentType: "application/pdf",
+            },
+          ],
+        });
+      } catch (emailErr) {
+        console.error("Background tax report email dispatch failed:", emailErr);
+      }
     });
   } catch (error) {
     console.error("Download Tax Report Error:", error.message);
@@ -1285,7 +1383,9 @@ export const downloadTaxReport = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({ success: false, message: error.message });
+    if (!res.headersSent) {
+      return res.status(500).json({ success: false, message: error.message });
+    }
   }
 };
 export const deleteAd = async (req, res) => {
@@ -1313,29 +1413,34 @@ export const deleteAd = async (req, res) => {
     const adDocRef = snapshot.docs[0].ref;
     const adData = snapshot.docs[0].data();
     await adDocRef.delete();
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("system"),
-        category: "system",
-        actionType: "AD_DELETION_ADMIN",
-        title: "Advertisement Deletion Audit",
-        message: `Advertisement "${adData.advertiserName || "Unknown"}" (ID: ${id}) was deleted by admin ${adminId}.`,
-        payload: { adId: id, advertiserName: adData.advertiserName },
-      },
-      false,
-    );
-
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: "Advertisement deleted successfully.",
     });
+    setImmediate(() => {
+      notifyAdmins(
+        { role: "super_admin" },
+        {
+          notificationId: generateNotificationId("system"),
+          category: "system",
+          actionType: "AD_DELETION_ADMIN",
+          title: "Advertisement Deletion Audit",
+          message: `Advertisement "${adData.advertiserName || "Unknown"}" (ID: ${id}) was deleted by admin ${adminId}.`,
+          payload: { adId: id, advertiserName: adData.advertiserName },
+        },
+        false,
+      ).catch((err) =>
+        console.error("Background ad deletion audit failed:", err),
+      );
+    });
   } catch (error) {
     console.error("Delete Ad Error:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error during deletion.",
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: "Internal server error during deletion.",
+      });
+    }
   }
 };
 export const createAd = async (req, res) => {
@@ -1356,7 +1461,6 @@ export const createAd = async (req, res) => {
         "==",
         adminId,
       ).get();
-
       if (!existingAdsSnapshot.empty) {
         return res.status(400).json({
           success: false,
@@ -1383,9 +1487,7 @@ export const createAd = async (req, res) => {
           "Missing required fields (advertiserName, mediaUrl, advertiserLogo).",
       });
     }
-
     const adId = generateAdId(advertiserName);
-
     const newAd = {
       id: adId,
       type: type || "image",
@@ -1402,40 +1504,40 @@ export const createAd = async (req, res) => {
       createdBy: req.admin.email || adminId,
     };
     await Ads.doc(adId).set(newAd);
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("system"),
-        category: "system",
-        actionType: "AD_CREATION_ADMIN",
-        title: "Advertisement Created Audit",
-        message: `New advertisement for "${advertiserName}" (ID: ${adId}) was created by a ${adminType}.`,
-        payload: {
-          adId: adId,
-          advertiserName: advertiserName,
-          addedBy: adminId,
-        },
-      },
-      false,
-    );
-
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
       message: "Advertisement created successfully.",
       data: newAd,
     });
+    setImmediate(() => {
+      notifyAdmins(
+        { role: "super_admin" },
+        {
+          notificationId: generateNotificationId("system"),
+          category: "system",
+          actionType: "AD_CREATION_ADMIN",
+          title: "Advertisement Created Audit",
+          message: `New advertisement for "${advertiserName}" (ID: ${adId}) was created by a ${adminType}.`,
+          payload: { adId, advertiserName, addedBy: adminId },
+        },
+        false,
+      ).catch((err) =>
+        console.error("Background ad creation audit failed:", err),
+      );
+    });
   } catch (error) {
     console.error("Create Ad Error:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Internal server error during ad creation.",
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: "Internal server error during ad creation.",
+      });
+    }
   }
 };
 export const updateAd = async (req, res) => {
   try {
     const adminType = req.admin?.adminType;
-
     if (!["super_admin", "school_administrator"].includes(adminType)) {
       return res.status(403).json({
         success: false,
@@ -1446,57 +1548,56 @@ export const updateAd = async (req, res) => {
 
     const { id } = req.params;
     const updateData = req.body;
-
     const snapshot = await Ads.where("id", "==", id).limit(1).get();
-
     if (snapshot.empty) {
       return res
         .status(404)
         .json({ success: false, error: "Advertisement not found." });
     }
-
     const adDocRef = snapshot.docs[0].ref;
     const existingAd = snapshot.docs[0].data();
-
     const payload = {
       ...updateData,
       updatedAt: new Date().toISOString(),
       updatedBy: req.admin.email || req.admin.id,
     };
     delete payload.id;
-
     await adDocRef.update(payload);
-
     const updatedSnapshot = await adDocRef.get();
     const updatedAd = updatedSnapshot.data();
-
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("system"),
-        category: "system",
-        actionType: "AD_UPDATE_ADMIN",
-        title: "Advertisement Updated Audit",
-        message: `Advertisement "${updatedAd.advertiserName || existingAd.advertiserName}" (ID: ${id}) was updated.`,
-        payload: {
-          adId: id,
-          advertiserName: updatedAd.advertiserName || existingAd.advertiserName,
-        },
-      },
-      false,
-    );
-
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: "Advertisement updated successfully.",
       ad: updatedAd,
     });
+    setImmediate(() => {
+      notifyAdmins(
+        { role: "super_admin" },
+        {
+          notificationId: generateNotificationId("system"),
+          category: "system",
+          actionType: "AD_UPDATE_ADMIN",
+          title: "Advertisement Updated Audit",
+          message: `Advertisement "${updatedAd.advertiserName || existingAd.advertiserName}" (ID: ${id}) was updated.`,
+          payload: {
+            adId: id,
+            advertiserName:
+              updatedAd.advertiserName || existingAd.advertiserName,
+          },
+        },
+        false,
+      ).catch((err) =>
+        console.error("Background ad update audit failed:", err),
+      );
+    });
   } catch (error) {
     console.error("Update Ad Error:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Internal server error during ad update.",
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        error: "Internal server error during ad update.",
+      });
+    }
   }
 };
 export const sendSupportMessage = async (req, res) => {
@@ -1504,13 +1605,22 @@ export const sendSupportMessage = async (req, res) => {
     const { ticketRefId } = req.params;
     const { message, attachments = [] } = req.body;
     const currentUserId = req.user.id || req.user.uid;
-    const userEmail = req.user.email;
 
     if (!ticketRefId || (!message && attachments.length === 0)) {
       return res.status(400).json({
         success: false,
         message:
           "Ticket reference ID and message content or attachments are required.",
+      });
+    }
+
+    const isAdmin =
+      req.user.adminType === "support" || req.user.adminType === "super_admin";
+
+    if (!isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access to this support ticket thread.",
       });
     }
 
@@ -1532,59 +1642,65 @@ export const sendSupportMessage = async (req, res) => {
     const ticketDoc = ticketSnapshot.docs[0];
     const ticketData = ticketDoc.data();
 
-    const isAdmin =
-      req.user.adminType === "support" || req.user.adminType === "super_admin";
-
-    if (!isAdmin) {
-      return res.status(403).json({
-        success: false,
-        message: "Unauthorized access to this support ticket thread.",
-      });
-    }
-
     const newMessage = {
       sender: currentUserId,
       message: message || "",
       attachments: attachments,
       timestamp: new Date().toISOString(),
     };
+
     const updatedThread = [...(ticketData.thread || []), newMessage];
     await ticketDoc.ref.update({
       thread: updatedThread,
       updatedAt: new Date().toISOString(),
     });
-
-    if (isAdmin && ticketData.source === "email" && ticketData.guestEmail) {
-      await sendEmail({
-        to: ticketData.guestEmail,
-        subject: `Update on Support Ticket: Ref ${ticketRefId}`,
-        text: message,
-        html: `<p>${message.replace(/\n/g, "<br>")}</p>`,
-        attachments: attachments,
-      });
-    }
-    await notifyAdmins(
-      { role: "super_admin" },
-      {
-        notificationId: generateNotificationId("system"),
-        category: "system",
-        actionType: "SUPPORT_MESSAGE_REPLY",
-        title: "New Support Ticket Message",
-        message: `New message added to ticket Ref: ${ticketRefId}`,
-        payload: { ticketRefId: ticketRefId },
-      },
-      false,
-    );
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: "Message sent successfully.",
       data: newMessage,
     });
+    setImmediate(async () => {
+      try {
+        if (isAdmin && ticketData.source === "email" && ticketData.guestEmail) {
+          await sendEmail({
+            to: ticketData.guestEmail,
+            subject: `Update on Support Ticket: Ref ${ticketRefId}`,
+            text: message,
+            html: `<p>${message.replace(/\n/g, "<br>")}</p>`,
+            attachments: attachments,
+          });
+        }
+      } catch (emailError) {
+        console.error("Background support email dispatch failed:", emailError);
+      }
+
+      try {
+        await notifyAdmins(
+          { role: "super_admin" },
+          {
+            notificationId: generateNotificationId("system"),
+            category: "system",
+            actionType: "SUPPORT_MESSAGE_REPLY",
+            title: "New Support Ticket Message",
+            message: `New message added to ticket Ref: ${ticketRefId}`,
+            payload: { ticketRefId: ticketRefId },
+          },
+          false,
+        );
+      } catch (notificationError) {
+        console.error(
+          "Background support audit notification failed:",
+          notificationError,
+        );
+      }
+    });
   } catch (error) {
     console.error("Backend sendSupportMessage Error:", error.message);
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Internal Server Error",
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: error.message || "Internal Server Error",
+      });
+    }
   }
 };

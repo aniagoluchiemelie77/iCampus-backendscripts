@@ -7,59 +7,6 @@ import path from "path";
 import { db } from "../config/firebaseAdmin.js";
 const IDEMPOTENCY_COLLECTION = "idempotency_keys";
 
-export const protect = async (req, res, next) => {
-  let token;
-  if (req.headers.authorization?.startsWith("Bearer")) {
-    token = req.headers.authorization.split(" ")[1];
-  } else if (req.query.token) {
-    token = req.query.token;
-  }
-  if (!token) {
-    return res.status(401).json({ message: "Not authorized: Token missing" });
-  }
-  try {
-    let decoded;
-    let uid;
-    if (token.length > 500) {
-      decoded = await admin.auth().verifyIdToken(token);
-      uid = decoded.uid;
-    } else {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-      uid = decoded.id || decoded.uid;
-    }
-    const querySnapshot = await User.where("uid", "==", uid).limit(1).get();
-
-    if (querySnapshot.empty) {
-      return res
-        .status(401)
-        .json({ message: "User not found in iCampus records" });
-    }
-
-    const userDoc = querySnapshot.docs[0];
-    const user = {
-      id: userDoc.data().uid || uid,
-      docId: userDoc.id,
-      ...userDoc.data(),
-    };
-
-    req.user = user;
-    req.user.id = user.uid || uid;
-    next();
-  } catch (error) {
-    console.error("Auth Error:", error.message);
-    res.status(401).json({ message: "Token invalid or expired" });
-  }
-};
-export const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: {
-    error:
-      "Too many security-related attempts. Please try again in 15 minutes.",
-  },
-  validate: { xForwardedForHeader: false },
-});
-
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, "uploads/");
@@ -77,6 +24,7 @@ export const upload = multer({
   storage: storage,
   limits: { fileSize: 1024 * 1024 * 25 },
 });
+
 export const verifyAdmin = async (req, res, next) => {
   try {
     if (!req.user || !req.user.uid) {
@@ -98,19 +46,20 @@ export const verifyAdmin = async (req, res, next) => {
       ...adminDoc.data(),
     };
 
-    next();
+    return next();
   } catch (err) {
     console.error("Admin verification error:", err);
-    res.status(500).json({ error: "Server error during authorization" });
+    return res.status(500).json({ error: "Server error during authorization" });
   }
 };
-
 export const idempotencyMiddleware = async (req, res, next) => {
   const idempotencyKey =
-    req.headers["idempotency-key"] || req.headers["X-Idempotency-Key"];
+    req.headers["idempotency-key"] || req.headers["x-idempotency-key"];
+
   if (!idempotencyKey) {
     return next();
   }
+
   const keyDocRef = db.collection(IDEMPOTENCY_COLLECTION).doc(idempotencyKey);
 
   try {
@@ -129,33 +78,94 @@ export const idempotencyMiddleware = async (req, res, next) => {
         return res.status(data.statusCode).json(data.responseBody);
       }
     }
+
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
     await keyDocRef.set({
       status: "PROCESSING",
       createdAt: new Date(),
       expiresAt: expiresAt,
     });
+
     const originalJson = res.json.bind(res);
 
     res.json = async (body) => {
       const statusCode = res.statusCode;
-      try {
-        await keyDocRef.set({
-          status: "COMPLETED",
-          statusCode: statusCode,
-          responseBody: body,
-          completedAt: new Date(),
-          expiresAt: expiresAt,
-        });
-      } catch (cacheError) {
-        console.error("[Idempotency] Failed to cache response:", cacheError);
-      }
+      setImmediate(async () => {
+        try {
+          await keyDocRef.set({
+            status: "COMPLETED",
+            statusCode: statusCode,
+            responseBody: body,
+            completedAt: new Date(),
+            expiresAt: expiresAt,
+          });
+        } catch (cacheError) {
+          console.error("[Idempotency] Failed to cache response:", cacheError);
+        }
+      });
       return originalJson(body);
     };
 
-    next();
+    return next();
   } catch (error) {
     console.error("[Idempotency Middleware Error]:", error);
-    next();
+    return next();
   }
 };
+export const protect = async (req, res, next) => {
+  let token;
+  if (req.headers.authorization?.startsWith("Bearer ")) {
+    token = req.headers.authorization.split(" ")[1];
+  } else if (req.query?.token) {
+    token = req.query.token;
+  }
+
+  if (!token) {
+    return res.status(401).json({ message: "Not authorized: Token missing" });
+  }
+
+  try {
+    let decoded;
+    let uid;
+
+    if (token.length > 500) {
+      decoded = await admin.auth().verifyIdToken(token);
+      uid = decoded.uid;
+    } else {
+      decoded = jwt.verify(token, process.env.JWT_SECRET);
+      uid = decoded.id || decoded.uid;
+    }
+
+    const querySnapshot = await User.where("uid", "==", uid).limit(1).get();
+
+    if (querySnapshot.empty) {
+      return res
+        .status(401)
+        .json({ message: "User not found in iCampus records" });
+    }
+
+    const userDoc = querySnapshot.docs[0];
+    const userData = userDoc.data();
+
+    req.user = {
+      id: userData.uid || uid,
+      uid: userData.uid || uid,
+      docId: userDoc.id,
+      ...userData,
+    };
+
+    return next();
+  } catch (error) {
+    console.error("Auth Error:", error.message);
+    return res.status(401).json({ message: "Token invalid or expired" });
+  }
+};
+export const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: {
+    error:
+      "Too many security-related attempts. Please try again in 15 minutes.",
+  },
+  validate: { xForwardedForHeader: false },
+});

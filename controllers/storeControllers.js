@@ -10,6 +10,7 @@ import {
   Follow,
   TaxEntries,
 } from "../tableDeclarations.js";
+import { setImmediate } from "timers";
 import { client as redis } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
 import { v4 as uuidv4 } from "uuid";
@@ -265,9 +266,11 @@ export const fetchStoreProducts = async (req, res) => {
   try {
     let queryRef = Product.where("isAvailable", "==", true);
     const isPopular = category === "popular";
+
     if (category && category !== "all" && !isPopular) {
       queryRef = queryRef.where("category", "==", category);
     }
+
     if (isPopular) {
       queryRef = queryRef
         .orderBy("favCount", "desc")
@@ -275,12 +278,14 @@ export const fetchStoreProducts = async (req, res) => {
     } else {
       queryRef = queryRef.orderBy("createdAt", "desc");
     }
+    let cursorDoc = null;
     if (cursor) {
-      const cursorDoc = await Product.doc(cursor).get();
+      cursorDoc = await Product.doc(cursor).get();
       if (cursorDoc.exists) {
         queryRef = queryRef.startAfter(cursorDoc);
       }
     }
+
     const fetchLimit = q ? pageLimit * 3 : pageLimit + 1;
     queryRef = queryRef.limit(fetchLimit);
 
@@ -300,18 +305,19 @@ export const fetchStoreProducts = async (req, res) => {
         return title.includes(searchTerm) || description.includes(searchTerm);
       });
     }
+
     const paginatedProducts = products.slice(0, pageLimit);
     let nextCursor = null;
     if (products.length > pageLimit) {
       nextCursor =
         paginatedProducts[paginatedProducts.length - 1]?.productId || null;
     }
-
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    }
-
-    return res.json({ products: paginatedProducts, nextCursor });
+    res.json({ products: paginatedProducts, nextCursor });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
   } catch (err) {
     console.error("Fetch Store Products Error:", err);
     if (typeof logControllerPerformance === "function") {
@@ -337,13 +343,25 @@ export const fetchAllProducts = async (req, res) => {
   try {
     const cachedData = await redis.get(CACHE_KEY);
     if (cachedData) {
-      logControllerPerformance(controllerName, action, startTime, "success");
-      return res.status(200).json({
+      res.status(200).json({
         success: true,
         products: JSON.parse(cachedData),
         source: "cache",
       });
+
+      setImmediate(() => {
+        if (typeof logControllerPerformance === "function") {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        }
+      });
+      return;
     }
+
     const products = [];
     const snapshot = await Product.get();
 
@@ -360,14 +378,32 @@ export const fetchAllProducts = async (req, res) => {
         type: data.type,
       });
     });
-
-    await redis.set(CACHE_KEY, JSON.stringify(products), { EX: 18000 });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       products,
       source: "database",
+    });
+    setImmediate(() => {
+      const backgroundTasks = [
+        redis
+          .set(CACHE_KEY, JSON.stringify(products), { EX: 18000 })
+          .catch((err) => console.error("Redis cache write error:", err)),
+      ];
+
+      if (typeof logControllerPerformance === "function") {
+        backgroundTasks.push(
+          Promise.resolve().then(() =>
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success",
+            ),
+          ),
+        );
+      }
+
+      Promise.all(backgroundTasks);
     });
   } catch (error) {
     console.error("Critical Catalog Fetch Error:", error);
@@ -392,18 +428,19 @@ export const clearUserCart = async (req, res) => {
     const userId = req.user?.id || req.user?.uid;
     if (!userId) throw new Error("Unauthorized");
     const userDocRef = User.doc(userId);
-
     await userDocRef.update({
       cart: [],
       updatedAt: new Date(),
     });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-
-    return res.status(200).json({
+    res.status(200).json({
       status: true,
       message: "Cart cleared successfully",
       cart: [],
+    });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
     });
   } catch (error) {
     console.error("Clear Cart Error:", error.message);
@@ -429,18 +466,18 @@ export const bulkAddToCart = async (req, res) => {
   const userId = req.user.id || req.user.uid;
 
   try {
-    const [userQuery] = await Promise.all([
-      User.where("uid", "==", userId).limit(1).get(),
-    ]);
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
 
     if (userQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User not found",
-      );
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      }
       return res.status(404).json({ status: false, message: "User not found" });
     }
 
@@ -452,28 +489,35 @@ export const bulkAddToCart = async (req, res) => {
       (item) => !existingProductIds.has(item.productId),
     );
 
+    const updatedCart = [...currentCart, ...itemsToAdd];
+
     if (itemsToAdd.length > 0) {
       await userDoc.ref.update({
-        cart: [...currentCart, ...itemsToAdd],
+        cart: updatedCart,
         updatedAt: new Date(),
       });
     }
-
-    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       status: true,
-      cart: [...currentCart, ...itemsToAdd],
+      cart: updatedCart,
       message: "Successfully added items to cart.",
+    });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
     });
   } catch (error) {
     console.error("Bulk Add To Cart Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
     res.status(500).json({ status: false, message: "An error occurred" });
   }
 };
@@ -490,6 +534,7 @@ export const clearFavorites = async (req, res) => {
         message: "Unauthorized user session",
       });
     }
+
     const userDocRef = User.doc(userId);
     const userSnap = await userDocRef.get();
 
@@ -508,18 +553,19 @@ export const clearFavorites = async (req, res) => {
         message: "User not found",
       });
     }
+
     await userDocRef.update({
       favorites: [],
       updatedAt: new Date(),
     });
-
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    }
-
-    return res
+    res
       .status(200)
       .json({ status: true, message: "Favorites cleared successfully" });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
   } catch (error) {
     console.error("Clear Favorites Error:", error.message);
     if (typeof logControllerPerformance === "function") {
@@ -594,12 +640,13 @@ export const initializeCheckout = async (req, res) => {
           throw new Error("Product or Seller info not found.");
         }
 
-        const productDoc = productQuery.docs[0];
-        const productData = productDoc.data();
-        const sellerDoc = sellerQuery.docs[0];
-        const sellerData = sellerDoc.data();
-
-        return { item, productDoc, productData, sellerDoc, sellerData };
+        return {
+          item,
+          productDoc: productQuery.docs[0],
+          productData: productQuery.docs[0].data(),
+          sellerDoc: sellerQuery.docs[0],
+          sellerData: sellerQuery.docs[0].data(),
+        };
       });
 
       const resolvedItems = await Promise.all(itemPromises);
@@ -691,46 +738,66 @@ export const initializeCheckout = async (req, res) => {
 
       return { processedResults: results, buyerTxId };
     });
-
-    const buyerQuery = await User.where("uid", "==", buyerId).limit(1).get();
-    const buyerData = !buyerQuery.empty
-      ? buyerQuery.docs[0].data()
-      : { uid: buyerId };
-
-    await sendOrderNotifications(
-      buyerData,
-      processedResults.processedResults,
-      processedResults.buyerTxId,
-    );
-    await notifyAdmins(
-      { role: ["super_admin", "finance"] },
-      {
-        notificationId: generateNotificationId("store"),
-        actionType: "NEW_PURCHASE_ORDER",
-        title: "New Purchase Order",
-        message: `Order set #${processedResults.buyerTxId} created with ${items.length} items.`,
-        payload: {
-          transactionId: processedResults.buyerTxId,
-          itemCount: items.length,
-          buyerId,
-        },
-      },
-      false,
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       data: processedResults.processedResults.map((r) => r.order),
     });
+
+    setImmediate(async () => {
+      try {
+        const buyerQuery = await User.where("uid", "==", buyerId)
+          .limit(1)
+          .get();
+        const buyerData = !buyerQuery.empty
+          ? buyerQuery.docs[0].data()
+          : { uid: buyerId };
+
+        await Promise.all([
+          sendOrderNotifications(
+            buyerData,
+            processedResults.processedResults,
+            processedResults.buyerTxId,
+          ),
+          notifyAdmins(
+            { role: ["super_admin", "finance"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: "NEW_PURCHASE_ORDER",
+              title: "New Purchase Order",
+              message: `Order set #${processedResults.buyerTxId} created with ${items.length} items.`,
+              payload: {
+                transactionId: processedResults.buyerTxId,
+                itemCount: items.length,
+                buyerId,
+              },
+            },
+            false,
+          ),
+        ]);
+
+        if (typeof logControllerPerformance === "function") {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        }
+      } catch (bgError) {
+        console.error("Background Checkout Tasks Error:", bgError);
+      }
+    });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    console.error("Checkout Initialization Error:", error.message);
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -739,7 +806,38 @@ export const completeOrderDelivery = async (req, res) => {
   const controllerName = "completeOrderDeliveryController";
   const action = "completeOrderDelivery";
   const { orderId } = req.body;
-  const scannerUid = req.user.id || req.user.uid;
+  const scannerUid = req.user?.id || req.user?.uid;
+
+  if (!scannerUid) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user identifier" });
+  }
+
+  if (!orderId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing orderId",
+      );
+    });
+    return res.status(400).json({
+      success: false,
+      message: "Missing order identification parameter.",
+    });
+  }
 
   try {
     const result = await db.runTransaction(async (transaction) => {
@@ -873,80 +971,7 @@ export const completeOrderDelivery = async (req, res) => {
         isSeller,
       };
     });
-
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: order.buyerId || result.buyer?.uid,
-      category: "store",
-      actionType: "ORDER_REVIEW_REQUEST",
-      title: "Share your experience",
-      message: `How was your ${result.productTitle}? Rate your experience to help the icampus community.`,
-      payload: {
-        orderId: orderId,
-        productName: result.productTitle,
-        targetId: orderId,
-        userName: result.buyer ? result.buyer.firstname : "Valued User",
-      },
-    });
-
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: result.seller.uid,
-      recipientEmail: result.seller.email,
-      category: "finance",
-      actionType: "ORDER_COMPLETED",
-      title: "Payment Received",
-      message: `Your sale for ${result.productTitle} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
-      payload: {
-        amount: result.sellerEarnings,
-        userName: result.seller.firstname,
-        productName: result.productTitle,
-        orderId: orderId,
-        role: "seller",
-      },
-      sendEmail: true,
-    });
-
-    if (result.agent) {
-      await createNotification({
-        notificationId: generateNotificationId("store"),
-        recipientId: result.agent.uid,
-        recipientEmail: result.agent.email,
-        category: "finance",
-        actionType: "ORDER_COMPLETED",
-        title: "Delivery Commission Earned",
-        message: `You earned ${result.agentEarnings} iCash for verifying order #${orderId}, proceed to payout to withdraw to your iCash wallet.`,
-        payload: {
-          amount: result.agentEarnings,
-          userName: result.agent.firstname,
-          productName: result.productTitle,
-          orderId: orderId,
-          role: "agent",
-        },
-        sendEmail: true,
-      });
-    }
-
-    await notifyAdmins(
-      { role: ["super_admin", "finance"] },
-      {
-        notificationId: generateNotificationId("store"),
-        actionType: "PURCHASE_ORDER_COMPLETION",
-        title: "Order Completed",
-        message: `Order #${orderId} has been completed and funds settled.`,
-        payload: {
-          orderId,
-          sellerId: result.seller.uid,
-          buyerId: result.buyer?.uid || "",
-          agentId: result.agent ? result.agent.uid : "",
-        },
-      },
-      false,
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       orderId,
       settlementAmount: result.isSeller
@@ -956,14 +981,110 @@ export const completeOrderDelivery = async (req, res) => {
       message: "Delivery verified and payments settled.",
       productName: result.productTitle,
     });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+    setImmediate(async () => {
+      try {
+        const notificationPromises = [];
+
+        notificationPromises.push(
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: order.buyerId || result.buyer?.uid,
+            category: "store",
+            actionType: "ORDER_REVIEW_REQUEST",
+            title: "Share your experience",
+            message: `How was your ${result.productTitle}? Rate your experience to help the icampus community.`,
+            payload: {
+              orderId: orderId,
+              productName: result.productTitle,
+              targetId: orderId,
+              userName: result.buyer ? result.buyer.firstname : "Valued User",
+            },
+          }),
+        );
+
+        notificationPromises.push(
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: result.seller.uid,
+            recipientEmail: result.seller.email,
+            category: "finance",
+            actionType: "ORDER_COMPLETED",
+            title: "Payment Received",
+            message: `Your sale for ${result.productTitle} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
+            payload: {
+              amount: result.sellerEarnings,
+              userName: result.seller.firstname,
+              productName: result.productTitle,
+              orderId: orderId,
+              role: "seller",
+            },
+            sendEmail: true,
+          }),
+        );
+
+        if (result.agent) {
+          notificationPromises.push(
+            createNotification({
+              notificationId: generateNotificationId("store"),
+              recipientId: result.agent.uid,
+              recipientEmail: result.agent.email,
+              category: "finance",
+              actionType: "ORDER_COMPLETED",
+              title: "Delivery Commission Earned",
+              message: `You earned ${result.agentEarnings} iCash for verifying order #${orderId}, proceed to payout to withdraw to your iCash wallet.`,
+              payload: {
+                amount: result.agentEarnings,
+                userName: result.agent.firstname,
+                productName: result.productTitle,
+                orderId: orderId,
+                role: "agent",
+              },
+              sendEmail: true,
+            }),
+          );
+        }
+
+        notificationPromises.push(
+          notifyAdmins(
+            { role: ["super_admin", "finance"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: "PURCHASE_ORDER_COMPLETION",
+              title: "Order Completed",
+              message: `Order #${orderId} has been completed and funds settled.`,
+              payload: {
+                orderId,
+                sellerId: result.seller.uid,
+                buyerId: result.buyer?.uid || "",
+                agentId: result.agent ? result.agent.uid : "",
+              },
+            },
+            false,
+          ),
+        );
+
+        await Promise.all(notificationPromises);
+      } catch (err) {
+        console.error(
+          "Background notification pipeline failure in completeOrderDelivery:",
+          err,
+        );
+      }
+    });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
     return res.status(400).json({ success: false, message: error.message });
   }
 };
@@ -972,7 +1093,38 @@ export const cancelOrder = async (req, res) => {
   const controllerName = "cancelOrderController";
   const action = "cancelOrder";
   const { orderId, reason } = req.body;
-  const userId = req.user.id || req.user.uid;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user identifier" });
+  }
+
+  if (!orderId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing orderId",
+      );
+    });
+    return res.status(400).json({
+      success: false,
+      message: "Missing order identification parameter.",
+    });
+  }
 
   try {
     const result = await db.runTransaction(async (transaction) => {
@@ -1057,55 +1209,68 @@ export const cancelOrder = async (req, res) => {
         refundTxId,
       };
     });
-
-    const currentDate = new Date();
-    const formattedDate = currentDate.toLocaleDateString();
-    const formattedTime = currentDate.toLocaleTimeString();
-
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: result.seller.uid,
-      recipientEmail: result.seller.email,
-      category: "store",
-      actionType: "ORDER_CANCELLED",
-      title: "Order Cancelled by Buyer",
-      message: `The order for "${result.productTitle}" (#${orderId}) was cancelled. Reason: ${reason}`,
-      payload: {
-        orderId: orderId,
-        productName: result.productTitle,
-        reason: reason,
-        buyerName: result.buyer.firstname || "Buyer",
-        date: formattedDate,
-        time: formattedTime,
-      },
-      sendEmail: true,
-    });
-
-    await notifyAdmins(
-      { role: ["super_admin", "finance"] },
-      {
-        notificationId: generateNotificationId("store"),
-        actionType: "ORDER_CANCELLED_ADMIN",
-        title: "Order Cancelled Audit",
-        message: `Order #${orderId} has been cancelled. Buyer ${result.buyer.uid} refunded.`,
-        payload: { orderId, sellerId: result.seller.uid, reason },
-      },
-      false,
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: "Order cancelled, buyer refunded, and seller notified.",
     });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+    setImmediate(async () => {
+      try {
+        const currentDate = new Date();
+        const formattedDate = currentDate.toLocaleDateString();
+        const formattedTime = currentDate.toLocaleTimeString();
+
+        await Promise.all([
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: result.seller.uid,
+            recipientEmail: result.seller.email,
+            category: "store",
+            actionType: "ORDER_CANCELLED",
+            title: "Order Cancelled by Buyer",
+            message: `The order for "${result.productTitle}" (#${orderId}) was cancelled. Reason: ${reason}`,
+            payload: {
+              orderId: orderId,
+              productName: result.productTitle,
+              reason: reason,
+              buyerName: result.buyer.firstname || "Buyer",
+              date: formattedDate,
+              time: formattedTime,
+            },
+            sendEmail: true,
+          }),
+          notifyAdmins(
+            { role: ["super_admin", "finance"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: "ORDER_CANCELLED_ADMIN",
+              title: "Order Cancelled Audit",
+              message: `Order #${orderId} has been cancelled. Buyer ${result.buyer.uid} refunded.`,
+              payload: { orderId, sellerId: result.seller.uid, reason },
+            },
+            false,
+          ),
+        ]);
+      } catch (err) {
+        console.error(
+          "Background notification pipeline failure in cancelOrder:",
+          err,
+        );
+      }
+    });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
     return res.status(400).json({ success: false, message: error.message });
   }
 };
@@ -1115,7 +1280,22 @@ export const getPendingOrders = async (req, res) => {
   const action = "getPendingOrders";
 
   try {
-    const userId = req.user.id || req.user.uid;
+    const userId = req.user?.id || req.user?.uid;
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user identifier",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user identifier" });
+    }
+
     const snapshot = await ProductOrder.where("buyerId", "==", userId)
       .where("status", "in", ["pending_delivery", "dropped_off"])
       .orderBy("createdAt", "desc")
@@ -1126,16 +1306,21 @@ export const getPendingOrders = async (req, res) => {
       orders.push(doc.data());
     });
 
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({ success: true, data: orders });
+    res.status(200).json({ success: true, data: orders });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
     return res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -1188,20 +1373,25 @@ export const logProductImpression = async (req, res) => {
         message: `${productId} impressions increment by ${userId} for ${currentMonthYear}`,
       };
     });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: result.message,
     });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
     return res.status(500).json({ success: false, message: error.message });
   }
 };
@@ -1209,21 +1399,25 @@ export const getSellerSalesHistory = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getSellerSalesHistoryController";
   const action = "getSellerSalesHistory";
+
   try {
     const sellerId = req.user.id || req.user.uid;
     if (!sellerId) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized: Seller ID missing",
-      );
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized: Seller ID missing",
+        );
+      }
       return res.status(401).json({
         success: false,
         message: "Unauthorized: Seller ID missing",
       });
     }
+
     const snapshot = await ProductSales.where("sellerId", "==", sellerId)
       .orderBy("createdAt", "desc")
       .get();
@@ -1232,22 +1426,27 @@ export const getSellerSalesHistory = async (req, res) => {
     snapshot.forEach((doc) => {
       sales.push({ id: doc.id, ...doc.data() });
     });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
     res.status(200).json({
       success: true,
       count: sales.length,
       data: sales,
     });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
   } catch (error) {
     console.error("getSellerSalesHistory Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
     res.status(500).json({
       success: false,
       message: "Internal server error while fetching sales records",
@@ -1258,21 +1457,25 @@ export const getPayoutHistory = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getPayoutHistoryController";
   const action = "getPayoutHistory";
+
   try {
     const userUid = req.user.id || req.user.uid;
     if (!userUid) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User identification missing.",
-      );
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User identification missing.",
+        );
+      }
       return res.status(400).json({
         success: false,
         message: "User identification missing.",
       });
     }
+
     const snapshot = await Payout.where("sellerUid", "==", userUid)
       .orderBy("createdAt", "desc")
       .get();
@@ -1283,22 +1486,28 @@ export const getPayoutHistory = async (req, res) => {
       const { __v, ...cleanData } = data;
       history.push({ id: doc.id, ...cleanData });
     });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       data: history,
       message: "Payout history retrieved successfully.",
     });
+
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
   } catch (error) {
     console.error("Fetch Payout Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
     return res.status(500).json({
       success: false,
       message: "An internal error occurred while fetching payout history.",
@@ -1312,6 +1521,36 @@ export const requestPayout = async (req, res) => {
   const action = "requestPayout";
   const { amount } = req.body;
   const userId = req.user.id || req.user.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user identifier" });
+  }
+
+  if (!amount || amount <= 0) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid payout amount",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, message: "Invalid payout amount specified." });
+  }
 
   try {
     const result = await db.runTransaction(async (transaction) => {
@@ -1377,63 +1616,77 @@ export const requestPayout = async (req, res) => {
         transactionId,
       };
     });
-
-    const currentDate = new Date();
-    const formattedDate = currentDate.toLocaleDateString();
-    const formattedTime = currentDate.toLocaleTimeString();
-
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: userId,
-      category: "finance",
-      actionType: "SALES_PAYOUT_SUCCESS",
-      title: "Sales Payout Credited",
-      message: `${amount.toLocaleString()} iCash from your sales has been added to your wallet.`,
-      recipientEmail: result.user.email,
-      sendEmail: true,
-      sendPush: true,
-      payload: {
-        username: result.user.firstname || result.user.lastname || "User",
-        amount: amount,
-        payoutId: result.payoutId,
-        transactionId: result.transactionId,
-        date: formattedDate,
-        time: formattedTime,
-      },
-    });
-
-    await notifyAdmins(
-      { role: ["finance", "super_admin"] },
-      {
-        notificationId: generateNotificationId("store"),
-        actionType: "SALES_PAYOUT_ADMIN_ALERT",
-        title: "New Sales Payout Processed",
-        message: `User ${result.user.uid} successfully withdrew ${amount} iCash to their wallet.`,
-        payload: {
-          userId: result.user.uid,
-          amount,
-          payoutId: result.payoutId,
-          transactionId: result.transactionId,
-        },
-      },
-      false,
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       newPointsBalance: result.newPointsBalance,
       transactionId: result.transactionId,
     });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+    setImmediate(async () => {
+      try {
+        const currentDate = new Date();
+        const formattedDate = currentDate.toLocaleDateString();
+        const formattedTime = currentDate.toLocaleTimeString();
+
+        const notificationPromises = [
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: userId,
+            category: "finance",
+            actionType: "SALES_PAYOUT_SUCCESS",
+            title: "Sales Payout Credited",
+            message: `${amount.toLocaleString()} iCash from your sales has been added to your wallet.`,
+            recipientEmail: result.user.email,
+            sendEmail: true,
+            sendPush: true,
+            payload: {
+              username: result.user.firstname || result.user.lastname || "User",
+              amount: amount,
+              payoutId: result.payoutId,
+              transactionId: result.transactionId,
+              date: formattedDate,
+              time: formattedTime,
+            },
+          }),
+          notifyAdmins(
+            { role: ["finance", "super_admin"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: "SALES_PAYOUT_ADMIN_ALERT",
+              title: "New Sales Payout Processed",
+              message: `User ${result.user.uid} successfully withdrew ${amount} iCash to their wallet.`,
+              payload: {
+                userId: result.user.uid,
+                amount,
+                payoutId: result.payoutId,
+                transactionId: result.transactionId,
+              },
+            },
+            false,
+          ),
+        ];
+
+        await Promise.all(notificationPromises);
+      } catch (err) {
+        console.error(
+          "Background notification pipeline failure in requestPayout:",
+          err,
+        );
+      }
+    });
   } catch (error) {
-    console.error("Payout Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
     return res.status(400).json({ success: false, message: error.message });
   }
 };
@@ -1451,18 +1704,16 @@ export const getDropOffStations = async (req, res) => {
     });
 
     if (!lat || !lng) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "success",
-        "Stations fetched successfully",
-      );
-      return res.status(200).json({
+      res.status(200).json({
         success: true,
         message: "Stations fetched successfully",
         data: stations,
       });
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+      return;
     }
 
     const userLat = parseFloat(lat);
@@ -1483,21 +1734,25 @@ export const getDropOffStations = async (req, res) => {
       })
       .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
 
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: "Closest stations fetched successfully",
       data: stationsWithDistance,
     });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
   } catch (error) {
-    console.error("Error fetching stations:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
     return res.status(500).json({
       success: false,
       message: "Internal server error processing station data",
@@ -1516,13 +1771,15 @@ export const saveProductController = async (req, res) => {
 
     if (!title || !description || !productType || !price) {
       if (req.file) await fs.unlink(req.file.path).catch(() => {});
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing required product fields.",
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required product fields.",
+        );
+      });
       return res
         .status(400)
         .json({ success: false, message: "Missing required product fields." });
@@ -1571,13 +1828,15 @@ export const saveProductController = async (req, res) => {
     if (isEditing) {
       if (!productQuery || productQuery.empty) {
         if (req.file) await fs.unlink(req.file.path).catch(() => {});
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Product not found.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Product not found.",
+          );
+        });
         return res
           .status(404)
           .json({ success: false, message: "Product not found." });
@@ -1605,36 +1864,6 @@ export const saveProductController = async (req, res) => {
 
       await productDocRef.update(productData);
       productData = { productId, sellerId: userUid, ...productData };
-
-      const currentDate = new Date();
-      const formattedDate = currentDate.toLocaleDateString();
-      const formattedTime = currentDate.toLocaleTimeString();
-
-      await createNotification({
-        notificationId: generateNotificationId("store"),
-        recipientId: userUid,
-        recipientEmail: req.user.email,
-        category: "store",
-        actionType: "PRODUCT_UPDATE",
-        title: "Product Updated Successfully",
-        message: `Your changes to "${title}" have been successfully saved.`,
-        entityId: productId,
-        entityType: "product",
-        sendEmail: true,
-        payload: {
-          productId: productId,
-          productType: productType,
-          productName: title,
-          price: Number(price),
-          date: formattedDate,
-          time: formattedTime,
-        },
-      }).catch((err) =>
-        console.error(
-          "Non-blocking update notification tracking failure:",
-          err,
-        ),
-      );
     } else {
       const newCustomId = generateProductId(userUid);
       productDocRef = Product.doc(newCustomId);
@@ -1653,52 +1882,90 @@ export const saveProductController = async (req, res) => {
       };
       await productDocRef.set(productData);
     }
-
-    processNotificationFanOut(
-      userUid,
-      sellerName,
-      productData,
-      isEditing,
-    ).catch((err) =>
-      console.error("Background task pipeline error context captured:", err),
-    );
-
-    await notifyAdmins(
-      { role: ["super_admin", "moderator"] },
-      {
-        notificationId: generateNotificationId("store"),
-        actionType: isEditing ? "PRODUCT_UPDATE" : "PRODUCT_CREATION",
-        title: isEditing ? "Product Updated" : "New Product Listed",
-        message: `Product "${title}" was ${isEditing ? "updated" : "listed"} by ${sellerName}.`,
-        payload: {
-          productId: productData.productId,
-          productName: title,
-          sellerId: userUid,
-        },
-      },
-      false,
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(isEditing ? 200 : 201).json({
+    res.status(isEditing ? 200 : 201).json({
       success: true,
       message: isEditing
         ? "Product entry successfully patched."
         : "Product entry successfully saved.",
       data: productData,
     });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+    setImmediate(async () => {
+      try {
+        const currentDate = new Date();
+        const formattedDate = currentDate.toLocaleDateString();
+        const formattedTime = currentDate.toLocaleTimeString();
+
+        const bgTasks = [
+          notifyAdmins(
+            { role: ["super_admin", "moderator"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: isEditing ? "PRODUCT_UPDATE" : "PRODUCT_CREATION",
+              title: isEditing ? "Product Updated" : "New Product Listed",
+              message: `Product "${title}" was ${isEditing ? "updated" : "listed"} by ${sellerName}.`,
+              payload: {
+                productId: productData.productId,
+                productName: title,
+                sellerId: userUid,
+              },
+            },
+            false,
+          ),
+          processNotificationFanOut(
+            userUid,
+            sellerName,
+            productData,
+            isEditing,
+          ),
+        ];
+
+        if (isEditing) {
+          bgTasks.push(
+            createNotification({
+              notificationId: generateNotificationId("store"),
+              recipientId: userUid,
+              recipientEmail: req.user.email,
+              category: "store",
+              actionType: "PRODUCT_UPDATE",
+              title: "Product Updated Successfully",
+              message: `Your changes to "${title}" have been successfully saved.`,
+              entityId: productId,
+              entityType: "product",
+              sendEmail: true,
+              payload: {
+                productId: productId,
+                productType: productType,
+                productName: title,
+                price: Number(price),
+                date: formattedDate,
+                time: formattedTime,
+              },
+            }),
+          );
+        }
+
+        await Promise.allSettled(bgTasks);
+      } catch (err) {
+        console.error("Background task pipeline error context captured:", err);
+      }
+    });
   } catch (error) {
     console.error(
       "Global crash layer hit in saveProductController:",
       error.message,
     );
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
     return res.status(500).json({
       success: false,
       message: "Internal application routing anomaly.",
@@ -1715,18 +1982,21 @@ export const deleteProductController = async (req, res) => {
     const { productId } = req.params;
 
     if (!productId) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing required product identification parameter.",
-      );
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required product identification parameter.",
+        );
+      }
       return res.status(400).json({
         success: false,
         message: "Missing required product identification parameter.",
       });
     }
+
     const [result, sellerQuery] = await Promise.all([
       db.runTransaction(async (transaction) => {
         const productQuery = await Product.where("productId", "==", productId)
@@ -1746,103 +2016,123 @@ export const deleteProductController = async (req, res) => {
       }),
       User.where("uid", "==", userUid).limit(1).get(),
     ]);
-    const mediaThumbnails = result.mediaUrls || result.thumbnails;
-    if (mediaThumbnails) {
-      const thumbnailUrls = Array.isArray(mediaThumbnails)
-        ? mediaThumbnails
-        : [mediaThumbnails];
-
-      const bucket = storage().bucket();
-
-      const deletionPromises = thumbnailUrls.map(async (url) => {
-        if (url && url.includes("firebasestorage.googleapis.com")) {
-          try {
-            const decodedUrl = decodeURIComponent(url);
-            const pathStartIndex = decodedUrl.indexOf("/o/") + 3;
-            const pathEndIndex = decodedUrl.indexOf("?");
-            const filePath =
-              pathEndIndex !== -1
-                ? decodedUrl.substring(pathStartIndex, pathEndIndex)
-                : decodedUrl.substring(pathStartIndex);
-
-            await bucket.file(filePath).delete();
-          } catch (parseError) {
-            console.error(
-              `Error parsing or deleting Firebase file for URL: ${url}`,
-              parseError,
-            );
-          }
-        }
-      });
-
-      await Promise.all(deletionPromises).catch((err) =>
-        console.error(
-          "Some file deletions failed during parallel cleanup:",
-          err,
-        ),
-      );
-    }
-
-    const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
-    const sellerEmail = seller ? seller.email : req.user.email;
-    const sellerName = seller ? seller.firstname : req.user.firstname;
-
-    const currentDate = new Date();
-    const formattedDate = currentDate.toLocaleDateString();
-    const formattedTime = currentDate.toLocaleTimeString();
-
-    await createNotification({
-      notificationId: generateNotificationId("store"),
-      recipientId: userUid,
-      recipientEmail: sellerEmail,
-      category: "store",
-      actionType: "PRODUCT_DELETION",
-      title: "Product Listing Removed",
-      message: `Your marketplace item "${result.title}" has been successfully deleted.`,
-      entityId: productId,
-      entityType: "product",
-      sendEmail: false,
-      payload: {
-        username: sellerName,
-        productId: productId,
-        productName: result.title,
-        date: formattedDate,
-        time: formattedTime,
-      },
-    }).catch((err) =>
-      console.error("Non-blocking deletion log emission failure:", err),
-    );
-
-    await notifyAdmins(
-      { role: ["super_admin", "moderator"] },
-      {
-        notificationId: generateNotificationId("store"),
-        actionType: "PRODUCT_DELETION_ADMIN",
-        title: "Product Deletion Audit",
-        message: `Product "${result.title}" was deleted by seller ${userUid}.`,
-        payload: { productId, productName: result.title, sellerId: userUid },
-      },
-      false,
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: "Product entry successfully unlinked and purged.",
       data: { productId },
+    });
+    setImmediate(async () => {
+      try {
+        const mediaThumbnails = result.mediaUrls || result.thumbnails;
+        if (mediaThumbnails) {
+          const thumbnailUrls = Array.isArray(mediaThumbnails)
+            ? mediaThumbnails
+            : [mediaThumbnails];
+
+          const bucket = storage().bucket();
+
+          const deletionPromises = thumbnailUrls.map(async (url) => {
+            if (url && url.includes("firebasestorage.googleapis.com")) {
+              try {
+                const decodedUrl = decodeURIComponent(url);
+                const pathStartIndex = decodedUrl.indexOf("/o/") + 3;
+                const pathEndIndex = decodedUrl.indexOf("?");
+                const filePath =
+                  pathEndIndex !== -1
+                    ? decodedUrl.substring(pathStartIndex, pathEndIndex)
+                    : decodedUrl.substring(pathStartIndex);
+
+                await bucket.file(filePath).delete();
+              } catch (parseError) {
+                console.error(
+                  `Error parsing or deleting Firebase file for URL: ${url}`,
+                  parseError,
+                );
+              }
+            }
+          });
+
+          await Promise.all(deletionPromises).catch((err) =>
+            console.error(
+              "Some file deletions failed during parallel cleanup:",
+              err,
+            ),
+          );
+        }
+
+        const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
+        const sellerEmail = seller ? seller.email : req.user.email;
+        const sellerName = seller ? seller.firstname : req.user.firstname;
+
+        const currentDate = new Date();
+        const formattedDate = currentDate.toLocaleDateString();
+        const formattedTime = currentDate.toLocaleTimeString();
+
+        await Promise.all([
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: userUid,
+            recipientEmail: sellerEmail,
+            category: "store",
+            actionType: "PRODUCT_DELETION",
+            title: "Product Listing Removed",
+            message: `Your marketplace item "${result.title}" has been successfully deleted.`,
+            entityId: productId,
+            entityType: "product",
+            sendEmail: false,
+            payload: {
+              username: sellerName,
+              productId: productId,
+              productName: result.title,
+              date: formattedDate,
+              time: formattedTime,
+            },
+          }).catch((err) =>
+            console.error("Non-blocking deletion log emission failure:", err),
+          ),
+          notifyAdmins(
+            { role: ["super_admin", "moderator"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: "PRODUCT_DELETION_ADMIN",
+              title: "Product Deletion Audit",
+              message: `Product "${result.title}" was deleted by seller ${userUid}.`,
+              payload: {
+                productId,
+                productName: result.title,
+                sellerId: userUid,
+              },
+            },
+            false,
+          ),
+        ]);
+
+        if (typeof logControllerPerformance === "function") {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        }
+      } catch (bgError) {
+        console.error("Background Product Deletion Tasks Error:", bgError);
+      }
     });
   } catch (error) {
     console.error(
       "Global crash layer hit in deleteProductController:",
       error.message,
     );
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
     const statusCode = error.message.includes("not found") ? 404 : 500;
     return res.status(statusCode).json({
       success: false,
@@ -1858,13 +2148,15 @@ export const togglefavoriteActionController = async (req, res) => {
   const userId = req.user.id || req.user.uid;
 
   if (!productId) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      "Missing required productId.",
-    );
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required productId.",
+      );
+    }
     return res
       .status(400)
       .json({ success: false, message: "Missing required productId." });
@@ -1895,23 +2187,28 @@ export const togglefavoriteActionController = async (req, res) => {
         favorites: updatedFavorites,
       };
     });
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       favorites: result.favorites,
       message: result.isFavorited
         ? "Removed from favorites"
         : "Added to favorites",
     });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
     const statusCode = error.message === "User not found" ? 404 : 500;
     return res
       .status(statusCode)
@@ -1932,14 +2229,19 @@ export const toggleCartActionController = async (req, res) => {
   const userId = req.user.id || req.user.uid;
 
   if (!productId || !action) {
-    logControllerPerformance(
-      controllerName,
-      controllerAction,
-      startTime,
-      "error",
-      "Missing required productId or action.",
-    );
-    return res.status(400).json({ success: false, message: "Missing required productId or action." });
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        controllerAction,
+        startTime,
+        "error",
+        "Missing required productId or action.",
+      );
+    }
+    return res.status(400).json({
+      success: false,
+      message: "Missing required productId or action.",
+    });
   }
 
   try {
@@ -2000,29 +2302,35 @@ export const toggleCartActionController = async (req, res) => {
 
       return updatedCart;
     });
-
-    logControllerPerformance(
-      controllerName,
-      controllerAction,
-      startTime,
-      "success",
-    );
-
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       cart: result,
       message: `Cart updated successfully`,
     });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          controllerAction,
+          startTime,
+          "success",
+        );
+      }
+    });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      controllerAction,
-      startTime,
-      "error",
-      error.message,
-    );
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        controllerAction,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
     const statusCode = error.message === "User not found" ? 404 : 500;
-    return res.status(statusCode).json({ success: false, message: error.message });
+    return res
+      .status(statusCode)
+      .json({ success: false, message: error.message });
   }
 };
 export const markOrderAsDroppedOff = async (req, res) => {
@@ -2033,8 +2341,18 @@ export const markOrderAsDroppedOff = async (req, res) => {
   const sellerId = req.user.id || req.user.uid;
 
   if (!orderId) {
-    logControllerPerformance(controllerName, action, startTime, "error", "Missing required orderId.");
-    return res.status(400).json({ success: false, message: "Missing required orderId." });
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required orderId.",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing required orderId." });
   }
 
   try {
@@ -2065,7 +2383,9 @@ export const markOrderAsDroppedOff = async (req, res) => {
       });
       const [buyerQuery, agentQuery] = await Promise.all([
         User.where("uid", "==", order.buyerId).limit(1).get(),
-        order.agentId ? User.where("uid", "==", order.agentId).limit(1).get() : Promise.resolve(null)
+        order.agentId
+          ? User.where("uid", "==", order.agentId).limit(1).get()
+          : Promise.resolve(null),
       ]);
 
       if (buyerQuery.empty) {
@@ -2073,7 +2393,8 @@ export const markOrderAsDroppedOff = async (req, res) => {
       }
 
       const buyer = buyerQuery.docs[0].data();
-      const agent = agentQuery && !agentQuery.empty ? agentQuery.docs[0].data() : null;
+      const agent =
+        agentQuery && !agentQuery.empty ? agentQuery.docs[0].data() : null;
 
       return {
         order,
@@ -2081,73 +2402,85 @@ export const markOrderAsDroppedOff = async (req, res) => {
         agent,
       };
     });
-
-    const currentDate = new Date();
-    const formattedDate = currentDate.toLocaleDateString();
-    const formattedTime = currentDate.toLocaleTimeString();
-    const notificationPromises = [
-      createNotification({
-        notificationId: generateNotificationId("store"),
-        recipientId: result.order.buyerId,
-        recipientEmail: result.buyer.email,
-        category: "store",
-        actionType: "ORDER_DROPPED_OFF",
-        sendEmail: true,
-        payload: {
-          userName: `${result.buyer.firstname || ""} ${result.buyer.lastname || ""}`.trim(),
-          productName: result.order.productName,
-          orderId: result.order.orderId,
-          stationName: result.order.selectedStation?.name || "",
-          stationAddress: result.order.selectedStation?.address || "",
-        },
-      })
-    ];
-
-    if (result.order.agentId && result.agent?.email) {
-      notificationPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("store"),
-          recipientId: result.order.agentId,
-          recipientEmail: result.agent.email,
-          category: "store",
-          actionType: "AGENT_AWAITING_PICKUP",
-          sendEmail: true,
-          payload: {
-            agentName: result.agent.firstname || "Agent",
-            productName: result.order.productName,
-            orderId: result.order.orderId,
-            stationName: result.order.selectedStation?.name || "",
-            date: formattedDate,
-            time: formattedTime,
-          },
-        })
-      );
-    }
-
-    await Promise.all(notificationPromises).catch((err) =>
-      console.error("Non-blocking notification pipeline failure in order drop-off:", err)
-    );
-
-    logControllerPerformance(controllerName, action, startTime, "success");
-    return res.status(200).json({
+    res.status(200).json({
       success: true,
       message: "Order updated to dropped off. Buyer notified.",
       status: "dropped_off",
     });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+    setImmediate(async () => {
+      try {
+        const currentDate = new Date();
+        const formattedDate = currentDate.toLocaleDateString();
+        const formattedTime = currentDate.toLocaleTimeString();
+
+        const notificationPromises = [
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: result.order.buyerId,
+            recipientEmail: result.buyer.email,
+            category: "store",
+            actionType: "ORDER_DROPPED_OFF",
+            sendEmail: true,
+            payload: {
+              userName:
+                `${result.buyer.firstname || ""} ${result.buyer.lastname || ""}`.trim(),
+              productName: result.order.productName,
+              orderId: result.order.orderId,
+              stationName: result.order.selectedStation?.name || "",
+              stationAddress: result.order.selectedStation?.address || "",
+            },
+          }),
+        ];
+
+        if (result.order.agentId && result.agent?.email) {
+          notificationPromises.push(
+            createNotification({
+              notificationId: generateNotificationId("store"),
+              recipientId: result.order.agentId,
+              recipientEmail: result.agent.email,
+              category: "store",
+              actionType: "AGENT_AWAITING_PICKUP",
+              sendEmail: true,
+              payload: {
+                agentName: result.agent.firstname || "Agent",
+                productName: result.order.productName,
+                orderId: result.order.orderId,
+                stationName: result.order.selectedStation?.name || "",
+                date: formattedDate,
+                time: formattedTime,
+              },
+            }),
+          );
+        }
+
+        await Promise.all(notificationPromises);
+      } catch (err) {
+        console.error(
+          "Background notification pipeline failure in order drop-off:",
+          err,
+        );
+      }
+    });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
     const clientErrors = [
       "Order not found.",
       "Unauthorized action.",
       "This action is only valid for station drop-offs.",
       "Buyer not found.",
-      "Missing required orderId."
+      "Missing required orderId.",
     ];
     const statusCode = clientErrors.includes(error.message) ? 400 : 500;
     return res

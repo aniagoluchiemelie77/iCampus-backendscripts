@@ -1,5 +1,5 @@
 import express from "express";
-import { protect } from "../middleware/auth.js";
+import { protect, idempotencyMiddleware } from "../middleware/auth.js";
 import {
   getSavedMethods,
   initializeBuy,
@@ -21,7 +21,6 @@ import {
   requestIcashPinReset,
   resetIcashPin,
 } from "../controllers/userActionsController.js";
-import { idempotencyMiddleware } from "../middleware/auth.js";
 
 const router = express.Router();
 
@@ -40,17 +39,43 @@ router.post(
   requestIcashPinReset,
 );
 router.post("/reset-icash-pin", protect, idempotencyMiddleware, resetIcashPin);
-router.get("/payment-methods", protect, getSavedMethods);
-router.get("/transactions/initialize-buy", protect, initializeBuy);
-router.get("/transactions/initialize-withdraw", protect, initializeWithdraw);
+router.get("/payment-methods/:userId", protect, getSavedMethods);
+router.post(
+  "/transactions/initialize-buy",
+  protect,
+  idempotencyMiddleware,
+  initializeBuy,
+);
+router.post(
+  "/transactions/initialize-withdraw",
+  protect,
+  idempotencyMiddleware,
+  initializeWithdraw,
+);
 router.get("/iTag/search/:username", protect, fetchItagByUsername);
-router.post("/transactions/p2p-transfer", protect, handleP2pTransfers);
+router.post(
+  "/transactions/p2p-transfer",
+  protect,
+  idempotencyMiddleware,
+  handleP2pTransfers,
+);
 router.get("/transactions/stats", protect, fetchUserTransactionStats);
-router.post("/transactions/export", protect, generateTransactionHistory);
-router.post("/payments/verify-otp", protect, validatePaymentOTP);
+router.post(
+  "/transactions/export",
+  protect,
+  idempotencyMiddleware,
+  generateTransactionHistory,
+);
+router.post(
+  "/payments/verify-otp",
+  protect,
+  idempotencyMiddleware,
+  validatePaymentOTP,
+);
 router.post(
   "/subscriptionPayments/verify",
   protect,
+  idempotencyMiddleware,
   verifySubscriptionFlwPayment,
 );
 router.get(

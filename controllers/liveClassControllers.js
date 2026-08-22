@@ -4,6 +4,7 @@ import { generateNotificationId } from "../utils/idGenerator.js";
 import { createNotification } from "../services/notification.js";
 import { DeepgramClient } from "@deepgram/sdk";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+import { setImmediate } from "timers";
 
 const activeClassroomConnections = new Map();
 export const generateDeepgramToken = async (req, res) => {
@@ -33,10 +34,11 @@ export const generateDeepgramToken = async (req, res) => {
   }
 };
 
-async function broadcastAttendeeList(io, lectureId) {
+export async function broadcastAttendeeList(io, lectureId) {
   const lectureRoomId = `lecture_${lectureId}`;
   const socketsInRoom = await io.in(lectureRoomId).fetchSockets();
   const uniqueStudentsMap = new Map();
+
   socketsInRoom.forEach((socketInstance) => {
     const profile = socketInstance.userProfile;
     if (profile && profile.uid) {
@@ -51,6 +53,7 @@ async function broadcastAttendeeList(io, lectureId) {
       });
     }
   });
+
   const attendeePayloadList = Array.from(uniqueStudentsMap.values());
   io.to(lectureRoomId).emit("update_attendee_list", attendeePayloadList);
 }
@@ -59,22 +62,26 @@ export const registerLectureStreamHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "onlineClassStreamReadyController";
     const action = "onlineClassStreamReady";
+
     try {
-      const { lectureId, streamUrl } = payload;
+      const { lectureId, streamUrl } = payload || {};
       if (!lectureId || !streamUrl) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing invalid payload dependencies.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Missing invalid payload dependencies.",
+          );
+        });
         socket.emit("error_response", {
           action: "stream_ready",
           message: "Missing invalid payload dependencies.",
         });
         return;
       }
+
       const updatedLecture = await Lectures.findOneAndUpdate(
         { id: lectureId },
         {
@@ -87,25 +94,28 @@ export const registerLectureStreamHandlers = (io, socket) => {
         },
         { new: true },
       );
+
       if (!updatedLecture) {
         console.warn(
           `[LIVE_CLASS_ENGINE] Stream initialization failed. Lecture id "${lectureId}" not found.`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target lecture track reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target lecture track reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "stream_ready",
           message: "Target lecture track reference could not be resolved.",
         });
         return;
       }
+
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
       await socket.join(lectureRoomId);
       io.to(lectureRoomId).emit("live_stream_started", {
         lectureId: updatedLecture.id,
@@ -113,6 +123,10 @@ export const registerLectureStreamHandlers = (io, socket) => {
         topicName: updatedLecture.topicName,
         status: updatedLecture.status,
         startedAt: updatedLecture.startedAt,
+      });
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
       });
 
       console.log(
@@ -123,13 +137,15 @@ export const registerLectureStreamHandlers = (io, socket) => {
         "[CORE_SOCKET_EXCEPTION] stream_ready handling failure:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "stream_ready",
@@ -143,59 +159,71 @@ export const registerWebRTCSignalingHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "onlineClassWebrtcSignalController";
     const action = "onlineClassWebrtcSignal";
+
     try {
-      const { lectureId, signal } = payload;
+      const { lectureId, signal } = payload || {};
       if (!lectureId || !signal) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed payload data",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed payload data",
+          );
+        });
         socket.emit("error_response", {
           action: "webrtc_signal",
           message: "Malformed payload data",
         });
         return;
       }
+
       if (!signal.type && !signal.candidate) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid signaling payload.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Invalid signaling payload.",
+          );
+        });
         socket.emit("error_response", {
           action: "webrtc_signal",
           message: "Invalid signaling payload.",
         });
         return;
       }
+
       const lectureRoomId = `lecture_${lectureId}`;
-      const connectedRooms = Array.from(socket.rooms);
-      if (!connectedRooms.includes(lectureRoomId)) {
+      if (!socket.rooms.has(lectureRoomId)) {
         await socket.join(lectureRoomId);
       }
-      logControllerPerformance(controllerName, action, startTime, "success");
+
       socket.to(lectureRoomId).emit("webrtc_signal_received", {
         lectureId,
         signal,
         senderId: socket.id,
+      });
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
       });
     } catch (error) {
       console.error(
         "[WEBRTC_SIGNALING_ERROR] Failed to safely proxy routing data:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "webrtc_signal",
@@ -210,29 +238,37 @@ export const registerAudioControlHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "toggleMicController";
     const action = "toggleMic";
+
     try {
-      const { lectureId, isMuted } = payload;
+      const { lectureId, isMuted } = payload || {};
       if (!lectureId || typeof isMuted !== "boolean") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed payload data.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed payload data.",
+          );
+        });
         socket.emit("error_response", {
           action: "toggle_lecturer_mic",
           message: "Malformed payload data.",
         });
         return;
       }
+
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
       socket.to(lectureRoomId).emit("lecturer_mic_status_changed", {
         lectureId,
         isMuted,
         updatedAt: new Date(),
       });
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       console.log(
         `[AUDIO_ENGINE] Mic status synced for Room: ${lectureRoomId} | Muted: ${isMuted}`,
       );
@@ -241,13 +277,15 @@ export const registerAudioControlHandlers = (io, socket) => {
         "[AUDIO_CONTROL_ERROR] Failed to broadcast mic status:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "toggle_lecturer_mic",
@@ -261,22 +299,26 @@ export const registerScreenShareHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "lecturerShareScreenStartController";
     const action = "lecturerShareScreenStart";
+
     try {
-      const { lectureId, streamId } = payload;
+      const { lectureId, streamId } = payload || {};
       if (!lectureId || !streamId) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed payload data.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed payload data.",
+          );
+        });
         socket.emit("error_response", {
           action: "lecturer_started_sharing",
           message: "Malformed payload data.",
         });
         return;
       }
+
       const updatedLecture = await Lectures.findOneAndUpdate(
         { id: lectureId },
         {
@@ -292,13 +334,15 @@ export const registerScreenShareHandlers = (io, socket) => {
         console.warn(
           `[SCREEN_SHARE_ENGINE] Execution failed. Lecture id "${lectureId}" not found.`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target lecture track reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target lecture track reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "lecturer_started_sharing",
           message: "Target lecture track reference could not be resolved.",
@@ -313,7 +357,10 @@ export const registerScreenShareHandlers = (io, socket) => {
         updatedAt: new Date(),
       });
 
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       console.log(
         `[SCREEN_SHARE_ENGINE] Screen share track synchronized for Room: ${lectureRoomId}`,
       );
@@ -322,13 +369,15 @@ export const registerScreenShareHandlers = (io, socket) => {
         "[SCREEN_SHARE_ERROR] Failed to execute screen share tracking:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "lecturer_started_sharing",
@@ -342,22 +391,26 @@ export const registerScreenShareStopHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "lecturerShareScreenStopController";
     const action = "lecturerShareScreenStop";
+
     try {
-      const { lectureId } = payload;
+      const { lectureId } = payload || {};
       if (!lectureId) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed payload data.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed payload data.",
+          );
+        });
         socket.emit("error_response", {
           action: "lecturer_stopped_sharing",
           message: "Malformed payload data.",
         });
         return;
       }
+
       const updatedLecture = await Lectures.findOneAndUpdate(
         { id: lectureId },
         {
@@ -372,13 +425,15 @@ export const registerScreenShareStopHandlers = (io, socket) => {
         console.warn(
           `[SCREEN_SHARE_ENGINE] Termination failed. Lecture id "${lectureId}" not found.`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target lecture track reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target lecture track reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "lecturer_stopped_sharing",
           message: "Target lecture track reference could not be resolved.",
@@ -387,7 +442,11 @@ export const registerScreenShareStopHandlers = (io, socket) => {
       }
 
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       socket.to(lectureRoomId).emit("lecturer_screen_share_stopped", {
         lectureId,
         updatedAt: new Date(),
@@ -401,13 +460,15 @@ export const registerScreenShareStopHandlers = (io, socket) => {
         "[SCREEN_SHARE_STOP_ERROR] Failed to execute stream breakdown:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "lecturer_stopped_sharing",
@@ -422,22 +483,26 @@ export const registerChatHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "onlineClassSendMessageController";
     const action = "onlineClassSendMessage";
+
     try {
-      const { text, senderId, lectureId, username, profilePic } = payload;
+      const { text, senderId, lectureId, username, profilePic } = payload || {};
       if (!lectureId || !senderId || !text || !text.trim()) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed message data payload components.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed message data payload components.",
+          );
+        });
         socket.emit("error_response", {
           action: "send_message",
           message: "Malformed message data payload components.",
         });
         return;
       }
+
       let sanitizedProfilePic = "";
       if (Array.isArray(profilePic)) {
         sanitizedProfilePic =
@@ -445,6 +510,7 @@ export const registerChatHandlers = (io, socket) => {
       } else if (typeof profilePic === "string") {
         sanitizedProfilePic = profilePic;
       }
+
       const newComment = {
         id: uuidv4(),
         userId: senderId,
@@ -455,6 +521,7 @@ export const registerChatHandlers = (io, socket) => {
         likes: 0,
         replies: [],
       };
+
       const updatedLecture = await Lectures.findOneAndUpdate(
         { id: lectureId },
         {
@@ -470,34 +537,44 @@ export const registerChatHandlers = (io, socket) => {
         console.warn(
           `[CHAT_ENGINE] Message persistence failed. Lecture id "${lectureId}" not found.`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target lecture track reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target lecture track reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "send_message",
           message: "Target lecture track reference could not be resolved.",
         });
         return;
       }
+
       const savedComment = updatedLecture.comments[0];
       const lectureRoomId = `lecture_${lectureId}`;
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       io.to(lectureRoomId).emit("receive_message", savedComment);
     } catch (error) {
       console.error(
         "[CHAT_ENGINE_ERROR] Failed to execute message processing:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "send_message",
@@ -511,30 +588,36 @@ export const registerNetworkFallbackHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "poorNetworkFallbackController";
     const action = "poorNetworkFallback";
+
     try {
-      const { lectureId, mode } = payload;
+      const { lectureId, mode } = payload || {};
       if (!lectureId || !mode) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed payload data.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed payload data.",
+          );
+        });
         socket.emit("error_response", {
           action: "lecturer_network_fallback",
           message: "Malformed payload data.",
         });
         return;
       }
+
       if (!["audio-only", "full-stream"].includes(mode)) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          'Invalid mode configuration. Expected "audio-only" or "full-stream".',
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            'Invalid mode configuration. Expected "audio-only" or "full-stream".',
+          );
+        });
         socket.emit("error_response", {
           action: "lecturer_network_fallback",
           message:
@@ -542,28 +625,22 @@ export const registerNetworkFallbackHandlers = (io, socket) => {
         });
         return;
       }
-      const isAudioOnly = mode === "audio-only";
-      const updatedLecture = await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        {
-          $set: {
-            liveStreamUrl: isAudioOnly ? null : lecture.liveStreamUrl,
-          },
-        },
-        { new: true },
-      );
 
-      if (!updatedLecture) {
+      const isAudioOnly = mode === "audio-only";
+      const currentLecture = await Lectures.findOne({ id: lectureId });
+      if (!currentLecture) {
         console.warn(
           `[NETWORK_ENGINE] Fallback processing failed. Lecture id "${lectureId}" not found.`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target lecture track reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target lecture track reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "lecturer_network_fallback",
           message: "Target lecture track reference could not be resolved.",
@@ -571,13 +648,27 @@ export const registerNetworkFallbackHandlers = (io, socket) => {
         return;
       }
 
+      const updatedLecture = await Lectures.findOneAndUpdate(
+        { id: lectureId },
+        {
+          $set: {
+            liveStreamUrl: isAudioOnly ? null : currentLecture.liveStreamUrl,
+          },
+        },
+        { new: true },
+      );
+
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       socket.to(lectureRoomId).emit("lecturer_network_mode_changed", {
         lectureId,
         mode,
         updatedAt: new Date(),
       });
+
       console.log(
         `[NETWORK_ENGINE] Adaptive stream shifted to [${mode}] for Room: ${lectureRoomId}`,
       );
@@ -586,13 +677,15 @@ export const registerNetworkFallbackHandlers = (io, socket) => {
         "[NETWORK_FALLBACK_ERROR] Failed to execute network state broadcast:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "lecturer_network_fallback",
@@ -607,22 +700,26 @@ export const registerStudentInteractionHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "studentWaveActionController";
     const action = "studentWaveAction";
+
     try {
-      const { uid, firstname, profilePic, lectureId } = payload;
+      const { uid, firstname, profilePic, lectureId } = payload || {};
       if (!lectureId || !uid || !firstname) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed interaction payload.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed interaction payload.",
+          );
+        });
         socket.emit("error_response", {
           action: "student_waved",
           message: "Malformed interaction payload.",
         });
         return;
       }
+
       let sanitizedProfilePic = "";
       if (Array.isArray(profilePic)) {
         sanitizedProfilePic =
@@ -630,8 +727,13 @@ export const registerStudentInteractionHandlers = (io, socket) => {
       } else if (typeof profilePic === "string") {
         sanitizedProfilePic = profilePic;
       }
+
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       socket.to(lectureRoomId).emit("student_waved_received", {
         uid,
         firstname,
@@ -648,13 +750,15 @@ export const registerStudentInteractionHandlers = (io, socket) => {
         "[INTERACTION_ENGINE_ERROR] Failed to process student wave event:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "student_waved",
@@ -669,24 +773,32 @@ export const registerSpeakerTrackingHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "activeSpeakerToggleController";
     const action = "activeSpeakerToggle";
+
     try {
-      const { uid, firstname, lectureId } = payload;
+      const { uid, firstname, lectureId } = payload || {};
       if (!lectureId || !uid || !firstname) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed speaker payload.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed speaker payload.",
+          );
+        });
         socket.emit("error_response", {
           action: "active_speaker_changed",
           message: "Malformed speaker payload.",
         });
         return;
       }
+
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       socket.to(lectureRoomId).emit("active_speaker_changed_received", {
         uid,
         firstname,
@@ -698,13 +810,15 @@ export const registerSpeakerTrackingHandlers = (io, socket) => {
         "[SPEAKER_ENGINE_ERROR] Failed to proxy active speaker update:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "active_speaker_changed",
@@ -712,8 +826,10 @@ export const registerSpeakerTrackingHandlers = (io, socket) => {
       });
     }
   });
+
   socket.on("share_transcription_chunk", (payload) => {
-    const { lectureId, speakerLabel, text } = payload;
+    const { lectureId, speakerLabel, text } = payload || {};
+    if (!lectureId) return;
     const lectureRoomId = `lecture_${lectureId}`;
     socket.to(lectureRoomId).emit("share_transcription_chunk", {
       speakerLabel,
@@ -726,38 +842,49 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "joinOnlineLectureSessionController";
     const action = "joinOnlineLectureSession";
+
     try {
-      const { lectureId, user, hostId } = payload;
+      const { lectureId, user, hostId } = payload || {};
       if (!lectureId || !user || !user.uid) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Incomplete handshake profile dependencies.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Incomplete handshake profile dependencies.",
+          );
+        });
         socket.emit("error_response", {
           action: "join_lecture_session",
           message: "Incomplete handshake profile dependencies.",
         });
         return;
       }
+
       const lectureRoomId = `lecture_${lectureId}`;
       socket.lectureId = lectureId;
       socket.userProfile = user;
       activeClassroomConnections.set(socket.id, { lectureId, ...user });
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       await socket.join(lectureRoomId);
       await broadcastAttendeeList(io, lectureId);
+
       const isHost = user.uid === hostId;
       const announcementMessage = isHost
         ? "Host has joined"
         : `${user.firstname} ${user.lastname} has joined`;
+
       io.to(lectureRoomId).emit("user_joined_announcement", {
         uid: user.uid,
         message: announcementMessage,
         isHost,
       });
+
       console.log(
         `[ATTENDANCE_ENGINE] ${user.firstname} successfully joined session: ${lectureId}`,
       );
@@ -766,15 +893,18 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
         "[ATTENDANCE_ERROR] Failed to mount student to session context:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
     }
   });
+
   socket.on("disconnect", async () => {
     try {
       const cachedSession = activeClassroomConnections.get(socket.id);
@@ -783,11 +913,13 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
         const { lectureId, firstname, lastname, uid } = cachedSession;
         activeClassroomConnections.delete(socket.id);
         await broadcastAttendeeList(io, lectureId);
+
         io.to(`lecture_${lectureId}`).emit("user_left_announcement", {
           uid: uid,
           message: `${firstname} ${lastname} disconnected`,
           isHost: false,
         });
+
         console.log(
           `[ATTENDANCE_ENGINE] Connection dropped cleanly for ${firstname}. Syncing room.`,
         );
@@ -805,51 +937,59 @@ export const registerPermissionHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "grantMicPermissionController";
     const action = "grantMicPermission";
+
     try {
-      const { lectureId, targetUid } = payload;
+      const { lectureId, targetUid } = payload || {};
       if (!lectureId || !targetUid) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed permission payload.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed permission payload.",
+          );
+        });
         socket.emit("error_response", {
           action: "mic_permission_granted",
           message: "Malformed permission payload.",
         });
         return;
       }
-      const lectureDoc = await Lectures.findOne({ id: lectureId });
 
+      const lectureDoc = await Lectures.findOne({ id: lectureId });
       if (!lectureDoc) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target lecture reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target lecture reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "mic_permission_granted",
           message: "Target lecture reference could not be resolved.",
         });
         return;
       }
+
       const isAuthorizedHost =
         socket.userProfile && socket.userProfile.uid === lectureDoc.hostId;
       if (!isAuthorizedHost) {
         console.warn(
           `[SECURITY_ALERT] Unauthorized floor mic permission request by socket ${socket.id} in lecture ${lectureId}`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Access Denied",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Access Denied",
+          );
+        });
         socket.emit("error_response", {
           action: "mic_permission_granted",
           message: "Access Denied",
@@ -858,7 +998,11 @@ export const registerPermissionHandlers = (io, socket) => {
       }
 
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       io.to(lectureRoomId).emit("mic_permission_granted_received", {
         lectureId,
         targetUid,
@@ -873,13 +1017,15 @@ export const registerPermissionHandlers = (io, socket) => {
         "[PERMISSION_ENGINE_ERROR] Failed to execute floor mic permission update:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "mic_permission_granted",
@@ -894,17 +1040,20 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "endOnlineLectureSessionController";
     const action = "endOnlineLectureSession";
+
     try {
-      const { lectureId } = payload;
+      const { lectureId } = payload || {};
 
       if (!lectureId) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed teardown payload.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed teardown payload.",
+          );
+        });
         socket.emit("error_response", {
           action: "end_lecture",
           message: "Malformed teardown payload.",
@@ -915,13 +1064,15 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
       const lectureDoc = await Lectures.findOne({ id: lectureId });
 
       if (!lectureDoc) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target lecture reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target lecture reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "end_lecture",
           message: "Target lecture reference could not be resolved.",
@@ -936,19 +1087,22 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
         console.warn(
           `[SECURITY_ALERT] Unauthorized attempt to terminate lecture ${lectureId} by socket ${socket.id}`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Access Denied",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Access Denied",
+          );
+        });
         socket.emit("error_response", {
           action: "end_lecture",
           message: "Access Denied",
         });
         return;
       }
+
       const terminatedLecture = await Lectures.findOneAndUpdate(
         { id: lectureId },
         {
@@ -969,12 +1123,14 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
       const lectureRoomId = `lecture_${lectureId}`;
       const socketsInRoom = await io.in(lectureRoomId).fetchSockets();
       const uniqueStudents = new Map();
+
       socketsInRoom.forEach((sInstance) => {
         const profile = sInstance.userProfile;
         if (profile && profile.uid && profile.uid !== lectureDoc.hostId) {
           uniqueStudents.set(profile.uid, profile);
         }
       });
+
       const reviewNotifications = Array.from(uniqueStudents.values()).map(
         (student) => {
           return createNotification({
@@ -983,10 +1139,10 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
             category: "classroom",
             actionType: "LECTURER_REVIEW_REQUEST",
             title: "Rate your lecture experience",
-            message: `How was today's session on "${terminatedLecture.topicName}"? Rate your experience to help the iCampus community.`,
+            message: `How was today's session on "${terminatedLecture?.topicName || "the lecture"}"? Rate your experience to help the iCampus community.`,
             payload: {
               lectureId: lectureId,
-              topicName: terminatedLecture.topicName,
+              topicName: terminatedLecture?.topicName || "",
               targetId: lectureDoc.hostId,
               targetType: "lecturer",
               userName: student.firstname || "Student",
@@ -999,18 +1155,24 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
           );
         },
       );
+
       Promise.all(reviewNotifications);
+
       socket.to(lectureRoomId).emit("lecture_ended_by_host", {
         lectureId,
         status: "completed",
         summary: {
-          topicName: terminatedLecture.topicName,
-          totalComments: terminatedLecture.comments
+          topicName: terminatedLecture?.topicName || "",
+          totalComments: terminatedLecture?.comments
             ? terminatedLecture.comments.length
             : 0,
         },
       });
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       socketsInRoom.forEach((socketInstance) => {
         socketInstance.leave(lectureRoomId);
       });
@@ -1023,13 +1185,15 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
         "[LECTURE_TEARDOWN_ERROR] Failed to securely terminate live session:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "end_lecture",
@@ -1044,17 +1208,20 @@ export const registerStudentLifecycleHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "leaveOnlineLectureSessionController";
     const action = "leaveOnlineLectureSession";
-    try {
-      const { lectureId, user } = payload;
 
-      if (!lectureId || !user.uid) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed departure payload.",
-        );
+    try {
+      const { lectureId, user } = payload || {};
+
+      if (!lectureId || !user || !user.uid) {
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed departure payload.",
+          );
+        });
         socket.emit("error_response", {
           action: "leave_lecture",
           message: "Malformed departure payload.",
@@ -1063,14 +1230,22 @@ export const registerStudentLifecycleHandlers = (io, socket) => {
       }
 
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       socket.leave(lectureRoomId);
+
       await ActiveLectureState.updateOne(
         { lectureId },
         { $pull: { wavers: { uid: user.uid } } },
       );
+
       await broadcastAttendeeList(io, lectureId);
-      const leaveMessage = `${user.firstname} ${user.lastname} has left`;
+
+      const leaveMessage =
+        `${user.firstname || "A user"} ${user.lastname || ""} has left`.trim();
       io.to(lectureRoomId).emit("user_left_announcement", {
         uid: user.uid,
         message: leaveMessage,
@@ -1085,13 +1260,16 @@ export const registerStudentLifecycleHandlers = (io, socket) => {
         "[STUDENT_LEAVE_ERROR] Failed to process departure:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
+
       socket.emit("error_response", {
         action: "leave_lecture",
         message: "Internal server failure processing lecture departure.",
@@ -1104,32 +1282,39 @@ export const registerPermissionRequestsHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "grantMicController";
     const action = "grantMic";
+
     try {
-      const { lectureId, targetUid } = payload;
+      const { lectureId, targetUid } = payload || {};
+
       if (!lectureId || !targetUid) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed permission payload.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed permission payload.",
+          );
+        });
         socket.emit("error_response", {
           action: "grant_mic_permission",
           message: "Malformed permission payload.",
         });
         return;
       }
+
       const lectureDoc = await Lectures.findOne({ id: lectureId });
 
       if (!lectureDoc) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target lecture reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target lecture reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "grant_mic_permission",
           message: "Target lecture reference could not be resolved.",
@@ -1144,13 +1329,15 @@ export const registerPermissionRequestsHandlers = (io, socket) => {
         console.warn(
           `[SECURITY_ALERT] Unauthorized floor management access bypass attempt by socket ${socket.id}`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Access Denied",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Access Denied",
+          );
+        });
         socket.emit("error_response", {
           action: "grant_mic_permission",
           message: "Access Denied",
@@ -1159,7 +1346,11 @@ export const registerPermissionRequestsHandlers = (io, socket) => {
       }
 
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       io.to(lectureRoomId).emit("mic_permission_granted_received", {
         lectureId,
         targetUid,
@@ -1174,13 +1365,15 @@ export const registerPermissionRequestsHandlers = (io, socket) => {
         "[FLOOR_CONTROL_ERROR] Failed to execute mic assignment sequence:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "grant_mic_permission",
@@ -1195,38 +1388,46 @@ export const registerMuteAllHandler = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "revokeAllMicsController";
     const action = "revokeAllMics";
+
     try {
-      const { lectureId } = payload;
+      const { lectureId } = payload || {};
+
       if (!lectureId) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed payload.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed payload.",
+          );
+        });
         socket.emit("error_response", {
           action: "revoke_all_mics",
           message: "Malformed payload.",
         });
         return;
       }
+
       const lectureDoc = await Lectures.findOne({ id: lectureId });
 
       if (!lectureDoc) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target lecture reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target lecture reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "revoke_all_mics",
           message: "Target lecture reference could not be resolved.",
         });
         return;
       }
+
       const isAuthorizedHost =
         socket.userProfile && socket.userProfile.uid === lectureDoc.hostId;
 
@@ -1234,13 +1435,15 @@ export const registerMuteAllHandler = (io, socket) => {
         console.warn(
           `[SECURITY_ALERT] Unauthorized mass-mute attempt by socket ${socket.id}`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Access Denied",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Access Denied",
+          );
+        });
         socket.emit("error_response", {
           action: "revoke_all_mics",
           message: "Access Denied",
@@ -1249,7 +1452,11 @@ export const registerMuteAllHandler = (io, socket) => {
       }
 
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       io.to(lectureRoomId).emit("all_mics_revoked_received", {
         lectureId,
         timestamp: new Date(),
@@ -1263,13 +1470,15 @@ export const registerMuteAllHandler = (io, socket) => {
         "[FLOOR_CONTROL_ERROR] Failed to execute mass-mute sequence:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "revoke_all_mics",
@@ -1280,19 +1489,21 @@ export const registerMuteAllHandler = (io, socket) => {
 };
 export const handleDeepgramTokenGeneration = async (req, res) => {
   try {
-    const { lectureId } = req.query;
+    const { lectureId } = req.query || {};
     if (!lectureId) {
       return res.status(400).json({
         success: false,
         message: "Missing parameter query context. lectureId is required.",
       });
     }
+
     if (!req.user || !req.user.uid) {
       return res.status(401).json({
         success: false,
         message: "Authentication tracking profiles failed validation checks.",
       });
     }
+
     const lectureCheck = await Lectures.findOne({ id: lectureId });
     if (!lectureCheck) {
       return res.status(404).json({
@@ -1300,18 +1511,22 @@ export const handleDeepgramTokenGeneration = async (req, res) => {
         message: "Target live classroom session cannot be identified.",
       });
     }
-    generateDeepgramToken(req, res);
-    return res.status(200).json({
-      success: true,
-      token: result.key,
-    });
+    const result = await generateDeepgramToken(req, res);
+    if (!res.headersSent) {
+      return res.status(200).json({
+        success: true,
+        token: result?.key || result,
+      });
+    }
   } catch (error) {
     console.error("[DEEPGRAM_KEY_BROKER_CRITICAL_ERROR]", error.message);
-    return res.status(500).json({
-      success: false,
-      message:
-        "Internal framework allocation error initializing transcription keys.",
-    });
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message:
+          "Internal framework allocation error initializing transcription keys.",
+      });
+    }
   }
 };
 export const registerLecturerMediaControlHandlers = (io, socket) => {
@@ -1319,38 +1534,46 @@ export const registerLecturerMediaControlHandlers = (io, socket) => {
     const startTime = Date.now();
     const controllerName = "toggleCameraController";
     const action = "toggleCamera";
+
     try {
-      const { lectureId, isCameraOn } = payload;
+      const { lectureId, isCameraOn } = payload || {};
+
       if (!lectureId || typeof isCameraOn !== "boolean") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Malformed media control payload.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Malformed media control payload.",
+          );
+        });
         socket.emit("error_response", {
           action: "toggle_lecturer_camera",
           message: "Malformed media control payload.",
         });
         return;
       }
+
       const lectureDoc = await Lectures.findOne({ id: lectureId });
 
       if (!lectureDoc) {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Target live session reference could not be resolved.",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Target live session reference could not be resolved.",
+          );
+        });
         socket.emit("error_response", {
           action: "toggle_lecturer_camera",
           message: "Target live session reference could not be resolved.",
         });
         return;
       }
+
       const isAuthorizedHost =
         socket.userProfile && socket.userProfile.uid === lectureDoc.hostId;
 
@@ -1358,26 +1581,33 @@ export const registerLecturerMediaControlHandlers = (io, socket) => {
         console.warn(
           `[SECURITY_ALERT] Unauthorized camera hardware channel state override modification attempt by: ${socket.id}`,
         );
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Access Denied",
-        );
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Access Denied",
+          );
+        });
         socket.emit("error_response", {
           action: "toggle_lecturer_camera",
           message: "Access Denied",
         });
         return;
       }
+
       await Lectures.findOneAndUpdate(
         { id: lectureId },
         { $set: { isVideoActive: isCameraOn } },
       );
 
       const lectureRoomId = `lecture_${lectureId}`;
-      logControllerPerformance(controllerName, action, startTime, "success");
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+
       socket.to(lectureRoomId).emit("lecturer_camera_toggled_received", {
         lectureId,
         isCameraOn,
@@ -1392,13 +1622,15 @@ export const registerLecturerMediaControlHandlers = (io, socket) => {
         "[MEDIA_CONTROL_ERROR] Critical failure processing video channel pipeline toggle:",
         error.message,
       );
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      });
 
       socket.emit("error_response", {
         action: "toggle_lecturer_camera",

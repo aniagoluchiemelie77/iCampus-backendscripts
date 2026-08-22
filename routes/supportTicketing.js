@@ -1,11 +1,14 @@
 import express from "express";
-import { protect, verifyAdmin } from "../middleware/auth.js";
+import {
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+} from "../middleware/auth.js";
 import {
   createTicket,
   adminUpdateTicketStatus,
 } from "../controllers/ticketingController.js";
 import { fetchActiveTickets } from "../controllers/fetchActions.js";
-import { idempotencyMiddleware } from "../middleware/auth.js";
 
 const router = express.Router();
 
