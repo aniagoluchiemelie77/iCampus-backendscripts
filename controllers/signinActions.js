@@ -8,10 +8,8 @@ import {
   Admin,
   UserSessions,
 } from "../tableDeclarations.js";
-import { sendEmail } from "../services/emailService.js";
 import axiosRetry from "axios-retry";
 import axios from "axios";
-import { db } from "../config/firebaseAdmin.js";
 import crypto from "crypto";
 import geoip from "geoip-lite";
 import { setImmediate } from "timers";
@@ -20,7 +18,6 @@ import {
   generateUniqueCardNumber,
   generateUserUID,
   generateTokens,
-  generateCode,
   generateUniqueReferralCode,
   generateItagUsername,
 } from "../utils/idGenerator.js";
@@ -39,18 +36,6 @@ import { logControllerPerformance } from "../utils/eventLogger.js";
 import { promisify } from "util";
 
 const verifyJwtAsync = promisify(jwt.verify);
-
-const now = new Date();
-const formattedDate = now.toLocaleDateString("en-US", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-});
-const formattedTime = now.toLocaleTimeString("en-US", {
-  hour: "2-digit",
-  minute: "2-digit",
-});
-const verificationCodes = {};
 axiosRetry(axios, { retries: 3 });
 
 export const signUp = async (req, res) => {
@@ -347,102 +332,96 @@ export const Login = async (req, res) => {
     const geo = geoip.lookup(ip);
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 
-    const sessionData = {
-      userId: user.uid,
-      deviceId,
-      deviceName,
-      ipAddress: ip,
-      location,
-      lastUsed: new Date(),
-      updatedAt: new Date(),
-    };
-    console.log("Pre parallelization...");
-    const [existingSessionQuery, allSessionsSnapshot, preferencesDoc, tokens] =
-      await Promise.all([
-        UserSessions.where("userId", "==", user.uid)
-          .where("deviceId", "==", deviceId)
-          .limit(1)
-          .get(),
-        UserSessions.where("userId", "==", user.uid).get(),
-        userPrefs.doc(user.uid).get(),
-        generateTokens(user),
-      ]);
-    console.log("Step 1...");
+    const [preferencesDoc, tokens] = await Promise.all([
+      userPrefs.doc(user.uid).get(),
+      generateTokens(user),
+    ]);
 
     const { accessToken, refreshToken } = tokens;
-    sessionData.refreshToken = refreshToken;
-
-    const sessionOperations = [];
-    let isNewSession = false;
-    let sessionId = "";
-    console.log("Post parallelization...");
-
-    if (!existingSessionQuery.empty) {
-      const sessionDocRef = existingSessionQuery.docs[0].ref;
-      sessionOperations.push(sessionDocRef.set(sessionData, { merge: true }));
-    } else {
-      isNewSession = true;
-      sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      sessionData.sessionId = sessionId;
-      sessionData.createdAt = new Date();
-      sessionOperations.push(UserSessions.doc(sessionId).set(sessionData));
-    }
-    console.log("Step 2...");
-    await Promise.all(sessionOperations);
     const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
-    const activeSessions = allSessionsSnapshot.docs.map((doc) => doc.data());
-    console.log("Pre session creation...");
-
     const safeUser = { ...user };
     delete safeUser.password;
     delete safeUser.iCashPin;
     delete safeUser.userAccountDetails;
-    console.log("Step 3...");
 
     safeUser.theme = preferences ? preferences.theme : "light";
-    safeUser.sessions = activeSessions;
-    console.log("Step 4...");
-    console.log("Successful Login...");
-
+    safeUser.sessions = [];
     res.status(200).json({
       message: "Login successful",
       user: safeUser,
       accessToken,
       refreshToken,
     });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
+    setImmediate(async () => {
+      try {
+        const sessionData = {
+          userId: user.uid,
+          deviceId,
+          deviceName,
+          ipAddress: ip,
+          location,
+          refreshToken,
+          lastUsed: new Date(),
+          updatedAt: new Date(),
+        };
+        const existingSessionQuery = await UserSessions.where(
+          "userId",
+          "==",
+          user.uid,
+        )
+          .where("deviceId", "==", deviceId)
+          .limit(1)
+          .get();
 
-      verifyAndNotifyLogin(user, req, "USER_LOGIN_AUDIT").catch((err) =>
-        console.error("Audit error:", err),
-      );
+        let isNewSession = false;
+        if (!existingSessionQuery.empty) {
+          const sessionDocRef = existingSessionQuery.docs[0].ref;
+          await sessionDocRef.set(sessionData, { merge: true });
+        } else {
+          isNewSession = true;
+          const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          sessionData.sessionId = sessionId;
+          sessionData.createdAt = new Date();
+          await UserSessions.doc(sessionId).set(sessionData);
+        }
 
-      if (isNewSession) {
-        const now = new Date();
-        createNotification({
-          notificationId: generateNotificationId("security"),
-          recipientId: user.uid,
-          recipientEmail: user.email,
-          recoveryEmails: user.recoveryEmails,
-          category: "auth",
-          actionType: "NEW_LOGIN",
-          title: "Security Alert: New Login",
-          payload: {
-            userName: user.firstname || user.firstName,
-            ipAddress: ip,
-            location,
-            date: now.toLocaleDateString(),
-            time: now.toLocaleTimeString(),
-            userId: user.uid,
-          },
-          message: `A login was detected from ${ip} in ${location}.`,
-          sendEmail: true,
-          saveToDb: true,
-        }).catch((err) => console.error("Background notification error:", err));
+        logControllerPerformance(controllerName, action, startTime, "success");
 
-        addFlag(user.uid, "UNRECOGNIZED_LOCATION").catch((err) =>
-          console.error("Background flag error:", err),
+        await verifyAndNotifyLogin(user, req, "USER_LOGIN_AUDIT").catch((err) =>
+          console.error("Audit error:", err),
         );
+
+        if (isNewSession) {
+          const now = new Date();
+          await createNotification({
+            notificationId: generateNotificationId("security"),
+            recipientId: user.uid,
+            recipientEmail: user.email,
+            recoveryEmails: user.recoveryEmails,
+            category: "auth",
+            actionType: "NEW_LOGIN",
+            title: "Security Alert: New Login",
+            payload: {
+              userName: user.firstname || user.firstName,
+              ipAddress: ip,
+              location,
+              date: now.toLocaleDateString(),
+              time: now.toLocaleTimeString(),
+              userId: user.uid,
+            },
+            message: `A login was detected from ${ip} in ${location}.`,
+            sendEmail: true,
+            saveToDb: true,
+          }).catch((err) =>
+            console.error("Background notification error:", err),
+          );
+
+          await addFlag(user.uid, "UNRECOGNIZED_LOCATION").catch((err) =>
+            console.error("Background flag error:", err),
+          );
+        }
+      } catch (bgError) {
+        console.error("Background session/audit processing error:", bgError);
       }
     });
   } catch (error) {
@@ -456,7 +435,10 @@ export const Login = async (req, res) => {
         error.message,
       );
     });
-    return res.status(500).json({ error: error.message || "Login error" });
+    // Ensure we only send 500 if headers haven't already been sent by `res.status(200)`
+    if (!res.headersSent) {
+      return res.status(500).json({ error: error.message || "Login error" });
+    }
   }
 };
 export const AdminLogin = async (req, res) => {
