@@ -320,17 +320,13 @@ export const Login = async (req, res) => {
         return res.status(401).json({ error: "Invalid password" });
       }
     }
+    console.log("Post password and providerId matching");
 
     if (socialProvider && user.providerId !== socialProvider) {
       return res.status(400).json({
         error: `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
       });
     }
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
-      .split(",")[0]
-      .trim();
-    const geo = geoip.lookup(ip);
-    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 
     const [preferencesDoc, tokens] = await Promise.all([
       userPrefs.doc(user.uid).get(),
@@ -338,6 +334,7 @@ export const Login = async (req, res) => {
     ]);
 
     const { accessToken, refreshToken } = tokens;
+    console.log("Post token generation");
     const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
     const safeUser = { ...user };
     delete safeUser.password;
@@ -345,7 +342,9 @@ export const Login = async (req, res) => {
     delete safeUser.userAccountDetails;
 
     safeUser.theme = preferences ? preferences.theme : "light";
+    console.log("Post user preferences and data fetching");
     safeUser.sessions = [];
+    console.log("Successful Login");
     res.status(200).json({
       message: "Login successful",
       user: safeUser,
@@ -353,7 +352,18 @@ export const Login = async (req, res) => {
       refreshToken,
     });
     setImmediate(async () => {
+      console.log(
+        "Post user login request action setImmediate() for notifications",
+      );
       try {
+        const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+          .split(",")[0]
+          .trim();
+        const geo = geoip.lookup(ip);
+        const location = geo
+          ? `${geo.city}, ${geo.country}`
+          : "Unknown Location";
+        console.log("Post user location fetching");
         const sessionData = {
           userId: user.uid,
           deviceId,
