@@ -76,14 +76,17 @@ export const signUp = async (req, res) => {
         .where("department", "==", department);
     }
 
-    const uid = generateUserUID();
-    const itagusername = generateItagUsername(firstname || lastname, 5);
-
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
-      .split(",")[0]
-      .trim();
-    const geo = geoip.lookup(ip);
-    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+    const [uid, itagusername, location] = await Promise.all([
+      Promise.resolve(generateUserUID()),
+      Promise.resolve(generateItagUsername(firstname || lastname, 5)),
+      Promise.resolve().then(() => {
+        const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+          .split(",")[0]
+          .trim();
+        const geo = geoip.lookup(ip);
+        return geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+      }),
+    ]);
 
     const isVerified =
       usertype === "student" || usertype === "lecturer" || !!providerId;
@@ -445,7 +448,6 @@ export const Login = async (req, res) => {
         error.message,
       );
     });
-    // Ensure we only send 500 if headers haven't already been sent by `res.status(200)`
     if (!res.headersSent) {
       return res.status(500).json({ error: error.message || "Login error" });
     }
