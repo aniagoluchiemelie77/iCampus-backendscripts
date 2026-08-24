@@ -344,10 +344,6 @@ export const Login = async (req, res) => {
 
     safeUser.theme = preferences ? preferences.theme : "light";
     safeUser.sessions = [];
-    console.log("Successful Login");
-    console.log("User Details: ", safeUser);
-    console.log("Access Token: ", accessToken);
-    console.log("Refresh Token: ", refreshToken);
     res.status(200).json({
       message: "Login successful",
       user: safeUser,
