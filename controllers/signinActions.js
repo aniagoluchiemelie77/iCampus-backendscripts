@@ -323,7 +323,6 @@ export const Login = async (req, res) => {
         return res.status(401).json({ error: "Invalid password" });
       }
     }
-    console.log("Post password and providerId matching");
 
     if (socialProvider && user.providerId !== socialProvider) {
       return res.status(400).json({
@@ -337,7 +336,6 @@ export const Login = async (req, res) => {
     ]);
 
     const { accessToken, refreshToken } = tokens;
-    console.log("Post token generation");
     const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
     const safeUser = { ...user };
     delete safeUser.password;
@@ -345,9 +343,11 @@ export const Login = async (req, res) => {
     delete safeUser.userAccountDetails;
 
     safeUser.theme = preferences ? preferences.theme : "light";
-    console.log("Post user preferences and data fetching");
     safeUser.sessions = [];
     console.log("Successful Login");
+    console.log("User Details: ", safeUser);
+    console.log("Access Token: ", accessToken);
+    console.log("Refresh Token: ", refreshToken);
     res.status(200).json({
       message: "Login successful",
       user: safeUser,
