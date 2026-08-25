@@ -17,6 +17,7 @@ import { scan } from "../services/visionAi.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
+import { calculateRankingScore } from "../utils/postRanker.js";
 
 const getPostStats = (post, repostersCount = 0, commentsCount = 0) => ({
   likes: post.likes || [],
@@ -130,10 +131,15 @@ export const createPost = async (req, res) => {
       `${author.firstname || ""} ${author.lastname || ""}`.trim();
     const newPostId = generatePostId();
     const resolvedPostType = postType || (poll ? "poll" : "media");
+    const initialScore = calculateRankingScore(
+      { impressions: 0, createdAt: new Date() },
+      author,
+    );
 
     const newPostData = {
       postId: newPostId,
       originalAuthor: userId,
+      rankingScore: initialScore,
       content: content || "",
       isSubscriptionContent: isSubscriptionContent || false,
       media: processedMedia,
@@ -728,9 +734,19 @@ export const toggleLike = async (req, res) => {
       const updatedLikes = isLiked
         ? likes.filter((id) => id !== userId)
         : [...likes, userId];
+      const likesCount = updatedLikes.length;
+      const impressionsScore = (post.impressions || 0) * 0.1;
+      const engagementScore = likesCount * 2;
 
+      const createdAtTime = post.createdAt?.toMillis
+        ? post.createdAt.toMillis()
+        : new Date(post.createdAt || Date.now()).getTime();
+      const timeScore = createdAtTime / 1000000000;
+
+      const newRankingScore = impressionsScore + engagementScore + timeScore;
       transaction.update(postDoc.ref, {
         likes: updatedLikes,
+        rankingScore: newRankingScore,
         updatedAt: new Date(),
       });
 
@@ -765,7 +781,13 @@ export const toggleLike = async (req, res) => {
       const commentsCount = commentsSnapshot.size;
 
       return {
-        post: { id: postDoc.id, ...post, likes: updatedLikes, commentsCount },
+        post: {
+          id: postDoc.id,
+          ...post,
+          likes: updatedLikes,
+          rankingScore: newRankingScore,
+          commentsCount,
+        },
         isLiked,
         repostersCount,
         commentsCount,
@@ -777,10 +799,14 @@ export const toggleLike = async (req, res) => {
     const repostersCount = result.repostersCount;
     const commentsCount = result.commentsCount;
     const message = isLiked ? "You unliked a post." : "You liked a post.";
+
     res.json({ updatedPost, message });
+
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
     });
+
+    // Background tasks (notifications and socket emission remain untouched)
     setImmediate(async () => {
       try {
         const postOwnerId = updatedPost.originalAuthor || updatedPost.userId;
@@ -883,8 +909,21 @@ export const toggleBookmark = async (req, res) => {
         ? bookmarks.filter((id) => id !== userId)
         : [...bookmarks, userId];
 
+      const bookmarksCount = updatedBookmarks.length;
+      const likesCount = (post.likes || []).length;
+
+      const impressionsScore = (post.impressions || 0) * 0.1;
+      const engagementScore = likesCount * 2 + bookmarksCount * 3;
+
+      const createdAtTime = post.createdAt?.toMillis
+        ? post.createdAt.toMillis()
+        : new Date(post.createdAt || Date.now()).getTime();
+      const timeScore = createdAtTime / 1000000000;
+
+      const newRankingScore = impressionsScore + engagementScore + timeScore;
       transaction.update(postDoc.ref, {
         bookmarks: updatedBookmarks,
+        rankingScore: newRankingScore,
         updatedAt: new Date(),
       });
 
@@ -900,7 +939,7 @@ export const toggleBookmark = async (req, res) => {
 
         transaction.update(userDoc.ref, {
           bookmarks: updatedUserBookmarks,
-          updatedAt: new Date(),
+          updatedAt: newDate(),
         });
       }
 
@@ -923,6 +962,7 @@ export const toggleBookmark = async (req, res) => {
           id: postDoc.id,
           ...post,
           bookmarks: updatedBookmarks,
+          rankingScore: newRankingScore,
           commentsCount,
         },
         isBookmarked,
@@ -935,6 +975,7 @@ export const toggleBookmark = async (req, res) => {
     const isBookmarked = result.isBookmarked;
     const repostersCount = result.repostersCount;
     const commentsCount = result.commentsCount;
+
     res.status(200).json({
       isBookmarked: !isBookmarked,
       count: updatedPost.bookmarks.length,
@@ -946,6 +987,7 @@ export const toggleBookmark = async (req, res) => {
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
     });
+
     setImmediate(() => {
       try {
         const io = req.app.get("socketio");
@@ -1031,7 +1073,20 @@ export const addComment = async (req, res) => {
       const postDoc = postQuery.docs[0];
       const postData = postDoc.data();
       const currentCommentsCount = postData.commentsCount || 0;
+      const newCommentsCount = currentCommentsCount + 1;
+      const likesCount = (postData.likes || []).length;
+      const bookmarksCount = (postData.bookmarks || []).length;
 
+      const impressionsScore = (postData.impressions || 0) * 0.1;
+      const engagementScore =
+        likesCount * 2 + bookmarksCount * 3 + newCommentsCount * 4; // Comments weigh heavy!
+
+      const createdAtTime = postData.createdAt?.toMillis
+        ? postData.createdAt.toMillis()
+        : new Date(postData.createdAt || Date.now()).getTime();
+      const timeScore = createdAtTime / 1000000000;
+
+      const newRankingScore = impressionsScore + engagementScore + timeScore;
       const userQuery = await User.where("uid", "==", userId).limit(1).get();
       const commenter = !userQuery.empty ? userQuery.docs[0].data() : null;
 
@@ -1049,8 +1104,10 @@ export const addComment = async (req, res) => {
 
       const commentDocRef = Comments.doc(commentId);
       transaction.set(commentDocRef, newCommentData);
+
       transaction.update(postDoc.ref, {
-        commentsCount: currentCommentsCount + 1,
+        commentsCount: newCommentsCount,
+        rankingScore: newRankingScore,
         updatedAt: createdAt,
       });
 
@@ -1062,7 +1119,11 @@ export const addComment = async (req, res) => {
       const repostersCount = repostersSnapshot.size;
 
       return {
-        postData,
+        postData: {
+          ...postData,
+          commentsCount: newCommentsCount,
+          rankingScore: newRankingScore,
+        },
         newCommentData,
         commenter,
         repostersCount,
@@ -1083,10 +1144,13 @@ export const addComment = async (req, res) => {
           }
         : { uid: userId },
     };
+
     res.status(201).json(populatedComment);
+
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
     });
+
     setImmediate(async () => {
       try {
         const io = req.app.get("socketio");
@@ -1099,13 +1163,7 @@ export const addComment = async (req, res) => {
             postId: postData.postId,
             stats:
               typeof getPostStats === "function"
-                ? getPostStats(
-                    {
-                      ...postData,
-                      commentsCount: (postData.commentsCount || 0) + 1,
-                    },
-                    repostersCount,
-                  )
+                ? getPostStats(postData, repostersCount, postData.commentsCount)
                 : postData,
           });
         }
@@ -1237,8 +1295,25 @@ export const pollVote = async (req, res) => {
         totalVotes: newTotalVotes,
       };
 
+      // --- CALCULATE NEW RANKING SCORE ---
+      const likesCount = (post.likes || []).length;
+      const bookmarksCount = (post.bookmarks || []).length;
+
+      const impressionsScore = (post.impressions || 0) * 0.1;
+      const engagementScore =
+        likesCount * 2 + bookmarksCount * 3 + newTotalVotes * 3; // Poll votes factor in!
+
+      const createdAtTime = post.createdAt?.toMillis
+        ? post.createdAt.toMillis()
+        : new Date(post.createdAt || Date.now()).getTime();
+      const timeScore = createdAtTime / 1000000000;
+
+      const newRankingScore = impressionsScore + engagementScore + timeScore;
+      // -----------------------------------
+
       transaction.update(postDoc.ref, {
         poll: updatedPoll,
+        rankingScore: newRankingScore, // <--- Updated score saved atomically!
         updatedAt: new Date(),
       });
 
@@ -1248,7 +1323,12 @@ export const pollVote = async (req, res) => {
       ]);
 
       return {
-        post: { id: postDoc.id, ...post, poll: updatedPoll },
+        post: {
+          id: postDoc.id,
+          ...post,
+          poll: updatedPoll,
+          rankingScore: newRankingScore,
+        },
         repostersCount: repostersSnapshot.size,
         commentsCount: commentsSnapshot.size,
       };
@@ -1257,10 +1337,13 @@ export const pollVote = async (req, res) => {
     const updatedPost = result.post;
     const repostersCount = result.repostersCount;
     const commentsCount = result.commentsCount;
+
     res.status(200).json(updatedPost);
+
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
     });
+
     setImmediate(async () => {
       try {
         const io = req.app.get("socketio");
@@ -1360,27 +1443,51 @@ export const incrementImpressions = async (req, res) => {
       const postDoc = postQuery.docs[0];
       const postData = postDoc.data();
       const newImpressions = (postData.impressions || 0) + 1;
+      const likesCount = (postData.likes || []).length;
+      const bookmarksCount = (postData.bookmarks || []).length;
+      const commentsCountSnapshot = await Comments.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const commentsCount = commentsCountSnapshot.size;
 
+      const impressionsScore = newImpressions * 0.1;
+      const engagementScore =
+        likesCount * 2 + bookmarksCount * 3 + commentsCount * 4;
+
+      const createdAtTime = postData.createdAt?.toMillis
+        ? postData.createdAt.toMillis()
+        : new Date(postData.createdAt || Date.now()).getTime();
+      const timeScore = createdAtTime / 1000000000;
+
+      const newRankingScore = impressionsScore + engagementScore + timeScore;
       transaction.update(postDoc.ref, {
         impressions: newImpressions,
+        rankingScore: newRankingScore,
         updatedAt: new Date(),
       });
 
-      const [repostersSnapshot, commentsSnapshot] = await Promise.all([
+      const [repostersSnapshot] = await Promise.all([
         PostReposters.where("postId", "==", postId).get(),
-        Comments.where("postId", "==", postId).get(),
       ]);
 
       return {
-        post: { id: postDoc.id, ...postData, impressions: newImpressions },
+        post: {
+          id: postDoc.id,
+          ...postData,
+          impressions: newImpressions,
+          rankingScore: newRankingScore,
+        },
         repostersCount: repostersSnapshot.size,
-        commentsCount: commentsSnapshot.size,
+        commentsCount,
       };
     });
 
     const updatedPost = result.post;
     const repostersCount = result.repostersCount;
     const commentsCount = result.commentsCount;
+
     res.status(200).json({
       success: true,
       impressions: updatedPost.impressions,
@@ -1389,6 +1496,7 @@ export const incrementImpressions = async (req, res) => {
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
     });
+
     setImmediate(async () => {
       try {
         const authorId = updatedPost.originalAuthor || updatedPost.userId;
@@ -1515,10 +1623,33 @@ export const repost = async (req, res) => {
         const latestPostSnap = await transaction.get(postDoc.ref);
         const latestPostData = latestPostSnap.data();
         const currentCount = latestPostData.repostsCount || 0;
+        const newRepostsCount = Math.max(0, currentCount - 1);
+        const likesCount = (latestPostData.likes || []).length;
+        const bookmarksCount = (latestPostData.bookmarks || []).length;
+        const commentsCountSnap = await Comments.where(
+          "postId",
+          "==",
+          originalPostId,
+        ).get();
+        const commentsCount = commentsCountSnap.size;
 
+        const impressionsScore = (latestPostData.impressions || 0) * 0.1;
+        const engagementScore =
+          likesCount * 2 +
+          bookmarksCount * 3 +
+          commentsCount * 4 +
+          newRepostsCount * 5;
+
+        const createdAtTime = latestPostData.createdAt?.toMillis
+          ? latestPostData.createdAt.toMillis()
+          : new Date(latestPostData.createdAt || Date.now()).getTime();
+        const timeScore = createdAtTime / 1000000000;
+
+        const newRankingScore = impressionsScore + engagementScore + timeScore;
         transaction.delete(repostDocRef);
         transaction.update(postDoc.ref, {
-          repostsCount: Math.max(0, currentCount - 1),
+          repostsCount: newRepostsCount,
+          rankingScore: newRankingScore,
           updatedAt: new Date(),
         });
       });
@@ -1583,10 +1714,33 @@ export const repost = async (req, res) => {
         const latestPostSnap = await transaction.get(postDoc.ref);
         const latestPostData = latestPostSnap.data();
         const currentCount = latestPostData.repostsCount || 0;
+        const newRepostsCount = currentCount + 1;
+        const likesCount = (latestPostData.likes || []).length;
+        const bookmarksCount = (latestPostData.bookmarks || []).length;
+        const commentsCountSnap = await Comments.where(
+          "postId",
+          "==",
+          originalPostId,
+        ).get();
+        const commentsCount = commentsCountSnap.size;
 
+        const impressionsScore = (latestPostData.impressions || 0) * 0.1;
+        const engagementScore =
+          likesCount * 2 +
+          bookmarksCount * 3 +
+          commentsCount * 4 +
+          newRepostsCount * 5; // Reposts weigh heavily!
+
+        const createdAtTime = latestPostData.createdAt?.toMillis
+          ? latestPostData.createdAt.toMillis()
+          : new Date(latestPostData.createdAt || Date.now()).getTime();
+        const timeScore = createdAtTime / 1000000000;
+
+        const newRankingScore = impressionsScore + engagementScore + timeScore;
         transaction.set(repostDocRef, reposterData);
         transaction.update(postDoc.ref, {
-          repostsCount: currentCount + 1,
+          repostsCount: newRepostsCount,
+          rankingScore: newRankingScore,
           updatedAt: new Date(),
         });
       });
@@ -1780,6 +1934,7 @@ export const toggleCommentLike = async (req, res) => {
     const { commentData, isLiked, updatedLikes } = result;
     const commentAuthorId = commentData.userId;
     const nowLiked = !isLiked;
+
     res.status(200).json({
       isLiked: nowLiked,
       likesCount: updatedLikes.length,
@@ -1788,6 +1943,7 @@ export const toggleCommentLike = async (req, res) => {
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
     });
+
     setImmediate(async () => {
       if (nowLiked && commentAuthorId && commentAuthorId !== userId) {
         try {

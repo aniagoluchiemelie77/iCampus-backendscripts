@@ -737,6 +737,7 @@ export const postSchema = new mongoose.Schema(
       endTime: Date,
       date: Date,
     },
+    rankingScore: { type: Number, default: 0, index: true },
   },
   { timestamps: true },
 );

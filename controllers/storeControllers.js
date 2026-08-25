@@ -1863,6 +1863,7 @@ export const saveProductController = async (req, res) => {
       };
 
       await productDocRef.update(productData);
+      await redis.del("catalog:all_products");
       productData = { productId, sellerId: userUid, ...productData };
     } else {
       const newCustomId = generateProductId(userUid);
@@ -2023,6 +2024,7 @@ export const deleteProductController = async (req, res) => {
     });
     setImmediate(async () => {
       try {
+        await redis.del("catalog:all_products");
         const mediaThumbnails = result.mediaUrls || result.thumbnails;
         if (mediaThumbnails) {
           const thumbnailUrls = Array.isArray(mediaThumbnails)

@@ -2181,215 +2181,111 @@ export const getNotifications = async (req, res) => {
   }
 };
 export const fetchPosts = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchPostsController";
-  const action = "fetchPosts";
   const limit = parseInt(req.query.limit) || 15;
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
-  const isInitialLoad = !cursorScore;
   const userId = req.user?.uid || req.user?.id;
+
   try {
-    let cachedPosts = null;
-    if (isInitialLoad && typeof client !== "undefined" && client.get) {
-      const cached = await client.get("hot_posts");
-      if (cached) {
-        cachedPosts = JSON.parse(cached);
-      }
+    let query = Posts.where("status", "!=", "hidden")
+      .orderBy("rankingScore", "desc")
+      .limit(limit);
+    if (cursorScore !== null && !isNaN(cursorScore)) {
+      query = query.startAfter(cursorScore);
     }
 
-    let posts = [];
+    const postsSnapshot = await query.get();
 
-    if (cachedPosts) {
-      posts = cachedPosts;
-    } else {
-      const postsSnapshot = await Posts.where("status", "!=", "hidden").get();
+    if (postsSnapshot.empty) {
+      return res.json({ posts: [], nextCursor: null });
+    }
 
-      const rawPosts = postsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+    const rawPosts = postsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+    const authorIds = [
+      ...new Set(rawPosts.map((p) => p.originalAuthor).filter(Boolean)),
+    ];
+    const postIds = rawPosts.map((p) => p.id);
 
-      const authorIds = [
-        ...new Set(rawPosts.map((p) => p.originalAuthor).filter(Boolean)),
-      ];
-      const postIds = rawPosts.map((p) => p.id);
+    const authorMap = new Map();
+    const repostersMap = new Map();
 
-      const authorMap = new Map();
-      const repostersMap = new Map();
+    const fetchTasks = [];
 
-      const fetchTasks = [];
-
-      if (authorIds.length > 0) {
-        const authorChunks = [];
-        for (let i = 0; i < authorIds.length; i += 30) {
-          authorChunks.push(authorIds.slice(i, i + 30));
-        }
-
-        fetchTasks.push(
-          Promise.all(
-            authorChunks.map(async (chunk) => {
-              const userSnap = await User.where("uid", "in", chunk).get();
-              userSnap.docs.forEach((doc) => {
-                const userData = doc.data();
-                const { password, iCashPin, ...safeData } = userData;
-                authorMap.set(userData.uid || doc.id, safeData);
-              });
-            }),
-          ),
-        );
+    if (authorIds.length > 0) {
+      const authorChunks = [];
+      for (let i = 0; i < authorIds.length; i += 30) {
+        authorChunks.push(authorIds.slice(i, i + 30));
       }
 
-      if (postIds.length > 0) {
-        const reposterChunks = [];
-        for (let i = 0; i < postIds.length; i += 30) {
-          reposterChunks.push(postIds.slice(i, i + 30));
-        }
+      fetchTasks.push(
+        Promise.all(
+          authorChunks.map(async (chunk) => {
+            const userSnap = await User.where("uid", "in", chunk).get();
+            userSnap.docs.forEach((doc) => {
+              const userData = doc.data();
+              const { password, iCashPin, ...safeData } = userData;
+              authorMap.set(userData.uid || doc.id, safeData);
+            });
+          }),
+        ),
+      );
+    }
 
-        fetchTasks.push(
-          Promise.all(
-            reposterChunks.map(async (chunk) => {
-              const repSnap = await PostReposters.where(
-                "postId",
-                "in",
-                chunk,
-              ).get();
-              repSnap.docs.forEach((doc) => {
-                const repData = doc.data();
-                const pId = repData.postId;
-                if (!repostersMap.has(pId)) {
-                  repostersMap.set(pId, []);
-                }
-                repostersMap.get(pId).push({ id: doc.id, ...repData });
-              });
-            }),
-          ),
-        );
+    if (postIds.length > 0) {
+      const reposterChunks = [];
+      for (let i = 0; i < postIds.length; i += 30) {
+        reposterChunks.push(postIds.slice(i, i + 30));
       }
 
-      await Promise.all(fetchTasks);
+      fetchTasks.push(
+        Promise.all(
+          reposterChunks.map(async (chunk) => {
+            const repSnap = await PostReposters.where(
+              "postId",
+              "in",
+              chunk,
+            ).get();
+            repSnap.docs.forEach((doc) => {
+              const repData = doc.data();
+              const pId = repData.postId;
+              if (!repostersMap.has(pId)) repostersMap.set(pId, []);
+              repostersMap.get(pId).push({ id: doc.id, ...repData });
+            });
+          }),
+        ),
+      );
+    }
 
-      const calculatedPosts = rawPosts.map((post) => {
+    await Promise.all(fetchTasks);
+    const processedPosts = await Promise.all(
+      rawPosts.map(async (post) => {
         const authorDetails = authorMap.get(post.originalAuthor) || {};
         const repostersDetails = repostersMap.get(post.id) || [];
-
-        const subscriberBonus = authorDetails.isSubscriber === true ? 1000 : 0;
-        let tierMultiplier = 1;
-        if (authorDetails.tier === "premium") {
-          tierMultiplier = 5;
-        } else if (authorDetails.tier === "pro") {
-          tierMultiplier = 2;
-        }
-        const impressionsScore = (post.impressions || 0) * 0.1 * tierMultiplier;
-        const createdAtTime = post.createdAt?.toMillis
-          ? post.createdAt.toMillis()
-          : new Date(post.createdAt || 0).getTime();
-        const timeScore = createdAtTime / 1000000000;
-
-        const rankingScore = subscriberBonus + impressionsScore + timeScore;
-
-        return {
-          ...post,
-          authorDetails,
-          repostersDetails,
-          rankingScore,
-        };
-      });
-
-      let filteredPosts = calculatedPosts;
-      if (cursorScore !== null) {
-        filteredPosts = calculatedPosts.filter(
-          (p) => p.rankingScore < cursorScore,
-        );
-      }
-      filteredPosts.sort((a, b) => b.rankingScore - a.rankingScore);
-      posts = filteredPosts.slice(0, limit);
-    }
-
-    const processedPosts = await Promise.all(
-      posts.map(async (post) => {
         const targetPostId = post.postId || post.id;
         const commentsSnapshot = await Comments.where(
           "postId",
           "==",
           targetPostId,
         ).get();
-
-        const commentUserIds = [];
-        const commentDocsData = commentsSnapshot.docs.map((doc) => {
-          const commentData = doc.data();
-          if (commentData.userId) commentUserIds.push(commentData.userId);
-          return { id: doc.id, ...commentData };
-        });
-
-        const commentUserMap = new Map();
-        if (commentUserIds.length > 0) {
-          const uniqueCommentUserIds = [...new Set(commentUserIds)];
-          const userChunks = [];
-          for (let i = 0; i < uniqueCommentUserIds.length; i += 30) {
-            userChunks.push(uniqueCommentUserIds.slice(i, i + 30));
-          }
-
-          await Promise.all(
-            userChunks.map(async (chunk) => {
-              const userSnap = await User.where("uid", "in", chunk).get();
-              userSnap.docs.forEach((doc) => {
-                const cuData = doc.data();
-                if (cuData.uid) {
-                  commentUserMap.set(cuData.uid, {
-                    uid: cuData.uid,
-                    firstname: cuData.firstname,
-                    lastname: cuData.lastname,
-                    username: cuData.username,
-                    profilePic: cuData.profilePic,
-                  });
-                }
-              });
-            }),
-          );
-        }
-
-        const comments = commentDocsData.map((commentData) => ({
-          ...commentData,
-          userId: commentUserMap.get(commentData.userId) || commentData.userId,
-        }));
-
         const commentsCount = commentsSnapshot.size;
 
         return {
           ...post,
-          comments,
+          authorDetails,
+          repostersDetails,
           commentsCount,
-          repostsCount:
-            post.repostsCount !== undefined
-              ? post.repostsCount
-              : (post.repostersDetails || []).length,
-          featuredReposter: await getPriorityReposter(
-            post.repostersDetails || [],
-            userId,
-          ),
+          featuredReposter: await getPriorityReposter(repostersDetails, userId),
         };
       }),
     );
+    const lastPost = rawPosts[rawPosts.length - 1];
+    const nextCursor = rawPosts.length === limit ? lastPost.rankingScore : null;
 
-    const nextCursor =
-      posts.length === limit ? posts[posts.length - 1].rankingScore : null;
-
-    const responseData = { posts: processedPosts, nextCursor };
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.json(responseData);
+    res.json({ posts: processedPosts, nextCursor });
   } catch (err) {
     console.error("Feed error:", err.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      ),
-    );
     res.status(500).json({ error: err.message });
   }
 };
