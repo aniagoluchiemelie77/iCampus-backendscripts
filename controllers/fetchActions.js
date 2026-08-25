@@ -1,16 +1,13 @@
 import {
-  Product,
   Follow,
   User,
   Posts,
   Transactions,
   ITag,
-  Message,
   Notification,
   Course,
   Exceptions,
   Lectures,
-  OperationalInstitutions,
   Assessment,
   Admin,
   SupportTicket,
@@ -18,7 +15,6 @@ import {
   Comments,
   Ads,
 } from "../tableDeclarations.js";
-import { client } from "../workers/reditFile.js";
 import { createNotification } from "../services/notification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import { setImmediate } from "timers";
