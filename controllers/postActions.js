@@ -34,12 +34,8 @@ export const moderateContent = async (postId, content, media) => {
 
   try {
     const result = await scan(media.url, content);
-
+    const postQuery = await Posts.where("postId", "==", postId).limit(1).get();
     if (result?.isViolation) {
-      const postQuery = await Posts.where("postId", "==", postId)
-        .limit(1)
-        .get();
-
       if (!postQuery.empty) {
         const postDocRef = postQuery.docs[0].ref;
         await postDocRef.update({
@@ -62,6 +58,14 @@ export const moderateContent = async (postId, content, media) => {
         },
         false,
       );
+    } else {
+      if (!postQuery.empty) {
+        const postDocRef = postQuery.docs[0].ref;
+        await postDocRef.update({
+          status: "visible",
+          updatedAt: new Date(),
+        });
+      }
     }
   } catch (error) {
     console.error(

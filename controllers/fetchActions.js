@@ -2227,13 +2227,13 @@ export const fetchPosts = async (req, res) => {
   const userId = req.user?.uid || req.user?.id;
 
   console.log("--- 1. FETCH POSTS REQUEST START ---");
-  console.log({ limit, cursorScore, userId });
 
   try {
+    console.log("🔥 STEP 1: INSIDE TRY BLOCK");
     let query = Posts.where("status", "!=", "hidden")
       .orderBy("rankingScore", "desc")
       .limit(limit);
-
+    console.log("🔥 STEP 2: PARSED PARAMS", { limit, cursorScore, userId });
     if (cursorScore !== null && !isNaN(cursorScore)) {
       query = query.startAfter(cursorScore);
     }

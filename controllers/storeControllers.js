@@ -263,31 +263,61 @@ export const fetchStoreProducts = async (req, res) => {
   const { q, category, cursor, limit = 10 } = req.query;
   const pageLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
 
+  // 1. Log initial incoming request params
+  console.log(`[${controllerName}] Incoming Request:`, {
+    q,
+    category,
+    cursor,
+    limit: pageLimit,
+  });
+
   try {
     let queryRef = Product.where("isAvailable", "==", true);
     const isPopular = category === "popular";
 
     if (category && category !== "all" && !isPopular) {
       queryRef = queryRef.where("category", "==", category);
+      console.log(`[${controllerName}] Applied category filter:`, category);
     }
 
     if (isPopular) {
       queryRef = queryRef
         .orderBy("favCount", "desc")
         .orderBy("ratingsAverage", "desc");
+      console.log(
+        `[${controllerName}] Applied 'popular' sorting (favCount, ratingsAverage)`,
+      );
     } else {
       queryRef = queryRef.orderBy("createdAt", "desc");
+      console.log(
+        `[${controllerName}] Applied default sorting (createdAt desc)`,
+      );
     }
+
     let cursorDoc = null;
     if (cursor) {
+      console.log(
+        `[${controllerName}] Fetching cursor document reference for ID:`,
+        cursor,
+      );
       cursorDoc = await Product.doc(cursor).get();
       if (cursorDoc.exists) {
         queryRef = queryRef.startAfter(cursorDoc);
+        console.log(`[${controllerName}] Cursor successfully applied.`);
+      } else {
+        console.warn(
+          `[${controllerName}] Warning: Provided cursor ID does not exist:`,
+          cursor,
+        );
       }
     }
 
     const fetchLimit = q ? pageLimit * 3 : pageLimit + 1;
     queryRef = queryRef.limit(fetchLimit);
+    console.log(
+      `[${controllerName}] Final Firestore fetchLimit set to:`,
+      fetchLimit,
+    );
 
     const snapshot = await queryRef.get();
     let products = [];
@@ -297,13 +327,25 @@ export const fetchStoreProducts = async (req, res) => {
       products.push({ id: doc.id, productId: doc.id, ...data });
     });
 
+    console.log(
+      `[${controllerName}] Raw documents fetched from Firestore:`,
+      products.length,
+    );
+
     if (q) {
       const searchTerm = q.toLowerCase().trim();
+      console.log(
+        `[${controllerName}] Filtering products locally by search term: "${searchTerm}"`,
+      );
       products = products.filter((p) => {
         const title = (p.title || "").toLowerCase();
         const description = (p.description || "").toLowerCase();
         return title.includes(searchTerm) || description.includes(searchTerm);
       });
+      console.log(
+        `[${controllerName}] Products remaining after search filter:`,
+        products.length,
+      );
     }
 
     const paginatedProducts = products.slice(0, pageLimit);
@@ -312,6 +354,11 @@ export const fetchStoreProducts = async (req, res) => {
       nextCursor =
         paginatedProducts[paginatedProducts.length - 1]?.productId || null;
     }
+
+    console.log(
+      `[${controllerName}] Response summary -> Returning items: ${paginatedProducts.length}, Next Cursor: ${nextCursor}`,
+    );
+
     res.json({ products: paginatedProducts, nextCursor });
     setImmediate(() => {
       if (typeof logControllerPerformance === "function") {
@@ -319,7 +366,12 @@ export const fetchStoreProducts = async (req, res) => {
       }
     });
   } catch (err) {
-    console.error("Fetch Store Products Error:", err);
+    console.error(`[${controllerName}] ❌ Fetch Store Products Error:`, {
+      message: err.message,
+      code: err.code,
+      details: err.details,
+      stack: err.stack,
+    });
     if (typeof logControllerPerformance === "function") {
       logControllerPerformance(
         controllerName,
@@ -1880,6 +1932,7 @@ export const saveProductController = async (req, res) => {
         impressions: 0,
         createdAt: new Date(),
         updatedAt: new Date(),
+        isAvailable: true,
       };
       await productDocRef.set(productData);
     }

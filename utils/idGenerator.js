@@ -210,7 +210,7 @@ export const generateTokens = async (user) => {
   }
   const [accessToken, refreshToken] = await Promise.all([
     signJwt({ id: userId, email: user.email }, process.env.JWT_SECRET, {
-      expiresIn: "30m",
+      expiresIn: "50m",
     }),
     signJwt({ id: userId }, process.env.REFRESH_TOKEN_SECRET, {
       expiresIn: "30d",

@@ -738,6 +738,11 @@ export const postSchema = new mongoose.Schema(
       date: Date,
     },
     rankingScore: { type: Number, default: 0, index: true },
+    status: {
+      type: String,
+      enum: ["visible", "hidden"],
+      default: "visible",
+    },
   },
   { timestamps: true },
 );
