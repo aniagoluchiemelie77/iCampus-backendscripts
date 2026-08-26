@@ -1971,9 +1971,14 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
+
+  console.log("--- 1. STUDENT COURSES REQUEST START ---");
+  console.log("Query Parameters:", req.query);
+  console.log("User ID from token:", req.user?.uid);
+
   try {
     const { semester, session, page = 1, limit = 10 } = req.query;
-    const userId = req.user.uid;
+    const userId = req.user?.uid;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
@@ -1992,19 +1997,41 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
     }
     queryRef = queryRef.orderBy("createdAt", "desc");
 
+    console.log("--- 2. Executing Firestore query for student courses... ---");
     const snapshot = await queryRef.get();
+    console.log(
+      `--- 3. Query finished. Found documents count: ${snapshot.size} ---`,
+    );
+
+    if (snapshot.empty) {
+      console.log(
+        "--- 3b. Snapshot is empty for student courses. Returning empty array. ---",
+      );
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
+      return res.status(200).json([]);
+    }
+
     const allCourses = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
 
     const paginatedCourses = allCourses.slice(skip, skip + limitNum);
+    console.log(
+      `--- 4. Success. Slicing pagination [skip: ${skip}, limit: ${limitNum}]. Returning ${paginatedCourses.length} courses ---`,
+    );
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
     res.status(200).json(paginatedCourses);
   } catch (error) {
+    console.error("--- ❌ STUDENT COURSES ERROR CAUGHT ---");
+    console.error("Error Message:", error.message);
+    console.error("Error Stack:", error.stack);
+
     setImmediate(() =>
       logControllerPerformance(
         controllerName,
@@ -2021,9 +2048,14 @@ export const fetchLecturerEnrolledCourses = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchLecturerEnrolledCoursesController";
   const action = "fetchLecturerEnrolledCourses";
+
+  console.log("--- 1. LECTURER COURSES REQUEST START ---");
+  console.log("Query Parameters:", req.query);
+  console.log("Lecturer ID from token:", req.user?.uid);
+
   try {
     const { semester, session, page = 1, limit = 10 } = req.query;
-    const lecturerId = req.user.uid;
+    const lecturerId = req.user?.uid;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
@@ -2032,22 +2064,35 @@ export const fetchLecturerEnrolledCourses = async (req, res) => {
     if (semester && semester !== "All") query.semester = semester;
     if (session && session !== "All") query.session = session;
 
+    console.log("--- 2. Built Mongoose query object:", query);
+
     const courses = await Course.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limitNum)
       .lean();
 
+    console.log(
+      `--- 3. Query finished. Found documents count: ${courses.length} ---`,
+    );
+
     const results = courses.map((course) => ({
       ...course,
     }));
+
+    console.log(
+      `--- 4. Success. Returning ${results.length} lecturer courses ---`,
+    );
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
     res.status(200).json(results);
   } catch (error) {
-    console.error("Lecturer Fetch Courses Error:", error.message);
+    console.error("--- ❌ LECTURER COURSES ERROR CAUGHT ---");
+    console.error("Error Message:", error.message);
+    console.error("Error Stack:", error.stack);
+
     setImmediate(() =>
       logControllerPerformance(
         controllerName,
@@ -2181,17 +2226,25 @@ export const fetchPosts = async (req, res) => {
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const userId = req.user?.uid || req.user?.id;
 
+  console.log("--- 1. FETCH POSTS REQUEST START ---");
+  console.log({ limit, cursorScore, userId });
+
   try {
     let query = Posts.where("status", "!=", "hidden")
       .orderBy("rankingScore", "desc")
       .limit(limit);
+
     if (cursorScore !== null && !isNaN(cursorScore)) {
       query = query.startAfter(cursorScore);
     }
 
     const postsSnapshot = await query.get();
+    console.log(
+      `--- 2. POSTS QUERY EXECUTED. Found docs: ${postsSnapshot.size} ---`,
+    );
 
     if (postsSnapshot.empty) {
+      console.log("--- 2b. Posts snapshot is empty, returning early. ---");
       return res.json({ posts: [], nextCursor: null });
     }
 
@@ -2199,14 +2252,21 @@ export const fetchPosts = async (req, res) => {
       id: doc.id,
       ...doc.data(),
     }));
+
+    // Log the first post to verify fields like 'rankingScore', 'status', and 'originalAuthor'
+    console.log("--- 3. FIRST RAW POST SAMPLE ---", rawPosts[0]);
+
     const authorIds = [
       ...new Set(rawPosts.map((p) => p.originalAuthor).filter(Boolean)),
     ];
     const postIds = rawPosts.map((p) => p.id);
 
+    console.log(
+      `--- 4. FETCHING RELATIONS --- Author IDs count: ${authorIds.length}, Post IDs count: ${postIds.length}`,
+    );
+
     const authorMap = new Map();
     const repostersMap = new Map();
-
     const fetchTasks = [];
 
     if (authorIds.length > 0) {
@@ -2255,11 +2315,14 @@ export const fetchPosts = async (req, res) => {
     }
 
     await Promise.all(fetchTasks);
+    console.log("--- 5. AUTHORS & REPOSTERS FETCHED SUCCESSFULLY ---");
+
     const processedPosts = await Promise.all(
       rawPosts.map(async (post) => {
         const authorDetails = authorMap.get(post.originalAuthor) || {};
         const repostersDetails = repostersMap.get(post.id) || [];
         const targetPostId = post.postId || post.id;
+
         const commentsSnapshot = await Comments.where(
           "postId",
           "==",
@@ -2276,12 +2339,18 @@ export const fetchPosts = async (req, res) => {
         };
       }),
     );
+
     const lastPost = rawPosts[rawPosts.length - 1];
     const nextCursor = rawPosts.length === limit ? lastPost.rankingScore : null;
 
+    console.log(
+      `--- 6. SUCCESS. Sending ${processedPosts.length} posts. Next cursor: ${nextCursor} ---`,
+    );
     res.json({ posts: processedPosts, nextCursor });
   } catch (err) {
-    console.error("Feed error:", err.message);
+    console.error("--- ❌ FEED ERROR CAUGHT ---");
+    console.error("Error Message:", err.message);
+    console.error("Error Stack:", err.stack);
     res.status(500).json({ error: err.message });
   }
 };
