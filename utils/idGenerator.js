@@ -2,6 +2,7 @@ import { ITag, User } from "../tableDeclarations.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { promisify } from "util";
+import { db } from "../config/firebaseAdmin.js";
 const signJwt = promisify(jwt.sign);
 
 export function generateNotificationId(category) {
@@ -202,20 +203,24 @@ export const generateUniqueDealId = (length = 10) => {
 export const generateCode = () =>
   Math.floor(100000 + Math.random() * 900000).toString();
 
-export const generateTokens = async (user) => {
+export const generateTokens = async (user, userType = "user") => {
   const userId = user?.uid || user?.id;
 
   if (!userId) {
     throw new Error("Invalid user object provided for token generation.");
   }
+
   const [accessToken, refreshToken] = await Promise.all([
-    signJwt({ id: userId, email: user.email }, process.env.JWT_SECRET, {
-      expiresIn: "50m",
-    }),
-    signJwt({ id: userId }, process.env.REFRESH_TOKEN_SECRET, {
+    signJwt(
+      { id: userId, email: user.email, role: userType },
+      process.env.JWT_SECRET,
+      { expiresIn: "70m" },
+    ),
+    signJwt({ id: userId, role: userType }, process.env.REFRESH_TOKEN_SECRET, {
       expiresIn: "30d",
     }),
   ]);
+
   const currentTokens = Array.isArray(user.refreshTokens)
     ? [...user.refreshTokens]
     : [];
@@ -224,7 +229,10 @@ export const generateTokens = async (user) => {
   if (currentTokens.length > 5) {
     currentTokens.shift();
   }
-  await User.doc(userId).update({
+
+  const collectionName = userType === "admin" ? "admins" : "users";
+
+  await db.collection(collectionName).doc(userId).update({
     refreshTokens: currentTokens,
     updatedAt: new Date(),
   });

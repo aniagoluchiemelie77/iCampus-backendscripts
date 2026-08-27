@@ -127,6 +127,7 @@ export const protect = async (req, res, next) => {
   try {
     let decoded;
     let uid;
+    let tableType = "user";
 
     if (token.length > 500) {
       decoded = await admin.auth().verifyIdToken(token);
@@ -134,14 +135,18 @@ export const protect = async (req, res, next) => {
     } else {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
       uid = decoded.id || decoded.uid;
+      tableType = decoded.role || "user";
     }
 
-    const querySnapshot = await User.where("uid", "==", uid).limit(1).get();
+    const collectionName = tableType === "admin" ? "admins" : "users";
+    const querySnapshot = await db
+      .collection(collectionName)
+      .where("uid", "==", uid)
+      .limit(1)
+      .get();
 
     if (querySnapshot.empty) {
-      return res
-        .status(401)
-        .json({ message: "User not found in iCampus records" });
+      return res.status(401).json({ message: "User not found in records" });
     }
 
     const userDoc = querySnapshot.docs[0];
@@ -151,6 +156,7 @@ export const protect = async (req, res, next) => {
       id: userData.uid || uid,
       uid: userData.uid || uid,
       docId: userDoc.id,
+      role: tableType,
       ...userData,
     };
 

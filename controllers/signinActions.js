@@ -8,6 +8,7 @@ import {
   Admin,
   UserSessions,
 } from "../tableDeclarations.js";
+import { db } from "../config/firebaseAdmin.js";
 import axiosRetry from "axios-retry";
 import axios from "axios";
 import crypto from "crypto";
@@ -34,7 +35,6 @@ import { verifyAndNotifyLogin } from "../utils/suspiciousActivityDetector.js";
 import { addFlag } from "../utils/flagger.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { promisify } from "util";
-
 const verifyJwtAsync = promisify(jwt.verify);
 axiosRetry(axios, { retries: 3 });
 
@@ -450,9 +450,6 @@ export const Login = async (req, res) => {
   }
 };
 export const AdminLogin = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "AdminLoginController";
-  const action = "AdminLogin";
   const credentials = req.body.credentials || req.body;
   const { identifier, password, deviceId, deviceName } = credentials;
 
@@ -501,7 +498,7 @@ export const AdminLogin = async (req, res) => {
           .limit(1)
           .get(),
         UserSessions.where("userId", "==", adminUid).get(),
-        generateTokens(admin),
+        generateTokens(admin, "admin"),
         adminDocRef.set(
           { lastAccessed: new Date(), updatedAt: new Date() },
           { merge: true },
@@ -557,7 +554,9 @@ export const refreshToken = async (req, res) => {
       refreshToken,
       process.env.REFRESH_TOKEN_SECRET,
     );
-    const sessionSnapshotPromise = UserSessions.where(
+    const userType = decoded.role || "user";
+
+    const sessionSnapshot = await UserSessions.where(
       "refreshToken",
       "==",
       refreshToken,
@@ -565,7 +564,6 @@ export const refreshToken = async (req, res) => {
       .limit(1)
       .get();
 
-    const sessionSnapshot = await sessionSnapshotPromise;
     if (sessionSnapshot.empty) {
       return res.status(403).json({ message: "Invalid Refresh Token Session" });
     }
@@ -574,7 +572,9 @@ export const refreshToken = async (req, res) => {
     const sessionData = sessionDoc.data();
     const userId = sessionData.userId;
 
-    const userDoc = await User.doc(userId).get();
+    const collectionName = userType === "admin" ? "admins" : "users";
+    const userDoc = await db.collection(collectionName).doc(userId).get();
+
     if (!userDoc.exists) {
       return res
         .status(403)
@@ -583,11 +583,13 @@ export const refreshToken = async (req, res) => {
 
     const user = userDoc.data();
     const newAccessToken = jwt.sign(
-      { id: user.uid || userId, email: user.email },
+      { id: user.uid || userId, email: user.email, role: userType },
       process.env.JWT_SECRET,
-      { expiresIn: "15m" },
+      { expiresIn: "70m" },
     );
+
     res.json({ accessToken: newAccessToken });
+
     setImmediate(() => {
       sessionDoc.ref
         .update({ lastUsed: new Date() })
@@ -1705,7 +1707,10 @@ export const switchToInstitutionAdmin = async (req, res) => {
     };
 
     const sessionCheckPromise = sessionDocRef.get();
-    const tokensPromise = generateTokens({ ...adminData, ...adminUpdates });
+    const tokensPromise = generateTokens(
+      { ...adminData, ...adminUpdates },
+      "admin",
+    );
 
     const [sessionDoc, tokensResult] = await Promise.all([
       sessionCheckPromise,
