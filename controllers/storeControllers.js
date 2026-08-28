@@ -1936,7 +1936,7 @@ export const saveProductController = async (req, res) => {
       };
       await productDocRef.set(productData);
     }
-    res.status(isEditing ? 200 : 201).json({
+    res.status(isEditing ? 200 : 200).json({
       success: true,
       message: isEditing
         ? "Product entry successfully patched."

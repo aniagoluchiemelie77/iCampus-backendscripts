@@ -184,7 +184,7 @@ export const submitLectureException = async (req, res) => {
       ? `Your exception for ${courseInfo.courseTitle} was received. ${EXCEPTION_COST_IN_ICASH} iCash has been deducted.`
       : `Your free exception for ${courseInfo.courseTitle} was successfully submitted.`;
 
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
       message: "Exception submitted successfully",
       newBalance: updatedBalance,
@@ -646,7 +646,7 @@ export const createLectureSchedule = async (req, res) => {
       }
     });
 
-    return res.status(201).json({
+    return res.status(200).json({
       message: "Lectures scheduled successfully",
       count: createdLecturesList.length,
       lecture: createdLecturesList[0],
@@ -847,7 +847,7 @@ export const createAssessment = async (req, res) => {
       });
     }
 
-    return res.status(existingAssessment ? 200 : 201).json({
+    return res.status(existingAssessment ? 200 : 200).json({
       message: isPublished ? "Assessment Published" : "Draft Synced",
       data: assessmentData,
     });
@@ -2332,7 +2332,7 @@ export const submitAssessment = async (req, res) => {
     }
 
     const { isImpersonator, isFlagged, customSubmissionId, test } = result;
-    res.status(201).json({
+    res.status(200).json({
       success: !isImpersonator,
       message: isImpersonator
         ? "Submission rejected due to high-risk validation failure."
@@ -3252,7 +3252,7 @@ export const createCourseAssignment = async (req, res) => {
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
-    return res.status(201).json(updatedAssignments);
+    return res.status(200).json(updatedAssignments);
   } catch (error) {
     console.error("Create Assignment Error:", error.message);
     setImmediate(() =>

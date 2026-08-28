@@ -5,8 +5,7 @@ import dotenv from "dotenv";
 import { pathToFileURL } from "url";
 import path from "path";
 import { fileURLToPath } from "url";
-import { db } from "./config/firebaseAdmin.js";
-import { client as redisClient } from "./workers/reditFile.js";
+import { monitorSubscriptions } from "./cron/subscriptionsCron.js";
 import { init as initSocket } from "./controllers/socket.js";
 import { flagSuspiciousAccounts } from "./cron/flagSuspiciousAccountsCron.js";
 import {
@@ -31,6 +30,7 @@ flagSuspiciousAccounts();
 updateStudentInfo();
 updateLecturerInfo();
 lectureReminderCron();
+monitorSubscriptions();
 
 app.use(cors());
 

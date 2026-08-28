@@ -271,7 +271,7 @@ export const createPost = async (req, res) => {
       ),
     );
 
-    res.status(201).json({
+    res.status(200).json({
       success: true,
       message: "Posts created successfully",
       data: newPostData,
@@ -1149,7 +1149,7 @@ export const addComment = async (req, res) => {
         : { uid: userId },
     };
 
-    res.status(201).json(populatedComment);
+    res.status(200).json(populatedComment);
 
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
@@ -1759,7 +1759,7 @@ export const repost = async (req, res) => {
       const updatedOriginal = updatedPostSnap.data();
       const repostersCount = repostersSnapshot.size;
       const commentsCount = commentsSnapshot.size;
-      res.status(201).json({
+      res.status(200).json({
         message: "Posts repost action completed successfully.",
         repostsCount: updatedOriginal.repostsCount || 0,
       });

@@ -2,13 +2,12 @@ import dotenv from "dotenv";
 dotenv.config();
 
 import request from "supertest";
+import { describe, beforeAll, test, expect } from "@jest/globals";
 
 const API_BASE_URL = process.env.BACKEND_URL;
 
 describe("Bulk API Controller Health & Status Audit", () => {
   let accessToken;
-
-  // 1. Authenticate once before running the matrix
   beforeAll(async () => {
     const loginResponse = await request(API_BASE_URL).post("users/login").send({
       identifier: process.env.TEST_USER_EMAIL,
@@ -23,7 +22,6 @@ describe("Bulk API Controller Health & Status Audit", () => {
     accessToken = loginResponse.body.accessToken;
   }, 60000);
 
-  // 2. Define your endpoints matrix (Route, Method, Expected Status, Requires Auth)
   const endpointsToTest = [
     {
       name: "Request PIN Reset",
@@ -53,13 +51,10 @@ describe("Bulk API Controller Health & Status Audit", () => {
       auth: true,
       expected: 200,
     },
-    // Add up to 200+ controllers here easily...
   ];
-
-  // 3. Dynamically loop through them and log a clean results matrix
   test.each(endpointsToTest)(
-    "[$method.toUpperCase()] /$path -> expects $expected",
-    async ({ method, path, auth, expected }) => {
+    "%s %s %i",
+    async ({ method, path, auth, expected: expectedStatus }) => {
       let req = request(API_BASE_URL)[method](path);
 
       if (auth) {
@@ -67,14 +62,20 @@ describe("Bulk API Controller Health & Status Audit", () => {
       }
 
       const response = await req.send();
-
-      // If it's a 500 error, print the exact error payload so you can debug fast
-      if (response.statusCode === 500) {
-        console.error(`❌ [FAILURE] /${path} threw 500:`, response.body);
+      console.log(`${method.toUpperCase()} ${path} ${response.statusCode}`);
+      if (response.statusCode !== expectedStatus) {
+        const errorDetails =
+          response.body?.message ||
+          response.body?.error ||
+          response.text ||
+          "No error body provided";
+        console.error(
+          `❌ [MISMATCH] /${path} expected ${expectedStatus}, got ${response.statusCode}. Backend message:`,
+          errorDetails,
+        );
       }
 
-      // Assert it matches what you expect (or adjust to check for non-500s)
-      expect(response.statusCode).toBe(expected);
+      expect(response.statusCode).toBe(expectedStatus);
     },
     60000,
   );

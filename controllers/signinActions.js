@@ -218,7 +218,7 @@ export const signUp = async (req, res) => {
     delete safeUser.iCashPin;
     safeUser.theme = defaultPreferencesData.theme;
     safeUser.sessions = [initialSession];
-    res.status(201).json({
+    res.status(200).json({
       message: "User created successfully",
       success: true,
       user: safeUser,

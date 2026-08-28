@@ -362,6 +362,22 @@ export const createNotification = async ({
           message ||
           "Your drop-off station request has been received and is under review. Our team will verify your details; please expect a reply within 5 days.";
         break;
+      case "SUBSCRIPTION_EXPIRING":
+        category = "finance";
+        subject = `Action Required: Your iCampus ${payload.tier} Subscription Expires Soon`;
+        title = title || "Subscription Renewal Notice";
+        message =
+          message ||
+          `Your ${payload.tier} subscription is set to expire on ${payload.expiryDate}. Renew now to keep your perks!`;
+        break;
+      case "SUBSCRIPTION_EXPIRED":
+        category = "finance";
+        subject = "Your Subscription Has Expired";
+        title = title || "Subscription Expired";
+        message =
+          message ||
+          `Your ${payload.tier} subscription has expired. Upgrade or renew to restore full access.`;
+        break;
 
       //navigate to CreateReviewScreen, param: productType: 'lecturer', targetId: payload.targetId
       case "LECTURER_REVIEW_REQUEST":

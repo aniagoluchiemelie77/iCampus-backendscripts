@@ -412,6 +412,14 @@ export const userSchema = new mongoose.Schema({
   personaInquiryId: { type: String, default: null },
   sessions: [sessionSchema],
   isInstitutionAdmin: { type: Boolean, default: false },
+  subscriptionExpiresAt: { type: Date, default: null },
+  subscriptionPlan: {
+    type: String,
+    enum: ["free", "pro", "premium"],
+    default: "free",
+  },
+  reminderSent7Days: { type: Boolean, default: false },
+  reminderSent1Day: { type: Boolean, default: false },
 });
 export const adminSchema = new mongoose.Schema({
   uid: { type: String, index: true, required: true, unique: true },

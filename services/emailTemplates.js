@@ -2244,3 +2244,50 @@ export const taxReportEmailTemplate = (
 
   return body;
 };
+export const subscriptionReminderTemplate = (
+  userName,
+  timeRemaining,
+  tier,
+  expiryDate,
+) => {
+  return `
+    <div style="font-family: Arial, sans-serif; color: ${colors.text}; max-width: 600px; margin: 0 auto;">
+      <p style="font-size: 16px; line-height: 1.5;">Hello ${userName},</p>
+      <p style="font-size: 16px; line-height: 1.5;">
+        Your <strong>iCampus ${tier.toUpperCase()}</strong> subscription is scheduled to expire in <strong>${timeRemaining}</strong> (${new Date(expiryDate).toDateString()}).
+      </p>
+      <div style="background: ${theme.colors.background}; padding: 20px; border-radius: 6px; margin: 20px 0;">
+        <p style="margin-top: 0; font-weight: bold;">Don't lose your perks!</p>
+        <p style="font-size: 14px; margin-bottom: 0;">
+          Renew your subscription today to maintain uninterrupted access to all your advanced features, priority support, and ecosystem tools.
+        </p>
+      </div>
+      <p style="font-size: 13px; color: #666;">
+        If you have already renewed, please disregard this message. Reach us at 
+        <a href="mailto:${theme.branding.supportEmail}" style="color: ${theme.colors.primary};">
+          ${theme.branding.supportEmail}
+        </a>
+      </p>
+    </div>
+  `;
+};
+
+export const subscriptionExpiredTemplate = (userName) => {
+  return `
+    <div style="font-family: Arial, sans-serif; color: ${colors.text}; max-width: 600px; margin: 0 auto;">
+      <p style="font-size: 16px; line-height: 1.5;">Hello ${userName},</p>
+      <p style="font-size: 16px; line-height: 1.5;">
+        Your <strong>iCampus</strong> subscription has officially expired. Your account has now been safely transitioned back to the <strong>Free tier</strong>.
+      </p>
+      <div style="border: 1px solid ${colors.danger}; border-radius: 6px; padding: 20px; margin: 20px 0;">
+        <h3 style="margin-top: 0; color: ${colors.danger}; font-size: 16px; margin-bottom: 10px;">What this means for you</h3>
+        <p style="font-size: 14px; margin: 0;">
+          You can still access your core profile and standard marketplace functions, but premium ecosystem features are now locked until you choose to renew.
+        </p>
+      </div>
+      <p style="font-size: 13px; color: #666;">
+        Ready to reactivate? Log in to your app at any time to select a plan and upgrade back instantly.
+      </p>
+    </div>
+  `;
+};

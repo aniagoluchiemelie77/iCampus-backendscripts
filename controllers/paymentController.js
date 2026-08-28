@@ -909,6 +909,8 @@ export const verifySubscriptionFlwPayment = async (req, res) => {
     const userDocRef = userQuery.docs[0].ref;
     const existingUserData = userQuery.docs[0].data();
     const now = new Date();
+    const expiresAt = new Date();
+    expiresAt.setDate(now.getDate() + 30);
 
     const subscriptionData = {
       tier: tier,
@@ -916,6 +918,9 @@ export const verifySubscriptionFlwPayment = async (req, res) => {
       subscriptionDate: now,
       lastTransactionId: id,
       updatedAt: now,
+      subscriptionExpiresAt: expiresAt,
+      reminderSent7Days: false,
+      reminderSent1Day: false,
     };
 
     await userDocRef.update(subscriptionData);

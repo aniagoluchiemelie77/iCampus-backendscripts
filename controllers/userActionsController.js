@@ -325,7 +325,7 @@ export const createReviewController = async (req, res) => {
       logControllerPerformance(controllerName, action, startTime, "success");
     });
 
-    return res.status(201).json({
+    return res.status(200).json({
       success: true,
       message: "Reviews validation metrics published successfully.",
       reviewId: newReviewDocRef.id,
@@ -4111,7 +4111,7 @@ export const createQuickMeeting = async (req, res) => {
       meeting: newMeeting,
     };
 
-    res.status(201).json(responseBody);
+    res.status(200).json(responseBody);
     setImmediate(async () => {
       const backgroundTasks = [];
       const readableDate = new Date(date).toLocaleDateString("en-US", {
@@ -4315,7 +4315,7 @@ export const registerDropOffStation = async (req, res) => {
         : Promise.resolve(),
     ]);
 
-    res.status(201).json({
+    res.status(200).json({
       success: true,
       message: "Request submitted successfully",
       stationId,

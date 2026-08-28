@@ -50,7 +50,7 @@ export const createTicket = async (req, res) => {
       updatedAt: now,
     };
     await SupportTicket.doc(ticketRefId).set(newTicketData);
-    res.status(201).json(newTicketData);
+    res.status(200).json(newTicketData);
     setImmediate(() => {
       Promise.all([
         typeof createNotification === "function"

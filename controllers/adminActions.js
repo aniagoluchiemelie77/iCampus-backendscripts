@@ -104,7 +104,7 @@ export const createAdmin = async (req, res) => {
     };
     await adminRef.set(adminData);
     res
-      .status(201)
+      .status(200)
       .json({ message: "Admin created successfully", uid: generatedUid });
     setImmediate(() => {
       Promise.all([
@@ -910,7 +910,7 @@ export const createInstitution = async (req, res) => {
       SchoolConfiguration.doc(schoolId).set(configData),
       Posts.doc(newPostId).set(welcomePostData),
     ]);
-    res.status(201).json({ success: true, institution: institutionData });
+    res.status(200).json({ success: true, institution: institutionData });
     setImmediate(() => {
       if (req.io) {
         req.io.emit("new_post", welcomePostData);
@@ -1031,7 +1031,7 @@ export const createStation = async (req, res) => {
     };
 
     await DropOffStation.doc(stationId).set(stationData);
-    res.status(201).json({ success: true, station: stationData });
+    res.status(200).json({ success: true, station: stationData });
     setImmediate(() => {
       Promise.all([
         createNotification({
@@ -1504,7 +1504,7 @@ export const createAd = async (req, res) => {
       createdBy: req.admin.email || adminId,
     };
     await Ads.doc(adId).set(newAd);
-    res.status(201).json({
+    res.status(200).json({
       success: true,
       message: "Advertisement created successfully.",
       data: newAd,
