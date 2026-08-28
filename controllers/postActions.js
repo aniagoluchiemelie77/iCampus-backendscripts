@@ -1067,23 +1067,29 @@ export const addComment = async (req, res) => {
     const createdAt = new Date();
 
     const result = await db.runTransaction(async (transaction) => {
-      const postQuery = await Posts.where("postId", "==", postId)
-        .limit(1)
-        .get();
+      const [postQuery, commentsCountSnapshot] = await Promise.all([
+        Posts.where("postId", "==", postId).limit(1).get(),
+        Comments.where("postId", "==", postId)
+          .where("parentId", "==", null)
+          .get(),
+      ]);
+
       if (postQuery.empty) {
         throw new Error("Post not found");
       }
 
       const postDoc = postQuery.docs[0];
       const postData = postDoc.data();
-      const currentCommentsCount = postData.commentsCount || 0;
+
+      const currentCommentsCount = commentsCountSnapshot.size;
       const newCommentsCount = currentCommentsCount + 1;
+
       const likesCount = (postData.likes || []).length;
       const bookmarksCount = (postData.bookmarks || []).length;
 
       const impressionsScore = (postData.impressions || 0) * 0.1;
       const engagementScore =
-        likesCount * 2 + bookmarksCount * 3 + newCommentsCount * 4; // Comments weigh heavy!
+        likesCount * 2 + bookmarksCount * 3 + newCommentsCount * 4;
 
       const createdAtTime = postData.createdAt?.toMillis
         ? postData.createdAt.toMillis()
