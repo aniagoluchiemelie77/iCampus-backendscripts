@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
-import crypto from "crypto";
 dotenv.config();
 
+import crypto from "crypto";
 import { describe, beforeAll, test, expect } from "@jest/globals";
 import request from "supertest";
 
@@ -12,17 +12,30 @@ describe("Sequential Media post actions API controller status audit", () => {
   let sharedContext = {};
 
   beforeAll(async () => {
-    const loginResponse = await request(API_BASE_URL).post("users/login").send({
-      identifier: process.env.TEST_USER_EMAIL,
-      password: process.env.TEST_USER_PASSWORD,
-    });
+    console.log("Waking up Render backend server...");
+
+    // Optional: Hit a lightweight root or health route first to wake up the server
+    try {
+      await request(API_BASE_URL).get("").timeout(60000);
+    } catch (e) {
+      // Ignore initial timeout on warm-up, it just ensures the server starts booting
+    }
+
+    const loginResponse = await request(API_BASE_URL)
+      .post("users/login")
+      .send({
+        identifier: process.env.TEST_USER_EMAIL,
+        password: process.env.TEST_USER_PASSWORD,
+      })
+      .timeout(100000); // Give login extra time to account for cold starts
+
     if (loginResponse.statusCode !== 200 || !loginResponse.body.accessToken) {
       throw new Error(
         `Authentication failed: ${JSON.stringify(loginResponse.body)}`,
       );
     }
     accessToken = loginResponse.body.accessToken;
-  }, 60000);
+  }, 100000);
 
   const endpointsToTest = [
     {
@@ -101,9 +114,12 @@ describe("Sequential Media post actions API controller status audit", () => {
       if (step.body) {
         req.send(step.body);
       }
-      if (endpoint.filePath) {
-        req.attach("mediaFile", endpoint.filePath);
+
+      // Fixed from endpoint to step
+      if (step.filePath) {
+        req.attach("mediaFile", step.filePath);
       }
+
       if (
         step.idempotent ||
         ["post", "put", "patch", "delete"].includes(step.method)
@@ -129,7 +145,6 @@ describe("Sequential Media post actions API controller status audit", () => {
         );
       }
 
-      // Execute custom success hook to store IDs if present
       if (response.statusCode === step.expected && step.onSuccess) {
         step.onSuccess(response);
       }
