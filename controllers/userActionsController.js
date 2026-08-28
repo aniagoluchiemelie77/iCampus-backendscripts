@@ -2110,9 +2110,9 @@ export const requestIcashPinReset = async (req, res) => {
     try {
       const htmlContent = icashPinResetTemplate(user.firstname || "User", otp);
       await sendEmail({
-        email: user.email,
+        to: user.email,
         subject: "IMPORTANT: iCash PIN Reset Code",
-        message: `Your reset code is ${otp}`,
+        text: `Your reset code is ${otp}`,
         html: htmlContent,
       });
       res

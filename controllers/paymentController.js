@@ -432,7 +432,7 @@ export const initializeWithdraw = async (req, res) => {
       currency: currency,
       narration: "iCampus iCash Withdrawal",
       reference: idempotencyKey,
-      callback_url: `${process.env.BACKEND_URL}/hooks/flutterwave`,
+      callback_url: `${process.env.BACKEND_URL}webhooks/handleFlutterwaveWebhook`,
       debit_currency: "NGN",
     });
 
