@@ -253,3 +253,4 @@ export default router;
 //npx nodemon index.js
 //email: alice@icampus.edu
 //password: icampusUser01
+//npm test controllertests/${filename} 
