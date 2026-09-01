@@ -239,8 +239,8 @@ export const userPreferencesSchema = new mongoose.Schema(
     language: { type: String, default: "en" },
     quietHours: {
       enabled: { type: Boolean, default: false },
-      start: { type: String }, // e.g., "22:00"
-      end: { type: String }, // e.g., "07:00"
+      start: { type: String },
+      end: { type: String },
     },
   },
   { timestamps: true },

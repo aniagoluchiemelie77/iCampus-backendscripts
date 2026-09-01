@@ -78,17 +78,16 @@ export const createNotification = async ({
     let canSendPush = sendPush;
     let canSendEmail = sendEmail;
     let canSendSocket = sendSocket;
-
     if (prefs && !isCritical) {
-      if (prefs.notifications[category] === false) {
+      if (prefs.notifications?.[category] === false) {
         console.log(
           `Notification suppressed: ${category} is disabled for user.`,
         );
         return null;
       }
-      canSendPush = sendPush && prefs.channels.push;
-      canSendEmail = sendEmail && prefs.channels.email;
-      canSendSocket = sendSocket && prefs.channels.socket;
+      canSendPush = sendPush && (prefs.channels?.push ?? true);
+      canSendEmail = sendEmail && (prefs.channels?.email ?? true);
+      canSendSocket = sendSocket && (prefs.channels?.socket ?? true);
     }
 
     let htmlContent = "";
