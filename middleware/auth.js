@@ -1,6 +1,6 @@
 import jwt from "jsonwebtoken";
 import admin from "firebase-admin";
-import { User, Admin } from "../tableDeclarations.js";
+import { Admin } from "../tableDeclarations.js";
 import rateLimit from "express-rate-limit";
 import multer from "multer";
 import path from "path";

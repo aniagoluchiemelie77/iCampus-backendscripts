@@ -556,46 +556,42 @@ export const refreshToken = async (req, res) => {
       refreshToken,
       process.env.REFRESH_TOKEN_SECRET,
     );
+    const userId = decoded.id;
     const userType = decoded.role || "user";
-
-    const sessionSnapshot = await UserSessions.where(
-      "refreshToken",
-      "==",
-      refreshToken,
-    )
-      .limit(1)
-      .get();
-
-    if (sessionSnapshot.empty) {
-      return res.status(403).json({ message: "Invalid Refresh Token Session" });
-    }
-
-    const sessionDoc = sessionSnapshot.docs[0];
-    const sessionData = sessionDoc.data();
-    const userId = sessionData.userId;
 
     const collectionName = userType === "admin" ? "admins" : "users";
     const userDoc = await db.collection(collectionName).doc(userId).get();
 
     if (!userDoc.exists) {
-      return res
-        .status(403)
-        .json({ message: "User not found for this session" });
+      return res.status(403).json({ message: "User not found" });
     }
 
-    const user = userDoc.data();
+    const userData = userDoc.data();
+    const storedTokens = userData.refreshTokens || [];
+    if (!storedTokens.includes(refreshToken)) {
+      return res.status(403).json({ message: "Invalid Refresh Token Session" });
+    }
+
     const newAccessToken = jwt.sign(
-      { id: user.uid || userId, email: user.email, role: userType },
+      { id: userId, email: userData.email, role: userType },
       process.env.JWT_SECRET,
       { expiresIn: "70m" },
     );
+    if (userType === "users") {
+      const [preferencesDoc] = await Promise.all([userPrefs.doc(userId).get()]);
+      const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
+      const safeUser = { ...userData };
+      safeUser.hasIcashPin = Boolean(userData.iCashPin);
+      delete safeUser.password;
+      delete safeUser.iCashPin;
+      delete safeUser.userAccountDetails;
+      safeUser.theme = preferences ? preferences.theme : "light";
+    }
 
-    res.json({ accessToken: newAccessToken });
-
-    setImmediate(() => {
-      sessionDoc.ref
-        .update({ lastUsed: new Date() })
-        .catch((err) => console.error("Session timestamp update error:", err));
+    return res.json({
+      accessToken: newAccessToken,
+      refreshToken,
+      user: userType === "users" ? safeUser : null,
     });
   } catch (e) {
     console.error("Refresh Token Error:", e.message);

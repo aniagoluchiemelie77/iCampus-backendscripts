@@ -249,7 +249,6 @@ router.post(
   idempotencyMiddleware,
   switchToInstitutionAdmin,
 );
-
 export default router;
 
 //npx nodemon index.js
