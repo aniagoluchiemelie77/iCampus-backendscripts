@@ -21,6 +21,8 @@ describe("Sequential Media post actions API controller status audit", () => {
       .send({
         identifier: process.env.TEST_USER_EMAIL,
         password: process.env.TEST_USER_PASSWORD,
+        deviceId: "9cb67e14404773b6",
+        deviceName: "Infinix Infinix X689C",
       })
       .timeout(150000);
 
@@ -138,7 +140,6 @@ describe("Sequential Media post actions API controller status audit", () => {
     }
   }, 120000);
 });
-
 describe("Second User: create poll, (repost, comment, like, bookmark first user's post)", () => {
   let accessToken;
 
@@ -153,10 +154,14 @@ describe("Second User: create poll, (repost, comment, like, bookmark first user'
       .send({
         identifier: process.env.TEST_USER_EMAIL_SECOND,
         password: process.env.TEST_USER_PASSWORD_SECOND,
+        deviceId: "9cb67e14404773b6",
+        deviceName: "Infinix Infinix X689C",
       })
       .timeout(150000);
 
     if (loginResponse.statusCode !== 200 || !loginResponse.body.accessToken) {
+      console.error("Login Debug Status:", loginResponse.statusCode);
+      console.error("Login Debug Body:", loginResponse.text);
       throw new Error(
         `Authentication failed: ${JSON.stringify(loginResponse.body)}`,
       );
@@ -313,10 +318,14 @@ describe("Third User, vote in second user's poll, search for post using a line f
       .send({
         identifier: process.env.TEST_USER_EMAIL_THIRD,
         password: process.env.TEST_USER_PASSWORD_THIRD,
+        deviceId: "9cb67e14404773b6",
+        deviceName: "Infinix Infinix X689C",
       })
       .timeout(150000);
 
     if (loginResponse.statusCode !== 200 || !loginResponse.body.accessToken) {
+      console.error("Login Debug Status:", loginResponse.statusCode);
+      console.error("Login Debug Body:", loginResponse.text);
       throw new Error(
         `Authentication failed: ${JSON.stringify(loginResponse.body)}`,
       );

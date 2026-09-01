@@ -1,4 +1,5 @@
 import { createNotification } from "../services/notification.js";
+import vision from "@google-cloud/vision";
 import {
   Follow,
   User,
@@ -18,6 +19,20 @@ import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
 import { calculateRankingScore } from "../utils/postRanker.js";
+let visionClient = null;
+const getVisionClient = () => {
+  if (!visionClient) {
+    try {
+      visionClient = new vision.ImageAnnotatorClient();
+    } catch (err) {
+      console.warn(
+        "Google Cloud Vision client could not be initialized (missing credentials).",
+      );
+      return null;
+    }
+  }
+  return visionClient;
+};
 
 const getPostStats = (post, repostersCount = 0, commentsCount = 0) => ({
   likes: post.likes || [],
@@ -32,9 +47,18 @@ export const moderateContent = async (postId, content, media) => {
     return;
   }
 
+  const client = getVisionClient();
+  if (!client) {
+    console.warn(
+      `Skipping content moderation for post ${postId}: Vision client unavailable.`,
+    );
+    return;
+  }
+
   try {
     const result = await scan(media.url, content);
     const postQuery = await Posts.where("postId", "==", postId).limit(1).get();
+
     if (result?.isViolation) {
       if (!postQuery.empty) {
         const postDocRef = postQuery.docs[0].ref;
