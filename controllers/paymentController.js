@@ -1372,3 +1372,5 @@ export const validatePaymentOTP = async (req, res) => {
     });
   }
 };
+
+//Tested and trusted using jest

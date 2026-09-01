@@ -1704,3 +1704,5 @@ export const sendSupportMessage = async (req, res) => {
     }
   }
 };
+
+//Tested and trusted using jest

@@ -303,3 +303,5 @@ export const registerAttendanceHandlers = (io, socket) => {
     }
   });
 };
+
+//Tested and trusted using jest

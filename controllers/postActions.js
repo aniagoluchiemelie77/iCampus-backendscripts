@@ -20,6 +20,7 @@ import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
 import { calculateRankingScore } from "../utils/postRanker.js";
 let visionClient = null;
+
 const getVisionClient = () => {
   if (!visionClient) {
     try {
@@ -33,7 +34,6 @@ const getVisionClient = () => {
   }
   return visionClient;
 };
-
 const getPostStats = (post, repostersCount = 0, commentsCount = 0) => ({
   likes: post.likes || [],
   bookmarks: post.bookmarks || [],
@@ -42,318 +42,6 @@ const getPostStats = (post, repostersCount = 0, commentsCount = 0) => ({
   commentsCount: commentsCount,
   totalVotes: post.poll?.totalVotes || 0,
 });
-export const deletePost = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "deletePostController";
-  const action = "deletePost";
-  try {
-    const userUid = req.user?.id || req.user?.uid;
-    const { postId } = req.params;
-
-    if (!userUid) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user identifier",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user identifier" });
-    }
-
-    if (!postId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing required post identification parameter.",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "Missing required post identification parameter.",
-      });
-    }
-
-    const [result, authorQuery] = await Promise.all([
-      db.runTransaction(async (transaction) => {
-        const postQuery = await Posts.where("postId", "==", postId)
-          .where("originalAuthor", "==", userUid)
-          .limit(1)
-          .get();
-
-        if (postQuery.empty) {
-          throw new Error(
-            "Posts record not found or unauthorized deletion access.",
-          );
-        }
-
-        const postDoc = postQuery.docs[0];
-        const postData = postDoc.data();
-
-        transaction.delete(postDoc.ref);
-
-        return postData;
-      }),
-      User.where("uid", "==", userUid).limit(1).get(),
-    ]);
-
-    res.status(200).json({
-      success: true,
-      message: "Posts entry successfully unlinked and purged.",
-      data: { postId },
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-
-    setImmediate(async () => {
-      const author = !authorQuery.empty ? authorQuery.docs[0].data() : null;
-      const authorEmail = author ? author.email : req.user.email;
-      const authorName = author ? author.firstname : req.user.firstname;
-      const cleanupPromises = [];
-
-      if (result.media) {
-        const mediaList = Array.isArray(result.media)
-          ? result.media
-          : [result.media];
-        const mediaUrls = [];
-
-        mediaList.forEach((m) => {
-          if (typeof m === "string") {
-            mediaUrls.push(m);
-          } else if (m && typeof m === "object") {
-            if (Array.isArray(m.url)) {
-              mediaUrls.push(...m.url);
-            } else if (typeof m.url === "string") {
-              mediaUrls.push(m.url);
-            }
-          }
-        });
-
-        const bucket = storage().bucket();
-
-        mediaUrls.forEach((url) => {
-          if (
-            typeof url === "string" &&
-            url.includes("firebasestorage.googleapis.com")
-          ) {
-            try {
-              const decodedUrl = decodeURIComponent(url);
-              const pathStartIndex = decodedUrl.indexOf("/o/") + 3;
-              const pathEndIndex = decodedUrl.indexOf("?");
-              const filePath =
-                pathEndIndex !== -1
-                  ? decodedUrl.substring(pathStartIndex, pathEndIndex)
-                  : decodedUrl.substring(pathStartIndex);
-
-              cleanupPromises.push(
-                bucket
-                  .file(filePath)
-                  .delete()
-                  .catch((err) =>
-                    console.error(
-                      `Firebase file deletion failed for post media path: ${filePath}`,
-                      err,
-                    ),
-                  ),
-              );
-            } catch (parseError) {
-              console.error(
-                `Error parsing Firebase media URL for deletion: ${url}`,
-                parseError,
-              );
-            }
-          }
-        });
-      }
-
-      cleanupPromises.push(
-        createNotification({
-          notificationId: generateNotificationId("social"),
-          recipientId: userUid,
-          recipientEmail: authorEmail,
-          category: "social",
-          actionType: "POST_DELETION",
-          title: "Posts Removed",
-          message: `Your post has been successfully deleted from your feed.`,
-          entityId: postId,
-          entityType: "post",
-          payload: {
-            username: authorName,
-            postId: postId,
-          },
-        }).catch((err) =>
-          console.error(
-            "Non-blocking post deletion log emission failure:",
-            err,
-          ),
-        ),
-      );
-
-      await Promise.all(cleanupPromises).catch((err) =>
-        console.error(
-          "Background cleanup pipeline failure in deletePost:",
-          err,
-        ),
-      );
-    });
-  } catch (error) {
-    console.error(
-      "Global crash layer hit in deletePostController:",
-      error.message,
-    );
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    const statusCode = error.message.includes("not found") ? 404 : 500;
-    return res.status(statusCode).json({
-      success: false,
-      message:
-        statusCode === 404
-          ? error.message
-          : "Internal application routing anomaly.",
-    });
-  }
-};
-export const toggleCommentLike = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "toggleCommentLikeController";
-  const action = "toggleCommentLike";
-  const { commentId } = req.params;
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user identifier",
-      );
-    });
-    return res.status(401).json({ error: "Unauthorized user identifier" });
-  }
-
-  if (!commentId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing commentId parameter",
-      );
-    });
-    return res.status(400).json({ error: "Missing commentId parameter" });
-  }
-
-  try {
-    const commentRef = Comments.doc(commentId);
-
-    const result = await db.runTransaction(async (transaction) => {
-      const commentDoc = await transaction.get(commentRef);
-      if (!commentDoc.exists) {
-        throw new Error("Comment not found");
-      }
-
-      const commentData = commentDoc.data();
-      const likes = commentData.likes || [];
-
-      const isLiked = likes.includes(userId);
-      const updatedLikes = isLiked
-        ? likes.filter((id) => id !== userId)
-        : [...likes, userId];
-
-      transaction.update(commentRef, {
-        likes: updatedLikes,
-        updatedAt: new Date(),
-      });
-
-      return {
-        commentData,
-        isLiked,
-        updatedLikes,
-      };
-    });
-
-    const { commentData, isLiked, updatedLikes } = result;
-    const commentAuthorId = commentData.userId;
-    const nowLiked = !isLiked;
-
-    res.status(200).json({
-      isLiked: nowLiked,
-      likesCount: updatedLikes.length,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-
-    setImmediate(async () => {
-      if (nowLiked && commentAuthorId && commentAuthorId !== userId) {
-        try {
-          const [likerQuery, ownerQuery] = await Promise.all([
-            User.where("uid", "==", userId).limit(1).get(),
-            User.where("uid", "==", commentAuthorId).limit(1).get(),
-          ]);
-
-          const liker = !likerQuery.empty ? likerQuery.docs[0].data() : null;
-          const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
-
-          if (liker && owner) {
-            await createNotification({
-              notificationId: generateNotificationId("social"),
-              recipientId: commentAuthorId,
-              recipientEmail: owner.email,
-              category: "social",
-              actionType: "COMMENT_LIKED",
-              title: "New Like",
-              message: `${liker.firstname || "Someone"} liked your comment.`,
-              payload: { commentId, postId: commentData.postId, userId },
-              sendPush: true,
-              saveToDb: true,
-            });
-          }
-        } catch (err) {
-          console.error(
-            "Background notification failure in toggleCommentLike:",
-            err,
-          );
-        }
-      }
-    });
-  } catch (err) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      );
-    });
-    const statusCode = err.message === "Comment not found" ? 404 : 500;
-    if (statusCode === 404) {
-      return res.status(404).send("Comment not found");
-    }
-    return res.status(500).send(err.message);
-  }
-};
 
 //Tested and trusted using jest
 export const fetchPostUsingPostId = async (req, res) => {
@@ -2196,5 +1884,317 @@ export const pollVote = async (req, res) => {
         : 400
       : 500;
     return res.status(statusCode).json({ error: error.message });
+  }
+};
+export const deletePost = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deletePostController";
+  const action = "deletePost";
+  try {
+    const userUid = req.user?.id || req.user?.uid;
+    const { postId } = req.params;
+
+    if (!userUid) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user identifier",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user identifier" });
+    }
+
+    if (!postId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required post identification parameter.",
+        );
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Missing required post identification parameter.",
+      });
+    }
+
+    const [result, authorQuery] = await Promise.all([
+      db.runTransaction(async (transaction) => {
+        const postQuery = await Posts.where("postId", "==", postId)
+          .where("originalAuthor", "==", userUid)
+          .limit(1)
+          .get();
+
+        if (postQuery.empty) {
+          throw new Error(
+            "Posts record not found or unauthorized deletion access.",
+          );
+        }
+
+        const postDoc = postQuery.docs[0];
+        const postData = postDoc.data();
+
+        transaction.delete(postDoc.ref);
+
+        return postData;
+      }),
+      User.where("uid", "==", userUid).limit(1).get(),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      message: "Posts entry successfully unlinked and purged.",
+      data: { postId },
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
+    setImmediate(async () => {
+      const author = !authorQuery.empty ? authorQuery.docs[0].data() : null;
+      const authorEmail = author ? author.email : req.user.email;
+      const authorName = author ? author.firstname : req.user.firstname;
+      const cleanupPromises = [];
+
+      if (result.media) {
+        const mediaList = Array.isArray(result.media)
+          ? result.media
+          : [result.media];
+        const mediaUrls = [];
+
+        mediaList.forEach((m) => {
+          if (typeof m === "string") {
+            mediaUrls.push(m);
+          } else if (m && typeof m === "object") {
+            if (Array.isArray(m.url)) {
+              mediaUrls.push(...m.url);
+            } else if (typeof m.url === "string") {
+              mediaUrls.push(m.url);
+            }
+          }
+        });
+
+        const bucket = storage().bucket();
+
+        mediaUrls.forEach((url) => {
+          if (
+            typeof url === "string" &&
+            url.includes("firebasestorage.googleapis.com")
+          ) {
+            try {
+              const decodedUrl = decodeURIComponent(url);
+              const pathStartIndex = decodedUrl.indexOf("/o/") + 3;
+              const pathEndIndex = decodedUrl.indexOf("?");
+              const filePath =
+                pathEndIndex !== -1
+                  ? decodedUrl.substring(pathStartIndex, pathEndIndex)
+                  : decodedUrl.substring(pathStartIndex);
+
+              cleanupPromises.push(
+                bucket
+                  .file(filePath)
+                  .delete()
+                  .catch((err) =>
+                    console.error(
+                      `Firebase file deletion failed for post media path: ${filePath}`,
+                      err,
+                    ),
+                  ),
+              );
+            } catch (parseError) {
+              console.error(
+                `Error parsing Firebase media URL for deletion: ${url}`,
+                parseError,
+              );
+            }
+          }
+        });
+      }
+
+      cleanupPromises.push(
+        createNotification({
+          notificationId: generateNotificationId("social"),
+          recipientId: userUid,
+          recipientEmail: authorEmail,
+          category: "social",
+          actionType: "POST_DELETION",
+          title: "Posts Removed",
+          message: `Your post has been successfully deleted from your feed.`,
+          entityId: postId,
+          entityType: "post",
+          payload: {
+            username: authorName,
+            postId: postId,
+          },
+        }).catch((err) =>
+          console.error(
+            "Non-blocking post deletion log emission failure:",
+            err,
+          ),
+        ),
+      );
+
+      await Promise.all(cleanupPromises).catch((err) =>
+        console.error(
+          "Background cleanup pipeline failure in deletePost:",
+          err,
+        ),
+      );
+    });
+  } catch (error) {
+    console.error(
+      "Global crash layer hit in deletePostController:",
+      error.message,
+    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    const statusCode = error.message.includes("not found") ? 404 : 500;
+    return res.status(statusCode).json({
+      success: false,
+      message:
+        statusCode === 404
+          ? error.message
+          : "Internal application routing anomaly.",
+    });
+  }
+};
+export const toggleCommentLike = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleCommentLikeController";
+  const action = "toggleCommentLike";
+  const { commentId } = req.params;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res.status(401).json({ error: "Unauthorized user identifier" });
+  }
+
+  if (!commentId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing commentId parameter",
+      );
+    });
+    return res.status(400).json({ error: "Missing commentId parameter" });
+  }
+
+  try {
+    const commentRef = Comments.doc(commentId);
+
+    const result = await db.runTransaction(async (transaction) => {
+      const commentDoc = await transaction.get(commentRef);
+      if (!commentDoc.exists) {
+        throw new Error("Comment not found");
+      }
+
+      const commentData = commentDoc.data();
+      const likes = commentData.likes || [];
+
+      const isLiked = likes.includes(userId);
+      const updatedLikes = isLiked
+        ? likes.filter((id) => id !== userId)
+        : [...likes, userId];
+
+      transaction.update(commentRef, {
+        likes: updatedLikes,
+        updatedAt: new Date(),
+      });
+
+      return {
+        commentData,
+        isLiked,
+        updatedLikes,
+      };
+    });
+
+    const { commentData, isLiked, updatedLikes } = result;
+    const commentAuthorId = commentData.userId;
+    const nowLiked = !isLiked;
+
+    res.status(200).json({
+      isLiked: nowLiked,
+      likesCount: updatedLikes.length,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
+    setImmediate(async () => {
+      if (nowLiked && commentAuthorId && commentAuthorId !== userId) {
+        try {
+          const [likerQuery, ownerQuery] = await Promise.all([
+            User.where("uid", "==", userId).limit(1).get(),
+            User.where("uid", "==", commentAuthorId).limit(1).get(),
+          ]);
+
+          const liker = !likerQuery.empty ? likerQuery.docs[0].data() : null;
+          const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
+
+          if (liker && owner) {
+            await createNotification({
+              notificationId: generateNotificationId("social"),
+              recipientId: commentAuthorId,
+              recipientEmail: owner.email,
+              category: "social",
+              actionType: "COMMENT_LIKED",
+              title: "New Like",
+              message: `${liker.firstname || "Someone"} liked your comment.`,
+              payload: { commentId, postId: commentData.postId, userId },
+              sendPush: true,
+              saveToDb: true,
+            });
+          }
+        } catch (err) {
+          console.error(
+            "Background notification failure in toggleCommentLike:",
+            err,
+          );
+        }
+      }
+    });
+  } catch (err) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      );
+    });
+    const statusCode = err.message === "Comment not found" ? 404 : 500;
+    if (statusCode === 404) {
+      return res.status(404).send("Comment not found");
+    }
+    return res.status(500).send(err.message);
   }
 };

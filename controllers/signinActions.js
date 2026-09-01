@@ -1757,3 +1757,5 @@ export const switchToInstitutionAdmin = async (req, res) => {
     });
   }
 };
+
+//Tested and trusted using jest

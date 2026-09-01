@@ -9,6 +9,7 @@ const API_BASE_URL = process.env.BACKEND_URL;
 let sharedContext = {
   postId: "PST-260901-2232-733D",
   pollPostId: "PST-260901-2232-X80P",
+  commentId: "c4howqkg5",
 };
 
 describe("First User, delete his/her post and like third user's comment", () => {

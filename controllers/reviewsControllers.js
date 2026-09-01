@@ -143,3 +143,5 @@ export const fetchSellerReviews = async (req, res) => {
     });
   }
 };
+
+//Tested and trusted using jest

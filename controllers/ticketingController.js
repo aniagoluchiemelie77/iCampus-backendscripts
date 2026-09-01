@@ -233,3 +233,6 @@ export const adminUpdateTicketStatus = async (req, res) => {
       .json({ message: "Server error updating ticket", success: false });
   }
 };
+
+
+//Tested and trusted using jest

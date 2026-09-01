@@ -1639,3 +1639,5 @@ export const registerLecturerMediaControlHandlers = (io, socket) => {
     }
   });
 };
+
+//Tested and trusted using jest
