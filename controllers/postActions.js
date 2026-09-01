@@ -229,205 +229,6 @@ export const deletePost = async (req, res) => {
     });
   }
 };
-export const pollVote = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "pollVoteController";
-  const action = "pollVote";
-  const { postId, optionId } = req.body;
-  const userId = req.body.userId || req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user identifier",
-      );
-    });
-    return res.status(401).json({ error: "Unauthorized user identifier" });
-  }
-
-  if (!postId || !optionId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing required postId or optionId",
-      );
-    });
-    return res
-      .status(400)
-      .json({ error: "Missing required postId or optionId" });
-  }
-
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const postQuery = await Posts.where("postId", "==", postId)
-        .limit(1)
-        .get();
-      if (postQuery.empty) {
-        throw new Error("Poll not found");
-      }
-
-      const postDoc = postQuery.docs[0];
-      const post = postDoc.data();
-
-      if (!post.poll || !Array.isArray(post.poll.options)) {
-        throw new Error("Poll not found");
-      }
-      if (post.poll.expiresAt && new Date() > new Date(post.poll.expiresAt)) {
-        throw new Error("Poll has expired");
-      }
-      const hasVoted = post.poll.options.some(
-        (opt) => Array.isArray(opt.votes) && opt.votes.includes(userId),
-      );
-
-      if (hasVoted) {
-        throw new Error("Already voted");
-      }
-      const optionIndex = post.poll.options.findIndex(
-        (opt) => opt.optionId === optionId,
-      );
-      if (optionIndex === -1) {
-        throw new Error("Poll option not found");
-      }
-      const updatedOptions = post.poll.options.map((opt, index) => {
-        if (index === optionIndex) {
-          return {
-            ...opt,
-            votes: [...(opt.votes || []), userId],
-          };
-        }
-        return opt;
-      });
-
-      const newTotalVotes = (post.poll.totalVotes || 0) + 1;
-
-      const updatedPoll = {
-        ...post.poll,
-        options: updatedOptions,
-        totalVotes: newTotalVotes,
-      };
-
-      // --- CALCULATE NEW RANKING SCORE ---
-      const likesCount = (post.likes || []).length;
-      const bookmarksCount = (post.bookmarks || []).length;
-
-      const impressionsScore = (post.impressions || 0) * 0.1;
-      const engagementScore =
-        likesCount * 2 + bookmarksCount * 3 + newTotalVotes * 3; // Poll votes factor in!
-
-      const createdAtTime = post.createdAt?.toMillis
-        ? post.createdAt.toMillis()
-        : new Date(post.createdAt || Date.now()).getTime();
-      const timeScore = createdAtTime / 1000000000;
-
-      const newRankingScore = impressionsScore + engagementScore + timeScore;
-      // -----------------------------------
-
-      transaction.update(postDoc.ref, {
-        poll: updatedPoll,
-        rankingScore: newRankingScore, // <--- Updated score saved atomically!
-        updatedAt: new Date(),
-      });
-
-      const [repostersSnapshot, commentsSnapshot] = await Promise.all([
-        PostReposters.where("postId", "==", postId).get(),
-        Comments.where("postId", "==", postId).get(),
-      ]);
-
-      return {
-        post: {
-          id: postDoc.id,
-          ...post,
-          poll: updatedPoll,
-          rankingScore: newRankingScore,
-        },
-        repostersCount: repostersSnapshot.size,
-        commentsCount: commentsSnapshot.size,
-      };
-    });
-
-    const updatedPost = result.post;
-    const repostersCount = result.repostersCount;
-    const commentsCount = result.commentsCount;
-
-    res.status(200).json(updatedPost);
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-
-    setImmediate(async () => {
-      try {
-        const io = req.app.get("socketio");
-        if (io) {
-          io.emit("post_stats_updated", {
-            postId: updatedPost.postId,
-            stats:
-              typeof getPostStats === "function"
-                ? getPostStats(updatedPost, repostersCount, commentsCount)
-                : updatedPost,
-          });
-        }
-
-        const postOwnerId = updatedPost.originalAuthor || updatedPost.userId;
-        if (
-          updatedPost.poll.totalVotes % 10 === 0 &&
-          postOwnerId &&
-          postOwnerId !== userId
-        ) {
-          const ownerQuery = await User.where("uid", "==", postOwnerId)
-            .limit(1)
-            .get();
-          const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
-
-          await createNotification({
-            notificationId: generateNotificationId("social"),
-            recipientId: postOwnerId,
-            recipientEmail: owner?.email,
-            category: "social",
-            actionType: "POLL_MILESTONE",
-            title: "Poll Update",
-            message: `${updatedPost.poll.totalVotes} people have now voted in your poll!`,
-            payload: { postId: updatedPost.postId },
-            sendPush: true,
-            saveToDb: true,
-          });
-        }
-      } catch (err) {
-        console.error("Background task failure in pollVote:", err);
-      }
-    });
-  } catch (error) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    const clientErrors = [
-      "Poll not found",
-      "Poll has expired",
-      "Already voted",
-      "Poll option not found",
-    ];
-    const statusCode = clientErrors.includes(error.message)
-      ? error.message === "Poll not found" ||
-        error.message === "Poll option not found"
-        ? 404
-        : 400
-      : 500;
-    return res.status(statusCode).json({ error: error.message });
-  }
-};
 export const toggleCommentLike = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "toggleCommentLikeController";
@@ -1615,7 +1416,11 @@ export const addComment = async (req, res) => {
         postId,
         userId,
         username: commenter?.username || commenter?.firstname || "Anonymous",
-        profilePic: commenter?.profilePic || "",
+        profilePic:
+          Array.isArray(commenter?.profilePic) &&
+          commenter.profilePic.length > 0
+            ? commenter.profilePic[commenter.profilePic.length - 1]
+            : "",
         text: commentText,
         parentId: parentId || null,
         timestamp: createdAt,
@@ -2025,7 +1830,11 @@ export const repost = async (req, res) => {
         username: repostAuthor.username || null,
         tier: repostAuthor.tier || "",
         organizationName: repostAuthor.organizationName || null,
-        profilePic: repostAuthor.profilePic || [],
+        profilePic:
+          Array.isArray(repostAuthor?.profilePic) &&
+          repostAuthor.profilePic.length > 0
+            ? repostAuthor.profilePic[repostAuthor.profilePic.length - 1]
+            : [],
         repostedAt,
       };
 
@@ -2188,5 +1997,204 @@ export const repost = async (req, res) => {
       );
     });
     return res.status(500).json({ message: err.message });
+  }
+};
+export const pollVote = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "pollVoteController";
+  const action = "pollVote";
+  const { postId, optionId } = req.body;
+  const userId = req.body.userId || req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res.status(401).json({ error: "Unauthorized user identifier" });
+  }
+
+  if (!postId || !optionId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required postId or optionId",
+      );
+    });
+    return res
+      .status(400)
+      .json({ error: "Missing required postId or optionId" });
+  }
+
+  try {
+    const result = await db.runTransaction(async (transaction) => {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .limit(1)
+        .get();
+      if (postQuery.empty) {
+        throw new Error("Poll not found");
+      }
+
+      const postDoc = postQuery.docs[0];
+      const post = postDoc.data();
+
+      if (!post.poll || !Array.isArray(post.poll.options)) {
+        throw new Error("Poll not found");
+      }
+      if (post.poll.expiresAt && new Date() > new Date(post.poll.expiresAt)) {
+        throw new Error("Poll has expired");
+      }
+      const hasVoted = post.poll.options.some(
+        (opt) => Array.isArray(opt.votes) && opt.votes.includes(userId),
+      );
+
+      if (hasVoted) {
+        throw new Error("Already voted");
+      }
+      const optionIndex = post.poll.options.findIndex(
+        (opt) => opt.optionId === optionId,
+      );
+      if (optionIndex === -1) {
+        throw new Error("Poll option not found");
+      }
+      const updatedOptions = post.poll.options.map((opt, index) => {
+        if (index === optionIndex) {
+          return {
+            ...opt,
+            votes: [...(opt.votes || []), userId],
+          };
+        }
+        return opt;
+      });
+
+      const newTotalVotes = (post.poll.totalVotes || 0) + 1;
+
+      const updatedPoll = {
+        ...post.poll,
+        options: updatedOptions,
+        totalVotes: newTotalVotes,
+      };
+
+      // --- CALCULATE NEW RANKING SCORE ---
+      const likesCount = (post.likes || []).length;
+      const bookmarksCount = (post.bookmarks || []).length;
+
+      const impressionsScore = (post.impressions || 0) * 0.1;
+      const engagementScore =
+        likesCount * 2 + bookmarksCount * 3 + newTotalVotes * 3; // Poll votes factor in!
+
+      const createdAtTime = post.createdAt?.toMillis
+        ? post.createdAt.toMillis()
+        : new Date(post.createdAt || Date.now()).getTime();
+      const timeScore = createdAtTime / 1000000000;
+
+      const newRankingScore = impressionsScore + engagementScore + timeScore;
+      // -----------------------------------
+
+      transaction.update(postDoc.ref, {
+        poll: updatedPoll,
+        rankingScore: newRankingScore, // <--- Updated score saved atomically!
+        updatedAt: new Date(),
+      });
+
+      const [repostersSnapshot, commentsSnapshot] = await Promise.all([
+        PostReposters.where("postId", "==", postId).get(),
+        Comments.where("postId", "==", postId).get(),
+      ]);
+
+      return {
+        post: {
+          id: postDoc.id,
+          ...post,
+          poll: updatedPoll,
+          rankingScore: newRankingScore,
+        },
+        repostersCount: repostersSnapshot.size,
+        commentsCount: commentsSnapshot.size,
+      };
+    });
+
+    const updatedPost = result.post;
+    const repostersCount = result.repostersCount;
+    const commentsCount = result.commentsCount;
+
+    res.status(200).json(updatedPost);
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
+    setImmediate(async () => {
+      try {
+        const io = req.app.get("socketio");
+        if (io) {
+          io.emit("post_stats_updated", {
+            postId: updatedPost.postId,
+            stats:
+              typeof getPostStats === "function"
+                ? getPostStats(updatedPost, repostersCount, commentsCount)
+                : updatedPost,
+          });
+        }
+
+        const postOwnerId = updatedPost.originalAuthor || updatedPost.userId;
+        if (
+          updatedPost.poll.totalVotes % 10 === 0 &&
+          postOwnerId &&
+          postOwnerId !== userId
+        ) {
+          const ownerQuery = await User.where("uid", "==", postOwnerId)
+            .limit(1)
+            .get();
+          const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
+
+          await createNotification({
+            notificationId: generateNotificationId("social"),
+            recipientId: postOwnerId,
+            recipientEmail: owner?.email,
+            category: "social",
+            actionType: "POLL_MILESTONE",
+            title: "Poll Update",
+            message: `${updatedPost.poll.totalVotes} people have now voted in your poll!`,
+            payload: { postId: updatedPost.postId },
+            sendPush: true,
+            saveToDb: true,
+          });
+        }
+      } catch (err) {
+        console.error("Background task failure in pollVote:", err);
+      }
+    });
+  } catch (error) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    const clientErrors = [
+      "Poll not found",
+      "Poll has expired",
+      "Already voted",
+      "Poll option not found",
+    ];
+    const statusCode = clientErrors.includes(error.message)
+      ? error.message === "Poll not found" ||
+        error.message === "Poll option not found"
+        ? 404
+        : 400
+      : 500;
+    return res.status(statusCode).json({ error: error.message });
   }
 };
