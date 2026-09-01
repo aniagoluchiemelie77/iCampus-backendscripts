@@ -353,9 +353,6 @@ export const Login = async (req, res) => {
       refreshToken,
     });
     setImmediate(async () => {
-      console.log(
-        "Post user login request action setImmediate() for notifications",
-      );
       try {
         const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
           .split(",")[0]
@@ -364,7 +361,6 @@ export const Login = async (req, res) => {
         const location = geo
           ? `${geo.city}, ${geo.country}`
           : "Unknown Location";
-        console.log("Post user location fetching");
         const sessionData = {
           userId: user.uid,
           deviceId,

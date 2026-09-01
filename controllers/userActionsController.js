@@ -3854,156 +3854,6 @@ export const aiChat = async (req, res) => {
       .json({ success: false, error: "Failed to fetch response" });
   }
 };
-export const searchPosts = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "searchPostsController";
-  const action = "searchPosts";
-
-  try {
-    const searchQuery = req.query.q;
-    const userId = req.user?.id || req.user?.uid;
-
-    if (
-      !searchQuery ||
-      typeof searchQuery !== "string" ||
-      searchQuery.trim().length < 2
-    ) {
-      logControllerPerformance(controllerName, action, startTime, "success");
-      return res.status(200).json({ success: true, count: 0, posts: [] });
-    }
-
-    const searchTerm = searchQuery.toLowerCase().trim();
-    const [postsSnapshot, commentsSnapshot, repostersSnapshot] =
-      await Promise.all([
-        Posts.orderBy("createdAt", "desc").limit(100).get(),
-        Comments.get(),
-        PostReposters.get(),
-      ]);
-
-    const allComments = commentsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    const allReposters = repostersSnapshot.docs.map((doc) => doc.data());
-    const matchedPosts = [];
-
-    postsSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const postId = data.postId || doc.id;
-
-      const content = (data.content || "").toLowerCase();
-      const postComments = allComments.filter((c) => c.postId === postId);
-      const jobTitle = (data.jobMetadata?.title || "").toLowerCase();
-      const jobCompany = (data.jobMetadata?.company || "").toLowerCase();
-      const eventTitle = (data.eventMetadata?.title || "").toLowerCase();
-
-      const hasMatchingComment = postComments.some((c) =>
-        (c.comment || "").toLowerCase().includes(searchTerm),
-      );
-
-      if (
-        content.includes(searchTerm) ||
-        hasMatchingComment ||
-        jobTitle.includes(searchTerm) ||
-        jobCompany.includes(searchTerm) ||
-        eventTitle.includes(searchTerm)
-      ) {
-        const repostersDetails = allReposters.filter(
-          (r) => r.postId === postId,
-        );
-        matchedPosts.push({
-          id: doc.id,
-          ...data,
-          comments: postComments,
-          repostersDetails,
-        });
-      }
-    });
-
-    const limitedPosts = matchedPosts.slice(0, 40);
-    const uniqueCommentUserIds = [
-      ...new Set(
-        limitedPosts
-          .flatMap((p) => p.comments || [])
-          .map((c) => c.userId)
-          .filter(Boolean),
-      ),
-    ];
-    const userMap = {};
-    if (uniqueCommentUserIds.length > 0) {
-      const userQueries = await Promise.all(
-        uniqueCommentUserIds.map((uid) =>
-          User.where("uid", "==", uid)
-            .limit(1)
-            .get()
-            .catch(() => null),
-        ),
-      );
-
-      userQueries.forEach((userQuery) => {
-        if (userQuery && !userQuery.empty) {
-          const cuData = userQuery.docs[0].data();
-          userMap[cuData.uid] = {
-            uid: cuData.uid,
-            firstname: cuData.firstname,
-            lastname: cuData.lastname,
-            username: cuData.username,
-            profilePic: cuData.profilePic,
-          };
-        }
-      });
-    }
-    const formattedPosts = await Promise.all(
-      limitedPosts.map(async (post) => {
-        const postComments = post.comments || [];
-
-        const commentsWithUsers = postComments.map((commentData) => ({
-          ...commentData,
-          userId: userMap[commentData.userId] || commentData.userId,
-        }));
-
-        const featuredReposter =
-          typeof getPriorityReposter === "function"
-            ? await getPriorityReposter(post.repostersDetails || [], userId)
-            : null;
-
-        return {
-          ...post,
-          comments: commentsWithUsers,
-          commentsCount: commentsWithUsers.length,
-          repostsCount:
-            post.repostsCount !== undefined
-              ? post.repostsCount
-              : (post.repostersDetails || []).length,
-          featuredReposter,
-        };
-      }),
-    );
-    res.status(200).json({
-      success: true,
-      count: formattedPosts.length,
-      posts: formattedPosts,
-    });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    console.error("Database match compilation exception:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    return res.status(500).json({
-      success: false,
-      message: "Failed to retrieve posts matching search parameter.",
-    });
-  }
-};
 export const createQuickMeeting = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "createQuickMeetingController";
@@ -4327,5 +4177,157 @@ export const registerDropOffStation = async (req, res) => {
       );
     });
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+//Tested and trusted using jest
+export const searchPosts = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "searchPostsController";
+  const action = "searchPosts";
+
+  try {
+    const searchQuery = req.query.q;
+    const userId = req.user?.id || req.user?.uid;
+
+    if (
+      !searchQuery ||
+      typeof searchQuery !== "string" ||
+      searchQuery.trim().length < 2
+    ) {
+      logControllerPerformance(controllerName, action, startTime, "success");
+      return res.status(200).json({ success: true, count: 0, posts: [] });
+    }
+
+    const searchTerm = searchQuery.toLowerCase().trim();
+    const [postsSnapshot, commentsSnapshot, repostersSnapshot] =
+      await Promise.all([
+        Posts.orderBy("createdAt", "desc").limit(100).get(),
+        Comments.get(),
+        PostReposters.get(),
+      ]);
+
+    const allComments = commentsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+    const allReposters = repostersSnapshot.docs.map((doc) => doc.data());
+    const matchedPosts = [];
+
+    postsSnapshot.forEach((doc) => {
+      const data = doc.data();
+      const postId = data.postId || doc.id;
+
+      const content = (data.content || "").toLowerCase();
+      const postComments = allComments.filter((c) => c.postId === postId);
+      const jobTitle = (data.jobMetadata?.title || "").toLowerCase();
+      const jobCompany = (data.jobMetadata?.company || "").toLowerCase();
+      const eventTitle = (data.eventMetadata?.title || "").toLowerCase();
+
+      const hasMatchingComment = postComments.some((c) =>
+        (c.comment || "").toLowerCase().includes(searchTerm),
+      );
+
+      if (
+        content.includes(searchTerm) ||
+        hasMatchingComment ||
+        jobTitle.includes(searchTerm) ||
+        jobCompany.includes(searchTerm) ||
+        eventTitle.includes(searchTerm)
+      ) {
+        const repostersDetails = allReposters.filter(
+          (r) => r.postId === postId,
+        );
+        matchedPosts.push({
+          id: doc.id,
+          ...data,
+          comments: postComments,
+          repostersDetails,
+        });
+      }
+    });
+
+    const limitedPosts = matchedPosts.slice(0, 40);
+    const uniqueCommentUserIds = [
+      ...new Set(
+        limitedPosts
+          .flatMap((p) => p.comments || [])
+          .map((c) => c.userId)
+          .filter(Boolean),
+      ),
+    ];
+    const userMap = {};
+    if (uniqueCommentUserIds.length > 0) {
+      const userQueries = await Promise.all(
+        uniqueCommentUserIds.map((uid) =>
+          User.where("uid", "==", uid)
+            .limit(1)
+            .get()
+            .catch(() => null),
+        ),
+      );
+
+      userQueries.forEach((userQuery) => {
+        if (userQuery && !userQuery.empty) {
+          const cuData = userQuery.docs[0].data();
+          userMap[cuData.uid] = {
+            uid: cuData.uid,
+            firstname: cuData.firstname,
+            lastname: cuData.lastname,
+            username: cuData.username,
+            profilePic: cuData.profilePic,
+          };
+        }
+      });
+    }
+    const formattedPosts = await Promise.all(
+      limitedPosts.map(async (post) => {
+        const postComments = post.comments || [];
+
+        const commentsWithUsers = postComments.map((commentData) => ({
+          ...commentData,
+          userId: userMap[commentData.userId] || commentData.userId,
+        }));
+
+        const featuredReposter =
+          typeof getPriorityReposter === "function"
+            ? await getPriorityReposter(post.repostersDetails || [], userId)
+            : null;
+
+        return {
+          ...post,
+          comments: commentsWithUsers,
+          commentsCount: commentsWithUsers.length,
+          repostsCount:
+            post.repostsCount !== undefined
+              ? post.repostsCount
+              : (post.repostersDetails || []).length,
+          featuredReposter,
+        };
+      }),
+    );
+    res.status(200).json({
+      success: true,
+      count: formattedPosts.length,
+      posts: formattedPosts,
+    });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (error) {
+    console.error("Database match compilation exception:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    return res.status(500).json({
+      success: false,
+      message: "Failed to retrieve posts matching search parameter.",
+    });
   }
 };
