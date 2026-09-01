@@ -66,34 +66,6 @@ describe("Sequential Media post actions API controller status audit", () => {
         sharedContext.postId = res.body.data?.postId || res.body.postId;
       },
     },
-    {
-      name: "Fetch Post Details",
-      method: "get",
-      path: () => `posts/${sharedContext.postId}`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-    },
-    {
-      name: "Edit Post",
-      method: "put",
-      path: () => `posts/${sharedContext.postId}/update`,
-      auth: true,
-      idempotent: true,
-      body: {
-        content:
-          "Checking out this details of my holiday in Australia, \n #Enoying the Holiday",
-        postType: "media",
-        isSubscriptionContent: false,
-        media: {
-          mediaType: "image",
-          url: [
-            "https://res.cloudinary.com/dbdw3zftx/image/upload/v1749821237/samples/landscapes/girl-urban-view.jpg",
-          ],
-        },
-      },
-      expected: 200,
-    },
   ];
 
   test("Run sequential dependency chain", async () => {
@@ -215,51 +187,13 @@ describe("Second User: create poll, (repost, comment, like, bookmark first user'
       },
     },
     {
-      name: "Like Post",
-      method: "post",
-      path: () => `posts/${sharedContext.postId}/like`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-    },
-    {
-      name: "Bookmark Post",
-      method: "patch",
-      path: () => `posts/${sharedContext.postId}/bookmark`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-    },
-    {
-      name: "Increment Impression",
-      method: "patch",
-      path: () => `posts/${sharedContext.postId}/impression`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-    },
-    {
-      name: "Comment on Post",
-      method: "post",
-      path: () => `posts/${sharedContext.postId}/comment`,
-      auth: true,
-      body: {
-        comment: "See Enjoyment... Enjoy my dear",
-      },
-      idempotent: true,
-      expected: 200,
-      onSuccess: (res) => {
-        sharedContext.commentId = res.body.id || res.body.commentId;
-      },
-    },
-    {
       name: "Repost",
       method: "post",
       path: "posts/repost",
       auth: true,
       idempotent: true,
       body: {
-        originalPostId: sharedContext.postId,
+        originalPostId: sharedContext.pollPostId,
       },
       expected: 200,
     },

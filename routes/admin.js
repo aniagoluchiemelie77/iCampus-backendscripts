@@ -38,6 +38,40 @@ import {
 
 const router = express.Router();
 
+router.post(
+  "/support/send-notification",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  adminSendTicketNotification,
+);
+router.get("/get-notifications", protect, verifyAdmin, getNotifications);
+router.get("/get-overview", protect, verifyAdmin, getAdminMetrics);
+router.get("/get-institutions", protect, verifyAdmin, getInstitutions);
+router.get("/get-drop-off-stations", protect, verifyAdmin, getDropOffStations);
+router.post(
+  "/stations/create",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  createStation,
+);
+router.post(
+  "/institutions/create",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  createInstitution,
+);
+router.get("/tax-entries/fetch", protect, verifyAdmin, getTaxEntries);
+router.get("/tax-entries/download", protect, verifyAdmin, downloadTaxReport);
+router.post(
+  "/ads/create",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  createAd,
+);
 router.get("/fetch-all", protect, verifyAdmin, fetchAllAdmins);
 router.post(
   "/create",
@@ -60,20 +94,12 @@ router.delete(
   idempotencyMiddleware,
   deleteAdmin,
 );
-router.get("/get-notifications", protect, verifyAdmin, getNotifications);
 router.get("/fetch-user/:userId", protect, verifyAdmin, adminFetchUserDetails);
 router.get(
   "/fetch-notifications/:userId",
   protect,
   verifyAdmin,
   adminFetchUserNotifications,
-);
-router.post(
-  "/support/send-notification",
-  protect,
-  verifyAdmin,
-  idempotencyMiddleware,
-  adminSendTicketNotification,
 );
 router.patch(
   "/edit-users/:uid",
@@ -82,9 +108,6 @@ router.patch(
   idempotencyMiddleware,
   updateUserController,
 );
-router.get("/get-overview", protect, verifyAdmin, getAdminMetrics);
-router.get("/get-institutions", protect, verifyAdmin, getInstitutions);
-router.get("/get-drop-off-stations", protect, verifyAdmin, getDropOffStations);
 router.delete(
   "/institutions/:id/delete",
   protect,
@@ -99,26 +122,12 @@ router.delete(
   idempotencyMiddleware,
   deleteDropOffStation,
 );
-router.post(
-  "/institutions/create",
-  protect,
-  verifyAdmin,
-  idempotencyMiddleware,
-  createInstitution,
-);
 router.patch(
   "/institutions/:id/update",
   protect,
   verifyAdmin,
   idempotencyMiddleware,
   updateInstitution,
-);
-router.post(
-  "/stations/create",
-  protect,
-  verifyAdmin,
-  idempotencyMiddleware,
-  createStation,
 );
 router.patch(
   "/stations/:stationId/update",
@@ -139,21 +148,12 @@ router.get(
   verifyAdmin,
   getStationDetails,
 );
-router.get("/tax-entries/fetch", protect, verifyAdmin, getTaxEntries);
-router.get("/tax-entries/download", protect, verifyAdmin, downloadTaxReport);
 router.delete(
   "/ads/:id/delete",
   protect,
   verifyAdmin,
   idempotencyMiddleware,
   deleteAd,
-);
-router.post(
-  "/ads/create",
-  protect,
-  verifyAdmin,
-  idempotencyMiddleware,
-  createAd,
 );
 router.patch(
   "/ads/:id/update",

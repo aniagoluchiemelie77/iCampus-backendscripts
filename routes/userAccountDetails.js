@@ -23,23 +23,6 @@ import {
 } from "../controllers/userActionsController.js";
 
 const router = express.Router();
-
-router.get("/my-transactions", protect, fetchUserTransactionHistory);
-router.post(
-  "/verify-icash-pin",
-  protect,
-  idempotencyMiddleware,
-  verifyIcashPin,
-);
-router.post("/setup-icash-pin", protect, idempotencyMiddleware, icashPinSetup);
-router.post(
-  "/request-pin-reset",
-  protect,
-  idempotencyMiddleware,
-  requestIcashPinReset,
-);
-router.post("/reset-icash-pin", protect, idempotencyMiddleware, resetIcashPin);
-router.get("/payment-methods/:userId", protect, getSavedMethods);
 router.post(
   "/transactions/initialize-buy",
   protect,
@@ -52,7 +35,6 @@ router.post(
   idempotencyMiddleware,
   initializeWithdraw,
 );
-router.get("/iTag/search/:username", protect, fetchItagByUsername);
 router.post(
   "/transactions/p2p-transfer",
   protect,
@@ -78,6 +60,23 @@ router.post(
   idempotencyMiddleware,
   verifySubscriptionFlwPayment,
 );
+router.get("/my-transactions", protect, fetchUserTransactionHistory);
+router.post(
+  "/verify-icash-pin",
+  protect,
+  idempotencyMiddleware,
+  verifyIcashPin,
+);
+router.post("/setup-icash-pin", protect, idempotencyMiddleware, icashPinSetup);
+router.post(
+  "/request-pin-reset",
+  protect,
+  idempotencyMiddleware,
+  requestIcashPinReset,
+);
+router.post("/reset-icash-pin", protect, idempotencyMiddleware, resetIcashPin);
+router.get("/payment-methods/:userId", protect, getSavedMethods);
+router.get("/iTag/search/:username", protect, fetchItagByUsername);
 router.get(
   "/transactions/fetch-transaction/:transactionId",
   protect,

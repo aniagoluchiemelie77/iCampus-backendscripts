@@ -229,354 +229,6 @@ export const deletePost = async (req, res) => {
     });
   }
 };
-export const toggleBookmark = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "toggleBookmarkController";
-  const action = "toggleBookmark";
-  const { postId } = req.params;
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user identifier",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user identifier" });
-  }
-
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const postQuery = await Posts.where("postId", "==", postId)
-        .limit(1)
-        .get();
-      if (postQuery.empty) {
-        throw new Error("Post not found");
-      }
-
-      const postDoc = postQuery.docs[0];
-      const post = postDoc.data();
-      const bookmarks = post.bookmarks || [];
-
-      const isBookmarked = bookmarks.includes(userId);
-      const updatedBookmarks = isBookmarked
-        ? bookmarks.filter((id) => id !== userId)
-        : [...bookmarks, userId];
-
-      const bookmarksCount = updatedBookmarks.length;
-      const likesCount = (post.likes || []).length;
-
-      const impressionsScore = (post.impressions || 0) * 0.1;
-      const engagementScore = likesCount * 2 + bookmarksCount * 3;
-
-      const createdAtTime = post.createdAt?.toMillis
-        ? post.createdAt.toMillis()
-        : new Date(post.createdAt || Date.now()).getTime();
-      const timeScore = createdAtTime / 1000000000;
-
-      const newRankingScore = impressionsScore + engagementScore + timeScore;
-      transaction.update(postDoc.ref, {
-        bookmarks: updatedBookmarks,
-        rankingScore: newRankingScore,
-        updatedAt: new Date(),
-      });
-
-      const userQuery = await User.where("uid", "==", userId).limit(1).get();
-      if (!userQuery.empty) {
-        const userDoc = userQuery.docs[0];
-        const userData = userDoc.data();
-        const userBookmarks = userData.bookmarks || [];
-
-        const updatedUserBookmarks = isBookmarked
-          ? userBookmarks.filter((id) => id !== postId)
-          : [...userBookmarks, postId];
-
-        transaction.update(userDoc.ref, {
-          bookmarks: updatedUserBookmarks,
-          updatedAt: new Date(),
-        });
-      }
-
-      const repostersSnapshot = await PostReposters.where(
-        "postId",
-        "==",
-        postId,
-      ).get();
-      const repostersCount = repostersSnapshot.size;
-
-      const commentsSnapshot = await Comments.where(
-        "postId",
-        "==",
-        postId,
-      ).get();
-      const commentsCount = commentsSnapshot.size;
-
-      return {
-        post: {
-          id: postDoc.id,
-          ...post,
-          bookmarks: updatedBookmarks,
-          rankingScore: newRankingScore,
-          commentsCount,
-        },
-        isBookmarked,
-        repostersCount,
-        commentsCount,
-      };
-    });
-
-    const updatedPost = result.post;
-    const isBookmarked = result.isBookmarked;
-    const repostersCount = result.repostersCount;
-    const commentsCount = result.commentsCount;
-
-    res.status(200).json({
-      isBookmarked: !isBookmarked,
-      count: updatedPost.bookmarks.length,
-      message: isBookmarked
-        ? "You removed a post from your bookmarks"
-        : "You bookmarked a post",
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-
-    setImmediate(() => {
-      try {
-        const io = req.app.get("socketio");
-        if (io && updatedPost) {
-          io.emit("post_stats_updated", {
-            postId: updatedPost.postId,
-            stats:
-              typeof getPostStats === "function"
-                ? getPostStats(updatedPost, repostersCount, commentsCount)
-                : updatedPost,
-          });
-        }
-      } catch (err) {
-        console.error(
-          "Background socket emission error in toggleBookmark:",
-          err,
-        );
-      }
-    });
-  } catch (err) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      );
-    });
-    const statusCode = err.message === "Post not found" ? 404 : 500;
-    return res.status(statusCode).json({ message: err.message });
-  }
-};
-export const addComment = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "addCommentController";
-  const action = "addComment";
-  const { postId } = req.params;
-  const { comment, text, parentId } = req.body;
-  const commentText = comment || text;
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user identifier",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user identifier" });
-  }
-
-  if (!commentText) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing comment text",
-      );
-    });
-    return res.status(400).json({ error: "Comment text is required." });
-  }
-
-  try {
-    const commentId = Math.random().toString(36).slice(2, 11);
-    const createdAt = new Date();
-
-    const result = await db.runTransaction(async (transaction) => {
-      const [postQuery, commentsCountSnapshot] = await Promise.all([
-        Posts.where("postId", "==", postId).limit(1).get(),
-        Comments.where("postId", "==", postId)
-          .where("parentId", "==", null)
-          .get(),
-      ]);
-
-      if (postQuery.empty) {
-        throw new Error("Post not found");
-      }
-
-      const postDoc = postQuery.docs[0];
-      const postData = postDoc.data();
-
-      const currentCommentsCount = commentsCountSnapshot.size;
-      const newCommentsCount = currentCommentsCount + 1;
-
-      const likesCount = (postData.likes || []).length;
-      const bookmarksCount = (postData.bookmarks || []).length;
-
-      const impressionsScore = (postData.impressions || 0) * 0.1;
-      const engagementScore =
-        likesCount * 2 + bookmarksCount * 3 + newCommentsCount * 4;
-
-      const createdAtTime = postData.createdAt?.toMillis
-        ? postData.createdAt.toMillis()
-        : new Date(postData.createdAt || Date.now()).getTime();
-      const timeScore = createdAtTime / 1000000000;
-
-      const newRankingScore = impressionsScore + engagementScore + timeScore;
-      const userQuery = await User.where("uid", "==", userId).limit(1).get();
-      const commenter = !userQuery.empty ? userQuery.docs[0].data() : null;
-
-      const newCommentData = {
-        id: commentId,
-        postId,
-        userId,
-        username: commenter?.username || commenter?.firstname || "Anonymous",
-        profilePic: commenter?.profilePic || "",
-        text: commentText,
-        parentId: parentId || null,
-        timestamp: createdAt,
-        likes: 0,
-      };
-
-      const commentDocRef = Comments.doc(commentId);
-      transaction.set(commentDocRef, newCommentData);
-
-      transaction.update(postDoc.ref, {
-        commentsCount: newCommentsCount,
-        rankingScore: newRankingScore,
-        updatedAt: createdAt,
-      });
-
-      const repostersSnapshot = await PostReposters.where(
-        "postId",
-        "==",
-        postId,
-      ).get();
-      const repostersCount = repostersSnapshot.size;
-
-      return {
-        postData: {
-          ...postData,
-          commentsCount: newCommentsCount,
-          rankingScore: newRankingScore,
-        },
-        newCommentData,
-        commenter,
-        repostersCount,
-      };
-    });
-
-    const { postData, newCommentData, commenter, repostersCount } = result;
-
-    const populatedComment = {
-      ...newCommentData,
-      userId: commenter
-        ? {
-            uid: commenter.uid || userId,
-            firstname: commenter.firstname,
-            lastname: commenter.lastname,
-            profilePic: commenter.profilePic,
-            username: commenter.username,
-          }
-        : { uid: userId },
-    };
-
-    res.status(200).json(populatedComment);
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-
-    setImmediate(async () => {
-      try {
-        const io = req.app.get("socketio");
-        if (io) {
-          io.emit("new_comment", {
-            postId,
-            comment: populatedComment,
-          });
-          io.emit("post_stats_updated", {
-            postId: postData.postId,
-            stats:
-              typeof getPostStats === "function"
-                ? getPostStats(postData, repostersCount, postData.commentsCount)
-                : postData,
-          });
-        }
-
-        const postAuthorId = postData.originalAuthor || postData.userId;
-        if (postAuthorId && postAuthorId !== userId) {
-          const ownerQuery = await db
-            .collection("users")
-            .where("uid", "==", postAuthorId)
-            .limit(1)
-            .get();
-          const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
-
-          await createNotification({
-            notificationId: generateNotificationId("social"),
-            recipientId: postAuthorId,
-            recipientEmail: owner?.email,
-            category: "social",
-            actionType: "POST_COMMENTED",
-            title: "New Comment",
-            message: `${commenter?.firstname || "Someone"} commented on your post: "${commentText.substring(0, 30)}..."`,
-            payload: { postId, commentId },
-            sendPush: true,
-            saveToDb: true,
-          });
-        }
-      } catch (err) {
-        console.error(
-          "Background notification/socket pipeline error in addComment:",
-          err,
-        );
-      }
-    });
-  } catch (err) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      );
-    });
-    const statusCode = err.message === "Post not found" ? 404 : 500;
-    return res.status(statusCode).json({ error: err.message });
-  }
-};
 export const pollVote = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "pollVoteController";
@@ -774,147 +426,6 @@ export const pollVote = async (req, res) => {
         : 400
       : 500;
     return res.status(statusCode).json({ error: error.message });
-  }
-};
-export const incrementImpressions = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "incrementImpressionsController";
-  const action = "incrementImpressions";
-  try {
-    const { postId } = req.params;
-
-    if (!postId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing postId parameter",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "Missing postId parameter" });
-    }
-
-    const result = await db.runTransaction(async (transaction) => {
-      const postQuery = await Posts.where("postId", "==", postId)
-        .limit(1)
-        .get();
-      if (postQuery.empty) {
-        throw new Error("Post not found");
-      }
-
-      const postDoc = postQuery.docs[0];
-      const postData = postDoc.data();
-      const newImpressions = (postData.impressions || 0) + 1;
-      const likesCount = (postData.likes || []).length;
-      const bookmarksCount = (postData.bookmarks || []).length;
-      const commentsCountSnapshot = await Comments.where(
-        "postId",
-        "==",
-        postId,
-      ).get();
-      const commentsCount = commentsCountSnapshot.size;
-
-      const impressionsScore = newImpressions * 0.1;
-      const engagementScore =
-        likesCount * 2 + bookmarksCount * 3 + commentsCount * 4;
-
-      const createdAtTime = postData.createdAt?.toMillis
-        ? postData.createdAt.toMillis()
-        : new Date(postData.createdAt || Date.now()).getTime();
-      const timeScore = createdAtTime / 1000000000;
-
-      const newRankingScore = impressionsScore + engagementScore + timeScore;
-      transaction.update(postDoc.ref, {
-        impressions: newImpressions,
-        rankingScore: newRankingScore,
-        updatedAt: new Date(),
-      });
-
-      const [repostersSnapshot] = await Promise.all([
-        PostReposters.where("postId", "==", postId).get(),
-      ]);
-
-      return {
-        post: {
-          id: postDoc.id,
-          ...postData,
-          impressions: newImpressions,
-          rankingScore: newRankingScore,
-        },
-        repostersCount: repostersSnapshot.size,
-        commentsCount,
-      };
-    });
-
-    const updatedPost = result.post;
-    const repostersCount = result.repostersCount;
-    const commentsCount = result.commentsCount;
-
-    res.status(200).json({
-      success: true,
-      impressions: updatedPost.impressions,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-
-    setImmediate(async () => {
-      try {
-        const authorId = updatedPost.originalAuthor || updatedPost.userId;
-        if (authorId) {
-          const authorQuery = await User.where("uid", "==", authorId)
-            .limit(1)
-            .get();
-          if (!authorQuery.empty) {
-            const authorDoc = authorQuery.docs[0];
-            const author = authorDoc.data();
-            if (author && author.usertype !== "enterprise") {
-              const currentMinutes = author.monthlyStats?.minutesActive || 0;
-              await authorDoc.ref.update({
-                "monthlyStats.minutesActive": currentMinutes + 0.5,
-                updatedAt: new Date(),
-              });
-            }
-          }
-        }
-
-        const io = req.app.get("socketio");
-        if (io) {
-          io.emit("post_stats_updated", {
-            postId: updatedPost.postId,
-            stats:
-              typeof getPostStats === "function"
-                ? getPostStats(updatedPost, repostersCount, commentsCount)
-                : updatedPost,
-          });
-        }
-      } catch (err) {
-        console.error(
-          "Background execution error in incrementImpressions:",
-          err,
-        );
-      }
-    });
-  } catch (err) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      );
-    });
-    const statusCode = err.message === "Post not found" ? 404 : 500;
-    if (statusCode === 404) {
-      return res.status(404).send("Post not found");
-    }
-    return res.status(500).send(err.message);
   }
 };
 export const repost = async (req, res) => {
@@ -2188,5 +1699,494 @@ export const toggleLike = async (req, res) => {
       return res.status(404).send("Post not found");
     }
     return res.status(500).json({ message: err.message });
+  }
+};
+export const toggleBookmark = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleBookmarkController";
+  const action = "toggleBookmark";
+  const { postId } = req.params;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user identifier" });
+  }
+
+  try {
+    const result = await db.runTransaction(async (transaction) => {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .limit(1)
+        .get();
+      if (postQuery.empty) {
+        throw new Error("Post not found");
+      }
+
+      const postDoc = postQuery.docs[0];
+      const post = postDoc.data();
+      const bookmarks = post.bookmarks || [];
+
+      const isBookmarked = bookmarks.includes(userId);
+      const updatedBookmarks = isBookmarked
+        ? bookmarks.filter((id) => id !== userId)
+        : [...bookmarks, userId];
+
+      const bookmarksCount = updatedBookmarks.length;
+      const likesCount = (post.likes || []).length;
+
+      const impressionsScore = (post.impressions || 0) * 0.1;
+      const engagementScore = likesCount * 2 + bookmarksCount * 3;
+
+      const createdAtTime = post.createdAt?.toMillis
+        ? post.createdAt.toMillis()
+        : new Date(post.createdAt || Date.now()).getTime();
+      const timeScore = createdAtTime / 1000000000;
+
+      const newRankingScore = impressionsScore + engagementScore + timeScore;
+      transaction.update(postDoc.ref, {
+        bookmarks: updatedBookmarks,
+        rankingScore: newRankingScore,
+        updatedAt: new Date(),
+      });
+
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      if (!userQuery.empty) {
+        const userDoc = userQuery.docs[0];
+        const userData = userDoc.data();
+        const userBookmarks = userData.bookmarks || [];
+
+        const updatedUserBookmarks = isBookmarked
+          ? userBookmarks.filter((id) => id !== postId)
+          : [...userBookmarks, postId];
+
+        transaction.update(userDoc.ref, {
+          bookmarks: updatedUserBookmarks,
+          updatedAt: new Date(),
+        });
+      }
+
+      const repostersSnapshot = await PostReposters.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const repostersCount = repostersSnapshot.size;
+
+      const commentsSnapshot = await Comments.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const commentsCount = commentsSnapshot.size;
+
+      return {
+        post: {
+          id: postDoc.id,
+          ...post,
+          bookmarks: updatedBookmarks,
+          rankingScore: newRankingScore,
+          commentsCount,
+        },
+        isBookmarked,
+        repostersCount,
+        commentsCount,
+      };
+    });
+
+    const updatedPost = result.post;
+    const isBookmarked = result.isBookmarked;
+    const repostersCount = result.repostersCount;
+    const commentsCount = result.commentsCount;
+
+    res.status(200).json({
+      isBookmarked: !isBookmarked,
+      count: updatedPost.bookmarks.length,
+      message: isBookmarked
+        ? "You removed a post from your bookmarks"
+        : "You bookmarked a post",
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
+    setImmediate(() => {
+      try {
+        const io = req.app.get("socketio");
+        if (io && updatedPost) {
+          io.emit("post_stats_updated", {
+            postId: updatedPost.postId,
+            stats:
+              typeof getPostStats === "function"
+                ? getPostStats(updatedPost, repostersCount, commentsCount)
+                : updatedPost,
+          });
+        }
+      } catch (err) {
+        console.error(
+          "Background socket emission error in toggleBookmark:",
+          err,
+        );
+      }
+    });
+  } catch (err) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      );
+    });
+    const statusCode = err.message === "Post not found" ? 404 : 500;
+    return res.status(statusCode).json({ message: err.message });
+  }
+};
+export const addComment = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "addCommentController";
+  const action = "addComment";
+  const { postId } = req.params;
+  const { comment, text, parentId } = req.body;
+  const commentText = comment || text;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user identifier" });
+  }
+
+  if (!commentText) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing comment text",
+      );
+    });
+    return res.status(400).json({ error: "Comment text is required." });
+  }
+
+  try {
+    const commentId = Math.random().toString(36).slice(2, 11);
+    const createdAt = new Date();
+
+    const result = await db.runTransaction(async (transaction) => {
+      const [postQuery, commentsCountSnapshot] = await Promise.all([
+        Posts.where("postId", "==", postId).limit(1).get(),
+        Comments.where("postId", "==", postId)
+          .where("parentId", "==", null)
+          .get(),
+      ]);
+
+      if (postQuery.empty) {
+        throw new Error("Post not found");
+      }
+
+      const postDoc = postQuery.docs[0];
+      const postData = postDoc.data();
+
+      const currentCommentsCount = commentsCountSnapshot.size;
+      const newCommentsCount = currentCommentsCount + 1;
+
+      const likesCount = (postData.likes || []).length;
+      const bookmarksCount = (postData.bookmarks || []).length;
+
+      const impressionsScore = (postData.impressions || 0) * 0.1;
+      const engagementScore =
+        likesCount * 2 + bookmarksCount * 3 + newCommentsCount * 4;
+
+      const createdAtTime = postData.createdAt?.toMillis
+        ? postData.createdAt.toMillis()
+        : new Date(postData.createdAt || Date.now()).getTime();
+      const timeScore = createdAtTime / 1000000000;
+
+      const newRankingScore = impressionsScore + engagementScore + timeScore;
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      const commenter = !userQuery.empty ? userQuery.docs[0].data() : null;
+
+      const newCommentData = {
+        id: commentId,
+        postId,
+        userId,
+        username: commenter?.username || commenter?.firstname || "Anonymous",
+        profilePic: commenter?.profilePic || "",
+        text: commentText,
+        parentId: parentId || null,
+        timestamp: createdAt,
+        likes: 0,
+      };
+
+      const commentDocRef = Comments.doc(commentId);
+      transaction.set(commentDocRef, newCommentData);
+
+      transaction.update(postDoc.ref, {
+        commentsCount: newCommentsCount,
+        rankingScore: newRankingScore,
+        updatedAt: createdAt,
+      });
+
+      const repostersSnapshot = await PostReposters.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const repostersCount = repostersSnapshot.size;
+
+      return {
+        postData: {
+          ...postData,
+          commentsCount: newCommentsCount,
+          rankingScore: newRankingScore,
+        },
+        newCommentData,
+        commenter,
+        repostersCount,
+      };
+    });
+
+    const { postData, newCommentData, commenter, repostersCount } = result;
+
+    const populatedComment = {
+      ...newCommentData,
+      userId: commenter
+        ? {
+            uid: commenter.uid || userId,
+            firstname: commenter.firstname,
+            lastname: commenter.lastname,
+            profilePic: commenter.profilePic,
+            username: commenter.username,
+          }
+        : { uid: userId },
+    };
+
+    res.status(200).json(populatedComment);
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
+    setImmediate(async () => {
+      try {
+        const io = req.app.get("socketio");
+        if (io) {
+          io.emit("new_comment", {
+            postId,
+            comment: populatedComment,
+          });
+          io.emit("post_stats_updated", {
+            postId: postData.postId,
+            stats:
+              typeof getPostStats === "function"
+                ? getPostStats(postData, repostersCount, postData.commentsCount)
+                : postData,
+          });
+        }
+
+        const postAuthorId = postData.originalAuthor || postData.userId;
+        if (postAuthorId && postAuthorId !== userId) {
+          const ownerQuery = await db
+            .collection("users")
+            .where("uid", "==", postAuthorId)
+            .limit(1)
+            .get();
+          const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
+
+          await createNotification({
+            notificationId: generateNotificationId("social"),
+            recipientId: postAuthorId,
+            recipientEmail: owner?.email,
+            category: "social",
+            actionType: "POST_COMMENTED",
+            title: "New Comment",
+            message: `${commenter?.firstname || "Someone"} commented on your post: "${commentText.substring(0, 30)}..."`,
+            payload: { postId, commentId },
+            sendPush: true,
+            saveToDb: true,
+          });
+        }
+      } catch (err) {
+        console.error(
+          "Background notification/socket pipeline error in addComment:",
+          err,
+        );
+      }
+    });
+  } catch (err) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      );
+    });
+    const statusCode = err.message === "Post not found" ? 404 : 500;
+    return res.status(statusCode).json({ error: err.message });
+  }
+};
+export const incrementImpressions = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "incrementImpressionsController";
+  const action = "incrementImpressions";
+  try {
+    const { postId } = req.params;
+
+    if (!postId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing postId parameter",
+        );
+      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing postId parameter" });
+    }
+
+    const result = await db.runTransaction(async (transaction) => {
+      const postQuery = await Posts.where("postId", "==", postId)
+        .limit(1)
+        .get();
+      if (postQuery.empty) {
+        throw new Error("Post not found");
+      }
+
+      const postDoc = postQuery.docs[0];
+      const postData = postDoc.data();
+      const newImpressions = (postData.impressions || 0) + 1;
+      const likesCount = (postData.likes || []).length;
+      const bookmarksCount = (postData.bookmarks || []).length;
+      const commentsCountSnapshot = await Comments.where(
+        "postId",
+        "==",
+        postId,
+      ).get();
+      const commentsCount = commentsCountSnapshot.size;
+
+      const impressionsScore = newImpressions * 0.1;
+      const engagementScore =
+        likesCount * 2 + bookmarksCount * 3 + commentsCount * 4;
+
+      const createdAtTime = postData.createdAt?.toMillis
+        ? postData.createdAt.toMillis()
+        : new Date(postData.createdAt || Date.now()).getTime();
+      const timeScore = createdAtTime / 1000000000;
+
+      const newRankingScore = impressionsScore + engagementScore + timeScore;
+      transaction.update(postDoc.ref, {
+        impressions: newImpressions,
+        rankingScore: newRankingScore,
+        updatedAt: new Date(),
+      });
+
+      const [repostersSnapshot] = await Promise.all([
+        PostReposters.where("postId", "==", postId).get(),
+      ]);
+
+      return {
+        post: {
+          id: postDoc.id,
+          ...postData,
+          impressions: newImpressions,
+          rankingScore: newRankingScore,
+        },
+        repostersCount: repostersSnapshot.size,
+        commentsCount,
+      };
+    });
+
+    const updatedPost = result.post;
+    const repostersCount = result.repostersCount;
+    const commentsCount = result.commentsCount;
+
+    res.status(200).json({
+      success: true,
+      impressions: updatedPost.impressions,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
+    setImmediate(async () => {
+      try {
+        const authorId = updatedPost.originalAuthor || updatedPost.userId;
+        if (authorId) {
+          const authorQuery = await User.where("uid", "==", authorId)
+            .limit(1)
+            .get();
+          if (!authorQuery.empty) {
+            const authorDoc = authorQuery.docs[0];
+            const author = authorDoc.data();
+            if (author && author.usertype !== "enterprise") {
+              const currentMinutes = author.monthlyStats?.minutesActive || 0;
+              await authorDoc.ref.update({
+                "monthlyStats.minutesActive": currentMinutes + 0.5,
+                updatedAt: new Date(),
+              });
+            }
+          }
+        }
+
+        const io = req.app.get("socketio");
+        if (io) {
+          io.emit("post_stats_updated", {
+            postId: updatedPost.postId,
+            stats:
+              typeof getPostStats === "function"
+                ? getPostStats(updatedPost, repostersCount, commentsCount)
+                : updatedPost,
+          });
+        }
+      } catch (err) {
+        console.error(
+          "Background execution error in incrementImpressions:",
+          err,
+        );
+      }
+    });
+  } catch (err) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      );
+    });
+    const statusCode = err.message === "Post not found" ? 404 : 500;
+    if (statusCode === 404) {
+      return res.status(404).send("Post not found");
+    }
+    return res.status(500).send(err.message);
   }
 };

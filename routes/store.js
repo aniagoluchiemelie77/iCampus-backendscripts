@@ -24,6 +24,18 @@ import {
 
 const router = express.Router();
 
+router.post(
+  "/products/create",
+  protect,
+  idempotencyMiddleware,
+  saveProductController,
+);
+router.patch(
+  "/orders/mark-as-dropped-off",
+  protect,
+  idempotencyMiddleware,
+  markOrderAsDroppedOff,
+);
 router.get("/get-store-products", idempotencyMiddleware, fetchStoreProducts);
 router.patch(
   "/cart/toggle",
@@ -91,23 +103,11 @@ router.delete(
   idempotencyMiddleware,
   deleteProductController,
 );
-router.post(
-  "/products/create",
-  protect,
-  idempotencyMiddleware,
-  saveProductController,
-);
 router.put(
   "/products/edit/:productId",
   protect,
   idempotencyMiddleware,
   saveProductController,
-);
-router.patch(
-  "/orders/mark-as-dropped-off",
-  protect,
-  idempotencyMiddleware,
-  markOrderAsDroppedOff,
 );
 
 export default router;

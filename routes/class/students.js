@@ -15,19 +15,6 @@ import {
 
 const router = express.Router();
 
-router.get("/courses/fetch-my-courses", protect, fetchStudentsEnrolledCourses);
-router.post(
-  "/exceptions/submit",
-  protect,
-  idempotencyMiddleware,
-  submitLectureException,
-);
-router.post("/test/submit", protect, idempotencyMiddleware, submitAssessment);
-router.get(
-  "/courses/:courseId/assessments/:assessmentId/check-status",
-  protect,
-  checkTestStatus,
-);
 router.get("/lectures/timeline", protect, fetchStudentsLecturesTimeline);
 router.post(
   "/submit-attendance",
@@ -40,6 +27,19 @@ router.post(
   protect,
   idempotencyMiddleware,
   compareStudentFacesWithGemini,
+);
+router.get("/courses/fetch-my-courses", protect, fetchStudentsEnrolledCourses);
+router.post(
+  "/exceptions/submit",
+  protect,
+  idempotencyMiddleware,
+  submitLectureException,
+);
+router.post("/test/submit", protect, idempotencyMiddleware, submitAssessment);
+router.get(
+  "/courses/:courseId/assessments/:assessmentId/check-status",
+  protect,
+  checkTestStatus,
 );
 
 export default router;
