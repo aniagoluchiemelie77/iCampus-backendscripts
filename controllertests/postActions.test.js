@@ -18,6 +18,12 @@ describe("Sequential Media post actions API controller status audit", () => {
 
     const loginResponse = await request(API_BASE_URL)
       .post("users/login")
+      .set(
+        "User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      )
+      .set("Accept", "application/json")
+      .set("X-Test-Bypass", process.env.TEST_SECRET || "")
       .send({
         identifier: process.env.TEST_USER_EMAIL,
         password: process.env.TEST_USER_PASSWORD,
@@ -27,6 +33,8 @@ describe("Sequential Media post actions API controller status audit", () => {
       .timeout(150000);
 
     if (loginResponse.statusCode !== 200 || !loginResponse.body.accessToken) {
+      console.error("Login Debug Status:", loginResponse.statusCode);
+      console.error("Login Debug Body:", loginResponse.text);
       throw new Error(
         `Authentication failed: ${JSON.stringify(loginResponse.body)}`,
       );
@@ -151,6 +159,12 @@ describe("Second User: create poll, (repost, comment, like, bookmark first user'
 
     const loginResponse = await request(API_BASE_URL)
       .post("users/login")
+      .set(
+        "User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      )
+      .set("Accept", "application/json")
+      .set("X-Test-Bypass", process.env.TEST_SECRET || "")
       .send({
         identifier: process.env.TEST_USER_EMAIL_SECOND,
         password: process.env.TEST_USER_PASSWORD_SECOND,
@@ -315,6 +329,12 @@ describe("Third User, vote in second user's poll, search for post using a line f
 
     const loginResponse = await request(API_BASE_URL)
       .post("users/login")
+      .set(
+        "User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      )
+      .set("Accept", "application/json")
+      .set("X-Test-Bypass", process.env.TEST_SECRET || "")
       .send({
         identifier: process.env.TEST_USER_EMAIL_THIRD,
         password: process.env.TEST_USER_PASSWORD_THIRD,
