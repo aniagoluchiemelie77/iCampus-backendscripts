@@ -428,324 +428,6 @@ export const pollVote = async (req, res) => {
     return res.status(statusCode).json({ error: error.message });
   }
 };
-export const repost = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "repostController";
-  const action = "repost";
-  const { originalPostId } = req.body;
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user identifier",
-      );
-    });
-    return res.status(401).json({ message: "Unauthorized user identifier" });
-  }
-
-  if (!originalPostId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing originalPostId.",
-      );
-    });
-    return res.status(400).json({ message: "Missing originalPostId." });
-  }
-
-  try {
-    const [postQuery, userQuery] = await Promise.all([
-      Posts.where("postId", "==", originalPostId).limit(1).get(),
-      User.where("uid", "==", userId).limit(1).get(),
-    ]);
-
-    if (postQuery.empty || userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Original post or user details not found.",
-        );
-      });
-      return res
-        .status(404)
-        .json({ message: "Original post details not found." });
-    }
-
-    const postDoc = postQuery.docs[0];
-    const originalPost = postDoc.data();
-    const repostAuthor = userQuery.docs[0].data();
-
-    const existingRepostQuery = await PostReposters.where("uid", "==", userId)
-      .where("postId", "==", originalPostId)
-      .limit(1)
-      .get();
-
-    const isExisting = !existingRepostQuery.empty;
-
-    if (isExisting) {
-      const repostDocRef = existingRepostQuery.docs[0].ref;
-
-      await db.runTransaction(async (transaction) => {
-        const latestPostSnap = await transaction.get(postDoc.ref);
-        const latestPostData = latestPostSnap.data();
-        const currentCount = latestPostData.repostsCount || 0;
-        const newRepostsCount = Math.max(0, currentCount - 1);
-        const likesCount = (latestPostData.likes || []).length;
-        const bookmarksCount = (latestPostData.bookmarks || []).length;
-        const commentsCountSnap = await Comments.where(
-          "postId",
-          "==",
-          originalPostId,
-        ).get();
-        const commentsCount = commentsCountSnap.size;
-
-        const impressionsScore = (latestPostData.impressions || 0) * 0.1;
-        const engagementScore =
-          likesCount * 2 +
-          bookmarksCount * 3 +
-          commentsCount * 4 +
-          newRepostsCount * 5;
-
-        const createdAtTime = latestPostData.createdAt?.toMillis
-          ? latestPostData.createdAt.toMillis()
-          : new Date(latestPostData.createdAt || Date.now()).getTime();
-        const timeScore = createdAtTime / 1000000000;
-
-        const newRankingScore = impressionsScore + engagementScore + timeScore;
-        transaction.delete(repostDocRef);
-        transaction.update(postDoc.ref, {
-          repostsCount: newRepostsCount,
-          rankingScore: newRankingScore,
-          updatedAt: new Date(),
-        });
-      });
-
-      const [updatedPostSnap, repostersSnapshot, commentsSnapshot] =
-        await Promise.all([
-          postDoc.ref.get(),
-          PostReposters.where("postId", "==", originalPostId).get(),
-          Comments.where("postId", "==", originalPostId).get(),
-        ]);
-
-      const updatedOriginal = updatedPostSnap.data();
-      const repostersCount = repostersSnapshot.size;
-      const commentsCount = commentsSnapshot.size;
-      res.status(200).json({
-        message: "You undid a repost action",
-        repostsCount: updatedOriginal.repostsCount || 0,
-      });
-
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-      setImmediate(() => {
-        try {
-          const io = req.app.get("socketio");
-          if (io && updatedOriginal) {
-            io.emit("post_stats_updated", {
-              postId: originalPostId,
-              stats:
-                typeof getPostStats === "function"
-                  ? getPostStats(updatedOriginal, repostersCount, commentsCount)
-                  : updatedOriginal,
-            });
-          }
-        } catch (err) {
-          console.error(
-            "Background socket emission error in undo repost:",
-            err,
-          );
-        }
-      });
-    } else {
-      const repostId = Math.random().toString(36).slice(2, 11);
-      const repostedAt = new Date();
-
-      const reposterData = {
-        repostId,
-        postId: originalPostId,
-        uid: repostAuthor.uid || userId,
-        firstname: repostAuthor.firstname || null,
-        lastname: repostAuthor.lastname || null,
-        username: repostAuthor.username || null,
-        tier: repostAuthor.tier || "",
-        organizationName: repostAuthor.organizationName || null,
-        profilePic: repostAuthor.profilePic || [],
-        repostedAt,
-      };
-
-      const repostDocRef = PostReposters.doc(repostId);
-
-      await db.runTransaction(async (transaction) => {
-        const latestPostSnap = await transaction.get(postDoc.ref);
-        const latestPostData = latestPostSnap.data();
-        const currentCount = latestPostData.repostsCount || 0;
-        const newRepostsCount = currentCount + 1;
-        const likesCount = (latestPostData.likes || []).length;
-        const bookmarksCount = (latestPostData.bookmarks || []).length;
-        const commentsCountSnap = await Comments.where(
-          "postId",
-          "==",
-          originalPostId,
-        ).get();
-        const commentsCount = commentsCountSnap.size;
-
-        const impressionsScore = (latestPostData.impressions || 0) * 0.1;
-        const engagementScore =
-          likesCount * 2 +
-          bookmarksCount * 3 +
-          commentsCount * 4 +
-          newRepostsCount * 5; // Reposts weigh heavily!
-
-        const createdAtTime = latestPostData.createdAt?.toMillis
-          ? latestPostData.createdAt.toMillis()
-          : new Date(latestPostData.createdAt || Date.now()).getTime();
-        const timeScore = createdAtTime / 1000000000;
-
-        const newRankingScore = impressionsScore + engagementScore + timeScore;
-        transaction.set(repostDocRef, reposterData);
-        transaction.update(postDoc.ref, {
-          repostsCount: newRepostsCount,
-          rankingScore: newRankingScore,
-          updatedAt: new Date(),
-        });
-      });
-
-      const [updatedPostSnap, repostersSnapshot, commentsSnapshot] =
-        await Promise.all([
-          postDoc.ref.get(),
-          PostReposters.where("postId", "==", originalPostId).get(),
-          Comments.where("postId", "==", originalPostId).get(),
-        ]);
-
-      const updatedOriginal = updatedPostSnap.data();
-      const repostersCount = repostersSnapshot.size;
-      const commentsCount = commentsSnapshot.size;
-      res.status(200).json({
-        message: "Posts repost action completed successfully.",
-        repostsCount: updatedOriginal.repostsCount || 0,
-      });
-
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-      setImmediate(async () => {
-        try {
-          const io = req.app.get("socketio");
-          if (io) {
-            io.emit("new_post", {
-              ...originalPost,
-              ...reposterData,
-              isRepost: true,
-            });
-            io.emit("post_stats_updated", {
-              postId: originalPostId,
-              stats:
-                typeof getPostStats === "function"
-                  ? getPostStats(updatedOriginal, repostersCount, commentsCount)
-                  : updatedOriginal,
-            });
-          }
-
-          let notifiedUids = new Set();
-          const reposterName =
-            repostAuthor && repostAuthor.usertype === "enterprise"
-              ? repostAuthor.organizationName
-              : repostAuthor.firstname;
-
-          const postOwnerId =
-            originalPost.originalAuthor || originalPost.userId;
-          if (postOwnerId && postOwnerId !== userId) {
-            notifiedUids.add(postOwnerId);
-            const ownerQuery = await User.where("uid", "==", postOwnerId)
-              .limit(1)
-              .get();
-            const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
-
-            await createNotification({
-              notificationId: generateNotificationId("social"),
-              recipientId: postOwnerId,
-              recipientEmail: owner?.email,
-              category: "social",
-              actionType: "POST_REPOSTED",
-              title: "Posts Reposted",
-              message: `${reposterName || "Someone"} reshared your post.`,
-              payload: { postId: originalPostId, originalPostId },
-              sendPush: true,
-              sendSocket: true,
-              saveToDb: true,
-            });
-          }
-
-          const followersQuery = await Follow.where(
-            "followingId",
-            "==",
-            userId,
-          ).get();
-
-          for (const doc of followersQuery.docs) {
-            const follow = doc.data();
-            const followerId = follow.followerId;
-            if (
-              followerId &&
-              !notifiedUids.has(followerId) &&
-              followerId !== userId
-            ) {
-              notifiedUids.add(followerId);
-              const followerSnap = await User.where("uid", "==", followerId)
-                .limit(1)
-                .get();
-              const followerUser = !followerSnap.empty
-                ? followerSnap.docs[0].data()
-                : null;
-
-              await createNotification({
-                notificationId: generateNotificationId("social"),
-                recipientId: followerId,
-                recipientEmail: followerUser?.email,
-                category: "social",
-                actionType: "NEW_POST",
-                title: `New Repost from ${reposterName || "Someone"}`,
-                message: `${reposterName || "Someone"} reshared a post.`,
-                payload: { postId: originalPostId, authorId: userId },
-                sendPush: true,
-                sendSocket: true,
-                saveToDb: true,
-              });
-            }
-          }
-        } catch (err) {
-          console.error(
-            "Background notification pipeline failure in repost:",
-            err,
-          );
-        }
-      });
-    }
-  } catch (err) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      );
-    });
-    return res.status(500).json({ message: err.message });
-  }
-};
 export const toggleCommentLike = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "toggleCommentLikeController";
@@ -2188,5 +1870,323 @@ export const incrementImpressions = async (req, res) => {
       return res.status(404).send("Post not found");
     }
     return res.status(500).send(err.message);
+  }
+};
+export const repost = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "repostController";
+  const action = "repost";
+  const { originalPostId } = req.body;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res.status(401).json({ message: "Unauthorized user identifier" });
+  }
+
+  if (!originalPostId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing originalPostId.",
+      );
+    });
+    return res.status(400).json({ message: "Missing originalPostId." });
+  }
+
+  try {
+    const [postQuery, userQuery] = await Promise.all([
+      Posts.where("postId", "==", originalPostId).limit(1).get(),
+      User.where("uid", "==", userId).limit(1).get(),
+    ]);
+
+    if (postQuery.empty || userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Original post or user details not found.",
+        );
+      });
+      return res
+        .status(404)
+        .json({ message: "Original post details not found." });
+    }
+
+    const postDoc = postQuery.docs[0];
+    const originalPost = postDoc.data();
+    const repostAuthor = userQuery.docs[0].data();
+
+    const existingRepostQuery = await PostReposters.where("uid", "==", userId)
+      .where("postId", "==", originalPostId)
+      .limit(1)
+      .get();
+
+    const isExisting = !existingRepostQuery.empty;
+
+    if (isExisting) {
+      const repostDocRef = existingRepostQuery.docs[0].ref;
+
+      await db.runTransaction(async (transaction) => {
+        const latestPostSnap = await transaction.get(postDoc.ref);
+        const latestPostData = latestPostSnap.data();
+        const currentCount = latestPostData.repostsCount || 0;
+        const newRepostsCount = Math.max(0, currentCount - 1);
+        const likesCount = (latestPostData.likes || []).length;
+        const bookmarksCount = (latestPostData.bookmarks || []).length;
+        const commentsCountSnap = await Comments.where(
+          "postId",
+          "==",
+          originalPostId,
+        ).get();
+        const commentsCount = commentsCountSnap.size;
+
+        const impressionsScore = (latestPostData.impressions || 0) * 0.1;
+        const engagementScore =
+          likesCount * 2 +
+          bookmarksCount * 3 +
+          commentsCount * 4 +
+          newRepostsCount * 5;
+
+        const createdAtTime = latestPostData.createdAt?.toMillis
+          ? latestPostData.createdAt.toMillis()
+          : new Date(latestPostData.createdAt || Date.now()).getTime();
+        const timeScore = createdAtTime / 1000000000;
+
+        const newRankingScore = impressionsScore + engagementScore + timeScore;
+        transaction.delete(repostDocRef);
+        transaction.update(postDoc.ref, {
+          repostsCount: newRepostsCount,
+          rankingScore: newRankingScore,
+          updatedAt: new Date(),
+        });
+      });
+
+      const [updatedPostSnap, repostersSnapshot, commentsSnapshot] =
+        await Promise.all([
+          postDoc.ref.get(),
+          PostReposters.where("postId", "==", originalPostId).get(),
+          Comments.where("postId", "==", originalPostId).get(),
+        ]);
+
+      const updatedOriginal = updatedPostSnap.data();
+      const repostersCount = repostersSnapshot.size;
+      const commentsCount = commentsSnapshot.size;
+      res.status(200).json({
+        message: "You undid a repost action",
+        repostsCount: updatedOriginal.repostsCount || 0,
+      });
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+      setImmediate(() => {
+        try {
+          const io = req.app.get("socketio");
+          if (io && updatedOriginal) {
+            io.emit("post_stats_updated", {
+              postId: originalPostId,
+              stats:
+                typeof getPostStats === "function"
+                  ? getPostStats(updatedOriginal, repostersCount, commentsCount)
+                  : updatedOriginal,
+            });
+          }
+        } catch (err) {
+          console.error(
+            "Background socket emission error in undo repost:",
+            err,
+          );
+        }
+      });
+    } else {
+      const repostId = Math.random().toString(36).slice(2, 11);
+      const repostedAt = new Date();
+
+      const reposterData = {
+        repostId,
+        postId: originalPostId,
+        uid: repostAuthor.uid || userId,
+        firstname: repostAuthor.firstname || null,
+        lastname: repostAuthor.lastname || null,
+        username: repostAuthor.username || null,
+        tier: repostAuthor.tier || "",
+        organizationName: repostAuthor.organizationName || null,
+        profilePic: repostAuthor.profilePic || [],
+        repostedAt,
+      };
+
+      const repostDocRef = PostReposters.doc(repostId);
+
+      await db.runTransaction(async (transaction) => {
+        const latestPostSnap = await transaction.get(postDoc.ref);
+        const latestPostData = latestPostSnap.data();
+        const currentCount = latestPostData.repostsCount || 0;
+        const newRepostsCount = currentCount + 1;
+        const likesCount = (latestPostData.likes || []).length;
+        const bookmarksCount = (latestPostData.bookmarks || []).length;
+        const commentsCountSnap = await Comments.where(
+          "postId",
+          "==",
+          originalPostId,
+        ).get();
+        const commentsCount = commentsCountSnap.size;
+
+        const impressionsScore = (latestPostData.impressions || 0) * 0.1;
+        const engagementScore =
+          likesCount * 2 +
+          bookmarksCount * 3 +
+          commentsCount * 4 +
+          newRepostsCount * 5; // Reposts weigh heavily!
+
+        const createdAtTime = latestPostData.createdAt?.toMillis
+          ? latestPostData.createdAt.toMillis()
+          : new Date(latestPostData.createdAt || Date.now()).getTime();
+        const timeScore = createdAtTime / 1000000000;
+
+        const newRankingScore = impressionsScore + engagementScore + timeScore;
+        transaction.set(repostDocRef, reposterData);
+        transaction.update(postDoc.ref, {
+          repostsCount: newRepostsCount,
+          rankingScore: newRankingScore,
+          updatedAt: new Date(),
+        });
+      });
+
+      const [updatedPostSnap, repostersSnapshot, commentsSnapshot] =
+        await Promise.all([
+          postDoc.ref.get(),
+          PostReposters.where("postId", "==", originalPostId).get(),
+          Comments.where("postId", "==", originalPostId).get(),
+        ]);
+
+      const updatedOriginal = updatedPostSnap.data();
+      const repostersCount = repostersSnapshot.size;
+      const commentsCount = commentsSnapshot.size;
+      res.status(200).json({
+        message: "Posts repost action completed successfully.",
+        repostsCount: updatedOriginal.repostsCount || 0,
+      });
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+      setImmediate(async () => {
+        try {
+          const io = req.app.get("socketio");
+          if (io) {
+            io.emit("new_post", {
+              ...originalPost,
+              ...reposterData,
+              isRepost: true,
+            });
+            io.emit("post_stats_updated", {
+              postId: originalPostId,
+              stats:
+                typeof getPostStats === "function"
+                  ? getPostStats(updatedOriginal, repostersCount, commentsCount)
+                  : updatedOriginal,
+            });
+          }
+
+          let notifiedUids = new Set();
+          const reposterName =
+            repostAuthor && repostAuthor.usertype === "enterprise"
+              ? repostAuthor.organizationName
+              : repostAuthor.firstname;
+
+          const postOwnerId =
+            originalPost.originalAuthor || originalPost.userId;
+          if (postOwnerId && postOwnerId !== userId) {
+            notifiedUids.add(postOwnerId);
+            const ownerQuery = await User.where("uid", "==", postOwnerId)
+              .limit(1)
+              .get();
+            const owner = !ownerQuery.empty ? ownerQuery.docs[0].data() : null;
+
+            await createNotification({
+              notificationId: generateNotificationId("social"),
+              recipientId: postOwnerId,
+              recipientEmail: owner?.email,
+              category: "social",
+              actionType: "POST_REPOSTED",
+              title: "Posts Reposted",
+              message: `${reposterName || "Someone"} reshared your post.`,
+              payload: { postId: originalPostId, originalPostId },
+              sendPush: true,
+              sendSocket: true,
+              saveToDb: true,
+            });
+          }
+
+          const followersQuery = await Follow.where(
+            "followingId",
+            "==",
+            userId,
+          ).get();
+
+          for (const doc of followersQuery.docs) {
+            const follow = doc.data();
+            const followerId = follow.followerId;
+            if (
+              followerId &&
+              !notifiedUids.has(followerId) &&
+              followerId !== userId
+            ) {
+              notifiedUids.add(followerId);
+              const followerSnap = await User.where("uid", "==", followerId)
+                .limit(1)
+                .get();
+              const followerUser = !followerSnap.empty
+                ? followerSnap.docs[0].data()
+                : null;
+
+              await createNotification({
+                notificationId: generateNotificationId("social"),
+                recipientId: followerId,
+                recipientEmail: followerUser?.email,
+                category: "social",
+                actionType: "NEW_POST",
+                title: `New Repost from ${reposterName || "Someone"}`,
+                message: `${reposterName || "Someone"} reshared a post.`,
+                payload: { postId: originalPostId, authorId: userId },
+                sendPush: true,
+                sendSocket: true,
+                saveToDb: true,
+              });
+            }
+          }
+        } catch (err) {
+          console.error(
+            "Background notification pipeline failure in repost:",
+            err,
+          );
+        }
+      });
+    }
+  } catch (err) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      );
+    });
+    return res.status(500).json({ message: err.message });
   }
 };
