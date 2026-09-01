@@ -14,6 +14,7 @@ import {
   PostReposters,
   Comments,
   Ads,
+  UserSessions,
 } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
@@ -2648,5 +2649,62 @@ export const getSupportTicketByRefId = async (req, res) => {
       success: false,
       message: error.message || "Internal Server Error",
     });
+  }
+};
+export const fetchUserSessions = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchUserSessionsController";
+  const action = "fetchUserSessions";
+
+  try {
+    const currentUserId = req.user.uid;
+
+    const sessionsSnapshot = await UserSessions.where(
+      "userId",
+      "==",
+      currentUserId,
+    ).get();
+
+    if (sessionsSnapshot.empty) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success",
+          "No sessions found.",
+        ),
+      );
+      return res.json({ success: true, data: [] });
+    }
+
+    const sessions = sessionsSnapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        deviceId: data.deviceId,
+        deviceName: data.deviceName || "",
+        deviceType: data.deviceType || "",
+        ipAddress: data.ipAddress || "",
+        location: data.location || "",
+        lastUsed: data.lastUsed ? data.lastUsed.toDate() : null,
+      };
+    });
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.json({ success: true, data: sessions });
+  } catch (error) {
+    console.error("fetchUserSessions Error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ success: false, message: error.message });
   }
 };

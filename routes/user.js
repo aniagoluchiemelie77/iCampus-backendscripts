@@ -23,6 +23,7 @@ import {
   fetchCourseDetails,
   fetchAllLecturesByCourseId,
   getAds,
+  fetchUserSessions,
 } from "../controllers/fetchActions.js";
 import { uploadCourseDetailsManually } from "../controllers/classActions.js";
 import {
@@ -234,6 +235,7 @@ router.post(
 router.post("/online-classes/create", protect, createQuickMeeting);
 router.post("/stations/register", protect, registerDropOffStation);
 router.get("/ads/fetch-active", protect, getAds);
+router.get("/fetch-sessions", protect, fetchUserSessions);
 router.post(
   "/course/extract-course-details-from-uploads",
   protect,

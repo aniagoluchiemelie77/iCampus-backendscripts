@@ -154,6 +154,7 @@ export const signUp = async (req, res) => {
       providerId: providerId || "",
       createdAt: new Date(),
       updatedAt: new Date(),
+      hasIcashPin: false,
     };
     delete newUserObj.passwordConfirm;
 
@@ -338,6 +339,7 @@ export const Login = async (req, res) => {
     const { accessToken, refreshToken } = tokens;
     const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
     const safeUser = { ...user };
+    safeUser.hasIcashPin = Boolean(user.iCashPin);
     delete safeUser.password;
     delete safeUser.iCashPin;
     delete safeUser.userAccountDetails;

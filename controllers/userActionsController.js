@@ -42,17 +42,10 @@ import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 import { db } from "../config/firebaseAdmin.js";
-
-const now = new Date();
-const formattedDate = now.toLocaleDateString("en-US", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-});
-const formattedTime = now.toLocaleTimeString("en-US", {
-  hour: "2-digit",
-  minute: "2-digit",
-});
+import {
+  USD_EQUIVALENCE_OF_1_ICASH,
+  EXCEPTION_ACCOUNT_LIMITS,
+} from "../constants/inAppConstants.js";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 axiosRetry(axios, { retries: 3 });
@@ -85,14 +78,12 @@ const FAQ_DATA = [
   {
     id: "icash-2",
     question: "What is the exchange rate for iCash?",
-    answer:
-      "iCash operates on a fixed exchange rate where 1 iCash equals exactly 0.74 USD (or its equivalent value in your local currency). Local currency inputs are automatically converted at the prevailing market rate into USD before iCash is issued.",
+    answer: `iCash operates on a fixed exchange rate where 1 iCash equals exactly ${USD_EQUIVALENCE_OF_1_ICASH} USD (or its equivalent value in your local currency). Local currency inputs are automatically converted at the prevailing market rate into USD before iCash is issued.`,
   },
   {
     id: "acad-2",
     question: "How many free Lecture Exceptions do I get each month?",
-    answer:
-      "Your monthly allotment depends on your subscription tier:\n• Free Tier: 1 free exception per month.\n• Pro Tier: 2 free exceptions per month.\n• Premium Tier: 3 free exceptions per month.",
+    answer: `Your monthly allotment depends on your subscription tier:\n Free Tier: ${EXCEPTION_ACCOUNT_LIMITS.free} free exception per month.\n• Pro Tier: ${EXCEPTION_ACCOUNT_LIMITS.pro} free exceptions per month.\n• Premium Tier: ${EXCEPTION_ACCOUNT_LIMITS.premium} free exceptions per month.`,
   },
   {
     id: "test-2",
@@ -129,7 +120,7 @@ const FAQ_DATA = [
     question:
       "What are the different lecture formats supported for attendance?",
     answer:
-      "iCampus supports three distinct types of lecture formats:\n1. Online sessions\n2. Pre-recorded video sessions\n3. Physical classroom sessions",
+      "iCampus supports two distinct types of lecture formats:\n1. Online sessions\n2. Physical classroom sessions",
   },
   {
     id: "iap-4",

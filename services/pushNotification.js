@@ -1,5 +1,6 @@
 import admin from "firebase-admin";
 import { User } from "../tableDeclarations.js";
+import { theme } from "./emailTheme.js";
 
 export const sendPushNotification = async (
   recipientId,
@@ -8,6 +9,7 @@ export const sendPushNotification = async (
   data = {},
 ) => {
   try {
+    const { colors } = theme;
     if (!recipientId) {
       console.warn("Push notification skipped: Missing recipientId.");
       return;
@@ -40,6 +42,27 @@ export const sendPushNotification = async (
       },
       data: sanitizedData,
       token: userData.fcmToken,
+      android: {
+        notification: {
+          icon: "icampus",
+          color: colors.primary,
+          priority: "high",
+          defaultSound: true,
+          defaultVibrateTimings: true,
+        },
+      },
+      apns: {
+        payload: {
+          aps: {
+            alert: {
+              title: title,
+              body: body,
+            },
+            sound: "default",
+            badge: 1,
+          },
+        },
+      },
     };
 
     const response = await admin.messaging().send(message);
