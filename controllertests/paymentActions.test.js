@@ -1,58 +1,69 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import crypto from "crypto";
 import { describe, beforeAll, test, expect } from "@jest/globals";
 import request from "supertest";
 
 const API_BASE_URL = process.env.BACKEND_URL;
+let sharedContext = {
+  postId: "PST-260901-2232-733D",
+  pollPostId: "PST-260901-2232-X80P",
+  commentId: "c4howqkg5",
+};
 
-describe("Sequential API Controller Health & Status Audit", () => {
+describe("First User, delete his/her post and like third user's comment", () => {
   let accessToken;
-  let sharedContext = {};
 
   beforeAll(async () => {
-    const loginResponse = await request(API_BASE_URL).post("users/login").send({
-      identifier: process.env.TEST_USER_EMAIL,
-      password: process.env.TEST_USER_PASSWORD,
-    });
+    console.log("Waking up Render backend server...");
+    try {
+      await request(API_BASE_URL).get("").timeout(100000);
+    } catch (e) {}
+
+    const loginResponse = await request(API_BASE_URL)
+      .post("users/login")
+      .set(
+        "User-Agent",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      )
+      .set("Accept", "application/json")
+      .set("X-Test-Bypass", process.env.TEST_SECRET || "")
+      .send({
+        identifier: process.env.TEST_USER_EMAIL,
+        password: process.env.TEST_USER_PASSWORD,
+        deviceId: "9cb67e14404773b6",
+        deviceName: "Infinix Infinix X689C",
+      })
+      .timeout(150000);
 
     if (loginResponse.statusCode !== 200 || !loginResponse.body.accessToken) {
+      console.error("Login Debug Status:", loginResponse.statusCode);
+      console.error("Login Debug Body:", loginResponse.text);
       throw new Error(
         `Authentication failed: ${JSON.stringify(loginResponse.body)}`,
       );
     }
     accessToken = loginResponse.body.accessToken;
-  }, 60000);
+  }, 150000);
 
   const endpointsToTest = [
     {
-      name: "Create Post",
+      name: "Like Comment",
       method: "post",
-      path: "posts",
+      path: () =>
+        `posts/${sharedContext.postId}/comments/${sharedContext.commentId}/like`,
       auth: true,
-      body: {
-        content: "Sequential test post",
-        postType: "media",
-      },
-      expected: 200,
-      onSuccess: (res) => {
-        sharedContext.postId = res.body.data?.postId || res.body.postId;
-      },
-    },
-    {
-      name: "Fetch Post Details",
-      method: "get",
-      // Dynamically map path using the captured postId
-      path: () => `posts/${sharedContext.postId}`,
-      auth: true,
+      idempotent: true,
       expected: 200,
     },
     {
       name: "Delete Post",
       method: "delete",
-      path: () => `posts/${sharedContext.postId}`,
+      path: () => `posts/${sharedContext.postId}/delete`,
       auth: true,
-      expected: 200, // Or 204 depending on your controller
+      idempotent: true,
+      expected: 200,
     },
   ];
 
@@ -70,11 +81,19 @@ describe("Sequential API Controller Health & Status Audit", () => {
       if (step.body) {
         req.send(step.body);
       }
-      if (endpoint.filePath) {
-        req.attach("mediaFile", endpoint.filePath);
+
+      if (step.filePath) {
+        req.attach("mediaFile", step.filePath);
       }
 
-      const response = await req.send();
+      if (
+        step.idempotent ||
+        ["post", "put", "patch", "delete"].includes(step.method)
+      ) {
+        req.set("Idempotency-Key", crypto.randomUUID());
+      }
+
+      const response = await req;
 
       console.log(
         `${step.method.toUpperCase()} ${resolvedPath} ${response.statusCode}`,
@@ -92,7 +111,6 @@ describe("Sequential API Controller Health & Status Audit", () => {
         );
       }
 
-      // Execute custom success hook to store IDs if present
       if (response.statusCode === step.expected && step.onSuccess) {
         step.onSuccess(response);
       }
