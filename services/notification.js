@@ -179,7 +179,6 @@ export const createNotification = async ({
           payload.location,
           payload.date,
           payload.time,
-          payload.userId,
         );
         break;
       case "PASSWORD_CHANGED":
