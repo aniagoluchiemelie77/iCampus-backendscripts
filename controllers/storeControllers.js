@@ -264,14 +264,12 @@ export const fetchStoreProducts = async (req, res) => {
     const isPopular = category === "popular";
 
     if (category && category !== "all" && !isPopular) {
-      queryRef = queryRef.where("category", "==", category);
+      queryRef = queryRef.where("niche", "==", category);
       console.log(`[${controllerName}] Applied category filter:`, category);
     }
 
     if (isPopular) {
-      queryRef = queryRef
-        .orderBy("favCount", "desc")
-        .orderBy("ratingsAverage", "desc");
+      queryRef = queryRef.orderBy("favCount", "desc");
       console.log(
         `[${controllerName}] Applied 'popular' sorting (favCount, ratingsAverage)`,
       );
@@ -2241,9 +2239,9 @@ export const saveProductController = async (req, res) => {
     const userUid = req.user.id || req.user.uid;
     const { productId } = req.params;
     const isEditing = !!productId;
-    const { title, description, productType, price, mediaUrls } = req.body;
+    const { title, description, type, price, mediaUrls, niche } = req.body;
 
-    if (!title || !description || !productType || !price) {
+    if (!title || !description || !type || !price || !niche) {
       if (req.file) await fs.unlink(req.file.path).catch(() => {});
       setImmediate(() => {
         logControllerPerformance(
@@ -2272,11 +2270,10 @@ export const saveProductController = async (req, res) => {
     }
 
     let physicalDetails = null;
-    if (productType === "physical") {
+    if (type === "physical") {
       physicalDetails = {
         weightKg: Number(req.body.weightKg) || 0,
         inStock: Number(req.body.inStock) || 0,
-        amountInStock: Number(req.body.inStock) || 0,
         colors: req.body.colors ? JSON.parse(req.body.colors) : [],
         sizes: req.body.sizes ? JSON.parse(req.body.sizes) : [],
         sellerGateways: req.body.sellerGateways
@@ -2329,11 +2326,12 @@ export const saveProductController = async (req, res) => {
       productData = {
         title,
         description,
-        productType,
+        type,
         price: Number(price),
         physicalDetails,
         mediaUrls: productThumbnails,
         updatedAt: new Date(),
+        niche,
       };
 
       await productDocRef.update(productData);
@@ -2347,7 +2345,7 @@ export const saveProductController = async (req, res) => {
         sellerId: userUid,
         title,
         description,
-        productType,
+        type,
         price: Number(price),
         physicalDetails,
         mediaUrls: productThumbnails,
@@ -2355,6 +2353,7 @@ export const saveProductController = async (req, res) => {
         createdAt: new Date(),
         updatedAt: new Date(),
         isAvailable: true,
+        niche,
       };
       await productDocRef.set(productData);
     }
@@ -2413,7 +2412,7 @@ export const saveProductController = async (req, res) => {
               sendEmail: true,
               payload: {
                 productId: productId,
-                productType: productType,
+                type: niche,
                 productName: title,
                 price: Number(price),
                 date: formattedDate,

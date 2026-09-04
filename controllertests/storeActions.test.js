@@ -10,7 +10,7 @@ let sharedContext = {
   productId: 'PR-260904-0001-_001-Q1'
 };
 
-describe("First User, create edit product, fetch all products ", () => {
+describe("First User, fetch all products, posts and courses ", () => {
   let accessToken;
 
   beforeAll(async () => {
@@ -51,7 +51,65 @@ describe("First User, create edit product, fetch all products ", () => {
       method: "get",
       path: () => `store/get-store-products`,
       idempotent: true,
+      auth: true,
       expected: 200,
+      query: {
+        cursor: 1711234567.89,
+        limit: 10,
+        category: "popular",
+      },
+    },
+    {
+      name: "Fetch Store Listings",
+      method: "get",
+      path: () => `store/get-store-products`,
+      idempotent: true,
+      auth: true,
+      expected: 200,
+      query: {
+        cursor: 1711234567.89,
+        limit: 10,
+        category: "Electronics",
+      },
+    },
+    {
+      name: "Fetch Store Listings",
+      method: "get",
+      path: () => `store/get-store-products`,
+      idempotent: true,
+      auth: true,
+      expected: 200,
+      query: {
+        cursor: 1711234567.89,
+        limit: 10,
+        category: "Footwears",
+      },
+    },
+    {
+      name: "Fetch Posts",
+      method: "get",
+      path: () => `posts/fetchPosts`,
+      idempotent: true,
+      auth: true,
+      expected: 200,
+      query: {
+        cursor: 1711234567.89,
+        limit: 10,
+      },
+    },
+    {
+      name: "Fetch Student Courses",
+      method: "get",
+      path: () => `users/student/class/courses/fetch-my-courses`,
+      idempotent: true,
+      auth: true,
+      expected: 200,
+      query: {
+        semester: "First",
+        session: "2025/2026",
+        page: 1,
+        limit: 10,
+      },
     },
   ];
 
@@ -64,6 +122,9 @@ describe("First User, create edit product, fetch all products ", () => {
 
       if (step.auth) {
         req.set("Authorization", `Bearer ${accessToken}`);
+      }
+      if (step.query) {
+        req.query(step.query);
       }
 
       if (step.body) {

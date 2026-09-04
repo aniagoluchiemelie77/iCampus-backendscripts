@@ -1974,9 +1974,6 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const action = "fetchStudentsEnrolledCourses";
 
   console.log("--- 1. STUDENT COURSES REQUEST START ---");
-  console.log("Query Parameters:", req.query);
-  console.log("User ID from token:", req.user?.uid);
-
   try {
     const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user?.uid;
@@ -2226,9 +2223,6 @@ export const fetchPosts = async (req, res) => {
   const limit = parseInt(req.query.limit) || 15;
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const userId = req.user?.uid || req.user?.id;
-
-  console.log("--- 1. FETCH POSTS REQUEST START ---");
-
   try {
     console.log("🔥 STEP 1: INSIDE TRY BLOCK");
     let query = Posts.where("status", "!=", "hidden")
@@ -2253,8 +2247,6 @@ export const fetchPosts = async (req, res) => {
       id: doc.id,
       ...doc.data(),
     }));
-
-    // Log the first post to verify fields like 'rankingScore', 'status', and 'originalAuthor'
     console.log("--- 3. FIRST RAW POST SAMPLE ---", rawPosts[0]);
 
     const authorIds = [
