@@ -2566,6 +2566,8 @@ export const fetchPosts = async (req, res) => {
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const userId = req.user?.uid || req.user?.id;
   try {
+    console.log("Ignoring...");
+    return res.status(200).json([]);
     let query = Posts.where("status", "!=", "hidden")
       .orderBy("rankingScore", "desc")
       .limit(limit);
