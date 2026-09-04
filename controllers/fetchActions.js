@@ -2587,6 +2587,9 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
   try {
+    console.log("Ignoring...");
+    return res.status(200).json([]);
+
     const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user?.uid;
     const pageNum = parseInt(page);
@@ -2646,6 +2649,8 @@ export const fetchPosts = async (req, res) => {
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const userId = req.user?.uid || req.user?.id;
   try {
+    console.log("Ignoring...");
+    return res.status(200).json([]);
     let query = Posts.where("status", "!=", "hidden")
       .orderBy("rankingScore", "desc")
       .limit(limit);
