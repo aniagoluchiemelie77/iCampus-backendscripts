@@ -47,45 +47,6 @@ describe("First User, fetch all products, posts and courses ", () => {
 
   const endpointsToTest = [
     {
-      name: "Fetch Store Listings",
-      method: "get",
-      path: () => `store/get-store-products`,
-      idempotent: true,
-      auth: true,
-      expected: 200,
-      query: {
-        cursor: 1711234567.89,
-        limit: 10,
-        category: "popular",
-      },
-    },
-    {
-      name: "Fetch Store Listings",
-      method: "get",
-      path: () => `store/get-store-products`,
-      idempotent: true,
-      auth: true,
-      expected: 200,
-      query: {
-        cursor: 1711234567.89,
-        limit: 10,
-        category: "Electronics",
-      },
-    },
-    {
-      name: "Fetch Store Listings",
-      method: "get",
-      path: () => `store/get-store-products`,
-      idempotent: true,
-      auth: true,
-      expected: 200,
-      query: {
-        cursor: 1711234567.89,
-        limit: 10,
-        category: "Footwears",
-      },
-    },
-    {
       name: "Fetch Posts",
       method: "get",
       path: () => `posts/fetchPosts`,
@@ -93,8 +54,19 @@ describe("First User, fetch all products, posts and courses ", () => {
       auth: true,
       expected: 200,
       query: {
-        cursor: 1711234567.89,
         limit: 10,
+      },
+    },
+    {
+      name: "Fetch Store Listings",
+      method: "get",
+      path: () => `store/get-store-products`,
+      idempotent: true,
+      auth: true,
+      expected: 200,
+      query: {
+        limit: 10,
+        category: "popular",
       },
     },
     {

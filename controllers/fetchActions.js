@@ -1968,80 +1968,6 @@ export const getTransactionById = async (req, res) => {
     });
   }
 };
-export const fetchStudentsEnrolledCourses = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchStudentsEnrolledCoursesController";
-  const action = "fetchStudentsEnrolledCourses";
-
-  console.log("--- 1. STUDENT COURSES REQUEST START ---");
-  try {
-    const { semester, session, page = 1, limit = 10 } = req.query;
-    const userId = req.user?.uid;
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
-
-    let queryRef = Course.where(
-      "studentsEnrolled",
-      "array-contains",
-      userId,
-    ).where("isActive", "==", true);
-
-    if (semester && semester !== "All") {
-      queryRef = queryRef.where("semester", "==", semester);
-    }
-    if (session && session !== "All") {
-      queryRef = queryRef.where("session", "==", session);
-    }
-    queryRef = queryRef.orderBy("createdAt", "desc");
-
-    console.log("--- 2. Executing Firestore query for student courses... ---");
-    const snapshot = await queryRef.get();
-    console.log(
-      `--- 3. Query finished. Found documents count: ${snapshot.size} ---`,
-    );
-
-    if (snapshot.empty) {
-      console.log(
-        "--- 3b. Snapshot is empty for student courses. Returning empty array. ---",
-      );
-      setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "success"),
-      );
-      return res.status(200).json([]);
-    }
-
-    const allCourses = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    const paginatedCourses = allCourses.slice(skip, skip + limitNum);
-    console.log(
-      `--- 4. Success. Slicing pagination [skip: ${skip}, limit: ${limitNum}]. Returning ${paginatedCourses.length} courses ---`,
-    );
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json(paginatedCourses);
-  } catch (error) {
-    console.error("--- ❌ STUDENT COURSES ERROR CAUGHT ---");
-    console.error("Error Message:", error.message);
-    console.error("Error Stack:", error.stack);
-
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: "Error fetching your courses" });
-  }
-};
 export const fetchLecturerEnrolledCourses = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchLecturerEnrolledCoursesController";
@@ -2701,5 +2627,61 @@ export const fetchUserSessions = async (req, res) => {
   }
 };
 
-
 //Tested and trusted using jest
+export const fetchStudentsEnrolledCourses = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchStudentsEnrolledCoursesController";
+  const action = "fetchStudentsEnrolledCourses";
+  try {
+    const { semester, session, page = 1, limit = 10 } = req.query;
+    const userId = req.user?.uid;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    let queryRef = Course.where(
+      "studentsEnrolled",
+      "array-contains",
+      userId,
+    ).where("isActive", "==", true);
+
+    if (semester && semester !== "All") {
+      queryRef = queryRef.where("semester", "==", semester);
+    }
+    if (session && session !== "All") {
+      queryRef = queryRef.where("session", "==", session);
+    }
+    queryRef = queryRef.orderBy("createdAt", "desc");
+    const snapshot = await queryRef.get();
+
+    if (snapshot.empty) {
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
+      return res.status(200).json([]);
+    }
+
+    const allCourses = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    const paginatedCourses = allCourses.slice(skip, skip + limitNum);
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json(paginatedCourses);
+  } catch (error) {
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ message: "Error fetching your courses" });
+  }
+};

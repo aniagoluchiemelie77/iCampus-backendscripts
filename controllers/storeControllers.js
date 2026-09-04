@@ -244,134 +244,6 @@ async function processNotificationFanOut(
     );
   }
 }
-export const fetchStoreProducts = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchStoreProductsController";
-  const action = "fetchStoreProducts";
-  const { q, category, cursor, limit = 10 } = req.query;
-  const pageLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
-
-  // 1. Log initial incoming request params
-  console.log(`[${controllerName}] Incoming Request:`, {
-    q,
-    category,
-    cursor,
-    limit: pageLimit,
-  });
-
-  try {
-    let queryRef = Product.where("isAvailable", "==", true);
-    const isPopular = category === "popular";
-
-    if (category && category !== "all" && !isPopular) {
-      queryRef = queryRef.where("niche", "==", category);
-      console.log(`[${controllerName}] Applied category filter:`, category);
-    }
-
-    if (isPopular) {
-      queryRef = queryRef.orderBy("favCount", "desc");
-      console.log(
-        `[${controllerName}] Applied 'popular' sorting (favCount, ratingsAverage)`,
-      );
-    } else {
-      queryRef = queryRef.orderBy("createdAt", "desc");
-      console.log(
-        `[${controllerName}] Applied default sorting (createdAt desc)`,
-      );
-    }
-
-    let cursorDoc = null;
-    if (cursor) {
-      console.log(
-        `[${controllerName}] Fetching cursor document reference for ID:`,
-        cursor,
-      );
-      cursorDoc = await Product.doc(cursor).get();
-      if (cursorDoc.exists) {
-        queryRef = queryRef.startAfter(cursorDoc);
-        console.log(`[${controllerName}] Cursor successfully applied.`);
-      } else {
-        console.warn(
-          `[${controllerName}] Warning: Provided cursor ID does not exist:`,
-          cursor,
-        );
-      }
-    }
-
-    const fetchLimit = q ? pageLimit * 3 : pageLimit + 1;
-    queryRef = queryRef.limit(fetchLimit);
-    console.log(
-      `[${controllerName}] Final Firestore fetchLimit set to:`,
-      fetchLimit,
-    );
-
-    const snapshot = await queryRef.get();
-    let products = [];
-
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      products.push({ id: doc.id, productId: doc.id, ...data });
-    });
-
-    console.log(
-      `[${controllerName}] Raw documents fetched from Firestore:`,
-      products.length,
-    );
-
-    if (q) {
-      const searchTerm = q.toLowerCase().trim();
-      console.log(
-        `[${controllerName}] Filtering products locally by search term: "${searchTerm}"`,
-      );
-      products = products.filter((p) => {
-        const title = (p.title || "").toLowerCase();
-        const description = (p.description || "").toLowerCase();
-        return title.includes(searchTerm) || description.includes(searchTerm);
-      });
-      console.log(
-        `[${controllerName}] Products remaining after search filter:`,
-        products.length,
-      );
-    }
-
-    const paginatedProducts = products.slice(0, pageLimit);
-    let nextCursor = null;
-    if (products.length > pageLimit) {
-      nextCursor =
-        paginatedProducts[paginatedProducts.length - 1]?.productId || null;
-    }
-
-    console.log(
-      `[${controllerName}] Response summary -> Returning items: ${paginatedProducts.length}, Next Cursor: ${nextCursor}`,
-    );
-
-    res.json({ products: paginatedProducts, nextCursor });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (err) {
-    console.error(`[${controllerName}] ❌ Fetch Store Products Error:`, {
-      message: err.message,
-      code: err.code,
-      details: err.details,
-      stack: err.stack,
-    });
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      );
-    }
-    return res
-      .status(500)
-      .json({ message: err.message || "Failed to fetch store items" });
-  }
-};
 export const clearUserCart = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "clearUserCartController";
@@ -2530,5 +2402,133 @@ export const fetchAllProducts = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "Server unable to sync catalog" });
+  }
+};
+export const fetchStoreProducts = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchStoreProductsController";
+  const action = "fetchStoreProducts";
+  const { q, category, cursor, limit = 10 } = req.query;
+  const pageLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
+
+  // 1. Log initial incoming request params
+  console.log(`[${controllerName}] Incoming Request:`, {
+    q,
+    category,
+    cursor,
+    limit: pageLimit,
+  });
+
+  try {
+    let queryRef = Product.where("isAvailable", "==", true);
+    const isPopular = category === "popular";
+
+    if (category && category !== "all" && !isPopular) {
+      queryRef = queryRef.where("niche", "==", category);
+      console.log(`[${controllerName}] Applied category filter:`, category);
+    }
+
+    if (isPopular) {
+      queryRef = queryRef.orderBy("favCount", "desc");
+      console.log(
+        `[${controllerName}] Applied 'popular' sorting (favCount, ratingsAverage)`,
+      );
+    } else {
+      queryRef = queryRef.orderBy("createdAt", "desc");
+      console.log(
+        `[${controllerName}] Applied default sorting (createdAt desc)`,
+      );
+    }
+
+    let cursorDoc = null;
+    if (cursor) {
+      console.log(
+        `[${controllerName}] Fetching cursor document reference for ID:`,
+        cursor,
+      );
+      cursorDoc = await Product.doc(cursor).get();
+      if (cursorDoc.exists) {
+        queryRef = queryRef.startAfter(cursorDoc);
+        console.log(`[${controllerName}] Cursor successfully applied.`);
+      } else {
+        console.warn(
+          `[${controllerName}] Warning: Provided cursor ID does not exist:`,
+          cursor,
+        );
+      }
+    }
+
+    const fetchLimit = q ? pageLimit * 3 : pageLimit + 1;
+    queryRef = queryRef.limit(fetchLimit);
+    console.log(
+      `[${controllerName}] Final Firestore fetchLimit set to:`,
+      fetchLimit,
+    );
+
+    const snapshot = await queryRef.get();
+    let products = [];
+
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      products.push({ id: doc.id, productId: doc.id, ...data });
+    });
+
+    console.log(
+      `[${controllerName}] Raw documents fetched from Firestore:`,
+      products.length,
+    );
+
+    if (q) {
+      const searchTerm = q.toLowerCase().trim();
+      console.log(
+        `[${controllerName}] Filtering products locally by search term: "${searchTerm}"`,
+      );
+      products = products.filter((p) => {
+        const title = (p.title || "").toLowerCase();
+        const description = (p.description || "").toLowerCase();
+        return title.includes(searchTerm) || description.includes(searchTerm);
+      });
+      console.log(
+        `[${controllerName}] Products remaining after search filter:`,
+        products.length,
+      );
+    }
+
+    const paginatedProducts = products.slice(0, pageLimit);
+    let nextCursor = null;
+    if (products.length > pageLimit) {
+      nextCursor =
+        paginatedProducts[paginatedProducts.length - 1]?.productId || null;
+    }
+
+    console.log(
+      `[${controllerName}] Response summary -> Returning items: ${paginatedProducts.length}, Next Cursor: ${nextCursor}`,
+    );
+
+    res.json({ products: paginatedProducts, nextCursor });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (err) {
+    console.error(`[${controllerName}] ❌ Fetch Store Products Error:`, {
+      message: err.message,
+      code: err.code,
+      details: err.details,
+      stack: err.stack,
+    });
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      );
+    }
+    return res
+      .status(500)
+      .json({ message: err.message || "Failed to fetch store items" });
   }
 };
