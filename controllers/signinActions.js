@@ -345,7 +345,7 @@ export const Login = async (req, res) => {
     delete safeUser.password;
     delete safeUser.iCashPin;
     delete safeUser.userAccountDetails;
-
+    console.log("Logging in...");
     safeUser.theme = preferences ? preferences.theme : "light";
     safeUser.sessions = [];
     res.status(200).json({
