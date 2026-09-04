@@ -3492,6 +3492,7 @@ export const toggleTheme = async (req, res) => {
   const action = "toggleTheme";
 
   try {
+    console.log("Inside try block...");
     const { theme } = req.body || {};
     const sanitizedTheme =
       typeof theme === "string" ? theme.trim().toLowerCase() : "";
@@ -3511,7 +3512,7 @@ export const toggleTheme = async (req, res) => {
         message: "Invalid choice schema profile allocation assignment.",
       });
     }
-
+    console.log("Step 1...");
     const userId = req.user?.uid || req.user?.id;
     if (!userId) {
       setImmediate(() => {
@@ -3527,9 +3528,8 @@ export const toggleTheme = async (req, res) => {
         .status(401)
         .json({ success: false, message: "Unauthorized user context." });
     }
-
-    const collectionRef =
-      typeof UserPrefs !== "undefined" ? UserPrefs : userPrefs;
+    console.log("Step 2...");
+    const collectionRef = userPrefs;
     if (!collectionRef) {
       throw new Error("UserPrefs collection reference is not defined.");
     }
@@ -3538,12 +3538,13 @@ export const toggleTheme = async (req, res) => {
       .where("userId", "==", userId)
       .limit(1)
       .get();
+    console.log("Step 3...");
 
     const preferenceData = {
       theme: sanitizedTheme,
       updatedAt: new Date(),
     };
-
+    console.log("Step 4...");
     if (prefQuery.empty) {
       preferenceData.createdAt = new Date();
       await collectionRef.add({
@@ -3553,6 +3554,7 @@ export const toggleTheme = async (req, res) => {
     } else {
       await prefQuery.docs[0].ref.update(preferenceData);
     }
+    console.log("Successful...");
 
     res.status(200).json({
       success: true,
