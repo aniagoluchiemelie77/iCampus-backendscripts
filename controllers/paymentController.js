@@ -471,6 +471,7 @@ export const initializeWithdraw = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("finance"),
               recipientId: userId,
+              isRead: false,
               recipientEmail: user.email,
               category: "finance",
               actionType: "ICASH_WITHDRAWAL",
@@ -732,6 +733,7 @@ export const handleP2pTransfers = async (req, res) => {
           createNotification({
             notificationId: senderNotificationId,
             recipientId: senderId,
+            isRead: false,
             category: "financial",
             actionType: "ICASH_WITHDRAWAL",
             title: "iCash Sent Successfully",
@@ -750,6 +752,7 @@ export const handleP2pTransfers = async (req, res) => {
           createNotification({
             notificationId: receipientNotificationId,
             recipientId: recipientId,
+            isRead: false,
             category: "financial",
             actionType: "ICASH_PURCHASE",
             title: "iCash Received!",
@@ -941,6 +944,7 @@ export const verifySubscriptionFlwPayment = async (req, res) => {
           createNotification({
             notificationId: generateNotificationId("subscription"),
             recipientId: updatedUser.uid,
+            isRead: false,
             category: "finance",
             actionType: "SUBSCRIPTION_UPGRADED",
             title: "Subscription Successful",

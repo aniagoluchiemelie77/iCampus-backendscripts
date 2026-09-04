@@ -57,6 +57,7 @@ export const createTicket = async (req, res) => {
           ? createNotification({
               recipientId: userId,
               category: "system",
+              isRead: false,
               actionType: "SUPPORT_TICKET_RECEIVED",
               sendEmail: true,
               recipientEmail: req.user?.email,
@@ -160,6 +161,7 @@ export const adminUpdateTicketStatus = async (req, res) => {
                   ? generateNotificationId("system")
                   : `NOTIF-${Date.now()}`,
               recipientId: ticketData.userId,
+              isRead: false,
               recipientEmail: userData?.email,
               category: "system",
               actionType: "SUPPORT_TICKET_RESOLVED",

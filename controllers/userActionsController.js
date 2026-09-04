@@ -414,6 +414,7 @@ export const createNewPasswordInApp = async (req, res) => {
     const notificationPromise = createNotification({
       notificationId: generateNotificationId("auth"),
       recipientId: user.uid,
+      isRead: false,
       recipientEmail: user.email,
       recoveryEmails: user.recoveryEmails,
       category: "auth",
@@ -2276,6 +2277,7 @@ export const resetIcashPin = async (req, res) => {
       createNotification({
         notificationId: generateNotificationId("security"),
         recipientEmail: user.email,
+        isRead: false,
         recoveryEmails: user.recoveryEmails,
         recipientId: user.uid,
         category: "security",
@@ -2614,6 +2616,7 @@ export const toggleFollowingUsers = async (req, res) => {
         notificationId: generateNotificationId("social"),
         recipientId: followingId,
         category: "social",
+        isRead: false,
         actionType: "NEW_FOLLOWER",
         title: "New Follower",
         message: `${followerName} started following you`,
@@ -3494,6 +3497,7 @@ export const toggleTheme = async (req, res) => {
   try {
     console.log("Inside try block...");
     const { theme } = req.body || {};
+    console.log("Theme: ", theme);
     const sanitizedTheme =
       typeof theme === "string" ? theme.trim().toLowerCase() : "";
 
@@ -3512,7 +3516,6 @@ export const toggleTheme = async (req, res) => {
         message: "Invalid choice schema profile allocation assignment.",
       });
     }
-    console.log("Step 1...");
     const userId = req.user?.uid || req.user?.id;
     if (!userId) {
       setImmediate(() => {
@@ -3528,7 +3531,6 @@ export const toggleTheme = async (req, res) => {
         .status(401)
         .json({ success: false, message: "Unauthorized user context." });
     }
-    console.log("Step 2...");
     const collectionRef = userPrefs;
     if (!collectionRef) {
       throw new Error("UserPrefs collection reference is not defined.");
@@ -3538,13 +3540,11 @@ export const toggleTheme = async (req, res) => {
       .where("userId", "==", userId)
       .limit(1)
       .get();
-    console.log("Step 3...");
 
     const preferenceData = {
       theme: sanitizedTheme,
       updatedAt: new Date(),
     };
-    console.log("Step 4...");
     if (prefQuery.empty) {
       preferenceData.createdAt = new Date();
       await collectionRef.add({
@@ -3554,7 +3554,6 @@ export const toggleTheme = async (req, res) => {
     } else {
       await prefQuery.docs[0].ref.update(preferenceData);
     }
-    console.log("Successful...");
 
     res.status(200).json({
       success: true,
@@ -3972,6 +3971,7 @@ export const createQuickMeeting = async (req, res) => {
                 ? generateNotificationId("classroom")
                 : `NOTIF-${Date.now()}`,
             recipientId: hostId,
+            isRead: false,
             category: "classroom",
             actionType: "CLASS_SCHEDULED",
             title: "Class Scheduled",
@@ -4129,6 +4129,7 @@ export const registerDropOffStation = async (req, res) => {
                 ? generateNotificationId("store")
                 : `NOTIF-${Date.now()}`,
             recipientId: userId,
+            isRead: false,
             category: "store",
             actionType: "STATION_REQUEST_RECEIVED",
             title: "Drop-off Station Registration Request Received",

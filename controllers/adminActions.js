@@ -270,6 +270,7 @@ export const adminSendTicketNotification = async (req, res) => {
           date: formattedDate,
           time: formattedTime,
         },
+        isRead: false,
       }),
       ticketRef.set(updatedTicketData, { merge: true }),
     ]);
@@ -823,6 +824,7 @@ export const deleteDropOffStation = async (req, res) => {
           title: "Station Removed",
           message: `Your drop-off station "${station?.name || "Station"}" has been removed from the platform. Please contact the support team to rectify this, if action not done with your consent.`,
           payload: { stationName: station?.name },
+          isRead: false,
         }),
         notifyAdmins(
           { role: "super_admin" },
@@ -1041,6 +1043,7 @@ export const createStation = async (req, res) => {
           title: "New Station Assigned",
           message: `A new drop-off station "${name}" has been assigned to your account.`,
           payload: { stationId, stationName: name },
+          isRead: false,
         }),
         notifyAdmins(
           { role: "super_admin" },
@@ -1098,6 +1101,7 @@ export const updateStation = async (req, res) => {
           title: "Station Details Updated",
           message: `Your station "${updatedStation.name}" details has been updated by iCampus administrators, please notify our support if you did not authorize this action.`,
           payload: { stationId: id, stationName: updatedStation.name },
+          isRead: false,
         }),
         notifyAdmins(
           { role: "super_admin" },

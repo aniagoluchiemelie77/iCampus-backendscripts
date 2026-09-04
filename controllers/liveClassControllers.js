@@ -1135,6 +1135,7 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
         (student) => {
           return createNotification({
             notificationId: generateNotificationId("classroom"),
+            isRead: false,
             recipientId: student.uid,
             category: "classroom",
             actionType: "LECTURER_REVIEW_REQUEST",

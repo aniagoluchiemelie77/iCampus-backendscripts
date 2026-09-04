@@ -98,6 +98,7 @@ export const updateStudentInfo = () => {
                   await createNotification({
                     notificationId: generateNotificationId("account_upgrade"),
                     recipientId: student.uid,
+                    isRead: false,
                     category: "system",
                     actionType: "GRADUATION_CONGRATULATIONS",
                     title: "Account Status Upgraded",

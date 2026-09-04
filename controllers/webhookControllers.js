@@ -72,6 +72,7 @@ export const personaVerifyConfirmation = async (req, res) => {
               actionType: "VERIFICATION_SUCCESS",
               title: "Identity Verified",
               message: "Your identity has been successfully verified!",
+              isRead: false,
             });
 
             const adminNotificationPromise = notifyAdmins(
@@ -177,6 +178,7 @@ export const handleFlutterwaveWebhook = async (req, res) => {
                   notificationId: generateNotificationId("finance"),
                   recipientId: userId,
                   recipientEmail: userData.email,
+                  isRead: false,
                   category: "finance",
                   actionType: "ICASH_PURCHASE",
                   title: "iCash Purchase Successful",
@@ -355,6 +357,7 @@ export const handlePostmarkInboundSupportTickets = async (req, res) => {
             category: "system",
             actionType: "SUPPORT_TICKET_RECEIVED",
             sendEmail: true,
+            isRead: false,
             recipientEmail: From,
             payload: {
               userName: "User",

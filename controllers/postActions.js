@@ -388,6 +388,7 @@ export const createPost = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("social"),
               recipientId: user.uid,
+              isRead: false,
               recipientEmail: user.email,
               category: "social",
               actionType: "POST_MENTION",
@@ -435,6 +436,7 @@ export const createPost = async (req, res) => {
               notificationId: generateNotificationId("social"),
               recipientId: followerUser.uid,
               recipientEmail: followerUser.email,
+              isRead: false,
               category: "social",
               actionType: "NEW_POST",
               title: `New Posts from ${authorName}`,
@@ -636,6 +638,7 @@ export const updatePost = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("social"),
               recipientId: targetUser.uid,
+              isRead: false,
               recipientEmail: targetUser.email,
               category: "social",
               actionType: "POST_MENTION",
@@ -655,6 +658,7 @@ export const updatePost = async (req, res) => {
       createNotification({
         notificationId: generateNotificationId("social"),
         recipientId: userId,
+        isRead: false,
         recipientEmail: author?.email,
         category: "social",
         actionType: "POST_UPDATED",
@@ -825,6 +829,7 @@ export const toggleLike = async (req, res) => {
             await createNotification({
               notificationId: generateNotificationId("social"),
               recipientId: postOwnerId,
+              isRead: false,
               recipientEmail: owner.email,
               category: "social",
               actionType: "POST_LIKED",
@@ -1192,6 +1197,7 @@ export const addComment = async (req, res) => {
           await createNotification({
             notificationId: generateNotificationId("social"),
             recipientId: postAuthorId,
+            isRead: false,
             recipientEmail: owner?.email,
             category: "social",
             actionType: "POST_COMMENTED",
@@ -1616,6 +1622,7 @@ export const repost = async (req, res) => {
             await createNotification({
               notificationId: generateNotificationId("social"),
               recipientId: postOwnerId,
+              isRead: false,
               recipientEmail: owner?.email,
               category: "social",
               actionType: "POST_REPOSTED",
@@ -1653,6 +1660,7 @@ export const repost = async (req, res) => {
               await createNotification({
                 notificationId: generateNotificationId("social"),
                 recipientId: followerId,
+                isRead: false,
                 recipientEmail: followerUser?.email,
                 category: "social",
                 actionType: "NEW_POST",
@@ -1846,6 +1854,7 @@ export const pollVote = async (req, res) => {
           await createNotification({
             notificationId: generateNotificationId("social"),
             recipientId: postOwnerId,
+            isRead: false,
             recipientEmail: owner?.email,
             category: "social",
             actionType: "POLL_MILESTONE",
@@ -2022,6 +2031,7 @@ export const deletePost = async (req, res) => {
         createNotification({
           notificationId: generateNotificationId("social"),
           recipientId: userUid,
+          isRead: false,
           recipientEmail: authorEmail,
           category: "social",
           actionType: "POST_DELETION",
@@ -2162,6 +2172,7 @@ export const toggleCommentLike = async (req, res) => {
             await createNotification({
               notificationId: generateNotificationId("social"),
               recipientId: commentAuthorId,
+              isRead: false,
               recipientEmail: owner.email,
               category: "social",
               actionType: "COMMENT_LIKED",

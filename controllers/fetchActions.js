@@ -15,6 +15,7 @@ import {
   Comments,
   Ads,
   UserSessions,
+  userPrefs,
 } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
@@ -804,6 +805,7 @@ export const fetchProfileInformation = async (req, res) => {
       createNotification({
         notificationId: generateNotificationId("profile"),
         recipientId: targetUid,
+        isRead: false,
         category: "social",
         actionType: "PROFILE_VIEW",
         title: "Profile View",
@@ -2498,6 +2500,86 @@ export const fetchUserSessions = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+export const getUserPreferences = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getUserPreferencesController";
+  const action = "getUserPreferences";
+  const userId = req.user?.uid || req.user?.id;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, error: "Unauthorized user context." });
+  }
+
+  try {
+    const prefsQuery = await userPrefs
+      .where("userId", "==", userId)
+      .limit(1)
+      .get();
+
+    let preferences;
+
+    if (prefsQuery.empty) {
+      preferences = {
+        userId,
+        notifications: {
+          auth: true,
+          social: true,
+          classroom: true,
+          store: true,
+          finance: true,
+          profile: true,
+          security: true,
+        },
+        channels: { push: true, email: true, socket: true },
+        theme: "light",
+        language: "en",
+        quietHours: { enabled: false },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    } else {
+      const doc = prefsQuery.docs[0];
+      preferences = {
+        id: doc.id,
+        ...doc.data(),
+      };
+    }
+
+    res.status(200).json({
+      success: true,
+      preferences,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error in getUserPreferences:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res
+      .status(500)
+      .json({ success: false, error: "Server error fetching preferences" });
+  }
+};
 
 //Tested and trusted using jest
 export const fetchStudentsEnrolledCourses = async (req, res) => {
@@ -2505,8 +2587,6 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
   try {
-    console.log("Ignoring...");
-    return res.status(200).json([]);
     const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user?.uid;
     const pageNum = parseInt(page);
@@ -2566,8 +2646,6 @@ export const fetchPosts = async (req, res) => {
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const userId = req.user?.uid || req.user?.id;
   try {
-    console.log("Ignoring...");
-    return res.status(200).json([]);
     let query = Posts.where("status", "!=", "hidden")
       .orderBy("rankingScore", "desc")
       .limit(limit);

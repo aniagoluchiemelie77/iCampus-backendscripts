@@ -80,11 +80,12 @@ export const signUp = async (req, res) => {
       Promise.resolve(generateUserUID()),
       Promise.resolve(generateItagUsername(firstname || lastname, 5)),
       Promise.resolve().then(() => {
-        const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
-          .split(",")[0]
-          .trim();
+        const rawIp =
+          req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+        const ip = rawIp ? rawIp.split(",")[0].trim() : "";
         const geo = geoip.lookup(ip);
-        return geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+        if (!geo) return "Unknown Location";
+        return geo.city ? `${geo.city}, ${geo.country}` : geo.country;
       }),
     ]);
 
@@ -234,6 +235,7 @@ export const signUp = async (req, res) => {
       createNotification({
         notificationId: generateNotificationId("signup"),
         recipientId: uid,
+        isRead: false,
         category: "signup",
         actionType: "WELCOME_USER",
         title: "Welcome to iCampus!",
@@ -358,9 +360,7 @@ export const Login = async (req, res) => {
           .split(",")[0]
           .trim();
         const geo = geoip.lookup(ip);
-        const location = geo
-          ? `${geo.city}, ${geo.country}`
-          : "Unknown Location";
+        const location = geo.city ? `${geo.city}, ${geo.country}` : geo.country;
         const sessionData = {
           userId: user.uid,
           deviceId,
@@ -403,6 +403,7 @@ export const Login = async (req, res) => {
           await createNotification({
             notificationId: generateNotificationId("security"),
             recipientId: user.uid,
+            isRead: false,
             recipientEmail: user.email,
             recoveryEmails: user.recoveryEmails,
             category: "auth",
@@ -868,6 +869,7 @@ export const validateEmail = async (req, res) => {
         sendEmail: true,
         sendPush: false,
         saveToDb: false,
+        isRead: false,
       };
 
       createNotification(notificationJob).catch((err) =>
@@ -1102,6 +1104,7 @@ export const forgotPassword = async (req, res) => {
       createNotification({
         notificationId: generateNotificationId("security"),
         recipientId: user.uid || user.id,
+        isRead: false,
         recipientEmail: normalizedEmail,
         category: "security",
         actionType: "PASSWORD_RESET_CODE",
@@ -1270,6 +1273,7 @@ export const changePassword = async (req, res) => {
       createNotification({
         notificationId: generateNotificationId("security"),
         recipientId: userId,
+        isRead: false,
         recipientEmail: userData.email,
         recoveryEmails: userData.recoveryEmails,
         category: "auth",

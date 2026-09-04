@@ -53,6 +53,7 @@ export const notifyAdmins = async (target, params, sendEmailFlag = false) => {
         recipientId: admin.uid,
         recipientEmail: admin.email,
         sendEmail: sendEmailFlag,
+        isRead: false,
       }).catch((err) => {
         console.error(
           `[NOTIFICATION_DISPATCH_ERR] Failed for admin ${admin.uid}:`,

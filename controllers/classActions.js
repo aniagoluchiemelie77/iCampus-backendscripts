@@ -194,6 +194,7 @@ export const submitLectureException = async (req, res) => {
       try {
         await createNotification({
           notificationId: generateNotificationId("classroom"),
+          isRead: false,
           recipientId: user.uid,
           category: "finance",
           actionType: "EXCEPTION_SUBMITTED",
@@ -432,6 +433,7 @@ export const manageExceptions = async (req, res) => {
         await createNotification({
           notificationId: generateNotificationId("classroom"),
           recipientId: studentUid,
+          isRead: false,
           category: "classroom",
           actionType: "EXCEPTION_UPDATED",
           title: `Exception ${status === "approved" ? "Approved" : "Rejected"}`,
@@ -611,6 +613,7 @@ export const createLectureSchedule = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("classroom"),
               recipientId: student.uid,
+              isRead: false,
               category: "academic",
               actionType: "LECTURE_SCHEDULED",
               title: "New Lecture Scheduled",
@@ -807,6 +810,7 @@ export const createAssessment = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("classroom"),
               recipientId: student.uid,
+              isRead: false,
               category: "classroom",
               actionType: "TEST_CREATED",
               title: "New Assessment Posted",
@@ -948,6 +952,7 @@ export const deleteLecture = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("classroom"),
               recipientId: student.uid,
+              isRead: false,
               category: "classroom",
               actionType: "LECTURE_CANCELLED",
               title: "Lecture Cancelled",
@@ -1310,6 +1315,7 @@ export const uploadCourseMaterial = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("classroom"),
               recipientId: student.uid,
+              isRead: false,
               category: "classroom",
               actionType: "MATERIAL_UPLOADED",
               title: "New Study Material",
@@ -1453,6 +1459,7 @@ export const deleteCourseMaterial = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("classroom"),
               recipientId: student.uid,
+              isRead: false,
               category: "classroom",
               actionType: "MATERIAL_DELETED",
               title: "Study Material Removed",
@@ -1585,6 +1592,7 @@ export const createCourseContent = async (req, res) => {
           return createNotification({
             notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
+            isRead: false,
             category: "classroom",
             actionType: "CONTENT_ADDED",
             title: "New Topic Added",
@@ -1734,6 +1742,7 @@ export const editCourseContent = async (req, res) => {
           return createNotification({
             notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
+            isRead: false,
             category: "classroom",
             actionType: "CONTENT_MUTATED",
             title: "Course Syllabus Updated",
@@ -1884,6 +1893,7 @@ export const deleteCourseContent = async (req, res) => {
           return createNotification({
             notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
+            isRead: false,
             category: "classroom",
             actionType: "CONTENT_DELETION",
             title: "Syllabus Content Removed",
@@ -2032,6 +2042,7 @@ export const deleteCourseAssignment = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("classroom"),
               recipientId: student.uid,
+              isRead: false,
               category: "classroom",
               actionType: "ASSIGNMENT_REMOVED",
               title: "Assignment Cancelled",
@@ -2345,6 +2356,7 @@ export const submitAssessment = async (req, res) => {
         await createNotification({
           notificationId: generateNotificationId("classroom"),
           recipientId: currentUserId,
+          isRead: false,
           recipientEmail: req.user?.email,
           sendEmail: !!req.user?.email,
           category: "academic",
@@ -2554,6 +2566,7 @@ export const editLectures = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("classroom"),
               recipientId: student.uid,
+              isRead: false,
               recipientEmail: student.email,
               sendEmail: !!student.email,
               category: "classroom",
@@ -3081,6 +3094,7 @@ export const uploadCourseDetails = async (req, res) => {
         await createNotification({
           notificationId: generateNotificationId("classroom"),
           recipientId: requesterUid,
+          isRead: false,
           recipientEmail: req.user?.email,
           sendEmail: !!req.user?.email,
           category: "academic",
@@ -3222,6 +3236,7 @@ export const createCourseAssignment = async (req, res) => {
             createNotification({
               notificationId: generateNotificationId("classroom"),
               recipientId: student.uid,
+              isRead: false,
               category: "classroom",
               actionType: "ASSIGNMENT_CREATED",
               title: "New Assignment",
@@ -3478,6 +3493,7 @@ export const handleUpcomingLectureRemindersCron = async () => {
           return await createNotification({
             notificationId: generateNotificationId("classroom"),
             recipientId: student.uid,
+            isRead: false,
             recipientEmail: student.email,
             sendEmail: !!student.email,
             category: "classroom",

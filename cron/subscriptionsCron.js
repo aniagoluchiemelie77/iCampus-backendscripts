@@ -41,12 +41,18 @@ export const monitorSubscriptions = () => {
             to: user.email,
             subject: "Your iCampus Subscription Expires in 7 Days",
             text: `Hello ${user.firstname}, your subscription will expire soon. Renew to keep your perks.`,
-            html: subscriptionReminderTemplate(user.firstname, "7 days", user.tier, user.subscriptionExpiresAt),
+            html: subscriptionReminderTemplate(
+              user.firstname,
+              "7 days",
+              user.tier,
+              user.subscriptionExpiresAt,
+            ),
           }),
           doc.ref.update({ reminderSent7Days: true }),
           createNotification({
             notificationId: generateNotificationId("finance"),
             recipientId: user.uid,
+            isRead: false,
             actionType: "SUBSCRIPTION_EXPIRING",
             payload: {
               tier: user.tier,
@@ -65,14 +71,21 @@ export const monitorSubscriptions = () => {
         await Promise.all([
           sendEmail({
             to: user.email,
-            subject: "Action Required: Your iCampus Subscription Expires Tomorrow",
+            subject:
+              "Action Required: Your iCampus Subscription Expires Tomorrow",
             text: `Hello ${user.firstname}, your subscription expires in 24 hours.`,
-            html: subscriptionReminderTemplate(user.firstname, "24 hours", user.tier, user.subscriptionExpiresAt),
+            html: subscriptionReminderTemplate(
+              user.firstname,
+              "24 hours",
+              user.tier,
+              user.subscriptionExpiresAt,
+            ),
           }),
           doc.ref.update({ reminderSent1Day: true }),
           createNotification({
             notificationId: generateNotificationId("finance"),
             recipientId: user.uid,
+            isRead: false,
             actionType: "SUBSCRIPTION_EXPIRED",
             payload: {
               tier: user.tier,
