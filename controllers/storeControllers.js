@@ -26,18 +26,6 @@ import fs from "fs/promises";
 import { TAX_RATE, DELIVERY_FEES } from "../constants/inAppConstants.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
-import { calculateDistribution } from "../utils/finance.js";
-
-const now = new Date();
-const formattedDate = now.toLocaleDateString("en-US", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-});
-const formattedTime = now.toLocaleTimeString("en-US", {
-  hour: "2-digit",
-  minute: "2-digit",
-});
 
 async function sendOrderNotifications(buyer, processedItems, transactionId) {
   if (!Array.isArray(processedItems) || processedItems.length === 0) {
@@ -384,91 +372,6 @@ export const fetchStoreProducts = async (req, res) => {
     return res
       .status(500)
       .json({ message: err.message || "Failed to fetch store items" });
-  }
-};
-export const fetchAllProducts = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchAllProductsController";
-  const action = "fetchAllProducts";
-  const CACHE_KEY = "catalog:all_products";
-
-  try {
-    const cachedData = await redis.get(CACHE_KEY);
-    if (cachedData) {
-      res.status(200).json({
-        success: true,
-        products: JSON.parse(cachedData),
-        source: "cache",
-      });
-
-      setImmediate(() => {
-        if (typeof logControllerPerformance === "function") {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success",
-          );
-        }
-      });
-      return;
-    }
-
-    const products = [];
-    const snapshot = await Product.get();
-
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      products.push({
-        id: doc.id,
-        title: data.title,
-        isAvailable: data.isAvailable,
-        priceInPoints: data.priceInPoints,
-        mediaUrls: data.mediaUrls,
-        productId: data.productId,
-        category: data.category,
-        type: data.type,
-      });
-    });
-    res.status(200).json({
-      success: true,
-      products,
-      source: "database",
-    });
-    setImmediate(() => {
-      const backgroundTasks = [
-        redis
-          .set(CACHE_KEY, JSON.stringify(products), { EX: 18000 })
-          .catch((err) => console.error("Redis cache write error:", err)),
-      ];
-
-      if (typeof logControllerPerformance === "function") {
-        backgroundTasks.push(
-          Promise.resolve().then(() =>
-            logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "success",
-            ),
-          ),
-        );
-      }
-
-      Promise.all(backgroundTasks);
-    });
-  } catch (error) {
-    console.error("Critical Catalog Fetch Error:", error);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    return res
-      .status(500)
-      .json({ success: false, message: "Server unable to sync catalog" });
   }
 };
 export const clearUserCart = async (req, res) => {
@@ -1811,221 +1714,6 @@ export const getDropOffStations = async (req, res) => {
     });
   }
 };
-export const saveProductController = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "saveProductController";
-  const action = "saveProduct";
-  try {
-    const userUid = req.user.id || req.user.uid;
-    const { productId } = req.params;
-    const isEditing = !!productId;
-    const { title, description, productType, price, mediaUrls } = req.body;
-
-    if (!title || !description || !productType || !price) {
-      if (req.file) await fs.unlink(req.file.path).catch(() => {});
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing required product fields.",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "Missing required product fields." });
-    }
-
-    let productThumbnails = [];
-    if (mediaUrls) {
-      try {
-        productThumbnails =
-          typeof mediaUrls === "string" && mediaUrls.startsWith("[")
-            ? JSON.parse(mediaUrls)
-            : [mediaUrls];
-      } catch (e) {
-        productThumbnails = [mediaUrls];
-      }
-    }
-
-    let physicalDetails = null;
-    if (productType === "physical") {
-      physicalDetails = {
-        weightKg: Number(req.body.weightKg) || 0,
-        inStock: Number(req.body.inStock) || 0,
-        amountInStock: Number(req.body.inStock) || 0,
-        colors: req.body.colors ? JSON.parse(req.body.colors) : [],
-        sizes: req.body.sizes ? JSON.parse(req.body.sizes) : [],
-        sellerGateways: req.body.sellerGateways
-          ? JSON.parse(req.body.sellerGateways)
-          : [],
-        dropOffAddress: req.body.dropOffAddress
-          ? JSON.parse(req.body.dropOffAddress)
-          : [],
-      };
-    }
-
-    let productDocRef = null;
-    const [productQuery, sellerQuery] = await Promise.all([
-      isEditing
-        ? Product.where("productId", "==", productId)
-            .where("sellerId", "==", userUid)
-            .limit(1)
-            .get()
-        : Promise.resolve(null),
-      User.where("uid", "==", userUid).limit(1).get(),
-    ]);
-
-    if (isEditing) {
-      if (!productQuery || productQuery.empty) {
-        if (req.file) await fs.unlink(req.file.path).catch(() => {});
-        setImmediate(() => {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Product not found.",
-          );
-        });
-        return res
-          .status(404)
-          .json({ success: false, message: "Product not found." });
-      }
-
-      const productDoc = productQuery.docs[0];
-      productDocRef = productDoc.ref;
-    }
-
-    const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
-    const sellerName = seller ? seller.firstname : "A creator you follow";
-
-    let productData;
-
-    if (isEditing) {
-      productData = {
-        title,
-        description,
-        productType,
-        price: Number(price),
-        physicalDetails,
-        mediaUrls: productThumbnails,
-        updatedAt: new Date(),
-      };
-
-      await productDocRef.update(productData);
-      await redis.del("catalog:all_products");
-      productData = { productId, sellerId: userUid, ...productData };
-    } else {
-      const newCustomId = generateProductId(userUid);
-      productDocRef = Product.doc(newCustomId);
-      productData = {
-        productId: newCustomId,
-        sellerId: userUid,
-        title,
-        description,
-        productType,
-        price: Number(price),
-        physicalDetails,
-        mediaUrls: productThumbnails,
-        impressions: 0,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-        isAvailable: true,
-      };
-      await productDocRef.set(productData);
-    }
-    res.status(isEditing ? 200 : 200).json({
-      success: true,
-      message: isEditing
-        ? "Product entry successfully patched."
-        : "Product entry successfully saved.",
-      data: productData,
-    });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-    setImmediate(async () => {
-      try {
-        const currentDate = new Date();
-        const formattedDate = currentDate.toLocaleDateString();
-        const formattedTime = currentDate.toLocaleTimeString();
-
-        const bgTasks = [
-          notifyAdmins(
-            { role: ["super_admin", "moderator"] },
-            {
-              notificationId: generateNotificationId("store"),
-              actionType: isEditing ? "PRODUCT_UPDATE" : "PRODUCT_CREATION",
-              title: isEditing ? "Product Updated" : "New Product Listed",
-              message: `Product "${title}" was ${isEditing ? "updated" : "listed"} by ${sellerName}.`,
-              payload: {
-                productId: productData.productId,
-                productName: title,
-                sellerId: userUid,
-              },
-            },
-            false,
-          ),
-          processNotificationFanOut(
-            userUid,
-            sellerName,
-            productData,
-            isEditing,
-          ),
-        ];
-
-        if (isEditing) {
-          bgTasks.push(
-            createNotification({
-              notificationId: generateNotificationId("store"),
-              recipientId: userUid,
-              recipientEmail: req.user.email,
-              category: "store",
-              actionType: "PRODUCT_UPDATE",
-              title: "Product Updated Successfully",
-              message: `Your changes to "${title}" have been successfully saved.`,
-              entityId: productId,
-              entityType: "product",
-              sendEmail: true,
-              payload: {
-                productId: productId,
-                productType: productType,
-                productName: title,
-                price: Number(price),
-                date: formattedDate,
-                time: formattedTime,
-              },
-            }),
-          );
-        }
-
-        await Promise.allSettled(bgTasks);
-      } catch (err) {
-        console.error("Background task pipeline error context captured:", err);
-      }
-    });
-  } catch (error) {
-    console.error(
-      "Global crash layer hit in saveProductController:",
-      error.message,
-    );
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      success: false,
-      message: "Internal application routing anomaly.",
-    });
-  }
-};
 export const deleteProductController = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "deleteProductController";
@@ -2545,3 +2233,303 @@ export const markOrderAsDroppedOff = async (req, res) => {
 };
 
 //Tested and trusted using jest
+export const saveProductController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "saveProductController";
+  const action = "saveProduct";
+  try {
+    const userUid = req.user.id || req.user.uid;
+    const { productId } = req.params;
+    const isEditing = !!productId;
+    const { title, description, productType, price, mediaUrls } = req.body;
+
+    if (!title || !description || !productType || !price) {
+      if (req.file) await fs.unlink(req.file.path).catch(() => {});
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required product fields.",
+        );
+      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required product fields." });
+    }
+
+    let productThumbnails = [];
+    if (mediaUrls) {
+      try {
+        productThumbnails =
+          typeof mediaUrls === "string" && mediaUrls.startsWith("[")
+            ? JSON.parse(mediaUrls)
+            : [mediaUrls];
+      } catch (e) {
+        productThumbnails = [mediaUrls];
+      }
+    }
+
+    let physicalDetails = null;
+    if (productType === "physical") {
+      physicalDetails = {
+        weightKg: Number(req.body.weightKg) || 0,
+        inStock: Number(req.body.inStock) || 0,
+        amountInStock: Number(req.body.inStock) || 0,
+        colors: req.body.colors ? JSON.parse(req.body.colors) : [],
+        sizes: req.body.sizes ? JSON.parse(req.body.sizes) : [],
+        sellerGateways: req.body.sellerGateways
+          ? JSON.parse(req.body.sellerGateways)
+          : [],
+        dropOffAddress: req.body.dropOffAddress
+          ? JSON.parse(req.body.dropOffAddress)
+          : [],
+      };
+    }
+
+    let productDocRef = null;
+    const [productQuery, sellerQuery] = await Promise.all([
+      isEditing
+        ? Product.where("productId", "==", productId)
+            .where("sellerId", "==", userUid)
+            .limit(1)
+            .get()
+        : Promise.resolve(null),
+      User.where("uid", "==", userUid).limit(1).get(),
+    ]);
+
+    if (isEditing) {
+      if (!productQuery || productQuery.empty) {
+        if (req.file) await fs.unlink(req.file.path).catch(() => {});
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Product not found.",
+          );
+        });
+        return res
+          .status(404)
+          .json({ success: false, message: "Product not found." });
+      }
+
+      const productDoc = productQuery.docs[0];
+      productDocRef = productDoc.ref;
+    }
+
+    const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
+    const sellerName = seller ? seller.firstname : "A creator you follow";
+
+    let productData;
+
+    if (isEditing) {
+      productData = {
+        title,
+        description,
+        productType,
+        price: Number(price),
+        physicalDetails,
+        mediaUrls: productThumbnails,
+        updatedAt: new Date(),
+      };
+
+      await productDocRef.update(productData);
+      await redis.del("catalog:all_products");
+      productData = { productId, sellerId: userUid, ...productData };
+    } else {
+      const newCustomId = generateProductId(userUid);
+      productDocRef = Product.doc(newCustomId);
+      productData = {
+        productId: newCustomId,
+        sellerId: userUid,
+        title,
+        description,
+        productType,
+        price: Number(price),
+        physicalDetails,
+        mediaUrls: productThumbnails,
+        impressions: 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        isAvailable: true,
+      };
+      await productDocRef.set(productData);
+    }
+    res.status(isEditing ? 200 : 200).json({
+      success: true,
+      message: isEditing
+        ? "Product entry successfully patched."
+        : "Product entry successfully saved.",
+      data: productData,
+    });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+    setImmediate(async () => {
+      try {
+        const currentDate = new Date();
+        const formattedDate = currentDate.toLocaleDateString();
+        const formattedTime = currentDate.toLocaleTimeString();
+
+        const bgTasks = [
+          notifyAdmins(
+            { role: ["super_admin", "moderator"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: isEditing ? "PRODUCT_UPDATE" : "PRODUCT_CREATION",
+              title: isEditing ? "Product Updated" : "New Product Listed",
+              message: `Product "${title}" was ${isEditing ? "updated" : "listed"} by ${sellerName}.`,
+              payload: {
+                productId: productData.productId,
+                productName: title,
+                sellerId: userUid,
+              },
+            },
+            false,
+          ),
+          processNotificationFanOut(
+            userUid,
+            sellerName,
+            productData,
+            isEditing,
+          ),
+        ];
+
+        if (isEditing) {
+          bgTasks.push(
+            createNotification({
+              notificationId: generateNotificationId("store"),
+              recipientId: userUid,
+              recipientEmail: req.user.email,
+              category: "store",
+              actionType: "PRODUCT_UPDATE",
+              title: "Product Updated Successfully",
+              message: `Your changes to "${title}" have been successfully saved.`,
+              entityId: productId,
+              entityType: "product",
+              sendEmail: true,
+              payload: {
+                productId: productId,
+                productType: productType,
+                productName: title,
+                price: Number(price),
+                date: formattedDate,
+                time: formattedTime,
+              },
+            }),
+          );
+        }
+
+        await Promise.allSettled(bgTasks);
+      } catch (err) {
+        console.error("Background task pipeline error context captured:", err);
+      }
+    });
+  } catch (error) {
+    console.error(
+      "Global crash layer hit in saveProductController:",
+      error.message,
+    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Internal application routing anomaly.",
+    });
+  }
+};
+export const fetchAllProducts = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllProductsController";
+  const action = "fetchAllProducts";
+  const CACHE_KEY = "catalog:all_products";
+
+  try {
+    const cachedData = await redis.get(CACHE_KEY);
+    if (cachedData) {
+      res.status(200).json({
+        success: true,
+        products: JSON.parse(cachedData),
+        source: "cache",
+      });
+
+      setImmediate(() => {
+        if (typeof logControllerPerformance === "function") {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        }
+      });
+      return;
+    }
+
+    const products = [];
+    const snapshot = await Product.get();
+
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      products.push({
+        id: doc.id,
+        title: data.title,
+        isAvailable: data.isAvailable,
+        priceInPoints: data.priceInPoints,
+        mediaUrls: data.mediaUrls,
+        productId: data.productId,
+        category: data.category,
+        type: data.type,
+      });
+    });
+    res.status(200).json({
+      success: true,
+      products,
+      source: "database",
+    });
+    setImmediate(() => {
+      const backgroundTasks = [
+        redis
+          .set(CACHE_KEY, JSON.stringify(products), { EX: 18000 })
+          .catch((err) => console.error("Redis cache write error:", err)),
+      ];
+
+      if (typeof logControllerPerformance === "function") {
+        backgroundTasks.push(
+          Promise.resolve().then(() =>
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success",
+            ),
+          ),
+        );
+      }
+
+      Promise.all(backgroundTasks);
+    });
+  } catch (error) {
+    console.error("Critical Catalog Fetch Error:", error);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    return res
+      .status(500)
+      .json({ success: false, message: "Server unable to sync catalog" });
+  }
+};

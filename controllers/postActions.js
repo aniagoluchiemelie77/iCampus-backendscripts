@@ -21,6 +21,7 @@ import { setImmediate } from "timers";
 import { calculateRankingScore } from "../utils/postRanker.js";
 let visionClient = null;
 
+//Tested and trusted using jest
 const getVisionClient = () => {
   if (!visionClient) {
     try {
@@ -42,8 +43,6 @@ const getPostStats = (post, repostersCount = 0, commentsCount = 0) => ({
   commentsCount: commentsCount,
   totalVotes: post.poll?.totalVotes || 0,
 });
-
-//Tested and trusted using jest
 export const fetchPostUsingPostId = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchPostUsingPostIdController";
