@@ -2145,134 +2145,6 @@ export const getNotifications = async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 };
-export const fetchPosts = async (req, res) => {
-  const limit = parseInt(req.query.limit) || 15;
-  const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
-  const userId = req.user?.uid || req.user?.id;
-  try {
-    console.log("🔥 STEP 1: INSIDE TRY BLOCK");
-    let query = Posts.where("status", "!=", "hidden")
-      .orderBy("rankingScore", "desc")
-      .limit(limit);
-    console.log("🔥 STEP 2: PARSED PARAMS", { limit, cursorScore, userId });
-    if (cursorScore !== null && !isNaN(cursorScore)) {
-      query = query.startAfter(cursorScore);
-    }
-
-    const postsSnapshot = await query.get();
-    console.log(
-      `--- 2. POSTS QUERY EXECUTED. Found docs: ${postsSnapshot.size} ---`,
-    );
-
-    if (postsSnapshot.empty) {
-      console.log("--- 2b. Posts snapshot is empty, returning early. ---");
-      return res.json({ posts: [], nextCursor: null });
-    }
-
-    const rawPosts = postsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    console.log("--- 3. FIRST RAW POST SAMPLE ---", rawPosts[0]);
-
-    const authorIds = [
-      ...new Set(rawPosts.map((p) => p.originalAuthor).filter(Boolean)),
-    ];
-    const postIds = rawPosts.map((p) => p.id);
-
-    console.log(
-      `--- 4. FETCHING RELATIONS --- Author IDs count: ${authorIds.length}, Post IDs count: ${postIds.length}`,
-    );
-
-    const authorMap = new Map();
-    const repostersMap = new Map();
-    const fetchTasks = [];
-
-    if (authorIds.length > 0) {
-      const authorChunks = [];
-      for (let i = 0; i < authorIds.length; i += 30) {
-        authorChunks.push(authorIds.slice(i, i + 30));
-      }
-
-      fetchTasks.push(
-        Promise.all(
-          authorChunks.map(async (chunk) => {
-            const userSnap = await User.where("uid", "in", chunk).get();
-            userSnap.docs.forEach((doc) => {
-              const userData = doc.data();
-              const { password, iCashPin, ...safeData } = userData;
-              authorMap.set(userData.uid || doc.id, safeData);
-            });
-          }),
-        ),
-      );
-    }
-
-    if (postIds.length > 0) {
-      const reposterChunks = [];
-      for (let i = 0; i < postIds.length; i += 30) {
-        reposterChunks.push(postIds.slice(i, i + 30));
-      }
-
-      fetchTasks.push(
-        Promise.all(
-          reposterChunks.map(async (chunk) => {
-            const repSnap = await PostReposters.where(
-              "postId",
-              "in",
-              chunk,
-            ).get();
-            repSnap.docs.forEach((doc) => {
-              const repData = doc.data();
-              const pId = repData.postId;
-              if (!repostersMap.has(pId)) repostersMap.set(pId, []);
-              repostersMap.get(pId).push({ id: doc.id, ...repData });
-            });
-          }),
-        ),
-      );
-    }
-
-    await Promise.all(fetchTasks);
-    console.log("--- 5. AUTHORS & REPOSTERS FETCHED SUCCESSFULLY ---");
-
-    const processedPosts = await Promise.all(
-      rawPosts.map(async (post) => {
-        const authorDetails = authorMap.get(post.originalAuthor) || {};
-        const repostersDetails = repostersMap.get(post.id) || [];
-        const targetPostId = post.postId || post.id;
-
-        const commentsSnapshot = await Comments.where(
-          "postId",
-          "==",
-          targetPostId,
-        ).get();
-        const commentsCount = commentsSnapshot.size;
-
-        return {
-          ...post,
-          authorDetails,
-          repostersDetails,
-          commentsCount,
-          featuredReposter: await getPriorityReposter(repostersDetails, userId),
-        };
-      }),
-    );
-
-    const lastPost = rawPosts[rawPosts.length - 1];
-    const nextCursor = rawPosts.length === limit ? lastPost.rankingScore : null;
-
-    console.log(
-      `--- 6. SUCCESS. Sending ${processedPosts.length} posts. Next cursor: ${nextCursor} ---`,
-    );
-    res.json({ posts: processedPosts, nextCursor });
-  } catch (err) {
-    console.error("--- ❌ FEED ERROR CAUGHT ---");
-    console.error("Error Message:", err.message);
-    console.error("Error Stack:", err.stack);
-    res.status(500).json({ error: err.message });
-  }
-};
 export const fetchActiveTickets = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
@@ -2633,6 +2505,8 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
   try {
+    console.log("Ignoring...");
+    return res.status(200).json([]);
     const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user?.uid;
     const pageNum = parseInt(page);
@@ -2651,7 +2525,12 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
     if (session && session !== "All") {
       queryRef = queryRef.where("session", "==", session);
     }
-    queryRef = queryRef.orderBy("createdAt", "desc");
+    queryRef = queryRef.orderBy("createdAt", "desc").limit(limitNum);
+
+    if (skip > 0) {
+      queryRef = queryRef.offset(skip);
+    }
+
     const snapshot = await queryRef.get();
 
     if (snapshot.empty) {
@@ -2660,13 +2539,10 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
       );
       return res.status(200).json([]);
     }
-
-    const allCourses = snapshot.docs.map((doc) => ({
+    const paginatedCourses = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
-
-    const paginatedCourses = allCourses.slice(skip, skip + limitNum);
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
@@ -2683,5 +2559,113 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
       ),
     );
     res.status(500).json({ message: "Error fetching your courses" });
+  }
+};
+export const fetchPosts = async (req, res) => {
+  const limit = parseInt(req.query.limit) || 15;
+  const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
+  const userId = req.user?.uid || req.user?.id;
+  try {
+    let query = Posts.where("status", "!=", "hidden")
+      .orderBy("rankingScore", "desc")
+      .limit(limit);
+    if (cursorScore !== null && !isNaN(cursorScore)) {
+      query = query.startAfter(cursorScore);
+    }
+
+    const postsSnapshot = await query.get();
+    if (postsSnapshot.empty) {
+      return res.json({ posts: [], nextCursor: null });
+    }
+
+    const rawPosts = postsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+    const authorIds = [
+      ...new Set(rawPosts.map((p) => p.originalAuthor).filter(Boolean)),
+    ];
+    const postIds = rawPosts.map((p) => p.id);
+    const authorMap = new Map();
+    const repostersMap = new Map();
+    const fetchTasks = [];
+
+    if (authorIds.length > 0) {
+      const authorChunks = [];
+      for (let i = 0; i < authorIds.length; i += 30) {
+        authorChunks.push(authorIds.slice(i, i + 30));
+      }
+
+      fetchTasks.push(
+        Promise.all(
+          authorChunks.map(async (chunk) => {
+            const userSnap = await User.where("uid", "in", chunk).get();
+            userSnap.docs.forEach((doc) => {
+              const userData = doc.data();
+              const { password, iCashPin, ...safeData } = userData;
+              authorMap.set(userData.uid || doc.id, safeData);
+            });
+          }),
+        ),
+      );
+    }
+
+    if (postIds.length > 0) {
+      const reposterChunks = [];
+      for (let i = 0; i < postIds.length; i += 30) {
+        reposterChunks.push(postIds.slice(i, i + 30));
+      }
+
+      fetchTasks.push(
+        Promise.all(
+          reposterChunks.map(async (chunk) => {
+            const repSnap = await PostReposters.where(
+              "postId",
+              "in",
+              chunk,
+            ).get();
+            repSnap.docs.forEach((doc) => {
+              const repData = doc.data();
+              const pId = repData.postId;
+              if (!repostersMap.has(pId)) repostersMap.set(pId, []);
+              repostersMap.get(pId).push({ id: doc.id, ...repData });
+            });
+          }),
+        ),
+      );
+    }
+
+    await Promise.all(fetchTasks);
+    const processedPosts = await Promise.all(
+      rawPosts.map(async (post) => {
+        const authorDetails = authorMap.get(post.originalAuthor) || {};
+        const repostersDetails = repostersMap.get(post.id) || [];
+        const targetPostId = post.postId || post.id;
+
+        const commentsSnapshot = await Comments.where(
+          "postId",
+          "==",
+          targetPostId,
+        ).get();
+        const commentsCount = commentsSnapshot.size;
+
+        return {
+          ...post,
+          authorDetails,
+          repostersDetails,
+          commentsCount,
+          featuredReposter: await getPriorityReposter(repostersDetails, userId),
+        };
+      }),
+    );
+
+    const lastPost = rawPosts[rawPosts.length - 1];
+    const nextCursor = rawPosts.length === limit ? lastPost.rankingScore : null;
+    res.json({ posts: processedPosts, nextCursor });
+  } catch (err) {
+    console.error("--- ❌ FEED ERROR CAUGHT ---");
+    console.error("Error Message:", err.message);
+    console.error("Error Stack:", err.stack);
+    res.status(500).json({ error: err.message });
   }
 };
