@@ -23,7 +23,6 @@ import { setImmediate } from "timers";
 import axiosRetry from "axios-retry";
 import axios from "axios";
 import * as cheerio from "cheerio";
-import { getFallbackBooks } from "../utils/libraryHelpers.js";
 import { CATEGORY_ROLES } from "../constants/inAppConstants.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
@@ -160,149 +159,6 @@ export const fetchUserTransactionHistory = async (req, res) => {
       ),
     );
     res.status(500).json({ message: error.message });
-  }
-};
-export const fetchUserTransactionStats = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchUserTransactionStatsController";
-  const action = "fetchUserTransactionStats";
-  try {
-    const userId = req.user.uid;
-    let { month, year } = req.query;
-
-    const currentDate = new Date();
-    const targetMonth = month
-      ? parseInt(month, 10)
-      : currentDate.getMonth() + 1;
-    const targetYear = year ? parseInt(year, 10) : currentDate.getFullYear();
-
-    if (
-      isNaN(targetMonth) ||
-      isNaN(targetYear) ||
-      targetMonth < 1 ||
-      targetMonth > 12
-    ) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid month or year parameter values provided.",
-        ),
-      );
-      return res.status(400).json({
-        success: false,
-        message: "Invalid month or year parameter values provided.",
-      });
-    }
-
-    const start = new Date(targetYear, targetMonth - 1, 1);
-    const end = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
-
-    const querySnapshot = await Transactions.where("userId", "==", userId)
-      .where("createdAt", ">=", start)
-      .where("createdAt", "<=", end)
-      .get();
-
-    const transactions = querySnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    const flowMap = {};
-    const monthlyMap = {};
-    const recipientMap = {};
-
-    transactions.forEach((tx) => {
-      const payType = tx.payType || "unknown";
-      const amount = tx.amountICash || 0;
-      flowMap[payType] = (flowMap[payType] || 0) + amount;
-
-      const txDate = tx.createdAt?.toDate
-        ? tx.createdAt.toDate()
-        : new Date(tx.createdAt);
-      const txMonth = txDate.getMonth() + 1;
-      monthlyMap[txMonth] = (monthlyMap[txMonth] || 0) + amount;
-
-      if (
-        tx.payType === "out" &&
-        tx.type === "p2p_sent" &&
-        tx.metadata?.recipientId
-      ) {
-        const recipientId = tx.metadata.recipientId;
-        if (!recipientMap[recipientId]) {
-          recipientMap[recipientId] = { count: 0, total: 0 };
-        }
-        recipientMap[recipientId].count += 1;
-        recipientMap[recipientId].total += amount;
-      }
-    });
-
-    const flow = Object.keys(flowMap).map((key) => ({
-      _id: key,
-      total: flowMap[key],
-    }));
-
-    const monthly = Object.keys(monthlyMap).map((key) => ({
-      _id: parseInt(key, 10),
-      total: monthlyMap[key],
-    }));
-
-    const sortedRecipientIds = Object.keys(recipientMap)
-      .sort((a, b) => recipientMap[b].count - recipientMap[a].count)
-      .slice(0, 5);
-
-    let topRecipients = [];
-    if (sortedRecipientIds.length > 0) {
-      const userSnapshot = await User.where(
-        "uid",
-        "in",
-        sortedRecipientIds,
-      ).get();
-      const usersMap = {};
-      userSnapshot.docs.forEach((doc) => {
-        const userData = doc.data();
-        usersMap[userData.uid] = userData;
-      });
-
-      topRecipients = sortedRecipientIds.map((recipientId) => {
-        const userDetails = usersMap[recipientId] || {};
-        const firstname = userDetails.firstname || "Unknown";
-        const lastname = userDetails.lastname || "User";
-        const fullName = `${firstname} ${lastname}`.trim();
-
-        return {
-          _id: recipientId,
-          count: recipientMap[recipientId].count,
-          total: recipientMap[recipientId].total,
-          name: fullName,
-        };
-      });
-    }
-
-    const result = { flow, topRecipients, monthly };
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json({
-      success: true,
-      period: { month: targetMonth, year: targetYear },
-      data: result,
-    });
-  } catch (e) {
-    console.error("Aggregation crash in fetchUserTransactionStats:", e.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        e.message,
-      ),
-    );
-    res.status(500).json({ success: false, error: e.message });
   }
 };
 export const fetchItagByUsername = async (req, res) => {
@@ -1349,91 +1205,6 @@ export const fetchOngoingLectures = async (req, res) => {
       ),
     );
     res.status(500).json({ error: err.message });
-  }
-};
-export const fetchFeaturedBooksFromLibrary = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchFeaturedBooksFromLibraryController";
-  const action = "fetchFeaturedBooksFromLibrary";
-  try {
-    const rawDept = req.query.department;
-    const department =
-      rawDept && rawDept.trim().length > 0 ? rawDept.trim() : null;
-    const BASE_URL = "https://1lib.sk";
-    const targetUrl = department
-      ? `${BASE_URL}/s/${encodeURIComponent(department)}`
-      : `${BASE_URL}/popular.php`;
-
-    const { data } = await axios.get(targetUrl, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
-      },
-      timeout: 5000,
-    });
-
-    const $ = cheerio.load(data);
-    const featuredBooks = [];
-
-    $(".bookDetailsBox, .resItemBox").each((index, element) => {
-      if (index >= 12) return;
-
-      const row = $(element);
-      const title = row.find('h3[itemprop="name"] a, .title a').text().trim();
-      const author =
-        row.find(".authors a, .author").first().text().trim() ||
-        "Various Authors";
-
-      const thumbnail =
-        row.find("img.cover").attr("data-src") ||
-        row.find("img.cover").attr("src") ||
-        row.find(".bookCover img").attr("src");
-
-      const detailsUrl = row.find('a[href^="/book/"]').attr("href");
-      const extension =
-        row.find(".property_value").first().text().trim() || "PDF";
-      const size = row.find(".property_size").text().trim() || "N/A";
-      const year = row.find(".property_year").text().trim() || "N/A";
-
-      if (title && detailsUrl) {
-        featuredBooks.push({
-          id: detailsUrl.split("/").pop(),
-          title,
-          author,
-          thumbnail: thumbnail?.startsWith("http")
-            ? thumbnail
-            : `${BASE_URL}${thumbnail}`,
-          extension: extension.toUpperCase(),
-          size,
-          year,
-          downloadUrl: `${BASE_URL}${detailsUrl}`,
-        });
-      }
-    });
-
-    if (featuredBooks.length === 0) {
-      setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "success"),
-      );
-      return res.json(getFallbackBooks());
-    }
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.json(featuredBooks);
-  } catch (error) {
-    console.error("Featured Scrape Error:", error.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.json(getFallbackBooks());
   }
 };
 export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
@@ -2648,8 +2419,6 @@ export const fetchPosts = async (req, res) => {
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const userId = req.user?.uid || req.user?.id;
   try {
-    console.log("Ignoring...");
-    return res.status(200).json([]);
     let query = Posts.where("status", "!=", "hidden")
       .orderBy("rankingScore", "desc")
       .limit(limit);

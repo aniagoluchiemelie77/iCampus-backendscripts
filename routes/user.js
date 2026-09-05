@@ -17,7 +17,6 @@ import {
   fetchLectureExceptionsLecturerView,
   fetchBanksUsingCountryCode,
   fetchOngoingLectures,
-  fetchFeaturedBooksFromLibrary,
   fetchCourseDetailsForOngoingLecture,
   fetchAllExceptionsForOngoingLecture,
   fetchCourseDetails,
@@ -46,7 +45,6 @@ import {
   toggleFollowingUsers,
   updateUserProfile,
   verifyiTagUsernameAvailability,
-  searchBookInLibrary,
   searchUserUsingUidOrNameQuery,
   checkAccountState,
   handleUnifiedCourseSearch,
@@ -84,8 +82,6 @@ router.get("/lectures/ongoing", protect, fetchOngoingLectures);
 router.get("/exceptions", protect, fetchLectureExceptions);
 router.post("/ai/chat", protect, aiChat);
 router.get("/check-account-state", protect, checkAccountState);
-router.get("/library/search", protect, searchBookInLibrary);
-router.get("/library/featured", protect, fetchFeaturedBooksFromLibrary);
 router.get("/search", protect, searchUserUsingUidOrNameQuery);
 router.get("/fetch-connections", protect, fetchConnections);
 router.post(

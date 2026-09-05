@@ -11,7 +11,6 @@ import {
 } from "../controllers/paymentController.js";
 import {
   fetchUserTransactionHistory,
-  fetchUserTransactionStats,
   fetchItagByUsername,
   getTransactionById,
 } from "../controllers/fetchActions.js";
@@ -41,7 +40,6 @@ router.post(
   idempotencyMiddleware,
   handleP2pTransfers,
 );
-router.get("/transactions/stats", protect, fetchUserTransactionStats);
 router.post(
   "/transactions/export",
   protect,
