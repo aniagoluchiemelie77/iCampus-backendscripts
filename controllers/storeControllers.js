@@ -2340,23 +2340,37 @@ export const fetchAllProducts = async (req, res) => {
   try {
     const cachedData = await redis.get(CACHE_KEY);
     if (cachedData) {
-      res.status(200).json({
-        success: true,
-        products: JSON.parse(cachedData),
-        source: "cache",
-      });
+      let parsedProducts;
+      try {
+        parsedProducts =
+          typeof cachedData === "string" ? JSON.parse(cachedData) : cachedData;
+      } catch (parseError) {
+        console.error(
+          "Cache parse error, falling back to database:",
+          parseError,
+        );
+        parsedProducts = null;
+      }
 
-      setImmediate(() => {
-        if (typeof logControllerPerformance === "function") {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success",
-          );
-        }
-      });
-      return;
+      if (parsedProducts) {
+        res.status(200).json({
+          success: true,
+          products: parsedProducts,
+          source: "cache",
+        });
+
+        setImmediate(() => {
+          if (typeof logControllerPerformance === "function") {
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success",
+            );
+          }
+        });
+        return;
+      }
     }
 
     const products = [];
@@ -2375,11 +2389,13 @@ export const fetchAllProducts = async (req, res) => {
         type: data.type,
       });
     });
+
     res.status(200).json({
       success: true,
       products,
       source: "database",
     });
+
     setImmediate(() => {
       const backgroundTasks = [
         redis
