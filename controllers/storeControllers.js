@@ -2338,8 +2338,6 @@ export const fetchAllProducts = async (req, res) => {
   const CACHE_KEY = "catalog:all_products";
 
   try {
-    console.log("Ignoring...");
-    return res.status(200).json([]);
     const cachedData = await redis.get(CACHE_KEY);
     if (cachedData) {
       res.status(200).json({
@@ -2425,9 +2423,6 @@ export const fetchStoreProducts = async (req, res) => {
   const { q, category, cursor, limit = 10 } = req.query;
   const pageLimit = Math.min(Math.max(Number(limit) || 10, 1), 50);
 
-  // 1. Log initial incoming request params
-  console.log("Ignoring...");
-  return res.status(200).json([]);
   console.log(`[${controllerName}] Incoming Request:`, {
     q,
     category,

@@ -2358,8 +2358,6 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
   try {
-    console.log("Ignoring...");
-    return res.status(200).json([]);
     const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user?.uid;
     const pageNum = parseInt(page);
@@ -2394,6 +2392,7 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
     }
     const paginatedCourses = snapshot.docs.map((doc) => ({
       id: doc.id,
+      courseId: doc.id,
       ...doc.data(),
     }));
 
@@ -2418,6 +2417,8 @@ export const fetchPosts = async (req, res) => {
   const limit = parseInt(req.query.limit) || 15;
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const userId = req.user?.uid || req.user?.id;
+  console.log("Ignoring...");
+  return res.status(200).json([]);
   try {
     let query = Posts.where("status", "!=", "hidden")
       .orderBy("rankingScore", "desc")
