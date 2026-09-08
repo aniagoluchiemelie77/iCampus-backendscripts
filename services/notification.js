@@ -1,6 +1,5 @@
 import { Notification, userPrefs } from "../tableDeclarations.js";
 import { getIO } from "../controllers/socket.js";
-import { sendEmail } from "./emailService.js";
 import { sendPushNotification } from "./pushNotification.js";
 import {
   welcomeEmailTemplate,
@@ -34,6 +33,7 @@ import {
   financialSecurityAlertTemplate,
   newStationRegistrationTemplate,
 } from "./emailTemplates.js";
+import { sendEmail as sendEmailFunction } from "../services/emailService.js";
 
 export const createNotification = async ({
   notificationId,
@@ -942,20 +942,20 @@ export const createNotification = async ({
 
     let notificationRecord = null;
     if (saveToDb) {
-  notificationRecord = {
-    notificationId,
-    recipientId,
-    category,
-    actionType,
-    title,
-    message,
-    relatedEntity: { entityId, entityType },
-    payload,
-    createdAt: new Date(),
-  };
+      notificationRecord = {
+        notificationId,
+        recipientId,
+        category,
+        actionType,
+        title,
+        message,
+        relatedEntity: { entityId, entityType },
+        payload,
+        createdAt: new Date(),
+      };
 
-  await Notification.doc(notificationId).set(notificationRecord);
-}
+      await Notification.doc(notificationId).set(notificationRecord);
+    }
     if (canSendSocket) {
       const io = getIO();
       io.to(recipientId).emit(
@@ -969,7 +969,7 @@ export const createNotification = async ({
         : [recipientEmail].filter(Boolean);
       await Promise.all(
         targets.map((email) =>
-          sendEmail({
+          sendEmailFunction({
             to: email,
             subject:
               isCritical && email !== recipientEmail

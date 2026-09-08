@@ -248,678 +248,6 @@ async function processNotificationFanOut(
     );
   }
 }
-export const clearUserCart = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "clearUserCartController";
-  const action = "clearUserCart";
-
-  try {
-    const userId = req.user?.id || req.user?.uid;
-    if (!userId) throw new Error("Unauthorized");
-    const userDocRef = User.doc(userId);
-    await userDocRef.update({
-      cart: [],
-      updatedAt: new Date(),
-    });
-    res.status(200).json({
-      status: true,
-      message: "Cart cleared successfully",
-      cart: [],
-    });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    console.error("Clear Cart Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    const statusCode = error.message === "Unauthorized" ? 401 : 500;
-    return res.status(statusCode).json({
-      status: false,
-      message: error.message || "An error occurred while clearing the cart",
-    });
-  }
-};
-export const bulkAddToCart = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "bulkAddToCartController";
-  const action = "bulkAddToCart";
-  const { items } = req.body;
-  const userId = req.user.id || req.user.uid;
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-
-    if (userQuery.empty) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      }
-      return res.status(404).json({ status: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const userData = userDoc.data();
-    const currentCart = userData.cart || [];
-    const existingProductIds = new Set(currentCart.map((i) => i.productId));
-    const itemsToAdd = (items || []).filter(
-      (item) => !existingProductIds.has(item.productId),
-    );
-
-    const updatedCart = [...currentCart, ...itemsToAdd];
-
-    if (itemsToAdd.length > 0) {
-      await userDoc.ref.update({
-        cart: updatedCart,
-        updatedAt: new Date(),
-      });
-    }
-    res.status(200).json({
-      status: true,
-      cart: updatedCart,
-      message: "Successfully added items to cart.",
-    });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    console.error("Bulk Add To Cart Error:", error.message);
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    res.status(500).json({ status: false, message: "An error occurred" });
-  }
-};
-export const clearFavorites = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "clearFavoritesController";
-  const action = "clearFavorites";
-
-  try {
-    const userId = req.user?.id || req.user?.uid;
-    if (!userId) {
-      return res.status(401).json({
-        status: false,
-        message: "Unauthorized user session",
-      });
-    }
-
-    const userDocRef = User.doc(userId);
-    const userSnap = await userDocRef.get();
-
-    if (!userSnap.exists) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      }
-      return res.status(404).json({
-        status: false,
-        message: "User not found",
-      });
-    }
-
-    await userDocRef.update({
-      favorites: [],
-      updatedAt: new Date(),
-    });
-    res
-      .status(200)
-      .json({ status: true, message: "Favorites cleared successfully" });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    console.error("Clear Favorites Error:", error.message);
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    return res.status(500).json({
-      status: false,
-      message: "An error occurred while clearing favorites",
-    });
-  }
-};
-export const initializeCheckout = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "initializeCheckoutController";
-  const action = "initializeCheckout";
-  const { items, totals, shippingContact } = req.body;
-  const buyerId = req.user.id || req.user.uid;
-  const PAYOUT_FACTOR = 1 - TAX_RATE;
-
-  try {
-    const processedResults = await db.runTransaction(async (transaction) => {
-      const buyerQuery = await User.where("uid", "==", buyerId).limit(1).get();
-      if (buyerQuery.empty) {
-        throw new Error(
-          "Insufficient iCash balance to complete purchase or user not found.",
-        );
-      }
-
-      const buyerDoc = buyerQuery.docs[0];
-      const buyerData = buyerDoc.data();
-      const currentBalance = buyerData.pointsBalance || 0;
-
-      if (currentBalance < totals.grandTotal) {
-        throw new Error(
-          "Insufficient iCash balance to complete purchase or user not found.",
-        );
-      }
-
-      const newBuyerBalance = currentBalance - totals.grandTotal;
-      transaction.update(buyerDoc.ref, {
-        pointsBalance: newBuyerBalance,
-        updatedAt: new Date(),
-      });
-
-      const buyerTxId = generateTransactionId("payment");
-      const buyerTransactionRef = Transactions.doc(buyerTxId);
-      const buyerTransaction = {
-        transactionId: buyerTxId,
-        userId: buyerId,
-        type: "payment",
-        amountICash: totals.grandTotal,
-        status: "success",
-        payType: "out",
-        title: `Purchase of ${items.length} item(s)`,
-        reference: `REF-${buyerTxId}`,
-        createdAt: new Date(),
-      };
-      transaction.set(buyerTransactionRef, buyerTransaction);
-      const itemPromises = items.map(async (item) => {
-        const [productQuery, sellerQuery] = await Promise.all([
-          Product.where("productId", "==", item.productId).limit(1).get(),
-          User.where("uid", "==", item.sellerId).limit(1).get(),
-        ]);
-
-        if (productQuery.empty || sellerQuery.empty) {
-          throw new Error("Product or Seller info not found.");
-        }
-
-        return {
-          item,
-          productDoc: productQuery.docs[0],
-          productData: productQuery.docs[0].data(),
-          sellerDoc: sellerQuery.docs[0],
-          sellerData: sellerQuery.docs[0].data(),
-        };
-      });
-
-      const resolvedItems = await Promise.all(itemPromises);
-      const results = [];
-
-      for (const resolved of resolvedItems) {
-        const { item, productDoc, productData, sellerDoc, sellerData } =
-          resolved;
-
-        const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
-        const isDropOff = item.deliveryMethod === "drop_off";
-        const stationAgentId =
-          isDropOff && item.selectedStation
-            ? item.selectedStation.agentId
-            : null;
-        const itemTotal = item.price * item.quantity;
-        const netEarnings = itemTotal * PAYOUT_FACTOR;
-        const productTaxAmount = itemTotal - netEarnings;
-
-        if (productTaxAmount > 0) {
-          const taxEntryId = generateTransactionId("appTax");
-          const taxDocRef = TaxEntries.doc(taxEntryId);
-
-          transaction.set(taxDocRef, {
-            transactionReference: `REF-${buyerTxId}`,
-            taxType: "product_tax",
-            amount: productTaxAmount,
-            currency: "iCash",
-            date: new Date(),
-            sourceDetails: {
-              buyerId: buyerId,
-              sellerId: item.sellerId,
-              productId: item.productId,
-              relatedTransactionId: orderId,
-            },
-            createdAt: new Date(),
-          });
-        }
-
-        const currentStock = productData.amountInStock ?? 1;
-        if (currentStock < item.quantity) {
-          throw new Error(
-            `Insufficient stock for ${productData.title}. Available: ${currentStock}`,
-          );
-        }
-
-        const updatedStock = currentStock - item.quantity;
-        const productUpdates = {
-          amountInStock: updatedStock,
-          updatedAt: new Date(),
-        };
-        if (updatedStock === 0) {
-          productUpdates.isAvailable = false;
-        }
-
-        transaction.update(productDoc.ref, productUpdates);
-
-        const newOrderRef = ProductOrder.doc(orderId);
-        const newOrder = {
-          orderId,
-          buyerId,
-          sellerId: item.sellerId,
-          productId: item.productId,
-          productName: productData.title,
-          amountPaid: itemTotal,
-          quantity: item.quantity,
-          status:
-            productData.type === "physical" ? "pending_delivery" : "completed",
-          deliveryMethod: item.deliveryMethod,
-          verificationQrCode: orderId,
-          agentId: stationAgentId,
-          selectedStation: item.selectedStation || null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date(),
-        };
-        transaction.set(newOrderRef, newOrder);
-
-        results.push({
-          order: newOrder,
-          fileUrl: newOrder.fileUrl,
-          sellerEmail: sellerData.email,
-          sellerId: sellerData.uid,
-          product: productData,
-          buyerAddress: shippingContact.address,
-          buyerPhoneNumber: shippingContact.phone,
-          deliveryMethod: item.deliveryMethod,
-        });
-      }
-
-      return { processedResults: results, buyerTxId };
-    });
-    res.status(200).json({
-      success: true,
-      data: processedResults.processedResults.map((r) => r.order),
-    });
-
-    setImmediate(async () => {
-      try {
-        const buyerQuery = await User.where("uid", "==", buyerId)
-          .limit(1)
-          .get();
-        const buyerData = !buyerQuery.empty
-          ? buyerQuery.docs[0].data()
-          : { uid: buyerId };
-
-        await Promise.all([
-          sendOrderNotifications(
-            buyerData,
-            processedResults.processedResults,
-            processedResults.buyerTxId,
-          ),
-          notifyAdmins(
-            { role: ["super_admin", "finance"] },
-            {
-              notificationId: generateNotificationId("store"),
-              actionType: "NEW_PURCHASE_ORDER",
-              title: "New Purchase Order",
-              message: `Order set #${processedResults.buyerTxId} created with ${items.length} items.`,
-              payload: {
-                transactionId: processedResults.buyerTxId,
-                itemCount: items.length,
-                buyerId,
-              },
-            },
-            false,
-          ),
-        ]);
-
-        if (typeof logControllerPerformance === "function") {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success",
-          );
-        }
-      } catch (bgError) {
-        console.error("Background Checkout Tasks Error:", bgError);
-      }
-    });
-  } catch (error) {
-    console.error("Checkout Initialization Error:", error.message);
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-export const completeOrderDelivery = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "completeOrderDeliveryController";
-  const action = "completeOrderDelivery";
-  const { orderId } = req.body;
-  const scannerUid = req.user?.id || req.user?.uid;
-
-  if (!scannerUid) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user identifier",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user identifier" });
-  }
-
-  if (!orderId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing orderId",
-      );
-    });
-    return res.status(400).json({
-      success: false,
-      message: "Missing order identification parameter.",
-    });
-  }
-
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const orderDocRef = ProductOrder.doc(orderId);
-      const orderDoc = await transaction.get(orderDocRef);
-
-      if (!orderDoc.exists) {
-        throw new Error("Product order not found.");
-      }
-
-      const order = orderDoc.data();
-      const salesIncrement = order.quantity || 1;
-
-      if (
-        order.status !== "pending_delivery" &&
-        order.status !== "dropped_off"
-      ) {
-        throw new Error("Product order is already processed or cancelled.");
-      }
-
-      const isSeller = order.sellerId === scannerUid;
-      const isAgent = order.agentId === scannerUid;
-
-      if (!isSeller && !isAgent) {
-        throw new Error("You are not authorized to verify this delivery.");
-      }
-      const [productQuery, sellerQuery, buyerQuery, agentQuery] =
-        await Promise.all([
-          Product.where("productId", "==", order.productId).limit(1).get(),
-          User.where("uid", "==", order.sellerId).limit(1).get(),
-          User.where("uid", "==", order.buyerId).limit(1).get(),
-          order.deliveryMethod === "drop_off" && order.agentId
-            ? User.where("uid", "==", order.agentId).limit(1).get()
-            : Promise.resolve(null),
-        ]);
-
-      if (productQuery.empty) {
-        throw new Error("Product not found.");
-      }
-      if (sellerQuery.empty) {
-        throw new Error("Seller account no longer exists.");
-      }
-      if (
-        order.deliveryMethod === "drop_off" &&
-        order.agentId &&
-        (!agentQuery || agentQuery.empty)
-      ) {
-        throw new Error("Drop-off agent not found.");
-      }
-
-      const productDoc = productQuery.docs[0];
-      const productData = productDoc.data();
-      const sellerDoc = sellerQuery.docs[0];
-      const seller = sellerDoc.data();
-      const buyer = !buyerQuery.empty ? buyerQuery.docs[0].data() : null;
-
-      let agentDoc = null;
-      let agentData = null;
-      if (agentQuery && !agentQuery.empty) {
-        agentDoc = agentQuery.docs[0];
-        agentData = agentDoc.data();
-      }
-
-      const buyerTier = buyer?.tier || "free";
-      const deliveryFeeRate =
-        DELIVERY_FEES?.[buyerTier]?.[order.deliveryMethod] || 0;
-      const deliveryFeeAmount = order.amountPaid * deliveryFeeRate;
-      const totalHeld = order.amountPaid;
-      const taxAmount = totalHeld * TAX_RATE;
-      const payableAmount = totalHeld - taxAmount;
-
-      let sellerEarnings = payableAmount;
-      let agentEarnings = 0;
-
-      if (order.deliveryMethod === "drop_off" && order.agentId && agentDoc) {
-        agentEarnings = deliveryFeeAmount * 0.5;
-        const sellerDeliveryShare = deliveryFeeAmount * 0.5;
-        sellerEarnings += sellerDeliveryShare;
-
-        const updatedAgentPending =
-          (agentData.pendingSalesBalance || 0) + agentEarnings;
-        transaction.update(agentDoc.ref, {
-          pendingSalesBalance: updatedAgentPending,
-          updatedAt: new Date(),
-        });
-      } else if (order.deliveryMethod === "home_delivery") {
-        const sellerDeliveryShare = deliveryFeeAmount * 0.7;
-        sellerEarnings += sellerDeliveryShare;
-      }
-
-      const updatedSellerPending =
-        (seller.pendingSalesBalance || 0) + sellerEarnings;
-      transaction.update(sellerDoc.ref, {
-        pendingSalesBalance: updatedSellerPending,
-        updatedAt: new Date(),
-      });
-
-      const currentSales = productData.sales || 0;
-      transaction.update(productDoc.ref, {
-        sales: currentSales + salesIncrement,
-        updatedAt: new Date(),
-      });
-
-      const completedAtTime = new Date().toISOString();
-      transaction.update(orderDocRef, {
-        status: "completed",
-        completedAt: completedAtTime,
-        updatedAt: new Date(),
-      });
-
-      const productSaleRef = ProductSales.doc();
-      transaction.set(productSaleRef, {
-        sellerId: order.sellerId,
-        productId: order.productId,
-        orderId,
-        productType: "physical",
-        quantity: order.quantity || 1,
-        buyerId: order.buyerId,
-        amountPaid: order.amountPaid,
-        netEarnings: sellerEarnings,
-        createdAt: new Date(),
-      });
-
-      return {
-        productTitle: productData.title,
-        buyer,
-        seller,
-        agent: agentData,
-        sellerEarnings,
-        agentEarnings,
-        isSeller,
-      };
-    });
-    res.status(200).json({
-      success: true,
-      orderId,
-      settlementAmount: result.isSeller
-        ? result.sellerEarnings
-        : result.agentEarnings,
-      role: result.isSeller ? "seller" : "agent",
-      message: "Delivery verified and payments settled.",
-      productName: result.productTitle,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-    setImmediate(async () => {
-      try {
-        const notificationPromises = [];
-
-        notificationPromises.push(
-          createNotification({
-            notificationId: generateNotificationId("store"),
-            recipientId: order.buyerId || result.buyer?.uid,
-            category: "store",
-            actionType: "ORDER_REVIEW_REQUEST",
-            title: "Share your experience",
-            isRead: false,
-            message: `How was your ${result.productTitle}? Rate your experience to help the icampus community.`,
-            payload: {
-              orderId: orderId,
-              productName: result.productTitle,
-              targetId: orderId,
-              userName: result.buyer ? result.buyer.firstname : "Valued User",
-            },
-          }),
-        );
-
-        notificationPromises.push(
-          createNotification({
-            notificationId: generateNotificationId("store"),
-            recipientId: result.seller.uid,
-            recipientEmail: result.seller.email,
-            isRead: false,
-            category: "finance",
-            actionType: "ORDER_COMPLETED",
-            title: "Payment Received",
-            message: `Your sale for ${result.productTitle} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
-            payload: {
-              amount: result.sellerEarnings,
-              userName: result.seller.firstname,
-              productName: result.productTitle,
-              orderId: orderId,
-              role: "seller",
-            },
-            sendEmail: true,
-          }),
-        );
-
-        if (result.agent) {
-          notificationPromises.push(
-            createNotification({
-              notificationId: generateNotificationId("store"),
-              recipientId: result.agent.uid,
-              recipientEmail: result.agent.email,
-              isRead: false,
-              category: "finance",
-              actionType: "ORDER_COMPLETED",
-              title: "Delivery Commission Earned",
-              message: `You earned ${result.agentEarnings} iCash for verifying order #${orderId}, proceed to payout to withdraw to your iCash wallet.`,
-              payload: {
-                amount: result.agentEarnings,
-                userName: result.agent.firstname,
-                productName: result.productTitle,
-                orderId: orderId,
-                role: "agent",
-              },
-              sendEmail: true,
-            }),
-          );
-        }
-
-        notificationPromises.push(
-          notifyAdmins(
-            { role: ["super_admin", "finance"] },
-            {
-              notificationId: generateNotificationId("store"),
-              actionType: "PURCHASE_ORDER_COMPLETION",
-              title: "Order Completed",
-              message: `Order #${orderId} has been completed and funds settled.`,
-              payload: {
-                orderId,
-                sellerId: result.seller.uid,
-                buyerId: result.buyer?.uid || "",
-                agentId: result.agent ? result.agent.uid : "",
-              },
-            },
-            false,
-          ),
-        );
-
-        await Promise.all(notificationPromises);
-      } catch (err) {
-        console.error(
-          "Background notification pipeline failure in completeOrderDelivery:",
-          err,
-        );
-      }
-    });
-  } catch (error) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(400).json({ success: false, message: error.message });
-  }
-};
 export const cancelOrder = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "cancelOrderController";
@@ -1107,435 +435,34 @@ export const cancelOrder = async (req, res) => {
     return res.status(400).json({ success: false, message: error.message });
   }
 };
-export const getPendingOrders = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "getPendingOrdersController";
-  const action = "getPendingOrders";
-
-  try {
-    const userId = req.user?.id || req.user?.uid;
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user identifier",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user identifier" });
-    }
-
-    const snapshot = await ProductOrder.where("buyerId", "==", userId)
-      .where("status", "in", ["pending_delivery", "dropped_off"])
-      .orderBy("createdAt", "desc")
-      .get();
-
-    const orders = [];
-    snapshot.forEach((doc) => {
-      orders.push(doc.data());
-    });
-
-    res.status(200).json({ success: true, data: orders });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-export const logProductImpression = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "logProductImpressionController";
-  const action = "logProductImpression";
-  const { productId } = req.body;
-  const userId = req.user.id || req.user.uid;
-  const currentMonthYear = new Date().toISOString().slice(0, 7);
-
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const [impressionQuery, productQuery] = await Promise.all([
-        ProductImpression.where("userId", "==", userId)
-          .where("productId", "==", productId)
-          .where("monthYear", "==", currentMonthYear)
-          .limit(1)
-          .get(),
-        Product.where("productId", "==", productId).limit(1).get(),
-      ]);
-
-      const productDoc = !productQuery.empty ? productQuery.docs[0] : null;
-
-      if (impressionQuery.empty) {
-        const newImpressionRef = ProductImpression.doc();
-        transaction.set(newImpressionRef, {
-          userId,
-          productId,
-          monthYear: currentMonthYear,
-          createdAt: new Date(),
-        });
-
-        if (productDoc) {
-          const currentImpressions = productDoc.data().impressions || 0;
-          transaction.update(productDoc.ref, {
-            impressions: currentImpressions + 1,
-            updatedAt: new Date(),
-          });
-        }
-
-        return {
-          newlyLogged: true,
-          message: "Impression logged",
-        };
-      }
-
-      return {
-        newlyLogged: false,
-        message: `${productId} impressions increment by ${userId} for ${currentMonthYear}`,
-      };
-    });
-    res.status(200).json({
-      success: true,
-      message: result.message,
-    });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-export const getSellerSalesHistory = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "getSellerSalesHistoryController";
-  const action = "getSellerSalesHistory";
-
-  try {
-    const sellerId = req.user.id || req.user.uid;
-    if (!sellerId) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized: Seller ID missing",
-        );
-      }
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: Seller ID missing",
-      });
-    }
-
-    const snapshot = await ProductSales.where("sellerId", "==", sellerId)
-      .orderBy("createdAt", "desc")
-      .get();
-
-    const sales = [];
-    snapshot.forEach((doc) => {
-      sales.push({ id: doc.id, ...doc.data() });
-    });
-    res.status(200).json({
-      success: true,
-      count: sales.length,
-      data: sales,
-    });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    console.error("getSellerSalesHistory Error:", error.message);
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    res.status(500).json({
-      success: false,
-      message: "Internal server error while fetching sales records",
-    });
-  }
-};
-export const getPayoutHistory = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "getPayoutHistoryController";
-  const action = "getPayoutHistory";
-
-  try {
-    const userUid = req.user.id || req.user.uid;
-    if (!userUid) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User identification missing.",
-        );
-      }
-      return res.status(400).json({
-        success: false,
-        message: "User identification missing.",
-      });
-    }
-
-    const snapshot = await Payout.where("sellerUid", "==", userUid)
-      .orderBy("createdAt", "desc")
-      .get();
-
-    const history = [];
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      const { __v, ...cleanData } = data;
-      history.push({ id: doc.id, ...cleanData });
-    });
-    res.status(200).json({
-      success: true,
-      data: history,
-      message: "Payout history retrieved successfully.",
-    });
-
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    console.error("Fetch Payout Error:", error.message);
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    return res.status(500).json({
-      success: false,
-      message: "An internal error occurred while fetching payout history.",
-      error: error.message,
-    });
-  }
-};
-export const requestPayout = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "requestPayoutController";
-  const action = "requestPayout";
-  const { amount } = req.body;
-  const userId = req.user.id || req.user.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user identifier",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user identifier" });
-  }
-
-  if (!amount || amount <= 0) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid payout amount",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, message: "Invalid payout amount specified." });
-  }
-
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const userQuery = await User.where("uid", "==", userId).limit(1).get();
-      if (userQuery.empty) {
-        throw new Error("User not found.");
-      }
-
-      const userDoc = userQuery.docs[0];
-      const user = userDoc.data();
-      const currentPendingBalance = user.pendingSalesBalance || 0;
-
-      if (currentPendingBalance < amount) {
-        throw new Error("Insufficient pending balance.");
-      }
-      const newPendingBalance = currentPendingBalance - amount;
-      const newPointsBalance = (user.pointsBalance || 0) + amount;
-      const payoutHistory = user.payoutHistory || [];
-
-      const payoutId = generatePayoutId(userId);
-      const transactionId = generateTransactionId("payment");
-
-      payoutHistory.push(payoutId);
-
-      transaction.update(userDoc.ref, {
-        pendingSalesBalance: newPendingBalance,
-        pointsBalance: newPointsBalance,
-        payoutHistory: payoutHistory,
-        updatedAt: new Date(),
-      });
-
-      const payoutRef = Payout.doc(payoutId);
-      const newPayoutData = {
-        payoutId,
-        sellerUid: userId,
-        amount: amount,
-        status: "completed",
-        method: "Internal Transfer",
-        reference: `REF-${payoutId}`,
-        processedAt: new Date(),
-        createdAt: new Date(),
-      };
-      transaction.set(payoutRef, newPayoutData);
-
-      const transactionRef = Transactions.doc(transactionId);
-      const newTransactionData = {
-        transactionId,
-        userId,
-        type: "payment",
-        amountICash: amount,
-        status: "success",
-        payType: "in",
-        title: `Sales Payout`,
-        reference: `REF-${payoutId}`,
-        createdAt: new Date(),
-      };
-      transaction.set(transactionRef, newTransactionData);
-
-      return {
-        user,
-        newPointsBalance,
-        payoutId,
-        transactionId,
-      };
-    });
-    res.status(200).json({
-      success: true,
-      newPointsBalance: result.newPointsBalance,
-      transactionId: result.transactionId,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-    setImmediate(async () => {
-      try {
-        const currentDate = new Date();
-        const formattedDate = currentDate.toLocaleDateString();
-        const formattedTime = currentDate.toLocaleTimeString();
-
-        const notificationPromises = [
-          createNotification({
-            notificationId: generateNotificationId("store"),
-            recipientId: userId,
-            isRead: false,
-            category: "finance",
-            actionType: "SALES_PAYOUT_SUCCESS",
-            title: "Sales Payout Credited",
-            message: `${amount.toLocaleString()} iCash from your sales has been added to your wallet.`,
-            recipientEmail: result.user.email,
-            sendEmail: true,
-            sendPush: true,
-            payload: {
-              username: result.user.firstname || result.user.lastname || "User",
-              amount: amount,
-              payoutId: result.payoutId,
-              transactionId: result.transactionId,
-              date: formattedDate,
-              time: formattedTime,
-            },
-          }),
-          notifyAdmins(
-            { role: ["finance", "super_admin"] },
-            {
-              notificationId: generateNotificationId("store"),
-              actionType: "SALES_PAYOUT_ADMIN_ALERT",
-              title: "New Sales Payout Processed",
-              message: `User ${result.user.uid} successfully withdrew ${amount} iCash to their wallet.`,
-              payload: {
-                userId: result.user.uid,
-                amount,
-                payoutId: result.payoutId,
-                transactionId: result.transactionId,
-              },
-            },
-            false,
-          ),
-        ];
-
-        await Promise.all(notificationPromises);
-      } catch (err) {
-        console.error(
-          "Background notification pipeline failure in requestPayout:",
-          err,
-        );
-      }
-    });
-  } catch (error) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(400).json({ success: false, message: error.message });
-  }
-};
 export const getDropOffStations = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getDropOffStationsController";
   const action = "getDropOffStations";
+  const CACHE_KEY = "stations:all_drop_off";
+
   try {
     const { lat, lng } = req.query;
-
-    const snapshot = await DropOffStation.get();
-    const stations = [];
-    snapshot.forEach((doc) => {
-      stations.push({ id: doc.id, ...doc.data() });
-    });
+    let stations = [];
+    try {
+      const cachedData = await redis.get(CACHE_KEY);
+      if (cachedData) {
+        stations = typeof cachedData === "string" ? JSON.parse(cachedData) : cachedData;
+      }
+    } catch (cacheError) {
+      console.error("Cache read error, falling back to database:", cacheError);
+    }
+    if (!stations || stations.length === 0) {
+      const snapshot = await DropOffStation.get();
+      snapshot.forEach((doc) => {
+        stations.push({ id: doc.id, ...doc.data() });
+      });
+      try {
+        await redis.setex(CACHE_KEY, 1800, JSON.stringify(stations));
+      } catch (cacheSetError) {
+        console.error("Cache write error:", cacheSetError);
+      }
+    }
 
     if (!lat || !lng) {
       res.status(200).json({
@@ -1545,7 +472,9 @@ export const getDropOffStations = async (req, res) => {
       });
 
       setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
+        if (typeof logControllerPerformance === "function") {
+          logControllerPerformance(controllerName, action, startTime, "success");
+        }
       });
       return;
     }
@@ -1575,17 +504,21 @@ export const getDropOffStations = async (req, res) => {
     });
 
     setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
     });
   } catch (error) {
     setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      }
     });
     return res.status(500).json({
       success: false,
@@ -1618,34 +551,36 @@ export const deleteProductController = async (req, res) => {
       });
     }
 
-    const [result, sellerQuery] = await Promise.all([
-      db.runTransaction(async (transaction) => {
-        const productQuery = await Product.where("productId", "==", productId)
-          .where("sellerId", "==", userUid)
-          .limit(1)
-          .get();
+    const result = await db.runTransaction(async (transaction) => {
+      const productQuery = await Product.where("productId", "==", productId)
+        .where("sellerId", "==", userUid)
+        .limit(1)
+        .get();
 
-        if (productQuery.empty) {
-          throw new Error("Product record not found or unauthorized access.");
-        }
+      if (productQuery.empty) {
+        throw new Error("Product record not found or unauthorized access.");
+      }
 
-        const productDoc = productQuery.docs[0];
-        const productData = productDoc.data();
-        transaction.delete(productDoc.ref);
+      const productDoc = productQuery.docs[0];
+      const productData = productDoc.data();
+      transaction.delete(productDoc.ref);
 
-        return productData;
-      }),
-      User.where("uid", "==", userUid).limit(1).get(),
-    ]);
+      return productData;
+    });
+
     res.status(200).json({
       success: true,
       message: "Product entry successfully unlinked and purged.",
       data: { productId },
     });
+
     setImmediate(async () => {
       try {
         await redis.del("catalog:all_products");
+        
+        const sellerQuery = await User.where("uid", "==", userUid).limit(1).get();
         const mediaThumbnails = result.mediaUrls || result.thumbnails;
+        
         if (mediaThumbnails) {
           const thumbnailUrls = Array.isArray(mediaThumbnails)
             ? mediaThumbnails
@@ -1762,356 +697,6 @@ export const deleteProductController = async (req, res) => {
     });
   }
 };
-export const togglefavoriteActionController = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "togglefavoriteActionController";
-  const action = "togglefavoriteAction";
-  const { productId } = req.body;
-  const userId = req.user.id || req.user.uid;
-
-  if (!productId) {
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing required productId.",
-      );
-    }
-    return res
-      .status(400)
-      .json({ success: false, message: "Missing required productId." });
-  }
-
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const userQuery = await User.where("uid", "==", userId).limit(1).get();
-      if (userQuery.empty) {
-        throw new Error("User not found");
-      }
-
-      const userDoc = userQuery.docs[0];
-      const userData = userDoc.data();
-      const favorites = userData.favorites || [];
-      const isFavorited = favorites.includes(productId);
-      const updatedFavorites = isFavorited
-        ? favorites.filter((id) => id !== productId)
-        : [...favorites, productId];
-
-      transaction.update(userDoc.ref, {
-        favorites: updatedFavorites,
-        updatedAt: new Date(),
-      });
-
-      return {
-        isFavorited,
-        favorites: updatedFavorites,
-      };
-    });
-    res.status(200).json({
-      success: true,
-      favorites: result.favorites,
-      message: result.isFavorited
-        ? "Removed from favorites"
-        : "Added to favorites",
-    });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    const statusCode = error.message === "User not found" ? 404 : 500;
-    return res
-      .status(statusCode)
-      .json({ success: false, message: error.message });
-  }
-};
-export const toggleCartActionController = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "toggleCartActionController";
-  const controllerAction = "toggleCartAction";
-  const {
-    productId,
-    action,
-    selectedSize,
-    selectedColor,
-    quantity = 1,
-  } = req.body;
-  const userId = req.user.id || req.user.uid;
-
-  if (!productId || !action) {
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        controllerAction,
-        startTime,
-        "error",
-        "Missing required productId or action.",
-      );
-    }
-    return res.status(400).json({
-      success: false,
-      message: "Missing required productId or action.",
-    });
-  }
-
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const userQuery = await User.where("uid", "==", userId).limit(1).get();
-      if (userQuery.empty) {
-        throw new Error("User not found");
-      }
-
-      const userDoc = userQuery.docs[0];
-      const userData = userDoc.data();
-      const cart = userData.cart || [];
-      let updatedCart = [...cart];
-
-      if (action === "add") {
-        const existingIndex = updatedCart.findIndex(
-          (item) =>
-            item.productId === productId &&
-            item.selectedSize === selectedSize &&
-            item.selectedColor === selectedColor,
-        );
-
-        if (existingIndex > -1) {
-          updatedCart[existingIndex] = {
-            ...updatedCart[existingIndex],
-            quantity:
-              (updatedCart[existingIndex].quantity || 1) + Number(quantity),
-          };
-        } else {
-          updatedCart.push({
-            productId,
-            quantity: Number(quantity),
-            selectedSize,
-            selectedColor,
-          });
-        }
-      } else if (action === "remove") {
-        updatedCart = updatedCart.filter(
-          (item) => item.productId !== productId,
-        );
-      } else if (action === "update") {
-        const existingIndex = updatedCart.findIndex(
-          (item) => item.productId === productId,
-        );
-
-        if (existingIndex > -1) {
-          updatedCart[existingIndex] = {
-            ...updatedCart[existingIndex],
-            quantity: Number(quantity),
-          };
-        }
-      }
-
-      transaction.update(userDoc.ref, {
-        cart: updatedCart,
-        updatedAt: new Date(),
-      });
-
-      return updatedCart;
-    });
-    res.status(200).json({
-      success: true,
-      cart: result,
-      message: `Cart updated successfully`,
-    });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          controllerAction,
-          startTime,
-          "success",
-        );
-      }
-    });
-  } catch (error) {
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        controllerAction,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    const statusCode = error.message === "User not found" ? 404 : 500;
-    return res
-      .status(statusCode)
-      .json({ success: false, message: error.message });
-  }
-};
-export const markOrderAsDroppedOff = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "markOrderAsDroppedOffController";
-  const action = "markOrderAsDroppedOff";
-  const { orderId } = req.body;
-  const sellerId = req.user.id || req.user.uid;
-
-  if (!orderId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing required orderId.",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, message: "Missing required orderId." });
-  }
-
-  try {
-    const result = await db.runTransaction(async (transaction) => {
-      const orderQuery = await ProductOrder.where("orderId", "==", orderId)
-        .limit(1)
-        .get();
-
-      if (orderQuery.empty) {
-        throw new Error("Order not found.");
-      }
-
-      const orderDoc = orderQuery.docs[0];
-      const order = orderDoc.data();
-
-      if (order.sellerId !== sellerId) {
-        throw new Error("Unauthorized action.");
-      }
-      if (order.deliveryMethod !== "drop_off") {
-        throw new Error("This action is only valid for station drop-offs.");
-      }
-
-      const droppedOffAt = new Date().toISOString();
-      transaction.update(orderDoc.ref, {
-        status: "dropped_off",
-        droppedOffAt: droppedOffAt,
-        updatedAt: new Date(),
-      });
-      const [buyerQuery, agentQuery] = await Promise.all([
-        User.where("uid", "==", order.buyerId).limit(1).get(),
-        order.agentId
-          ? User.where("uid", "==", order.agentId).limit(1).get()
-          : Promise.resolve(null),
-      ]);
-
-      if (buyerQuery.empty) {
-        throw new Error("Buyer not found.");
-      }
-
-      const buyer = buyerQuery.docs[0].data();
-      const agent =
-        agentQuery && !agentQuery.empty ? agentQuery.docs[0].data() : null;
-
-      return {
-        order,
-        buyer,
-        agent,
-      };
-    });
-    res.status(200).json({
-      success: true,
-      message: "Order updated to dropped off. Buyer notified.",
-      status: "dropped_off",
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-    setImmediate(async () => {
-      try {
-        const currentDate = new Date();
-        const formattedDate = currentDate.toLocaleDateString();
-        const formattedTime = currentDate.toLocaleTimeString();
-
-        const notificationPromises = [
-          createNotification({
-            notificationId: generateNotificationId("store"),
-            recipientId: result.order.buyerId,
-            recipientEmail: result.buyer.email,
-            isRead: false,
-            category: "store",
-            actionType: "ORDER_DROPPED_OFF",
-            sendEmail: true,
-            payload: {
-              userName:
-                `${result.buyer.firstname || ""} ${result.buyer.lastname || ""}`.trim(),
-              productName: result.order.productName,
-              orderId: result.order.orderId,
-              stationName: result.order.selectedStation?.name || "",
-              stationAddress: result.order.selectedStation?.address || "",
-            },
-          }),
-        ];
-
-        if (result.order.agentId && result.agent?.email) {
-          notificationPromises.push(
-            createNotification({
-              notificationId: generateNotificationId("store"),
-              recipientId: result.order.agentId,
-              recipientEmail: result.agent.email,
-              isRead: false,
-              category: "store",
-              actionType: "AGENT_AWAITING_PICKUP",
-              sendEmail: true,
-              payload: {
-                agentName: result.agent.firstname || "Agent",
-                productName: result.order.productName,
-                orderId: result.order.orderId,
-                stationName: result.order.selectedStation?.name || "",
-                date: formattedDate,
-                time: formattedTime,
-              },
-            }),
-          );
-        }
-
-        await Promise.all(notificationPromises);
-      } catch (err) {
-        console.error(
-          "Background notification pipeline failure in order drop-off:",
-          err,
-        );
-      }
-    });
-  } catch (error) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    const clientErrors = [
-      "Order not found.",
-      "Unauthorized action.",
-      "This action is only valid for station drop-offs.",
-      "Buyer not found.",
-      "Missing required orderId.",
-    ];
-    const statusCode = clientErrors.includes(error.message) ? 400 : 500;
-    return res
-      .status(statusCode)
-      .json({ success: false, message: error.message });
-  }
-};
 
 //Tested and trusted using jest
 export const saveProductController = async (req, res) => {
@@ -2123,6 +708,8 @@ export const saveProductController = async (req, res) => {
     const { productId } = req.params;
     const isEditing = !!productId;
     const { title, description, type, price, mediaUrls, niche } = req.body;
+
+    const amountInStock = Number(req.body.amountInStock) || 0;
 
     if (!title || !description || !type || !price || !niche) {
       if (req.file) await fs.unlink(req.file.path).catch(() => {});
@@ -2210,7 +797,8 @@ export const saveProductController = async (req, res) => {
         title,
         description,
         type,
-        price: Number(price),
+        amountInStock,
+        priceInPoints: Number(price),
         physicalDetails,
         mediaUrls: productThumbnails,
         updatedAt: new Date(),
@@ -2229,7 +817,8 @@ export const saveProductController = async (req, res) => {
         title,
         description,
         type,
-        price: Number(price),
+        amountInStock,
+        priceInPoints: Number(price),
         physicalDetails,
         mediaUrls: productThumbnails,
         impressions: 0,
@@ -2558,5 +1147,1443 @@ export const fetchStoreProducts = async (req, res) => {
     return res
       .status(500)
       .json({ message: err.message || "Failed to fetch store items" });
+  }
+};
+export const togglefavoriteActionController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "togglefavoriteActionController";
+  const action = "togglefavoriteAction";
+  const { productId } = req.body;
+  const userId = req.user.id || req.user.uid;
+
+  if (!productId) {
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required productId.",
+      );
+    }
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing required productId." });
+  }
+
+  try {
+    const result = await db.runTransaction(async (transaction) => {
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      if (userQuery.empty) {
+        throw new Error("User not found");
+      }
+
+      const userDoc = userQuery.docs[0];
+      const userData = userDoc.data();
+      const favorites = userData.favorites || [];
+      const isFavorited = favorites.includes(productId);
+      const updatedFavorites = isFavorited
+        ? favorites.filter((id) => id !== productId)
+        : [...favorites, productId];
+
+      transaction.update(userDoc.ref, {
+        favorites: updatedFavorites,
+        updatedAt: new Date(),
+      });
+
+      return {
+        isFavorited,
+        favorites: updatedFavorites,
+      };
+    });
+    res.status(200).json({
+      success: true,
+      favorites: result.favorites,
+      message: result.isFavorited
+        ? "Removed from favorites"
+        : "Added to favorites",
+    });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (error) {
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    const statusCode = error.message === "User not found" ? 404 : 500;
+    return res
+      .status(statusCode)
+      .json({ success: false, message: error.message });
+  }
+};
+export const toggleCartActionController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleCartActionController";
+  const controllerAction = "toggleCartAction";
+  const {
+    productId,
+    action,
+    selectedSize,
+    selectedColor,
+    quantity = 1,
+  } = req.body;
+  const userId = req.user.id || req.user.uid;
+
+  if (!productId || !action) {
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        controllerAction,
+        startTime,
+        "error",
+        "Missing required productId or action.",
+      );
+    }
+    return res.status(400).json({
+      success: false,
+      message: "Missing required productId or action.",
+    });
+  }
+
+  try {
+    const result = await db.runTransaction(async (transaction) => {
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      if (userQuery.empty) {
+        throw new Error("User not found");
+      }
+
+      const userDoc = userQuery.docs[0];
+      const userData = userDoc.data();
+      const cart = userData.cart || [];
+      let updatedCart = [...cart];
+
+      if (action === "add") {
+        const existingIndex = updatedCart.findIndex(
+          (item) =>
+            item.productId === productId &&
+            item.selectedSize === selectedSize &&
+            item.selectedColor === selectedColor,
+        );
+
+        if (existingIndex > -1) {
+          updatedCart[existingIndex] = {
+            ...updatedCart[existingIndex],
+            quantity:
+              (updatedCart[existingIndex].quantity || 1) + Number(quantity),
+          };
+        } else {
+          updatedCart.push({
+            productId,
+            quantity: Number(quantity),
+            selectedSize,
+            selectedColor,
+          });
+        }
+      } else if (action === "remove") {
+        updatedCart = updatedCart.filter(
+          (item) => item.productId !== productId,
+        );
+      } else if (action === "update") {
+        const existingIndex = updatedCart.findIndex(
+          (item) => item.productId === productId,
+        );
+
+        if (existingIndex > -1) {
+          updatedCart[existingIndex] = {
+            ...updatedCart[existingIndex],
+            quantity: Number(quantity),
+          };
+        }
+      }
+
+      transaction.update(userDoc.ref, {
+        cart: updatedCart,
+        updatedAt: new Date(),
+      });
+
+      return updatedCart;
+    });
+    res.status(200).json({
+      success: true,
+      cart: result,
+      message: `Cart updated successfully`,
+    });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          controllerAction,
+          startTime,
+          "success",
+        );
+      }
+    });
+  } catch (error) {
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        controllerAction,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    const statusCode = error.message === "User not found" ? 404 : 500;
+    return res
+      .status(statusCode)
+      .json({ success: false, message: error.message });
+  }
+};
+export const logProductImpression = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "logProductImpressionController";
+  const action = "logProductImpression";
+  const { productId } = req.body;
+  const userId = req.user.id || req.user.uid;
+  const currentMonthYear = new Date().toISOString().slice(0, 7);
+
+  try {
+    const result = await db.runTransaction(async (transaction) => {
+      const [impressionQuery, productQuery] = await Promise.all([
+        ProductImpression.where("userId", "==", userId)
+          .where("productId", "==", productId)
+          .where("monthYear", "==", currentMonthYear)
+          .limit(1)
+          .get(),
+        Product.where("productId", "==", productId).limit(1).get(),
+      ]);
+
+      const productDoc = !productQuery.empty ? productQuery.docs[0] : null;
+
+      if (impressionQuery.empty) {
+        const newImpressionRef = ProductImpression.doc();
+        transaction.set(newImpressionRef, {
+          userId,
+          productId,
+          monthYear: currentMonthYear,
+          createdAt: new Date(),
+        });
+
+        if (productDoc) {
+          const currentImpressions = productDoc.data().impressions || 0;
+          transaction.update(productDoc.ref, {
+            impressions: currentImpressions + 1,
+            updatedAt: new Date(),
+          });
+        }
+
+        return {
+          newlyLogged: true,
+          message: "Impression logged",
+        };
+      }
+
+      return {
+        newlyLogged: false,
+        message: `${productId} impressions increment by ${userId} for ${currentMonthYear}`,
+      };
+    });
+    res.status(200).json({
+      success: true,
+      message: result.message,
+    });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (error) {
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const initializeCheckout = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "initializeCheckoutController";
+  const action = "initializeCheckout";
+  const { items, totals, shippingContact } = req.body;
+  const buyerId = req.user.id || req.user.uid;
+  const PAYOUT_FACTOR = 1 - TAX_RATE;
+
+  try {
+    const processedResults = await db.runTransaction(async (transaction) => {
+      const buyerQuery = await User.where("uid", "==", buyerId).limit(1).get();
+      if (buyerQuery.empty) {
+        throw new Error(
+          "Insufficient iCash balance to complete purchase or user not found.",
+        );
+      }
+      const buyerDoc = buyerQuery.docs[0];
+      const buyerData = buyerDoc.data();
+      const currentBalance = buyerData.pointsBalance || 0;
+
+      if (currentBalance < totals.grandTotal) {
+        throw new Error(
+          "Insufficient iCash balance to complete purchase or user not found.",
+        );
+      }
+
+      const newBuyerBalance = currentBalance - totals.grandTotal;
+      transaction.update(buyerDoc.ref, {
+        pointsBalance: newBuyerBalance,
+        updatedAt: new Date(),
+      });
+
+      const buyerTxId = generateTransactionId("payment");
+      const buyerTransactionRef = Transactions.doc(buyerTxId);
+      const buyerTransaction = {
+        transactionId: buyerTxId,
+        userId: buyerId,
+        type: "payment",
+        amountICash: totals.grandTotal,
+        status: "success",
+        payType: "out",
+        title: `Purchase of ${items.length} item(s)`,
+        reference: `REF-${buyerTxId}`,
+        createdAt: new Date(),
+      };
+      transaction.set(buyerTransactionRef, buyerTransaction);
+      const itemPromises = items.map(async (item) => {
+        const [productQuery, sellerQuery] = await Promise.all([
+          Product.where("productId", "==", item.productId).limit(1).get(),
+          User.where("uid", "==", item.sellerId).limit(1).get(),
+        ]);
+
+        if (productQuery.empty || sellerQuery.empty) {
+          throw new Error("Product or Seller info not found.");
+        }
+
+        return {
+          item,
+          productDoc: productQuery.docs[0],
+          productData: productQuery.docs[0].data(),
+          sellerDoc: sellerQuery.docs[0],
+          sellerData: sellerQuery.docs[0].data(),
+        };
+      });
+
+      const resolvedItems = await Promise.all(itemPromises);
+      const results = [];
+
+      for (const resolved of resolvedItems) {
+        const { item, productDoc, productData, sellerDoc, sellerData } =
+          resolved;
+
+        const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
+        const isDropOff = item.deliveryMethod === "drop_off";
+        const stationAgentId =
+          isDropOff && item.selectedStation
+            ? item.selectedStation.agentId
+            : null;
+        const itemTotal = item.price * item.quantity;
+        const netEarnings = itemTotal * PAYOUT_FACTOR;
+        const productTaxAmount = itemTotal - netEarnings;
+
+        if (productTaxAmount > 0) {
+          const taxEntryId = generateTransactionId("appTax");
+          const taxDocRef = TaxEntries.doc(taxEntryId);
+
+          transaction.set(taxDocRef, {
+            transactionReference: `REF-${buyerTxId}`,
+            taxType: "product_tax",
+            amount: productTaxAmount,
+            currency: "iCash",
+            date: new Date(),
+            sourceDetails: {
+              buyerId: buyerId,
+              sellerId: item.sellerId,
+              productId: item.productId,
+              relatedTransactionId: orderId,
+            },
+            createdAt: new Date(),
+          });
+        }
+
+        const currentStock = productData.amountInStock ?? 1;
+        if (currentStock < item.quantity) {
+          throw new Error(
+            `Insufficient stock for ${productData.title}. Available: ${currentStock}`,
+          );
+        }
+
+        const updatedStock = currentStock - item.quantity;
+        const productUpdates = {
+          amountInStock: updatedStock,
+          updatedAt: new Date(),
+        };
+        if (updatedStock === 0) {
+          productUpdates.isAvailable = false;
+        }
+
+        transaction.update(productDoc.ref, productUpdates);
+
+        const newOrderRef = ProductOrder.doc(orderId);
+        const newOrder = {
+          orderId,
+          buyerId,
+          sellerId: item.sellerId,
+          productId: item.productId,
+          productName: productData.title,
+          amountPaid: itemTotal,
+          quantity: item.quantity,
+          status:
+            productData.type === "physical" ? "pending_delivery" : "completed",
+          deliveryMethod: item.deliveryMethod,
+          verificationQrCode: orderId,
+          agentId: stationAgentId,
+          selectedStation: item.selectedStation || null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date(),
+        };
+        transaction.set(newOrderRef, newOrder);
+
+        results.push({
+          order: newOrder,
+          fileUrl: newOrder.fileUrl,
+          sellerEmail: sellerData.email,
+          sellerId: sellerData.uid,
+          product: productData,
+          buyerAddress: shippingContact.address,
+          buyerPhoneNumber: shippingContact.phone,
+          deliveryMethod: item.deliveryMethod,
+        });
+      }
+
+      return { processedResults: results, buyerTxId };
+    });
+    res.status(200).json({
+      success: true,
+      data: processedResults.processedResults.map((r) => r.order),
+    });
+
+    setImmediate(async () => {
+      try {
+        const buyerQuery = await User.where("uid", "==", buyerId)
+          .limit(1)
+          .get();
+        const buyerData = !buyerQuery.empty
+          ? buyerQuery.docs[0].data()
+          : { uid: buyerId };
+
+        await Promise.all([
+          sendOrderNotifications(
+            buyerData,
+            processedResults.processedResults,
+            processedResults.buyerTxId,
+          ),
+          notifyAdmins(
+            { role: ["super_admin", "finance"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: "NEW_PURCHASE_ORDER",
+              title: "New Purchase Order",
+              message: `Order set #${processedResults.buyerTxId} created with ${items.length} items.`,
+              payload: {
+                transactionId: processedResults.buyerTxId,
+                itemCount: items.length,
+                buyerId,
+              },
+            },
+            false,
+          ),
+        ]);
+
+        if (typeof logControllerPerformance === "function") {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        }
+      } catch (bgError) {
+        console.error("Background Checkout Tasks Error:", bgError);
+      }
+    });
+  } catch (error) {
+    console.error("Checkout Initialization Error:", error.message);
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const clearUserCart = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "clearUserCartController";
+  const action = "clearUserCart";
+
+  try {
+    const userId = req.user?.id || req.user?.uid;
+    if (!userId) throw new Error("Unauthorized");
+    const userDocRef = User.doc(userId);
+    await userDocRef.update({
+      cart: [],
+      updatedAt: new Date(),
+    });
+    res.status(200).json({
+      status: true,
+      message: "Cart cleared successfully",
+      cart: [],
+    });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (error) {
+    console.error("Clear Cart Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    const statusCode = error.message === "Unauthorized" ? 401 : 500;
+    return res.status(statusCode).json({
+      status: false,
+      message: error.message || "An error occurred while clearing the cart",
+    });
+  }
+};
+export const clearFavorites = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "clearFavoritesController";
+  const action = "clearFavorites";
+
+  try {
+    const userId = req.user?.id || req.user?.uid;
+    if (!userId) {
+      return res.status(401).json({
+        status: false,
+        message: "Unauthorized user session",
+      });
+    }
+
+    const userDocRef = User.doc(userId);
+    const userSnap = await userDocRef.get();
+
+    if (!userSnap.exists) {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      }
+      return res.status(404).json({
+        status: false,
+        message: "User not found",
+      });
+    }
+
+    await userDocRef.update({
+      favorites: [],
+      updatedAt: new Date(),
+    });
+    res
+      .status(200)
+      .json({ status: true, message: "Favorites cleared successfully" });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (error) {
+    console.error("Clear Favorites Error:", error.message);
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    return res.status(500).json({
+      status: false,
+      message: "An error occurred while clearing favorites",
+    });
+  }
+};
+export const bulkAddToCart = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "bulkAddToCartController";
+  const action = "bulkAddToCart";
+  const { items } = req.body;
+  const userId = req.user.id || req.user.uid;
+
+  try {
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+
+    if (userQuery.empty) {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      }
+      return res.status(404).json({ status: false, message: "User not found" });
+    }
+
+    const userDoc = userQuery.docs[0];
+    const userData = userDoc.data();
+    const currentCart = userData.cart || [];
+    const existingProductIds = new Set(currentCart.map((i) => i.productId));
+    const itemsToAdd = (items || []).filter(
+      (item) => !existingProductIds.has(item.productId),
+    );
+
+    const updatedCart = [...currentCart, ...itemsToAdd];
+
+    if (itemsToAdd.length > 0) {
+      await userDoc.ref.update({
+        cart: updatedCart,
+        updatedAt: new Date(),
+      });
+    }
+    res.status(200).json({
+      status: true,
+      cart: updatedCart,
+      message: "Successfully added items to cart.",
+    });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (error) {
+    console.error("Bulk Add To Cart Error:", error.message);
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    res.status(500).json({ status: false, message: "An error occurred" });
+  }
+};
+export const getPendingOrders = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getPendingOrdersController";
+  const action = "getPendingOrders";
+
+  try {
+    const userId = req.user?.id || req.user?.uid;
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user identifier",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user identifier" });
+    }
+
+    const snapshot = await ProductOrder.where("buyerId", "==", userId)
+      .where("status", "in", ["pending_delivery", "dropped_off"])
+      .orderBy("createdAt", "desc")
+      .get();
+
+    const orders = [];
+    snapshot.forEach((doc) => {
+      orders.push(doc.data());
+    });
+
+    res.status(200).json({ success: true, data: orders });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const completeOrderDelivery = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "completeOrderDeliveryController";
+  const action = "completeOrderDelivery";
+  const { orderId } = req.body;
+  const scannerUid = req.user?.id || req.user?.uid;
+
+  if (!scannerUid) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user identifier" });
+  }
+
+  if (!orderId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing orderId",
+      );
+    });
+    return res.status(400).json({
+      success: false,
+      message: "Missing order identification parameter.",
+    });
+  }
+
+  try {
+    const result = await db.runTransaction(async (transaction) => {
+      const orderDocRef = ProductOrder.doc(orderId);
+      const orderDoc = await transaction.get(orderDocRef);
+
+      if (!orderDoc.exists) {
+        throw new Error("Product order not found.");
+      }
+
+      const order = orderDoc.data();
+      const salesIncrement = order.quantity || 1;
+
+      if (
+        order.status !== "pending_delivery" &&
+        order.status !== "dropped_off"
+      ) {
+        throw new Error("Product order is already processed or cancelled.");
+      }
+
+      const isSeller = order.sellerId === scannerUid;
+      const isAgent = order.agentId === scannerUid;
+
+      if (!isSeller && !isAgent) {
+        throw new Error("You are not authorized to verify this delivery.");
+      }
+      const [productQuery, sellerQuery, buyerQuery, agentQuery] =
+        await Promise.all([
+          Product.where("productId", "==", order.productId).limit(1).get(),
+          User.where("uid", "==", order.sellerId).limit(1).get(),
+          User.where("uid", "==", order.buyerId).limit(1).get(),
+          order.deliveryMethod === "drop_off" && order.agentId
+            ? User.where("uid", "==", order.agentId).limit(1).get()
+            : Promise.resolve(null),
+        ]);
+
+      if (productQuery.empty) {
+        throw new Error("Product not found.");
+      }
+      if (sellerQuery.empty) {
+        throw new Error("Seller account no longer exists.");
+      }
+      if (
+        order.deliveryMethod === "drop_off" &&
+        order.agentId &&
+        (!agentQuery || agentQuery.empty)
+      ) {
+        throw new Error("Drop-off agent not found.");
+      }
+
+      const productDoc = productQuery.docs[0];
+      const productData = productDoc.data();
+      const sellerDoc = sellerQuery.docs[0];
+      const seller = sellerDoc.data();
+      const buyer = !buyerQuery.empty ? buyerQuery.docs[0].data() : null;
+
+      let agentDoc = null;
+      let agentData = null;
+      if (agentQuery && !agentQuery.empty) {
+        agentDoc = agentQuery.docs[0];
+        agentData = agentDoc.data();
+      }
+
+      const buyerTier = buyer?.tier || "free";
+      const deliveryFeeRate =
+        DELIVERY_FEES?.[buyerTier]?.[order.deliveryMethod] || 0;
+      const deliveryFeeAmount = order.amountPaid * deliveryFeeRate;
+      const totalHeld = order.amountPaid;
+      const taxAmount = totalHeld * TAX_RATE;
+      const payableAmount = totalHeld - taxAmount;
+
+      let sellerEarnings = payableAmount;
+      let agentEarnings = 0;
+
+      if (order.deliveryMethod === "drop_off" && order.agentId && agentDoc) {
+        agentEarnings = deliveryFeeAmount * 0.5;
+        const sellerDeliveryShare = deliveryFeeAmount * 0.5;
+        sellerEarnings += sellerDeliveryShare;
+
+        const updatedAgentPending =
+          (agentData.pendingSalesBalance || 0) + agentEarnings;
+        transaction.update(agentDoc.ref, {
+          pendingSalesBalance: updatedAgentPending,
+          updatedAt: new Date(),
+        });
+      } else if (order.deliveryMethod === "home_delivery") {
+        const sellerDeliveryShare = deliveryFeeAmount * 0.7;
+        sellerEarnings += sellerDeliveryShare;
+      }
+
+      const updatedSellerPending =
+        (seller.pendingSalesBalance || 0) + sellerEarnings;
+      transaction.update(sellerDoc.ref, {
+        pendingSalesBalance: updatedSellerPending,
+        updatedAt: new Date(),
+      });
+
+      const currentSales = productData.sales || 0;
+      transaction.update(productDoc.ref, {
+        sales: currentSales + salesIncrement,
+        updatedAt: new Date(),
+      });
+
+      const completedAtTime = new Date().toISOString();
+      transaction.update(orderDocRef, {
+        status: "completed",
+        completedAt: completedAtTime,
+        updatedAt: new Date(),
+      });
+
+      const productSaleRef = ProductSales.doc();
+      transaction.set(productSaleRef, {
+        sellerId: order.sellerId,
+        productId: order.productId,
+        orderId,
+        productType: "physical",
+        quantity: order.quantity || 1,
+        buyerId: order.buyerId,
+        amountPaid: order.amountPaid,
+        netEarnings: sellerEarnings,
+        createdAt: new Date(),
+      });
+
+      return {
+        productTitle: productData.title,
+        buyer,
+        seller,
+        agent: agentData,
+        sellerEarnings,
+        agentEarnings,
+        isSeller,
+      };
+    });
+    res.status(200).json({
+      success: true,
+      orderId,
+      settlementAmount: result.isSeller
+        ? result.sellerEarnings
+        : result.agentEarnings,
+      role: result.isSeller ? "seller" : "agent",
+      message: "Delivery verified and payments settled.",
+      productName: result.productTitle,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+    setImmediate(async () => {
+      try {
+        const notificationPromises = [];
+
+        notificationPromises.push(
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: order.buyerId || result.buyer?.uid,
+            category: "store",
+            actionType: "ORDER_REVIEW_REQUEST",
+            title: "Share your experience",
+            isRead: false,
+            message: `How was your ${result.productTitle}? Rate your experience to help the icampus community.`,
+            payload: {
+              orderId: orderId,
+              productName: result.productTitle,
+              targetId: orderId,
+              userName: result.buyer ? result.buyer.firstname : "Valued User",
+            },
+          }),
+        );
+
+        notificationPromises.push(
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: result.seller.uid,
+            recipientEmail: result.seller.email,
+            isRead: false,
+            category: "finance",
+            actionType: "ORDER_COMPLETED",
+            title: "Payment Received",
+            message: `Your sale for ${result.productTitle} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
+            payload: {
+              amount: result.sellerEarnings,
+              userName: result.seller.firstname,
+              productName: result.productTitle,
+              orderId: orderId,
+              role: "seller",
+            },
+            sendEmail: true,
+          }),
+        );
+
+        if (result.agent) {
+          notificationPromises.push(
+            createNotification({
+              notificationId: generateNotificationId("store"),
+              recipientId: result.agent.uid,
+              recipientEmail: result.agent.email,
+              isRead: false,
+              category: "finance",
+              actionType: "ORDER_COMPLETED",
+              title: "Delivery Commission Earned",
+              message: `You earned ${result.agentEarnings} iCash for verifying order #${orderId}, proceed to payout to withdraw to your iCash wallet.`,
+              payload: {
+                amount: result.agentEarnings,
+                userName: result.agent.firstname,
+                productName: result.productTitle,
+                orderId: orderId,
+                role: "agent",
+              },
+              sendEmail: true,
+            }),
+          );
+        }
+
+        notificationPromises.push(
+          notifyAdmins(
+            { role: ["super_admin", "finance"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: "PURCHASE_ORDER_COMPLETION",
+              title: "Order Completed",
+              message: `Order #${orderId} has been completed and funds settled.`,
+              payload: {
+                orderId,
+                sellerId: result.seller.uid,
+                buyerId: result.buyer?.uid || "",
+                agentId: result.agent ? result.agent.uid : "",
+              },
+            },
+            false,
+          ),
+        );
+
+        await Promise.all(notificationPromises);
+      } catch (err) {
+        console.error(
+          "Background notification pipeline failure in completeOrderDelivery:",
+          err,
+        );
+      }
+    });
+  } catch (error) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(400).json({ success: false, message: error.message });
+  }
+};
+export const markOrderAsDroppedOff = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "markOrderAsDroppedOffController";
+  const action = "markOrderAsDroppedOff";
+  const { orderId } = req.body;
+  const sellerId = req.user.id || req.user.uid;
+
+  if (!orderId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required orderId.",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, message: "Missing required orderId." });
+  }
+
+  try {
+    const result = await db.runTransaction(async (transaction) => {
+      const orderQuery = await ProductOrder.where("orderId", "==", orderId)
+        .limit(1)
+        .get();
+
+      if (orderQuery.empty) {
+        throw new Error("Order not found.");
+      }
+
+      const orderDoc = orderQuery.docs[0];
+      const order = orderDoc.data();
+
+      if (order.sellerId !== sellerId) {
+        throw new Error("Unauthorized action.");
+      }
+      if (order.deliveryMethod !== "drop_off") {
+        throw new Error("This action is only valid for station drop-offs.");
+      }
+
+      const droppedOffAt = new Date().toISOString();
+      transaction.update(orderDoc.ref, {
+        status: "dropped_off",
+        droppedOffAt: droppedOffAt,
+        updatedAt: new Date(),
+      });
+      const [buyerQuery, agentQuery] = await Promise.all([
+        User.where("uid", "==", order.buyerId).limit(1).get(),
+        order.agentId
+          ? User.where("uid", "==", order.agentId).limit(1).get()
+          : Promise.resolve(null),
+      ]);
+
+      if (buyerQuery.empty) {
+        throw new Error("Buyer not found.");
+      }
+
+      const buyer = buyerQuery.docs[0].data();
+      const agent =
+        agentQuery && !agentQuery.empty ? agentQuery.docs[0].data() : null;
+
+      return {
+        order,
+        buyer,
+        agent,
+      };
+    });
+    res.status(200).json({
+      success: true,
+      message: "Order updated to dropped off. Buyer notified.",
+      status: "dropped_off",
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+    setImmediate(async () => {
+      try {
+        const currentDate = new Date();
+        const formattedDate = currentDate.toLocaleDateString();
+        const formattedTime = currentDate.toLocaleTimeString();
+
+        const notificationPromises = [
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: result.order.buyerId,
+            recipientEmail: result.buyer.email,
+            isRead: false,
+            category: "store",
+            actionType: "ORDER_DROPPED_OFF",
+            sendEmail: true,
+            payload: {
+              userName:
+                `${result.buyer.firstname || ""} ${result.buyer.lastname || ""}`.trim(),
+              productName: result.order.productName,
+              orderId: result.order.orderId,
+              stationName: result.order.selectedStation?.name || "",
+              stationAddress: result.order.selectedStation?.address || "",
+            },
+          }),
+        ];
+
+        if (result.order.agentId && result.agent?.email) {
+          notificationPromises.push(
+            createNotification({
+              notificationId: generateNotificationId("store"),
+              recipientId: result.order.agentId,
+              recipientEmail: result.agent.email,
+              isRead: false,
+              category: "store",
+              actionType: "AGENT_AWAITING_PICKUP",
+              sendEmail: true,
+              payload: {
+                agentName: result.agent.firstname || "Agent",
+                productName: result.order.productName,
+                orderId: result.order.orderId,
+                stationName: result.order.selectedStation?.name || "",
+                date: formattedDate,
+                time: formattedTime,
+              },
+            }),
+          );
+        }
+
+        await Promise.all(notificationPromises);
+      } catch (err) {
+        console.error(
+          "Background notification pipeline failure in order drop-off:",
+          err,
+        );
+      }
+    });
+  } catch (error) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    const clientErrors = [
+      "Order not found.",
+      "Unauthorized action.",
+      "This action is only valid for station drop-offs.",
+      "Buyer not found.",
+      "Missing required orderId.",
+    ];
+    const statusCode = clientErrors.includes(error.message) ? 400 : 500;
+    return res
+      .status(statusCode)
+      .json({ success: false, message: error.message });
+  }
+};
+export const getSellerSalesHistory = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getSellerSalesHistoryController";
+  const action = "getSellerSalesHistory";
+
+  try {
+    const sellerId = req.user.id || req.user.uid;
+    if (!sellerId) {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized: Seller ID missing",
+        );
+      }
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: Seller ID missing",
+      });
+    }
+
+    const snapshot = await ProductSales.where("sellerId", "==", sellerId)
+      .orderBy("createdAt", "desc")
+      .get();
+
+    const sales = [];
+    snapshot.forEach((doc) => {
+      sales.push({ id: doc.id, ...doc.data() });
+    });
+    res.status(200).json({
+      success: true,
+      count: sales.length,
+      data: sales,
+    });
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (error) {
+    console.error("getSellerSalesHistory Error:", error.message);
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    res.status(500).json({
+      success: false,
+      message: "Internal server error while fetching sales records",
+    });
+  }
+};
+export const getPayoutHistory = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getPayoutHistoryController";
+  const action = "getPayoutHistory";
+
+  try {
+    const userUid = req.user.id || req.user.uid;
+    if (!userUid) {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User identification missing.",
+        );
+      }
+      return res.status(400).json({
+        success: false,
+        message: "User identification missing.",
+      });
+    }
+
+    const snapshot = await Payout.where("sellerUid", "==", userUid)
+      .orderBy("createdAt", "desc")
+      .get();
+
+    const history = [];
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      const { __v, ...cleanData } = data;
+      history.push({ id: doc.id, ...cleanData });
+    });
+    res.status(200).json({
+      success: true,
+      data: history,
+      message: "Payout history retrieved successfully.",
+    });
+
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (error) {
+    console.error("Fetch Payout Error:", error.message);
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    return res.status(500).json({
+      success: false,
+      message: "An internal error occurred while fetching payout history.",
+      error: error.message,
+    });
+  }
+};
+export const requestPayout = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "requestPayoutController";
+  const action = "requestPayout";
+  const { amount } = req.body;
+  const userId = req.user.id || req.user.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user identifier",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user identifier" });
+  }
+
+  if (!amount || amount <= 0) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid payout amount",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, message: "Invalid payout amount specified." });
+  }
+
+  try {
+    const result = await db.runTransaction(async (transaction) => {
+      const userQuery = await User.where("uid", "==", userId).limit(1).get();
+      if (userQuery.empty) {
+        throw new Error("User not found.");
+      }
+
+      const userDoc = userQuery.docs[0];
+      const user = userDoc.data();
+      const currentPendingBalance = user.pendingSalesBalance || 0;
+
+      if (currentPendingBalance < amount) {
+        throw new Error("Insufficient pending balance.");
+      }
+      const newPendingBalance = currentPendingBalance - amount;
+      const newPointsBalance = (user.pointsBalance || 0) + amount;
+      const payoutHistory = user.payoutHistory || [];
+
+      const payoutId = generatePayoutId(userId);
+      const transactionId = generateTransactionId("payment");
+
+      payoutHistory.push(payoutId);
+
+      transaction.update(userDoc.ref, {
+        pendingSalesBalance: newPendingBalance,
+        pointsBalance: newPointsBalance,
+        payoutHistory: payoutHistory,
+        updatedAt: new Date(),
+      });
+
+      const payoutRef = Payout.doc(payoutId);
+      const newPayoutData = {
+        payoutId,
+        sellerUid: userId,
+        amount: amount,
+        status: "completed",
+        method: "Internal Transfer",
+        reference: `REF-${payoutId}`,
+        processedAt: new Date(),
+        createdAt: new Date(),
+      };
+      transaction.set(payoutRef, newPayoutData);
+
+      const transactionRef = Transactions.doc(transactionId);
+      const newTransactionData = {
+        transactionId,
+        userId,
+        type: "payment",
+        amountICash: amount,
+        status: "success",
+        payType: "in",
+        title: `Sales Payout`,
+        reference: `REF-${payoutId}`,
+        createdAt: new Date(),
+      };
+      transaction.set(transactionRef, newTransactionData);
+
+      return {
+        user,
+        newPointsBalance,
+        payoutId,
+        transactionId,
+      };
+    });
+    res.status(200).json({
+      success: true,
+      newPointsBalance: result.newPointsBalance,
+      transactionId: result.transactionId,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+    setImmediate(async () => {
+      try {
+        const currentDate = new Date();
+        const formattedDate = currentDate.toLocaleDateString();
+        const formattedTime = currentDate.toLocaleTimeString();
+
+        const notificationPromises = [
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: userId,
+            isRead: false,
+            category: "finance",
+            actionType: "SALES_PAYOUT_SUCCESS",
+            title: "Sales Payout Credited",
+            message: `${amount.toLocaleString()} iCash from your sales has been added to your wallet.`,
+            recipientEmail: result.user.email,
+            sendEmail: true,
+            sendPush: true,
+            payload: {
+              username: result.user.firstname || result.user.lastname || "User",
+              amount: amount,
+              payoutId: result.payoutId,
+              transactionId: result.transactionId,
+              date: formattedDate,
+              time: formattedTime,
+            },
+          }),
+          notifyAdmins(
+            { role: ["finance", "super_admin"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: "SALES_PAYOUT_ADMIN_ALERT",
+              title: "New Sales Payout Processed",
+              message: `User ${result.user.uid} successfully withdrew ${amount} iCash to their wallet.`,
+              payload: {
+                userId: result.user.uid,
+                amount,
+                payoutId: result.payoutId,
+                transactionId: result.transactionId,
+              },
+            },
+            false,
+          ),
+        ];
+
+        await Promise.all(notificationPromises);
+      } catch (err) {
+        console.error(
+          "Background notification pipeline failure in requestPayout:",
+          err,
+        );
+      }
+    });
+  } catch (error) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(400).json({ success: false, message: error.message });
   }
 };
