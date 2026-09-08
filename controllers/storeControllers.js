@@ -2296,7 +2296,7 @@ export const saveProductController = async (req, res) => {
               sendEmail: true,
               payload: {
                 productId: productId,
-                type: niche,
+                productType: type,
                 productName: title,
                 price: Number(price),
                 date: formattedDate,
@@ -2387,6 +2387,7 @@ export const fetchAllProducts = async (req, res) => {
         productId: data.productId,
         category: data.category,
         type: data.type,
+        sellerId: data.sellerId,
       });
     });
 
