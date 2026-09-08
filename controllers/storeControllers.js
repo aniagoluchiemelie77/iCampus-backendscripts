@@ -176,7 +176,7 @@ async function processNotificationFanOut(
           sendEmail: true,
           payload: {
             productId: product.productId,
-            productType: product.productType,
+            productType: product.type,
             productName: product.title,
             date: formattedDate,
             time: formattedTime,
@@ -227,7 +227,7 @@ async function processNotificationFanOut(
               sendEmail: true,
               payload: {
                 productId: product.productId,
-                productType: product.productType,
+                productType: product.type,
                 productName: product.title,
                 userName: sellerName || "Seller",
               },
