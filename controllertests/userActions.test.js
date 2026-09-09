@@ -52,32 +52,50 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
 
   const endpointsToTest = [
     {
-      name: "Verify password in-app",
-      method: "post",
-      path: () => `users/password/verify`,
+      name: "Customize iTag details",
+      method: "put",
+      path: () => `users/update-itag`,
       auth: true,
       idempotent: true,
       expected: 200,
       body: {
-        password: "secureNewPassword123",
+        updates: {
+          username: "chinedu_kiv",
+          designOptions: {
+            backgroundColor: "#eee",
+          },
+        },
       },
     },
     {
-      name: "Mark single notification as read",
-      method: "patch",
-      path: () =>
-        `users/notifications/${encodeURIComponent("auth-2609092134-5658")}/read`,
+      name: "Search user using UID or query term",
+      method: "get",
+      path: () => `users/search?q=Alice&viewerRole=user&viewerTier=pro`,
       auth: true,
-      idempotent: true,
       expected: 200,
-      body: {},
+      body: null,
     },
     {
-      name: "Mark all notifications as read",
-      method: "patch",
-      path: () => `users/notifications/mark-all-read`,
+      name: "Handle unified course search lookup",
+      method: "get",
+      path: () => `users/courses/search?q=petr`,
       auth: true,
-      idempotent: true,
+      expected: 200,
+      body: null,
+    },
+    {
+      name: "Handle unified resource search lookup",
+      method: "get",
+      path: () => `users/courses/resources/search?q=petro`,
+      auth: true,
+      expected: 200,
+      body: null,
+    },
+    {
+      name: "Refresh user details and generate new tokens",
+      method: "get",
+      path: () => `users/refresh-user-details`,
+      auth: true,
       expected: 200,
       body: {},
     },
@@ -116,7 +134,7 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
       idempotent: false,
       expected: 200,
       body: {
-        deviceIdToRevoke: "device-uuid-abc-123",
+        deviceIdToRevoke: "9cb67e14404773b6",
       },
     },
     {
@@ -131,6 +149,36 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
       },
     },
     /*
+    {
+      name: "Verify password in-app",
+      method: "post",
+      path: () => `users/password/verify`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        password: "secureNewPassword123",
+      },
+    },
+    {
+      name: "Mark single notification as read",
+      method: "patch",
+      path: () =>
+        `users/notifications/${encodeURIComponent("auth-2609092134-5658")}/read`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {},
+    },
+    {
+      name: "Mark all notifications as read",
+      method: "patch",
+      path: () => `users/notifications/mark-all-read`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {},
+    },
     {
       name: "Verify iTag username availability",
       method: "get",

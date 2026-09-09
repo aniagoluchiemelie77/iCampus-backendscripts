@@ -792,111 +792,6 @@ export const customizeItag = async (req, res) => {
     });
   }
 };
-export const verifyPasswordInapp = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "verifyPasswordInAppController";
-  const action = "verifyPasswordInApp";
-  const { password } = req.body;
-  const userId = req.user?.uid || req.user?.id;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user context." });
-  }
-
-  if (!password || typeof password !== "string") {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Password is required",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, message: "Password is required." });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const user = userDoc.data();
-
-    if (!user.password) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Password not set for user",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Incorrect current password" });
-    }
-
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Incorrect current password",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Incorrect current password" });
-    }
-    res.status(200).json({ success: true, message: "Password verified" });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in verifyPasswordInapp:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
 export const revokeLoggedInDeviceSession = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "revokeLoggedInDeviceController";
@@ -1283,195 +1178,6 @@ export const resetIcashPin = async (req, res) => {
       );
     });
     return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const markNotificationAsRead = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "markNotificationAsReadController";
-  const action = "markNotificationAsRead";
-
-  try {
-    const { id } = req.params;
-    const userId = req.user?.uid || req.user?.id;
-
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user context",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user context." });
-    }
-
-    if (!id) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Notification ID required",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "Notification ID is required." });
-    }
-
-    const notificationQuery = await Notification.where(
-      "notificationId",
-      "==",
-      id,
-    )
-      .where("recipientId", "==", userId)
-      .limit(1)
-      .get();
-
-    if (notificationQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Notification not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "Notification not found" });
-    }
-
-    const notificationDoc = notificationQuery.docs[0];
-    const existingData = notificationDoc.data();
-    const updateTimestamp = new Date();
-
-    await notificationDoc.ref.update({
-      isRead: true,
-      updatedAt: updateTimestamp,
-    });
-
-    const notification = {
-      id: notificationDoc.id,
-      ...existingData,
-      isRead: true,
-      updatedAt: updateTimestamp,
-    };
-    res.status(200).json({
-      success: true,
-      message: "Notification marked as read",
-      notification,
-    });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error marking notification as read:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const markAllNotificationsAsRead = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "markAllNotificationAsReadController";
-  const action = "markAllNotificationAsRead";
-
-  try {
-    const userId = req.user?.uid || req.user?.id;
-
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user context",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user context." });
-    }
-
-    const unreadQuery = await Notification.where("recipientId", "==", userId)
-      .where("isRead", "==", false)
-      .get();
-
-    if (unreadQuery.empty) {
-      res.status(200).json({
-        success: true,
-        message: "All notifications marked as read",
-        modifiedCount: 0,
-      });
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-      return;
-    }
-
-    const batches = [];
-    let currentBatch = db.batch();
-    let operationCount = 0;
-    const updateTimestamp = new Date();
-
-    unreadQuery.docs.forEach((doc) => {
-      currentBatch.update(doc.ref, {
-        isRead: true,
-        updatedAt: updateTimestamp,
-      });
-      operationCount++;
-
-      if (operationCount === 500) {
-        batches.push(currentBatch.commit());
-        currentBatch = db.batch();
-        operationCount = 0;
-      }
-    });
-
-    if (operationCount > 0) {
-      batches.push(currentBatch.commit());
-    }
-
-    await Promise.all(batches);
-
-    res.status(200).json({
-      success: true,
-      message: "All notifications marked as read",
-      modifiedCount: unreadQuery.size,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error marking all notifications as read:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res
-      .status(500)
-      .json({ success: false, message: "Server error updating notifications" });
   }
 };
 export const searchUserUsingUidOrNameQuery = async (req, res) => {
@@ -2090,7 +1796,7 @@ export const aiChat = async (req, res) => {
     }
 
     const { type = "general", data = {} } = context;
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
 
     let systemInstruction = "";
     if (type === "support") {
@@ -4225,5 +3931,299 @@ export const verifyiTagUsernameAvailability = async (req, res) => {
       available: false,
       message: "Server error",
     });
+  }
+};
+export const markNotificationAsRead = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "markNotificationAsReadController";
+  const action = "markNotificationAsRead";
+
+  try {
+    const { id } = req.params;
+    const userId = req.user?.uid || req.user?.id;
+
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user context",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    if (!id) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Notification ID required",
+        );
+      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Notification ID is required." });
+    }
+
+    const notificationQuery = await Notification.where(
+      "notificationId",
+      "==",
+      id,
+    )
+      .where("recipientId", "==", userId)
+      .limit(1)
+      .get();
+
+    if (notificationQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Notification not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ success: false, message: "Notification not found" });
+    }
+
+    const notificationDoc = notificationQuery.docs[0];
+    const existingData = notificationDoc.data();
+    const updateTimestamp = new Date();
+
+    await notificationDoc.ref.update({
+      isRead: true,
+      updatedAt: updateTimestamp,
+    });
+
+    const notification = {
+      id: notificationDoc.id,
+      ...existingData,
+      isRead: true,
+      updatedAt: updateTimestamp,
+    };
+    res.status(200).json({
+      success: true,
+      message: "Notification marked as read",
+      notification,
+    });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error marking notification as read:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const markAllNotificationsAsRead = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "markAllNotificationAsReadController";
+  const action = "markAllNotificationAsRead";
+
+  try {
+    const userId = req.user?.uid || req.user?.id;
+
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user context",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    const unreadQuery = await Notification.where("recipientId", "==", userId)
+      .where("isRead", "==", false)
+      .get();
+
+    if (unreadQuery.empty) {
+      res.status(200).json({
+        success: true,
+        message: "All notifications marked as read",
+        modifiedCount: 0,
+      });
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+      return;
+    }
+
+    const batches = [];
+    let currentBatch = db.batch();
+    let operationCount = 0;
+    const updateTimestamp = new Date();
+
+    unreadQuery.docs.forEach((doc) => {
+      currentBatch.update(doc.ref, {
+        isRead: true,
+        updatedAt: updateTimestamp,
+      });
+      operationCount++;
+
+      if (operationCount === 500) {
+        batches.push(currentBatch.commit());
+        currentBatch = db.batch();
+        operationCount = 0;
+      }
+    });
+
+    if (operationCount > 0) {
+      batches.push(currentBatch.commit());
+    }
+
+    await Promise.all(batches);
+
+    res.status(200).json({
+      success: true,
+      message: "All notifications marked as read",
+      modifiedCount: unreadQuery.size,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error marking all notifications as read:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Server error updating notifications" });
+  }
+};
+export const verifyPasswordInapp = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyPasswordInAppController";
+  const action = "verifyPasswordInApp";
+  const { password } = req.body;
+  const userId = req.user?.uid || req.user?.id;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user context." });
+  }
+
+  if (!password || typeof password !== "string") {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Password is required",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, message: "Password is required." });
+  }
+
+  try {
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+    if (userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const userDoc = userQuery.docs[0];
+    const user = userDoc.data();
+
+    if (!user.password) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Password not set for user",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Incorrect current password" });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Incorrect current password",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Incorrect current password" });
+    }
+    res.status(200).json({ success: true, message: "Password verified" });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error in verifyPasswordInapp:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
