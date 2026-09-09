@@ -6,6 +6,7 @@ import { describe, beforeAll, test, expect } from "@jest/globals";
 import request from "supertest";
 
 const API_BASE_URL = process.env.BACKEND_URL;
+
 let sharedContext = {
   productId: 'PR-260908-1756-_001-DT',
   secondProductId: 'PR-260904-0001-_001-Q1',
@@ -50,71 +51,38 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
 
   const endpointsToTest = [
     {
-      name: "Update password in-app",
-      method: "put",
-      path: () => `users/password/update`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-      body: {
-        newPassword: "secureNewPassword123",
-      },
-    },
-    {
-      name: "Update primary or secondary email",
-      method: "patch",
-      path: () => `users/update-emails`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-      body: {
-        email: "new.secondary@fupre.edu.ng",
-        type: "secondary",
-      },
-    },
-    {
-      name: "Patch user preferences",
-      method: "patch",
-      path: () => `users/preferences`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-      body: {
-        notifications: {
-          classroom: false,
-          profile: false,
-        },
-      },
-    },
-    {
-      name: "Setup iCash PIN",
+      name: "Toggle block/unblock user",
       method: "post",
-      path: () => `user/setup-icash-pin`,
+      path: () => `users/block/toggle`,
       auth: true,
       idempotent: true,
       expected: 200,
       body: {
-        pin: "123456",
+        targetUserId: "USER_002",
       },
     },
     {
-      name: "Verify iCash PIN",
-      method: "post",
-      path: () => `user/verify-icash-pin`,
+      name: "Delete recovery email",
+      method: "delete",
+      path: () => `users/recovery-email`,
       auth: true,
       idempotent: true,
       expected: 200,
       body: {
-        pin: "123456",
+        emailToDelete: "new.secondary@fupre.edu.ng",
       },
     },
     {
-      name: "Request iCash PIN reset OTP",
+      name: "Send phone number OTP via WhatsApp/SMS",
       method: "post",
-      path: () => `user/request-pin-reset`,
+      path: () => `users/send-phone-otp`,
       auth: true,
       idempotent: true,
       expected: 200,
+      body: {
+        phoneNumber: "+2349122312493",
+        channel: "whatsapp",
+      },
     },
     {
       name: "Reset iCash PIN",
@@ -186,6 +154,14 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
       },
     },
     {
+      name: "Request iCash PIN reset OTP",
+      method: "post",
+      path: () => `user/request-pin-reset`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+    },
+    {
       name: "Delete user account",
       method: "delete",
       path: () => `users/account/delete`,
@@ -196,6 +172,67 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
         reason: "No longer utilizing the platform services.",
       },
     },
+    /*
+    {
+      name: "Update password in-app",
+      method: "put",
+      path: () => `users/password/update`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        newPassword: "secureNewPassword123",
+      },
+    },
+    {
+      name: "Update primary or secondary email",
+      method: "patch",
+      path: () => `users/update-emails`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        email: "new.secondary@fupre.edu.ng",
+        type: "secondary",
+      },
+    },
+    {
+      name: "Patch user preferences",
+      method: "patch",
+      path: () => `users/preferences`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        notifications: {
+          classroom: false,
+          profile: false,
+        },
+      },
+    },
+    {
+      name: "Setup iCash PIN",
+      method: "post",
+      path: () => `user/setup-icash-pin`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        pin: "123456",
+      },
+    },
+    {
+      name: "Verify iCash PIN",
+      method: "post",
+      path: () => `user/verify-icash-pin`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        pin: "123456",
+      },
+    },
+    */
   ];
 
   test("Run sequential dependency chain", async () => {

@@ -165,121 +165,6 @@ const FAQ_DATA = [
   },
 ];
 
-export const createNewPasswordInApp = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "InAppPasswordCreationController";
-  const action = "createPasswordInApp";
-  const { newPassword } = req.body;
-
-  try {
-    const userId = req.user?.uid || req.user?.id;
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized context",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user context." });
-    }
-
-    if (!newPassword || newPassword.length < 6) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid password format",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "Password must be at least 6 characters long.",
-      });
-    }
-    const [querySnapshot, hashedPassword] = await Promise.all([
-      User.where("uid", "==", userId).limit(1).get(),
-      bcrypt.hash(newPassword, 10),
-    ]);
-
-    if (querySnapshot.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDocRef = querySnapshot.docs[0].ref;
-    const user = querySnapshot.docs[0].data();
-
-    const now = new Date();
-    const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
-
-    const passwordUpdatePromise = userDocRef.update({
-      password: hashedPassword,
-      updatedAt: now,
-    });
-
-    const notificationPromise = createNotification({
-      notificationId: generateNotificationId("auth"),
-      recipientId: user.uid,
-      isRead: false,
-      recipientEmail: user.email,
-      recoveryEmails: user.recoveryEmails,
-      category: "auth",
-      actionType: "PASSWORD_CHANGED",
-      title: "Password Changed",
-      message: `Your password was successfully updated on ${formattedTime}.`,
-      payload: {
-        userName: user.firstname || "User",
-        time: formattedTime,
-      },
-      sendEmailFlag: true,
-      sendEmail: true,
-      sendPush: true,
-      sendSocket: true,
-      saveToDb: true,
-    }).catch((err) => console.error("Notification dispatch failed:", err));
-
-    await Promise.all([passwordUpdatePromise, notificationPromise]);
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-
-    return res
-      .status(200)
-      .json({ success: true, message: "Password updated successfully" });
-  } catch (error) {
-    console.error("Error in createNewPasswordInApp:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res
-      .status(500)
-      .json({ success: false, message: "Could not update password" });
-  }
-};
 export const deleteAccount = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "deleteAccountController";
@@ -457,129 +342,6 @@ export const deleteAccount = async (req, res) => {
     return res
       .status(500)
       .json({ status: false, message: "Error during account deletion." });
-  }
-};
-export const updateEmails = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "updateEmailController";
-  const action = "updateEmail";
-  const { email, type } = req.body;
-  const userUid = req.user?.uid || req.user?.id;
-
-  if (!userUid) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ message: "Unauthorized user context.", success: false });
-  }
-
-  if (type !== "primary" && type !== "secondary") {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid update type",
-      );
-    });
-    return res
-      .status(400)
-      .json({ message: "Invalid update type", success: false });
-  }
-
-  if (!email || typeof email !== "string" || !email.includes("@")) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid email format",
-      );
-    });
-    return res.status(400).json({
-      message: "Please provide a valid email address.",
-      success: false,
-    });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userUid).limit(1).get();
-
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ message: "User not found", success: false });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const userData = userDoc.data();
-    const sanitizedEmail = email.trim().toLowerCase();
-
-    if (type === "primary") {
-      await userDoc.ref.update({
-        email: sanitizedEmail,
-        updatedAt: new Date(),
-      });
-    } else if (type === "secondary") {
-      const recoveryEmails = userData.recoveryEmails || [];
-      const emailExists = recoveryEmails.some(
-        (rec) => rec.email.toLowerCase() === sanitizedEmail,
-      );
-
-      if (!emailExists) {
-        recoveryEmails.push({
-          email: sanitizedEmail,
-          isVerified: true,
-          addedAt: new Date(),
-        });
-
-        await userDoc.ref.update({
-          recoveryEmails: recoveryEmails,
-          updatedAt: new Date(),
-        });
-      }
-    }
-    res.status(200).json({
-      message: `${type === "primary" ? "Primary" : "Recovery"} email updated successfully.`,
-      success: true,
-    });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in updateEmails:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      message: "Internal server error during email update",
-      success: false,
-    });
   }
 };
 export const verifyPhoneNumberOTP = async (req, res) => {
@@ -1373,99 +1135,6 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
       .json({ success: false, error: "Could not revoke session" });
   }
 };
-export const patchUserPreferences = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "updateUserPreferencesController";
-  const action = "updateUserPreferences";
-  const userId = req.user?.uid || req.user?.id;
-  const updateData = req.body;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, error: "Unauthorized user context." });
-  }
-
-  if (
-    !updateData ||
-    typeof updateData !== "object" ||
-    Array.isArray(updateData)
-  ) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid update payload",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, error: "Valid update payload is required." });
-  }
-
-  try {
-    const prefsQuery = await userPrefs
-      .where("userId", "==", userId)
-      .limit(1)
-      .get();
-
-    let prefDocRef;
-    let existingData = {};
-
-    if (prefsQuery.empty) {
-      prefDocRef = userPrefs.doc();
-      existingData = { userId, createdAt: new Date() };
-    } else {
-      prefDocRef = prefsQuery.docs[0].ref;
-      existingData = prefsQuery.docs[0].data();
-    }
-
-    const payload = {
-      ...updateData,
-      updatedAt: new Date(),
-    };
-
-    await prefDocRef.set({ ...existingData, ...payload }, { merge: true });
-    const updatedPrefs = {
-      id: prefDocRef.id,
-      ...existingData,
-      ...payload,
-    };
-    res.status(200).json({
-      success: true,
-      message: "Preferences updated successfully",
-      preferences: updatedPrefs,
-    });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in patchUserPreferences:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res
-      .status(500)
-      .json({ success: false, error: "Server error updating preferences" });
-  }
-};
 export const sendPhoneNumberOTP = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "sendOtpToMobileController";
@@ -1565,310 +1234,6 @@ export const sendPhoneNumberOTP = async (req, res) => {
       success: false,
       message: error?.message || "Failed to send verification message",
     });
-  }
-};
-export const verifyIcashPin = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "verifyIcashPinController";
-  const action = "verifyIcashPin";
-  const { pin } = req.body;
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user context." });
-  }
-
-  if (!pin || typeof pin !== "string") {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "PIN is required",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, message: "PIN is required." });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const user = userDoc.data();
-
-    if (user.isSuspended) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "This account is already suspended.",
-        );
-      });
-      return res.status(403).json({
-        success: false,
-        isSuspended: true,
-        message: "This account is already suspended.",
-      });
-    }
-
-    let lockoutTimestamp = null;
-    if (user.iCashLockoutUntil) {
-      lockoutTimestamp = user.iCashLockoutUntil.toDate
-        ? user.iCashLockoutUntil.toDate().getTime()
-        : new Date(user.iCashLockoutUntil).getTime();
-    }
-
-    if (lockoutTimestamp && lockoutTimestamp > Date.now()) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Locked. Try again",
-        );
-      });
-      return res.status(403).json({
-        success: false,
-        message: `Locked. Try again after ${moment(lockoutTimestamp).format("LT")}`,
-      });
-    }
-
-    if (!user.iCashPin) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "iCash PIN not set",
-        );
-      });
-      return res.status(401).json({ success: false, message: "Invalid PIN" });
-    }
-
-    const isMatch = await bcrypt.compare(pin, user.iCashPin);
-    if (!isMatch) {
-      const currentAttempts = (user.iCashAttempts || 0) + 1;
-
-      if (currentAttempts >= 5) {
-        await Promise.all([
-          addFlag(userId, "FAILED_PIN_ATTEMPT"),
-          userDoc.ref.update({
-            isSuspended: true,
-            iCashAttempts: 0,
-            updatedAt: new Date(),
-          }),
-          notifyAdmins(
-            { role: ["moderator", "super_admin"] },
-            {
-              notificationId: generateNotificationId("security"),
-              category: "security",
-              actionType: "ACCOUNT_SUSPENDED_SECURITY",
-              payload: {
-                userId,
-                reason: "Excessive failed iCash PIN attempts",
-              },
-              senderId: "system",
-            },
-            false,
-          ),
-        ]);
-
-        setImmediate(() => {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Maximum attempts reached. Account suspended for security.",
-          );
-        });
-        return res.status(403).json({
-          success: false,
-          isSuspended: true,
-          message: "Maximum attempts reached. Account suspended for security.",
-        });
-      }
-
-      await Promise.all([
-        addFlag(userId, "FAILED_PIN_ATTEMPT"),
-        userDoc.ref.update({
-          iCashAttempts: currentAttempts,
-          updatedAt: new Date(),
-        }),
-      ]);
-
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid PIN.",
-        );
-      });
-      return res.status(401).json({
-        success: false,
-        message: "Invalid PIN",
-        attemptsRemaining: 5 - currentAttempts,
-      });
-    }
-
-    await userDoc.ref.update({
-      iCashAttempts: 0,
-      iCashLockoutUntil: null,
-      updatedAt: new Date(),
-    });
-    res
-      .status(200)
-      .json({ success: true, message: "PIN verified successfully" });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in verifyIcashPin:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const icashPinSetup = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "icashPinSetupController";
-  const action = "icashPinSetup";
-  const { pin } = req.body;
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user context." });
-  }
-
-  if (!pin || typeof pin !== "string" || pin.length < 4) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid PIN format",
-      );
-    });
-    return res.status(400).json({
-      success: false,
-      message: "A valid PIN of at least 4 digits is required.",
-    });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const user = userDoc.data();
-
-    if (user.iCashPin) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "PIN already exists. Use the 'Reset PIN' flow to change it.",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "PIN already exists. Use the 'Reset PIN' flow to change it.",
-      });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPin = await bcrypt.hash(pin, salt);
-
-    await userDoc.ref.update({
-      iCashPin: hashedPin,
-      twoFactorEnabled: true,
-      updatedAt: new Date(),
-    });
-    res.status(200).json({ success: true, message: "iCash PIN secured." });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in icashPinSetup:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const requestIcashPinReset = async (req, res) => {
@@ -3208,98 +2573,6 @@ export const handleUnifiedResourceSearch = async (req, res) => {
     });
   }
 };
-export const toggleTheme = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "toggleThemeController";
-  const action = "toggleTheme";
-
-  try {
-    console.log("Inside try block...");
-    const { theme } = req.body || {};
-    console.log("Theme: ", theme);
-    const sanitizedTheme =
-      typeof theme === "string" ? theme.trim().toLowerCase() : "";
-
-    if (!["light", "dark", "system"].includes(sanitizedTheme)) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid choice schema profile allocation assignment.",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "Invalid choice schema profile allocation assignment.",
-      });
-    }
-    const userId = req.user?.uid || req.user?.id;
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user context",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user context." });
-    }
-    const collectionRef = userPrefs;
-    if (!collectionRef) {
-      throw new Error("UserPrefs collection reference is not defined.");
-    }
-
-    const prefQuery = await collectionRef
-      .where("userId", "==", userId)
-      .limit(1)
-      .get();
-
-    const preferenceData = {
-      theme: sanitizedTheme,
-      updatedAt: new Date(),
-    };
-    if (prefQuery.empty) {
-      preferenceData.createdAt = new Date();
-      await collectionRef.add({
-        userId,
-        ...preferenceData,
-      });
-    } else {
-      await prefQuery.docs[0].ref.update(preferenceData);
-    }
-
-    res.status(200).json({
-      success: true,
-      message: "Theme synchronization configurations stored successfully.",
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Preferences Update Engine System Fault:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      success: false,
-      message: "Internal Server Error",
-      error: error.message,
-    });
-  }
-};
 export const refreshUserDetails = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "refreshUserDetailsController";
@@ -4225,5 +3498,732 @@ export const createReviewController = async (req, res) => {
       message:
         "Internal application routing anomaly during review storage commit pipeline.",
     });
+  }
+};
+export const toggleTheme = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleThemeController";
+  const action = "toggleTheme";
+
+  try {
+    console.log("Inside try block...");
+    const { theme } = req.body || {};
+    console.log("Theme: ", theme);
+    const sanitizedTheme =
+      typeof theme === "string" ? theme.trim().toLowerCase() : "";
+
+    if (!["light", "dark", "system"].includes(sanitizedTheme)) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid choice schema profile allocation assignment.",
+        );
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Invalid choice schema profile allocation assignment.",
+      });
+    }
+    const userId = req.user?.uid || req.user?.id;
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user context",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+    const collectionRef = userPrefs;
+    if (!collectionRef) {
+      throw new Error("UserPrefs collection reference is not defined.");
+    }
+
+    const prefQuery = await collectionRef
+      .where("userId", "==", userId)
+      .limit(1)
+      .get();
+
+    const preferenceData = {
+      theme: sanitizedTheme,
+      updatedAt: new Date(),
+    };
+    if (prefQuery.empty) {
+      preferenceData.createdAt = new Date();
+      await collectionRef.add({
+        userId,
+        ...preferenceData,
+      });
+    } else {
+      await prefQuery.docs[0].ref.update(preferenceData);
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Theme synchronization configurations stored successfully.",
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Preferences Update Engine System Fault:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+};
+export const createNewPasswordInApp = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "InAppPasswordCreationController";
+  const action = "createPasswordInApp";
+  const { newPassword } = req.body;
+
+  try {
+    const userId = req.user?.uid || req.user?.id;
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized context",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    if (!newPassword || newPassword.length < 6) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid password format",
+        );
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 6 characters long.",
+      });
+    }
+    const [querySnapshot, hashedPassword] = await Promise.all([
+      User.where("uid", "==", userId).limit(1).get(),
+      bcrypt.hash(newPassword, 10),
+    ]);
+
+    if (querySnapshot.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const userDocRef = querySnapshot.docs[0].ref;
+    const user = querySnapshot.docs[0].data();
+
+    const now = new Date();
+    const formattedTime = `${now.toLocaleDateString()} at ${now.toLocaleTimeString()}`;
+
+    const passwordUpdatePromise = userDocRef.update({
+      password: hashedPassword,
+      updatedAt: now,
+    });
+
+    const notificationPromise = createNotification({
+      notificationId: generateNotificationId("auth"),
+      recipientId: user.uid,
+      isRead: false,
+      recipientEmail: user.email,
+      recoveryEmails: user.recoveryEmails,
+      category: "auth",
+      actionType: "PASSWORD_CHANGED",
+      title: "Password Changed",
+      message: `Your password was successfully updated on ${formattedTime}.`,
+      payload: {
+        userName: user.firstname || "User",
+        time: formattedTime,
+      },
+      sendEmailFlag: true,
+      sendEmail: true,
+      sendPush: true,
+      sendSocket: true,
+      saveToDb: true,
+    }).catch((err) => console.error("Notification dispatch failed:", err));
+
+    await Promise.all([passwordUpdatePromise, notificationPromise]);
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
+    return res
+      .status(200)
+      .json({ success: true, message: "Password updated successfully" });
+  } catch (error) {
+    console.error("Error in createNewPasswordInApp:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Could not update password" });
+  }
+};
+export const updateEmails = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "updateEmailController";
+  const action = "updateEmail";
+  const { email, type } = req.body;
+  const userUid = req.user?.uid || req.user?.id;
+
+  if (!userUid) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+    });
+    return res
+      .status(401)
+      .json({ message: "Unauthorized user context.", success: false });
+  }
+
+  if (type !== "primary" && type !== "secondary") {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid update type",
+      );
+    });
+    return res
+      .status(400)
+      .json({ message: "Invalid update type", success: false });
+  }
+
+  if (!email || typeof email !== "string" || !email.includes("@")) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid email format",
+      );
+    });
+    return res.status(400).json({
+      message: "Please provide a valid email address.",
+      success: false,
+    });
+  }
+
+  try {
+    const userQuery = await User.where("uid", "==", userUid).limit(1).get();
+
+    if (userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ message: "User not found", success: false });
+    }
+
+    const userDoc = userQuery.docs[0];
+    const userData = userDoc.data();
+    const sanitizedEmail = email.trim().toLowerCase();
+
+    if (type === "primary") {
+      await userDoc.ref.update({
+        email: sanitizedEmail,
+        updatedAt: new Date(),
+      });
+    } else if (type === "secondary") {
+      const recoveryEmails = userData.recoveryEmails || [];
+      const emailExists = recoveryEmails.some(
+        (rec) => rec.email.toLowerCase() === sanitizedEmail,
+      );
+
+      if (!emailExists) {
+        recoveryEmails.push({
+          email: sanitizedEmail,
+          isVerified: true,
+          addedAt: new Date(),
+        });
+
+        await userDoc.ref.update({
+          recoveryEmails: recoveryEmails,
+          updatedAt: new Date(),
+        });
+      }
+    }
+    res.status(200).json({
+      message: `${type === "primary" ? "Primary" : "Recovery"} email updated successfully.`,
+      success: true,
+    });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error in updateEmails:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      message: "Internal server error during email update",
+      success: false,
+    });
+  }
+};
+export const patchUserPreferences = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "updateUserPreferencesController";
+  const action = "updateUserPreferences";
+  const userId = req.user?.uid || req.user?.id;
+  const updateData = req.body;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, error: "Unauthorized user context." });
+  }
+
+  if (
+    !updateData ||
+    typeof updateData !== "object" ||
+    Array.isArray(updateData)
+  ) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid update payload",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, error: "Valid update payload is required." });
+  }
+
+  try {
+    const prefsQuery = await userPrefs
+      .where("userId", "==", userId)
+      .limit(1)
+      .get();
+
+    let prefDocRef;
+    let existingData = {};
+
+    if (prefsQuery.empty) {
+      prefDocRef = userPrefs.doc();
+      existingData = { userId, createdAt: new Date() };
+    } else {
+      prefDocRef = prefsQuery.docs[0].ref;
+      existingData = prefsQuery.docs[0].data();
+    }
+
+    const payload = {
+      ...updateData,
+      updatedAt: new Date(),
+    };
+
+    await prefDocRef.set({ ...existingData, ...payload }, { merge: true });
+    const updatedPrefs = {
+      id: prefDocRef.id,
+      ...existingData,
+      ...payload,
+    };
+    res.status(200).json({
+      success: true,
+      message: "Preferences updated successfully",
+      preferences: updatedPrefs,
+    });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error in patchUserPreferences:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res
+      .status(500)
+      .json({ success: false, error: "Server error updating preferences" });
+  }
+};
+export const verifyIcashPin = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyIcashPinController";
+  const action = "verifyIcashPin";
+  const { pin } = req.body;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user context." });
+  }
+
+  if (!pin || typeof pin !== "string") {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "PIN is required",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, message: "PIN is required." });
+  }
+
+  try {
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+    if (userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const userDoc = userQuery.docs[0];
+    const user = userDoc.data();
+
+    if (user.isSuspended) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "This account is already suspended.",
+        );
+      });
+      return res.status(403).json({
+        success: false,
+        isSuspended: true,
+        message: "This account is already suspended.",
+      });
+    }
+
+    let lockoutTimestamp = null;
+    if (user.iCashLockoutUntil) {
+      lockoutTimestamp = user.iCashLockoutUntil.toDate
+        ? user.iCashLockoutUntil.toDate().getTime()
+        : new Date(user.iCashLockoutUntil).getTime();
+    }
+
+    if (lockoutTimestamp && lockoutTimestamp > Date.now()) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Locked. Try again",
+        );
+      });
+      return res.status(403).json({
+        success: false,
+        message: `Locked. Try again after ${moment(lockoutTimestamp).format("LT")}`,
+      });
+    }
+
+    if (!user.iCashPin) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "iCash PIN not set",
+        );
+      });
+      return res.status(401).json({ success: false, message: "Invalid PIN" });
+    }
+
+    const isMatch = await bcrypt.compare(pin, user.iCashPin);
+    if (!isMatch) {
+      const currentAttempts = (user.iCashAttempts || 0) + 1;
+
+      if (currentAttempts >= 5) {
+        await Promise.all([
+          addFlag(userId, "FAILED_PIN_ATTEMPT"),
+          userDoc.ref.update({
+            isSuspended: true,
+            iCashAttempts: 0,
+            updatedAt: new Date(),
+          }),
+          notifyAdmins(
+            { role: ["moderator", "super_admin"] },
+            {
+              notificationId: generateNotificationId("security"),
+              category: "security",
+              actionType: "ACCOUNT_SUSPENDED_SECURITY",
+              payload: {
+                userId,
+                reason: "Excessive failed iCash PIN attempts",
+              },
+              senderId: "system",
+            },
+            false,
+          ),
+        ]);
+
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Maximum attempts reached. Account suspended for security.",
+          );
+        });
+        return res.status(403).json({
+          success: false,
+          isSuspended: true,
+          message: "Maximum attempts reached. Account suspended for security.",
+        });
+      }
+
+      await Promise.all([
+        addFlag(userId, "FAILED_PIN_ATTEMPT"),
+        userDoc.ref.update({
+          iCashAttempts: currentAttempts,
+          updatedAt: new Date(),
+        }),
+      ]);
+
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid PIN.",
+        );
+      });
+      return res.status(401).json({
+        success: false,
+        message: "Invalid PIN",
+        attemptsRemaining: 5 - currentAttempts,
+      });
+    }
+
+    await userDoc.ref.update({
+      iCashAttempts: 0,
+      iCashLockoutUntil: null,
+      updatedAt: new Date(),
+    });
+    res
+      .status(200)
+      .json({ success: true, message: "PIN verified successfully" });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error in verifyIcashPin:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const icashPinSetup = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "icashPinSetupController";
+  const action = "icashPinSetup";
+  const { pin } = req.body;
+  const userId = req.user?.id || req.user?.uid;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, message: "Unauthorized user context." });
+  }
+
+  if (!pin || typeof pin !== "string" || pin.length < 4) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Invalid PIN format",
+      );
+    });
+    return res.status(400).json({
+      success: false,
+      message: "A valid PIN of at least 4 digits is required.",
+    });
+  }
+
+  try {
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+    if (userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const userDoc = userQuery.docs[0];
+    const user = userDoc.data();
+
+    if (user.iCashPin) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "PIN already exists. Use the 'Reset PIN' flow to change it.",
+        );
+      });
+      return res.status(400).json({
+        success: false,
+        message: "PIN already exists. Use the 'Reset PIN' flow to change it.",
+      });
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const hashedPin = await bcrypt.hash(pin, salt);
+
+    await userDoc.ref.update({
+      iCashPin: hashedPin,
+      twoFactorEnabled: true,
+      updatedAt: new Date(),
+    });
+    res.status(200).json({ success: true, message: "iCash PIN secured." });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error in icashPinSetup:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
