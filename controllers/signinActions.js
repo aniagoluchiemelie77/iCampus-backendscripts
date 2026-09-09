@@ -77,17 +77,17 @@ export const signUp = async (req, res) => {
         .where("department", "==", department);
     }
     console.log("Step 2...");
-    const [uid, itagusername, location] = await Promise.all([
+    const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const ip = rawIp ? rawIp.split(",")[0].trim() : "";
+    const geo = geoip.lookup(ip);
+    const location = !geo
+      ? "Unknown Location"
+      : geo.city
+        ? `${geo.city}, ${geo.country}`
+        : geo.country;
+    const [uid, itagusername] = await Promise.all([
       Promise.resolve(generateUserUID()),
       Promise.resolve(generateItagUsername(firstname || lastname, 5)),
-      Promise.resolve().then(() => {
-        const rawIp =
-          req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-        const ip = rawIp ? rawIp.split(",")[0].trim() : "";
-        const geo = geoip.lookup(ip);
-        if (!geo) return "Unknown Location";
-        return geo.city ? `${geo.city}, ${geo.country}` : geo.country;
-      }),
     ]);
     console.log("Step 3...");
 
@@ -274,106 +274,6 @@ export const signUp = async (req, res) => {
       message: error.message || "Failed to save user",
       success: false,
     });
-  }
-};
-export const AdminLogin = async (req, res) => {
-  const credentials = req.body.credentials || req.body;
-  const { identifier, password, deviceId, deviceName } = credentials;
-
-  try {
-    const adminSnapshot = await Admin.where("email", "==", identifier)
-      .limit(1)
-      .get();
-
-    console.log("User found");
-    if (adminSnapshot.empty) {
-      return res.status(404).json({ error: "Admin credentials invalid." });
-    }
-
-    const adminDoc = adminSnapshot.docs[0];
-    const adminDocRef = adminDoc.ref;
-    const admin = {
-      id: adminDoc.id,
-      ...adminDoc.data(),
-    };
-
-    const isMatch = await bcrypt.compare(password, admin.password || "");
-    if (!isMatch) {
-      return res.status(401).json({ error: "Invalid credentials" });
-    }
-    console.log("Password matched");
-
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
-      .split(",")[0]
-      .trim();
-    const geo = geoip.lookup(ip);
-    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
-
-    const adminUid = admin.uid || admin.id;
-    console.log("Location extracted");
-    const sessionData = {
-      userId: adminUid,
-      deviceId,
-      deviceName,
-      ipAddress: ip,
-      location,
-      lastUsed: new Date(),
-      updatedAt: new Date(),
-    };
-    console.log("Session data prepared");
-    const [existingSessionQuery, allSessionsSnapshot, tokens, _] =
-      await Promise.all([
-        UserSessions.where("userId", "==", adminUid)
-          .where("deviceId", "==", deviceId)
-          .limit(1)
-          .get(),
-        UserSessions.where("userId", "==", adminUid).get(),
-        generateTokens(admin, "admin"),
-        adminDocRef.set(
-          { lastAccessed: new Date(), updatedAt: new Date() },
-          { merge: true },
-        ),
-      ]);
-
-    const { accessToken, refreshToken } = tokens;
-    console.log("Tokens generated");
-    sessionData.refreshToken = refreshToken;
-
-    const sessionOperations = [];
-    if (!existingSessionQuery.empty) {
-      const sessionDocRef = existingSessionQuery.docs[0].ref;
-      sessionOperations.push(sessionDocRef.set(sessionData, { merge: true }));
-    } else {
-      const sessionId = `admsess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      sessionData.sessionId = sessionId;
-      sessionData.createdAt = new Date();
-      sessionOperations.push(UserSessions.doc(sessionId).set(sessionData));
-    }
-    console.log("Session resolved");
-
-    await Promise.all(sessionOperations);
-
-    const activeSessions = allSessionsSnapshot.docs.map((doc) => doc.data());
-    const safeAdmin = { ...admin };
-    delete safeAdmin.password;
-    safeAdmin.sessions = activeSessions;
-    console.log("Successful login");
-    res.status(200).json({
-      message: "Admin login successful",
-      admin: safeAdmin,
-      accessToken,
-      refreshToken,
-    });
-    setImmediate(() => {
-      verifyAndNotifyLogin(admin, req, "ADMIN_LOGIN_AUDIT").catch((err) =>
-        console.error("Admin audit error:", err),
-      );
-    });
-  } catch (error) {
-    console.error("Admin Login Error:", error);
-    return res
-      .status(500)
-      .json({ error: "Internal server error during login" });
   }
 };
 export const fetchInstitutionByCountry = async (req, res) => {
@@ -1792,5 +1692,105 @@ export const Login = async (req, res) => {
     if (!res.headersSent) {
       return res.status(500).json({ error: error.message || "Login error" });
     }
+  }
+};
+export const AdminLogin = async (req, res) => {
+  const credentials = req.body.credentials || req.body;
+  const { identifier, password, deviceId, deviceName } = credentials;
+
+  try {
+    const adminSnapshot = await Admin.where("email", "==", identifier)
+      .limit(1)
+      .get();
+
+    console.log("User found");
+    if (adminSnapshot.empty) {
+      return res.status(404).json({ error: "Admin credentials invalid." });
+    }
+
+    const adminDoc = adminSnapshot.docs[0];
+    const adminDocRef = adminDoc.ref;
+    const admin = {
+      id: adminDoc.id,
+      ...adminDoc.data(),
+    };
+
+    const isMatch = await bcrypt.compare(password, admin.password || "");
+    if (!isMatch) {
+      return res.status(401).json({ error: "Invalid credentials" });
+    }
+    console.log("Password matched");
+
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+      .split(",")[0]
+      .trim();
+    const geo = geoip.lookup(ip);
+    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+
+    const adminUid = admin.uid || admin.id;
+    console.log("Location extracted");
+    const sessionData = {
+      userId: adminUid,
+      deviceId,
+      deviceName,
+      ipAddress: ip,
+      location,
+      lastUsed: new Date(),
+      updatedAt: new Date(),
+    };
+    console.log("Session data prepared");
+    const [existingSessionQuery, allSessionsSnapshot, tokens, _] =
+      await Promise.all([
+        UserSessions.where("userId", "==", adminUid)
+          .where("deviceId", "==", deviceId)
+          .limit(1)
+          .get(),
+        UserSessions.where("userId", "==", adminUid).get(),
+        generateTokens(admin, "admin"),
+        adminDocRef.set(
+          { lastAccessed: new Date(), updatedAt: new Date() },
+          { merge: true },
+        ),
+      ]);
+
+    const { accessToken, refreshToken } = tokens;
+    console.log("Tokens generated");
+    sessionData.refreshToken = refreshToken;
+
+    const sessionOperations = [];
+    if (!existingSessionQuery.empty) {
+      const sessionDocRef = existingSessionQuery.docs[0].ref;
+      sessionOperations.push(sessionDocRef.set(sessionData, { merge: true }));
+    } else {
+      const sessionId = `admsess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      sessionData.sessionId = sessionId;
+      sessionData.createdAt = new Date();
+      sessionOperations.push(UserSessions.doc(sessionId).set(sessionData));
+    }
+    console.log("Session resolved");
+
+    await Promise.all(sessionOperations);
+
+    const activeSessions = allSessionsSnapshot.docs.map((doc) => doc.data());
+    const safeAdmin = { ...admin };
+    delete safeAdmin.password;
+    safeAdmin.sessions = activeSessions;
+    console.log("Successful login");
+    res.status(200).json({
+      message: "Admin login successful",
+      admin: safeAdmin,
+      accessToken,
+      refreshToken,
+    });
+    setImmediate(() => {
+      verifyAndNotifyLogin(admin, req, "ADMIN_LOGIN_AUDIT").catch((err) =>
+        console.error("Admin audit error:", err),
+      );
+    });
+  } catch (error) {
+    console.error("Admin Login Error:", error);
+    return res
+      .status(500)
+      .json({ error: "Internal server error during login" });
   }
 };

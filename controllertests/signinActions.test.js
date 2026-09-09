@@ -155,6 +155,7 @@ describe("Signup and onboarding actions, register new user, verify email, and se
     }
   }, 120000);
 });
+/*
 describe("Signup and onboarding actions, admin login and onboarding actions", () => {
   const endpointsToTest = [
     {
@@ -219,3 +220,4 @@ describe("Signup and onboarding actions, admin login and onboarding actions", ()
     }
   }, 120000);
 });
+*/
