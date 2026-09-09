@@ -447,165 +447,6 @@ export const changePassword = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
-export const switchToInstitutionAdmin = async (req, res) => {
-  try {
-    const userId = req.user?.uid || req.user?.id;
-    if (!userId) {
-      return res
-        .status(401)
-        .json({ success: false, error: "Unauthorized user context." });
-    }
-
-    const userQueryPromise = User.where("uid", "==", userId).limit(1).get();
-    const adminDocRef = Admin.doc(userId);
-    const adminDocPromise = adminDocRef.get();
-
-    const [userSnapshot, adminDocSnapshot] = await Promise.all([
-      userQueryPromise,
-      adminDocPromise,
-    ]);
-
-    if (userSnapshot.empty) {
-      return res
-        .status(404)
-        .json({ success: false, error: "User profile not found." });
-    }
-
-    const userDoc = userSnapshot.docs[0];
-    const userData = userDoc.data();
-
-    const canSwitch =
-      userData.isInstitutionAdmin === true &&
-      userData.isVerified === true &&
-      userData.usertype === "enterprise";
-
-    if (!canSwitch) {
-      return res.status(403).json({
-        success: false,
-        error:
-          "Unauthorized. You do not meet the requirements to switch to an institutional administrator dashboard.",
-      });
-    }
-
-    let adminData;
-    const adminUpdates = {};
-
-    if (!adminDocSnapshot.exists) {
-      adminData = {
-        uid: userId,
-        firstname: userData.organizationName || "School",
-        lastname: userData.lastname || "Admin",
-        email: userData.email,
-        password: userData.password,
-        adminType: "school_administrator",
-        profilePic: userData.profilePic || [],
-        country: userData.country || "Unknown",
-        isVerified: true,
-        schoolCode: userData.schoolCode || null,
-        lastAccessed: new Date(),
-        createdAt: new Date(),
-      };
-      await adminDocRef.set(adminData);
-      adminData.id = userId;
-    } else {
-      adminData = {
-        id: adminDocSnapshot.id,
-        ...adminDocSnapshot.data(),
-      };
-
-      if (
-        adminData.adminType !== "school_administrator" &&
-        adminData.adminType !== "super_admin"
-      ) {
-        adminUpdates.adminType = "school_administrator";
-      }
-    }
-
-    adminUpdates.lastAccessed = new Date();
-    adminUpdates.updatedAt = new Date();
-
-    const ip = (
-      req.headers["x-forwarded-for"] ||
-      req.socket.remoteAddress ||
-      ""
-    )
-      .split(",")[0]
-      .trim();
-    const geo = geoip.lookup(ip);
-    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
-    const deviceId = req.body?.deviceId || "switch_device";
-    const deviceName = req.body?.deviceName || "Web/Mobile Switch";
-
-    const sessionDocId = `admsess_${userId}_${deviceId}`;
-    const sessionDocRef = UserSessions.doc(sessionDocId);
-
-    const sessionData = {
-      userId: userId,
-      deviceId,
-      deviceName,
-      ipAddress: ip,
-      location,
-      lastUsed: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const sessionCheckPromise = sessionDocRef.get();
-    const tokensPromise = generateTokens(
-      { ...adminData, ...adminUpdates },
-      "admin",
-    );
-
-    const [sessionDoc, tokensResult] = await Promise.all([
-      sessionCheckPromise,
-      tokensPromise,
-    ]);
-
-    const { accessToken, refreshToken } = tokensResult;
-    sessionData.refreshToken = refreshToken;
-
-    if (!sessionDoc.exists) {
-      sessionData.createdAt = new Date();
-    }
-
-    const sessionWritePromise = sessionDocRef.set(sessionData, { merge: true });
-    const adminWritePromise = adminDocRef.set(adminUpdates, { merge: true });
-
-    await Promise.all([sessionWritePromise, adminWritePromise]);
-    res.status(200).json({
-      success: true,
-      message: "Successfully switched to school administrator profile.",
-      admin: { ...adminData, ...adminUpdates, password: undefined },
-      accessToken,
-      refreshToken,
-    });
-    setImmediate(async () => {
-      try {
-        const allSessionsSnapshot = await UserSessions.where(
-          "userId",
-          "==",
-          userId,
-        ).get();
-        const activeSessions = allSessionsSnapshot.docs.map((doc) =>
-          doc.data(),
-        );
-
-        const safeAdmin = { ...adminData, ...adminUpdates };
-        delete safeAdmin.password;
-        safeAdmin.sessions = activeSessions;
-
-        await verifyAndNotifyLogin(safeAdmin, req, "ADMIN_LOGIN_AUDIT");
-      } catch (err) {
-        console.error("Admin login audit/background task failed:", err);
-      }
-    });
-  } catch (error) {
-    console.error("Switch to Admin Error:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Internal server error during profile switch.",
-    });
-  }
-};
 
 //Tested and trusted using jest
 export const validateInstitution = async (req, res) => {
@@ -1784,6 +1625,165 @@ export const signUp = async (req, res) => {
     return res.status(500).json({
       message: error.message || "Failed to save user",
       success: false,
+    });
+  }
+};
+export const switchToInstitutionAdmin = async (req, res) => {
+  try {
+    const userId = req.user?.uid || req.user?.id;
+    if (!userId) {
+      return res
+        .status(401)
+        .json({ success: false, error: "Unauthorized user context." });
+    }
+
+    const userQueryPromise = User.where("uid", "==", userId).limit(1).get();
+    const adminDocRef = Admin.doc(userId);
+    const adminDocPromise = adminDocRef.get();
+
+    const [userSnapshot, adminDocSnapshot] = await Promise.all([
+      userQueryPromise,
+      adminDocPromise,
+    ]);
+
+    if (userSnapshot.empty) {
+      return res
+        .status(404)
+        .json({ success: false, error: "User profile not found." });
+    }
+
+    const userDoc = userSnapshot.docs[0];
+    const userData = userDoc.data();
+
+    const canSwitch =
+      userData.isInstitutionAdmin === true &&
+      userData.isVerified === true &&
+      userData.usertype === "enterprise";
+
+    if (!canSwitch) {
+      return res.status(403).json({
+        success: false,
+        error:
+          "Unauthorized. You do not meet the requirements to switch to an institutional administrator dashboard.",
+      });
+    }
+
+    let adminData;
+    const adminUpdates = {};
+
+    if (!adminDocSnapshot.exists) {
+      adminData = {
+        uid: userId,
+        firstname: userData.organizationName || "School",
+        lastname: userData.lastname || "Admin",
+        email: userData.email,
+        password: userData.password,
+        adminType: "school_administrator",
+        profilePic: userData.profilePic || [],
+        country: userData.country || "Unknown",
+        isVerified: true,
+        schoolCode: userData.schoolCode || null,
+        lastAccessed: new Date(),
+        createdAt: new Date(),
+      };
+      await adminDocRef.set(adminData);
+      adminData.id = userId;
+    } else {
+      adminData = {
+        id: adminDocSnapshot.id,
+        ...adminDocSnapshot.data(),
+      };
+
+      if (
+        adminData.adminType !== "school_administrator" &&
+        adminData.adminType !== "super_admin"
+      ) {
+        adminUpdates.adminType = "school_administrator";
+      }
+    }
+
+    adminUpdates.lastAccessed = new Date();
+    adminUpdates.updatedAt = new Date();
+
+    const ip = (
+      req.headers["x-forwarded-for"] ||
+      req.socket.remoteAddress ||
+      ""
+    )
+      .split(",")[0]
+      .trim();
+    const geo = geoip.lookup(ip);
+    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+    const deviceId = req.body?.deviceId || "switch_device";
+    const deviceName = req.body?.deviceName || "Web/Mobile Switch";
+
+    const sessionDocId = `admsess_${userId}_${deviceId}`;
+    const sessionDocRef = UserSessions.doc(sessionDocId);
+
+    const sessionData = {
+      userId: userId,
+      deviceId,
+      deviceName,
+      ipAddress: ip,
+      location,
+      lastUsed: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const sessionCheckPromise = sessionDocRef.get();
+    const tokensPromise = generateTokens(
+      { ...adminData, ...adminUpdates },
+      "admin",
+    );
+
+    const [sessionDoc, tokensResult] = await Promise.all([
+      sessionCheckPromise,
+      tokensPromise,
+    ]);
+
+    const { accessToken, refreshToken } = tokensResult;
+    sessionData.refreshToken = refreshToken;
+
+    if (!sessionDoc.exists) {
+      sessionData.createdAt = new Date();
+    }
+
+    const sessionWritePromise = sessionDocRef.set(sessionData, { merge: true });
+    const adminWritePromise = adminDocRef.set(adminUpdates, { merge: true });
+
+    await Promise.all([sessionWritePromise, adminWritePromise]);
+    res.status(200).json({
+      success: true,
+      message: "Successfully switched to school administrator profile.",
+      admin: { ...adminData, ...adminUpdates, password: undefined },
+      accessToken,
+      refreshToken,
+    });
+    setImmediate(async () => {
+      try {
+        const allSessionsSnapshot = await UserSessions.where(
+          "userId",
+          "==",
+          userId,
+        ).get();
+        const activeSessions = allSessionsSnapshot.docs.map((doc) =>
+          doc.data(),
+        );
+
+        const safeAdmin = { ...adminData, ...adminUpdates };
+        delete safeAdmin.password;
+        safeAdmin.sessions = activeSessions;
+
+        await verifyAndNotifyLogin(safeAdmin, req, "ADMIN_LOGIN_AUDIT");
+      } catch (err) {
+        console.error("Admin login audit/background task failed:", err);
+      }
+    });
+  } catch (error) {
+    console.error("Switch to Admin Error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error during profile switch.",
     });
   }
 };

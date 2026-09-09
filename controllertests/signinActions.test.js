@@ -14,6 +14,7 @@ let sharedContext = {
   admin_test_email: process.env.ADMIN_TEST_EMAIL,
   admin_test_password: process.env.ADMIN_TEST_PASSWORD,
 };
+/*
 describe("Admin actions, admin switch from user", () => {
   let accessToken;
 
@@ -112,7 +113,6 @@ describe("Admin actions, admin switch from user", () => {
     }
   }, 120000);
 });
-/*
 describe("Signup and onboarding actions, register new user, verify email, and set up profile", () => {
   let tempUserEmail;
 

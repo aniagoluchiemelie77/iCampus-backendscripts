@@ -459,111 +459,6 @@ export const deleteAccount = async (req, res) => {
       .json({ status: false, message: "Error during account deletion." });
   }
 };
-export const verifyPhoneNumberOTP = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "verifyPhoneNumberController";
-  const action = "verifyPhoneNumber";
-  const { phoneNumber, codeInput } = req.body;
-
-  try {
-    const hashedInput = crypto
-      .createHash("sha256")
-      .update(codeInput)
-      .digest("hex");
-
-    const [verificationQuery, userQuery] = await Promise.all([
-      PhoneNumberVerification.where("phoneNumber", "==", phoneNumber)
-        .where("code", "==", hashedInput)
-        .limit(1)
-        .get(),
-      User.where("uid", "==", req.user.id).limit(1).get(),
-    ]);
-
-    if (verificationQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid or expired code",
-        );
-      });
-      return res.status(400).json({ message: "Invalid or expired code" });
-    }
-
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const verificationDoc = verificationQuery.docs[0];
-    const userDoc = userQuery.docs[0];
-    const userData = userDoc.data();
-    const phoneNumbers = userData.phoneNumbers || [];
-
-    let phoneFound = false;
-    const updatedPhoneNumbers = phoneNumbers.map((phone) => {
-      if (phone.number === phoneNumber) {
-        phoneFound = true;
-        return { ...phone, isVerified: true };
-      }
-      return phone;
-    });
-
-    if (!phoneFound) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Phone number not registered to user",
-        );
-      });
-      return res
-        .status(404)
-        .json({ message: "Phone number not found in user records" });
-    }
-    await Promise.all([
-      userDoc.ref.update({
-        phoneNumbers: updatedPhoneNumbers,
-        updatedAt: new Date(),
-      }),
-      verificationDoc.ref.delete(),
-    ]);
-    res.status(200).json({
-      success: true,
-      message: "Phone verified!",
-      phoneNumbers: updatedPhoneNumbers,
-    });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in verifyPhoneNumberOTP:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    res
-      .status(500)
-      .json({ message: "Internal server error during phone verification" });
-  }
-};
 export const updateEmails = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "updateEmailController";
@@ -685,6 +580,111 @@ export const updateEmails = async (req, res) => {
       message: "Internal server error during email update",
       success: false,
     });
+  }
+};
+export const verifyPhoneNumberOTP = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyPhoneNumberController";
+  const action = "verifyPhoneNumber";
+  const { phoneNumber, codeInput } = req.body;
+
+  try {
+    const hashedInput = crypto
+      .createHash("sha256")
+      .update(codeInput)
+      .digest("hex");
+
+    const [verificationQuery, userQuery] = await Promise.all([
+      PhoneNumberVerification.where("phoneNumber", "==", phoneNumber)
+        .where("code", "==", hashedInput)
+        .limit(1)
+        .get(),
+      User.where("uid", "==", req.user.id).limit(1).get(),
+    ]);
+
+    if (verificationQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid or expired code",
+        );
+      });
+      return res.status(400).json({ message: "Invalid or expired code" });
+    }
+
+    if (userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    const verificationDoc = verificationQuery.docs[0];
+    const userDoc = userQuery.docs[0];
+    const userData = userDoc.data();
+    const phoneNumbers = userData.phoneNumbers || [];
+
+    let phoneFound = false;
+    const updatedPhoneNumbers = phoneNumbers.map((phone) => {
+      if (phone.number === phoneNumber) {
+        phoneFound = true;
+        return { ...phone, isVerified: true };
+      }
+      return phone;
+    });
+
+    if (!phoneFound) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Phone number not registered to user",
+        );
+      });
+      return res
+        .status(404)
+        .json({ message: "Phone number not found in user records" });
+    }
+    await Promise.all([
+      userDoc.ref.update({
+        phoneNumbers: updatedPhoneNumbers,
+        updatedAt: new Date(),
+      }),
+      verificationDoc.ref.delete(),
+    ]);
+    res.status(200).json({
+      success: true,
+      message: "Phone verified!",
+      phoneNumbers: updatedPhoneNumbers,
+    });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error in verifyPhoneNumberOTP:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    res
+      .status(500)
+      .json({ message: "Internal server error during phone verification" });
   }
 };
 export const deleteRecoveryEmail = async (req, res) => {
@@ -1424,7 +1424,7 @@ export const patchUserPreferences = async (req, res) => {
     let existingData = {};
 
     if (prefsQuery.empty) {
-      prefDocRef = UserPrefs.doc();
+      prefDocRef = userPrefs.doc();
       existingData = { userId, createdAt: new Date() };
     } else {
       prefDocRef = prefsQuery.docs[0].ref;

@@ -31,8 +31,8 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
       .set("Accept", "application/json")
       .set("X-Test-Bypass", process.env.TEST_SECRET || "")
       .send({
-        identifier: process.env.TEST_USER_EMAIL_SECOND,
-        password: process.env.TEST_USER_PASSWORD_SECOND,
+        identifier: process.env.NEW_USER_EMAIL,
+        password: process.env.NEW_USER_PASSWORD,
         deviceId: "9cb67e14404773b6",
         deviceName: "Infinix Infinix X689C",
       })
@@ -50,387 +50,150 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
 
   const endpointsToTest = [
     {
-      name: "Create a review for a product or seller",
-      method: "post",
-      path: () => `users/reviews/create`, 
+      name: "Update password in-app",
+      method: "put",
+      path: () => `users/password/update`,
       auth: true,
       idempotent: true,
       expected: 200,
       body: {
-        targetId: sharedContext.productId,
-        targetType: "product",
-        orderId: sharedContext.orderId,
-        rating: 5,
-        comment: "Exceptional product quality and swift fulfillment!",
-        attributes: {
-          accuracy: 5,
-          deliverySpeed: 4,
-          clarity: 5
-        }
+        newPassword: "secureNewPassword123",
       },
-      onSuccess: (response) => {
-        if (response.body.reviewId) {
-          sharedContext.reviewId = response.body.reviewId;
-        }
-      }
     },
     {
-      name: "Fetch reviews associated with the seller",
-      method: "get",
-      path: () => `reviews/fetch-seller-reviews`, 
-      auth: true,
-      expected: 200
-    },
-  ];
-
-  test("Run sequential dependency chain", async () => {
-    for (const step of endpointsToTest) {
-      const resolvedPath =
-        typeof step.path === "function" ? step.path() : step.path;
-
-      let req = request(API_BASE_URL)[step.method](resolvedPath);
-
-      if (step.auth) {
-        req.set("Authorization", `Bearer ${accessToken}`);
-      }
-
-      if (step.body) {
-        req.send(step.body);
-      }
-
-      if (step.filePath) {
-        req.attach("mediaFile", step.filePath);
-      }
-
-      if (
-        step.idempotent ||
-        ["post", "put", "patch", "delete"].includes(step.method)
-      ) {
-        req.set("Idempotency-Key", crypto.randomUUID());
-      }
-
-      const response = await req;
-
-      console.log(
-        `${step.method.toUpperCase()} ${resolvedPath} ${response.statusCode}`,
-      );
-
-      if (response.statusCode !== step.expected) {
-        const errorDetails =
-          response.body?.message ||
-          response.body?.error ||
-          response.text ||
-          "No error body provided";
-        console.error(
-          `❌ [MISMATCH] /${resolvedPath} expected ${step.expected}, got ${response.statusCode}. Backend message:`,
-          errorDetails,
-        );
-      }
-
-      if (response.statusCode === step.expected && step.onSuccess) {
-        step.onSuccess(response);
-      }
-
-      expect(response.statusCode).toBe(step.expected);
-    }
-  }, 120000);
-});
-/*
-describe("Seller actions, complete order, mark as dropped off, get payout history, request payout", () => {
-  let accessToken;
-
-  beforeAll(async () => {
-    console.log("Waking up Render backend server...");
-    try {
-      await request(API_BASE_URL).get("").timeout(100000);
-    } catch (e) {}
-
-    const loginResponse = await request(API_BASE_URL)
-      .post("users/login")
-      .set(
-        "User-Agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      )
-      .set("Accept", "application/json")
-      .set("X-Test-Bypass", process.env.TEST_SECRET || "")
-      .send({
-        identifier: process.env.TEST_USER_EMAIL,
-        password: process.env.TEST_USER_PASSWORD,
-        deviceId: "9cb67e14404773b6",
-        deviceName: "Infinix Infinix X689C",
-      })
-      .timeout(150000);
-
-    if (loginResponse.statusCode !== 200 || !loginResponse.body.accessToken) {
-      console.error("Login Debug Status:", loginResponse.statusCode);
-      console.error("Login Debug Body:", loginResponse.text);
-      throw new Error(
-        `Authentication failed: ${JSON.stringify(loginResponse.body)}`,
-      );
-    }
-    accessToken = loginResponse.body.accessToken;
-  }, 150000);
-  const endpointsToTest = [
-    {
-      name: "Get drop-off stations",
-      method: "get",
-      path: () => `store/drop-off-stations/fetch?lat=6.5244&lng=3.3792`,
+      name: "Update primary or secondary email",
+      method: "patch",
+      path: () => `users/update-emails`,
       auth: true,
       idempotent: true,
-      expected: 200
+      expected: 200,
+      body: {
+        email: "new.secondary@fupre.edu.ng",
+        type: "secondary",
+      },
     },
     {
-      name: "Delete product by ID for authenticated seller",
-      method: "delete",
-      path: () => `store/products/delete/${sharedContext.secondProductId}`,
+      name: "Patch user preferences",
+      method: "patch",
+      path: () => `users/preferences`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        notifications: {
+          classroom: false,
+          profile: false,
+        },
+      },
+    },
+    {
+      name: "Setup iCash PIN",
+      method: "post",
+      path: () => `user/setup-icash-pin`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        pin: "123456",
+      },
+    },
+    {
+      name: "Verify iCash PIN",
+      method: "post",
+      path: () => `user/verify-icash-pin`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        pin: "123456",
+      },
+    },
+    {
+      name: "Request iCash PIN reset OTP",
+      method: "post",
+      path: () => `user/request-pin-reset`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+    },
+    {
+      name: "Reset iCash PIN",
+      method: "post",
+      path: () => `user/reset-icash-pin`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        otp: "123456",
+        newPin: "654321",
+      },
+    },
+    {
+      name: "Toggle following status of user",
+      method: "post",
+      path: () => `users/follow/toggle`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        followingId: "USER_001",
+      },
+    },
+    {
+      name: "Update user profile",
+      method: "patch",
+      path: () => `users/update-profile`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        username: "Mastakraft",
+        headline: "Software developer | Founder | Tech Ethusiast.",
+      },
+    },
+    {
+      name: "Verify iTag username availability",
+      method: "get",
+      path: (val = "chinedu") => `users/check-itag/${val}`,
       auth: true,
       idempotent: false,
-      expected: 200
-    },
-  ];
-
-  test("Run sequential dependency chain", async () => {
-    for (const step of endpointsToTest) {
-      const resolvedPath =
-        typeof step.path === "function" ? step.path() : step.path;
-
-      let req = request(API_BASE_URL)[step.method](resolvedPath);
-
-      if (step.auth) {
-        req.set("Authorization", `Bearer ${accessToken}`);
-      }
-
-      if (step.body) {
-        req.send(step.body);
-      }
-
-      if (step.filePath) {
-        req.attach("mediaFile", step.filePath);
-      }
-
-      if (
-        step.idempotent ||
-        ["post", "put", "patch", "delete"].includes(step.method)
-      ) {
-        req.set("Idempotency-Key", crypto.randomUUID());
-      }
-
-      const response = await req;
-
-      console.log(
-        `${step.method.toUpperCase()} ${resolvedPath} ${response.statusCode}`,
-      );
-
-      if (response.statusCode !== step.expected) {
-        const errorDetails =
-          response.body?.message ||
-          response.body?.error ||
-          response.text ||
-          "No error body provided";
-        console.error(
-          `❌ [MISMATCH] /${resolvedPath} expected ${step.expected}, got ${response.statusCode}. Backend message:`,
-          errorDetails,
-        );
-      }
-
-      if (response.statusCode === step.expected && step.onSuccess) {
-        step.onSuccess(response);
-      }
-
-      expect(response.statusCode).toBe(step.expected);
-    }
-  }, 120000);
-});
-describe("First User, fetch all products, posts and courses ", () => {
-  let accessToken;
-
-  beforeAll(async () => {
-    console.log("Waking up Render backend server...");
-    try {
-      await request(API_BASE_URL).get("").timeout(100000);
-    } catch (e) {}
-
-    const loginResponse = await request(API_BASE_URL)
-      .post("users/login")
-      .set(
-        "User-Agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      )
-      .set("Accept", "application/json")
-      .set("X-Test-Bypass", process.env.TEST_SECRET || "")
-      .send({
-        identifier: process.env.TEST_USER_EMAIL,
-        password: process.env.TEST_USER_PASSWORD,
-        deviceId: "9cb67e14404773b6",
-        deviceName: "Infinix Infinix X689C",
-      })
-      .timeout(150000);
-
-    if (loginResponse.statusCode !== 200 || !loginResponse.body.accessToken) {
-      console.error("Login Debug Status:", loginResponse.statusCode);
-      console.error("Login Debug Body:", loginResponse.text);
-      throw new Error(
-        `Authentication failed: ${JSON.stringify(loginResponse.body)}`,
-      );
-    }
-    accessToken = loginResponse.body.accessToken;
-  }, 150000);
-
-  const endpointsToTest = [
-    {
-      name: "Fetch Posts",
-      method: "get",
-      path: () => `posts/fetchPosts`,
-      idempotent: true,
-      auth: true,
       expected: 200,
-      query: {
-        limit: 10,
-      },
+      body: null,
     },
     {
-      name: "Fetch Store Listings",
+      name: "Check account state",
       method: "get",
-      path: () => `store/get-store-products`,
-      idempotent: true,
+      path: () => `users/check-account-state`,
       auth: true,
+      idempotent: false,
       expected: 200,
-      query: {
-        limit: 10,
-        category: "popular",
-      },
+      body: null,
     },
     {
-      name: "Fetch Student Courses",
-      method: "get",
-      path: () => `users/student/class/courses/fetch-my-courses`,
-      idempotent: true,
-      auth: true,
-      expected: 200,
-      query: {
-        semester: "First",
-        session: "2025/2026",
-        page: 1,
-        limit: 10,
-      },
-    },
-  ];
-
-  test("Run sequential dependency chain", async () => {
-    for (const step of endpointsToTest) {
-      const resolvedPath =
-        typeof step.path === "function" ? step.path() : step.path;
-
-      let req = request(API_BASE_URL)[step.method](resolvedPath);
-
-      if (step.auth) {
-        req.set("Authorization", `Bearer ${accessToken}`);
-      }
-      if (step.query) {
-        req.query(step.query);
-      }
-
-      if (step.body) {
-        req.send(step.body);
-      }
-
-      if (step.filePath) {
-        req.attach("mediaFile", step.filePath);
-      }
-
-      if (
-        step.idempotent ||
-        ["post", "put", "patch", "delete"].includes(step.method)
-      ) {
-        req.set("Idempotency-Key", crypto.randomUUID());
-      }
-
-      const response = await req;
-
-      console.log(
-        `${step.method.toUpperCase()} ${resolvedPath} ${response.statusCode}`,
-      );
-
-      if (response.statusCode !== step.expected) {
-        const errorDetails =
-          response.body?.message ||
-          response.body?.error ||
-          response.text ||
-          "No error body provided";
-        console.error(
-          `❌ [MISMATCH] /${resolvedPath} expected ${step.expected}, got ${response.statusCode}. Backend message:`,
-          errorDetails,
-        );
-      }
-
-      if (response.statusCode === step.expected && step.onSuccess) {
-        step.onSuccess(response);
-      }
-
-      expect(response.statusCode).toBe(step.expected);
-    }
-  }, 120000);
-});
-describe("First User, create product", () => {
-  let accessToken;
-
-  beforeAll(async () => {
-    console.log("Waking up Render backend server...");
-    try {
-      await request(API_BASE_URL).get("").timeout(100000);
-    } catch (e) {}
-
-    const loginResponse = await request(API_BASE_URL)
-      .post("users/login")
-      .set(
-        "User-Agent",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      )
-      .set("Accept", "application/json")
-      .set("X-Test-Bypass", process.env.TEST_SECRET || "")
-      .send({
-        identifier: process.env.TEST_USER_EMAIL,
-        password: process.env.TEST_USER_PASSWORD,
-        deviceId: "9cb67e14404773b6",
-        deviceName: "Infinix Infinix X689C",
-      })
-      .timeout(150000);
-
-    if (loginResponse.statusCode !== 200 || !loginResponse.body.accessToken) {
-      console.error("Login Debug Status:", loginResponse.statusCode);
-      console.error("Login Debug Body:", loginResponse.text);
-      throw new Error(
-        `Authentication failed: ${JSON.stringify(loginResponse.body)}`,
-      );
-    }
-    accessToken = loginResponse.body.accessToken;
-  }, 150000);
-
-  const endpointsToTest = [
-    {
-      name: "Create Product",
+      name: "Send AI chat message",
       method: "post",
-      path: () => `store/products/create`,
+      path: () => `users/ai/chat`,
       auth: true,
       idempotent: true,
       expected: 200,
       body: {
-        title: "Wireless Bluetooth Earbuds",
-        description: "High-quality wireless earbuds with deep bass and long battery life.",
-        type: "physical",
-        price: 10,
-        niche: "Electronics",
-        mediaUrls: JSON.stringify([
-          "https://res.cloudinary.com/dbdw3zftx/image/upload/v1788888801/ea2_dtupca.jpg",
-          "https://res.cloudinary.com/dbdw3zftx/image/upload/v1788888801/ea3_ozzked.jpg",
-          "https://res.cloudinary.com/dbdw3zftx/image/upload/v1788888801/ea1_x99dzr.jpg"
-        ]),
-        weightKg: 0.2,
-        inStock: 10,
-        colors: JSON.stringify(["Black", "White"]),
-        sizes: JSON.stringify(["Standard"]),
-        sellerGateways: JSON.stringify(["home_delivery"]),
-        dropOffAddress: JSON.stringify([])
+        message: "How do I reset my password?",
+        context: {
+          type: "support",
+          data: {},
+        },
+        history: [],
+      },
+    },
+    {
+      name: "Delete user account",
+      method: "delete",
+      path: () => `users/account/delete`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        reason: "No longer utilizing the platform services.",
       },
     },
   ];
@@ -487,4 +250,3 @@ describe("First User, create product", () => {
     }
   }, 120000);
 });
-*/
