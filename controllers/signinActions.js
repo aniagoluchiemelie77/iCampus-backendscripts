@@ -156,6 +156,10 @@ export const signUp = async (req, res) => {
       createdAt: new Date(),
       updatedAt: new Date(),
       hasIcashPin: false,
+      tier: "free",
+      pointsBalance: 0.0,
+      hasSubscribed: false,
+      twoFactorEnabled: false,
     };
     delete newUserObj.passwordConfirm;
 
