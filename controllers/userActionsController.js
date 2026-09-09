@@ -1005,107 +1005,6 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
       .json({ success: false, error: "Could not revoke session" });
   }
 };
-export const sendPhoneNumberOTP = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "sendOtpToMobileController";
-  const action = "sendOtpToMobile";
-  const { phoneNumber, channel = "whatsapp" } = req.body;
-
-  if (!phoneNumber) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Phone number is required",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, message: "Phone number is required." });
-  }
-
-  const accountSid = process.env.TWILIO_ACCOUNT_SID;
-  const authToken = process.env.TWILIO_AUTH_TOKEN;
-
-  if (!accountSid || !authToken) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Twilio credentials missing",
-      );
-    });
-    return res
-      .status(500)
-      .json({ success: false, message: "SMS/WhatsApp service misconfigured." });
-  }
-
-  const client = twilio(accountSid, authToken);
-  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-  const hashedCode = crypto.createHash("sha256").update(otpCode).digest("hex");
-
-  try {
-    const existingQuery = await PhoneNumberVerification.where(
-      "phoneNumber",
-      "==",
-      phoneNumber,
-    )
-      .limit(1)
-      .get();
-
-    const verificationData = {
-      phoneNumber,
-      code: hashedCode,
-      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-      updatedAt: new Date(),
-    };
-
-    if (existingQuery.empty) {
-      await PhoneNumberVerification.add({
-        ...verificationData,
-        createdAt: new Date(),
-      });
-    } else {
-      await existingQuery.docs[0].ref.update(verificationData);
-    }
-
-    const isWhatsApp = channel.toLowerCase() === "whatsapp";
-    const fromAddress = isWhatsApp
-      ? `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`
-      : process.env.TWILIO_PHONE_NUMBER;
-    const toAddress = isWhatsApp ? `whatsapp:${phoneNumber}` : phoneNumber;
-
-    await client.messages.create({
-      from: fromAddress,
-      contentSid: process.env.TWILIO_CONTENT_SID,
-      contentVariables: JSON.stringify({ 1: otpCode }),
-      to: toAddress,
-    });
-    res.status(200).json({ success: true, message: `OTP sent to ${channel}` });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Twilio Error:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      success: false,
-      message: error?.message || "Failed to send verification message",
-    });
-  }
-};
 export const requestIcashPinReset = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "requestIcashPinResetController";
@@ -1575,324 +1474,6 @@ export const markAllNotificationsAsRead = async (req, res) => {
       .json({ success: false, message: "Server error updating notifications" });
   }
 };
-export const toggleFollowingUsers = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "toggleFollowingController";
-  const action = "toggleFollowing";
-
-  try {
-    const followerId = req.user?.uid || req.user?.id;
-    const { followingId } = req.body;
-
-    if (!followerId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user context",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user context." });
-    }
-
-    if (!followingId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing target followingId",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "Missing target followingId" });
-    }
-
-    if (followerId === followingId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "You cannot follow yourself",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "You cannot follow yourself" });
-    }
-
-    const [followQuery, targetUserQuery] = await Promise.all([
-      Follow.where("followerId", "==", followerId)
-        .where("followingId", "==", followingId)
-        .limit(1)
-        .get(),
-      User.where("uid", "==", followingId).limit(1).get(),
-    ]);
-
-    const targetUserData = !targetUserQuery.empty
-      ? targetUserQuery.docs[0].data()
-      : null;
-    const targetFirstName = targetUserData?.firstname || "User";
-
-    if (!followQuery.empty) {
-      await followQuery.docs[0].ref.delete();
-
-      res.status(200).json({
-        success: true,
-        action: "unfollowed",
-        message: `Unfollowed ${targetFirstName} successfully`,
-      });
-
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-      return;
-    } else {
-      const [, followerUserQuery] = await Promise.all([
-        Follow.add({
-          followerId,
-          followingId,
-          createdAt: new Date(),
-        }),
-        User.where("uid", "==", followerId).limit(1).get(),
-      ]);
-
-      const followerUserData = !followerUserQuery.empty
-        ? followerUserQuery.docs[0].data()
-        : null;
-      const followerName = followerUserData?.firstname || "Someone";
-
-      createNotification({
-        notificationId: generateNotificationId("social"),
-        recipientId: followingId,
-        category: "social",
-        isRead: false,
-        actionType: "NEW_FOLLOWER",
-        title: "New Follower",
-        message: `${followerName} started following you`,
-        payload: {
-          followerId,
-          firstname: followerName,
-        },
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
-      }).catch((err) => console.error("Follow Notification Error:", err));
-
-      res.status(200).json({
-        success: true,
-        action: "followed",
-        message: `Followed ${targetFirstName} successfully`,
-      });
-
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-      return;
-    }
-  } catch (error) {
-    console.error("Follow Toggle Error:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const updateUserProfile = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "updateUserProfileController";
-  const action = "updateUserProfile";
-
-  try {
-    const userId = req.user?.id || req.user?.uid;
-    const updates = req.body || {};
-
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user context",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user context." });
-    }
-
-    const allowedUpdates = [
-      "bio",
-      "skills",
-      "username",
-      "headline",
-      "jobTitle",
-      "website",
-      "alternateEmails",
-      "firstname",
-      "lastname",
-      "email",
-      "profilePic",
-      "organizationName",
-      "department",
-    ];
-
-    const filteredUpdates = Object.keys(updates)
-      .filter((key) => allowedUpdates.includes(key))
-      .reduce((obj, key) => {
-        obj[key] = updates[key];
-        return obj;
-      }, {});
-
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const existingUserData = userDoc.data();
-    const updateTimestamp = new Date();
-
-    const payload = {
-      ...filteredUpdates,
-      updatedAt: updateTimestamp,
-    };
-
-    await userDoc.ref.set(payload, { merge: true });
-
-    const mergedUserData = {
-      ...existingUserData,
-      ...payload,
-    };
-
-    const {
-      resetPinOTP,
-      resetPinOTPExpires,
-      iCashPin,
-      password,
-      refreshTokens,
-      ...sanitizedUser
-    } = mergedUserData;
-
-    const updatedUser = { id: userDoc.id, ...sanitizedUser };
-
-    res.status(200).json({
-      success: true,
-      data: updatedUser,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error updating user profile:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server Error" });
-  }
-};
-export const verifyiTagUsernameAvailability = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "verifyiTagUsernameAvailabilityController";
-  const action = "verifyiTagUsernameAvailability";
-
-  try {
-    const rawVal = req.params?.val;
-
-    if (!rawVal || typeof rawVal !== "string") {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing or invalid username parameter",
-        );
-      });
-      return res.status(400).json({
-        available: false,
-        message: "Missing or invalid username parameter",
-      });
-    }
-
-    const val = rawVal.trim().toLowerCase();
-    const itagQuery = await ITag.where("username", "==", val).limit(1).get();
-
-    if (itagQuery.empty) {
-      res.status(200).json({
-        available: true,
-        message: "iTag username available",
-      });
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-      return;
-    }
-
-    res.status(200).json({
-      available: false,
-      message: "iTag username already exists",
-    });
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "iTag username already exists",
-      );
-    });
-  } catch (error) {
-    console.error("Error fetching iTag:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      available: false,
-      message: "Server error",
-    });
-  }
-};
 export const searchUserUsingUidOrNameQuery = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "searchUserUsingUidOrNameQueryController";
@@ -2015,73 +1596,6 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
       );
     });
     return res.status(500).json({ message: error.message, success: false });
-  }
-};
-export const checkAccountState = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "checkAccountStateController";
-  const action = "checkAccountState";
-
-  try {
-    const userId = req.user?.uid || req.user?.id;
-
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user context",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user context." });
-    }
-
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const user = userQuery.docs[0].data();
-
-    res.status(200).json({
-      success: true,
-      user: {
-        uid: user.uid,
-        isSuspended: user.isSuspended || false,
-      },
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Check Account State Error:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const createPersonaVerifyInquiry = async (req, res) => {
@@ -2576,7 +2090,7 @@ export const aiChat = async (req, res) => {
     }
 
     const { type = "general", data = {} } = context;
-    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
     let systemInstruction = "";
     if (type === "support") {
@@ -4225,5 +3739,491 @@ export const toggleBlockedUsers = async (req, res) => {
       );
     });
     return res.status(500).json({ success: false, error: err.message });
+  }
+};
+export const sendPhoneNumberOTP = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "sendOtpToMobileController";
+  const action = "sendOtpToMobile";
+  const { phoneNumber, channel = "whatsapp" } = req.body;
+
+  if (!phoneNumber) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Phone number is required",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, message: "Phone number is required." });
+  }
+
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+
+  if (!accountSid || !authToken) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Twilio credentials missing",
+      );
+    });
+    return res
+      .status(500)
+      .json({ success: false, message: "SMS/WhatsApp service misconfigured." });
+  }
+
+  const client = twilio(accountSid, authToken);
+  const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+  const hashedCode = crypto.createHash("sha256").update(otpCode).digest("hex");
+
+  try {
+    const existingQuery = await PhoneNumberVerification.where(
+      "phoneNumber",
+      "==",
+      phoneNumber,
+    )
+      .limit(1)
+      .get();
+
+    const verificationData = {
+      phoneNumber,
+      code: hashedCode,
+      expiresAt: new Date(Date.now() + 15 * 60 * 1000),
+      updatedAt: new Date(),
+    };
+
+    if (existingQuery.empty) {
+      await PhoneNumberVerification.add({
+        ...verificationData,
+        createdAt: new Date(),
+      });
+    } else {
+      await existingQuery.docs[0].ref.update(verificationData);
+    }
+
+    const isWhatsApp = channel.toLowerCase() === "whatsapp";
+    const fromAddress = isWhatsApp
+      ? `whatsapp:${process.env.TWILIO_WHATSAPP_NUMBER}`
+      : process.env.TWILIO_PHONE_NUMBER;
+    const toAddress = isWhatsApp ? `whatsapp:${phoneNumber}` : phoneNumber;
+
+    await client.messages.create({
+      from: fromAddress,
+      contentSid: process.env.TWILIO_CONTENT_SID,
+      contentVariables: JSON.stringify({ 1: otpCode }),
+      to: toAddress,
+    });
+    res.status(200).json({ success: true, message: `OTP sent to ${channel}` });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Twilio Error:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      success: false,
+      message: error?.message || "Failed to send verification message",
+    });
+  }
+};
+export const toggleFollowingUsers = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleFollowingController";
+  const action = "toggleFollowing";
+
+  try {
+    const followerId = req.user?.uid || req.user?.id;
+    const { followingId } = req.body;
+
+    if (!followerId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user context",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    if (!followingId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing target followingId",
+        );
+      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing target followingId" });
+    }
+
+    if (followerId === followingId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "You cannot follow yourself",
+        );
+      });
+      return res
+        .status(400)
+        .json({ success: false, message: "You cannot follow yourself" });
+    }
+
+    const [followQuery, targetUserQuery] = await Promise.all([
+      Follow.where("followerId", "==", followerId)
+        .where("followingId", "==", followingId)
+        .limit(1)
+        .get(),
+      User.where("uid", "==", followingId).limit(1).get(),
+    ]);
+
+    const targetUserData = !targetUserQuery.empty
+      ? targetUserQuery.docs[0].data()
+      : null;
+    const targetFirstName = targetUserData?.firstname || "User";
+
+    if (!followQuery.empty) {
+      await followQuery.docs[0].ref.delete();
+
+      res.status(200).json({
+        success: true,
+        action: "unfollowed",
+        message: `Unfollowed ${targetFirstName} successfully`,
+      });
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+      return;
+    } else {
+      const [, followerUserQuery] = await Promise.all([
+        Follow.add({
+          followerId,
+          followingId,
+          createdAt: new Date(),
+        }),
+        User.where("uid", "==", followerId).limit(1).get(),
+      ]);
+
+      const followerUserData = !followerUserQuery.empty
+        ? followerUserQuery.docs[0].data()
+        : null;
+      const followerName = followerUserData?.firstname || "Someone";
+
+      createNotification({
+        notificationId: generateNotificationId("social"),
+        recipientId: followingId,
+        category: "social",
+        isRead: false,
+        actionType: "NEW_FOLLOWER",
+        title: "New Follower",
+        message: `${followerName} started following you`,
+        payload: {
+          followerId,
+          firstname: followerName,
+        },
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      }).catch((err) => console.error("Follow Notification Error:", err));
+
+      res.status(200).json({
+        success: true,
+        action: "followed",
+        message: `Followed ${targetFirstName} successfully`,
+      });
+
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+      return;
+    }
+  } catch (error) {
+    console.error("Follow Toggle Error:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const updateUserProfile = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "updateUserProfileController";
+  const action = "updateUserProfile";
+
+  try {
+    const userId = req.user?.id || req.user?.uid;
+    const updates = req.body || {};
+
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user context",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    const allowedUpdates = [
+      "bio",
+      "skills",
+      "username",
+      "headline",
+      "jobTitle",
+      "website",
+      "alternateEmails",
+      "firstname",
+      "lastname",
+      "email",
+      "profilePic",
+      "organizationName",
+      "department",
+    ];
+
+    const filteredUpdates = Object.keys(updates)
+      .filter((key) => allowedUpdates.includes(key))
+      .reduce((obj, key) => {
+        obj[key] = updates[key];
+        return obj;
+      }, {});
+
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+
+    if (userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const userDoc = userQuery.docs[0];
+    const existingUserData = userDoc.data();
+    const updateTimestamp = new Date();
+
+    const payload = {
+      ...filteredUpdates,
+      updatedAt: updateTimestamp,
+    };
+
+    await userDoc.ref.set(payload, { merge: true });
+
+    const mergedUserData = {
+      ...existingUserData,
+      ...payload,
+    };
+
+    const {
+      resetPinOTP,
+      resetPinOTPExpires,
+      iCashPin,
+      password,
+      refreshTokens,
+      ...sanitizedUser
+    } = mergedUserData;
+
+    const updatedUser = { id: userDoc.id, ...sanitizedUser };
+
+    res.status(200).json({
+      success: true,
+      data: updatedUser,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error updating user profile:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ success: false, message: "Server Error" });
+  }
+};
+export const checkAccountState = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "checkAccountStateController";
+  const action = "checkAccountState";
+
+  try {
+    const userId = req.user?.uid || req.user?.id;
+
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user context",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user context." });
+    }
+
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+
+    if (userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const user = userQuery.docs[0].data();
+
+    res.status(200).json({
+      success: true,
+      user: {
+        uid: user.uid,
+        isSuspended: user.isSuspended || false,
+      },
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Check Account State Error:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const verifyiTagUsernameAvailability = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyiTagUsernameAvailabilityController";
+  const action = "verifyiTagUsernameAvailability";
+
+  try {
+    const rawVal = req.params?.val;
+
+    if (!rawVal || typeof rawVal !== "string") {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing or invalid username parameter",
+        );
+      });
+      return res.status(400).json({
+        available: false,
+        message: "Missing or invalid username parameter",
+      });
+    }
+
+    const val = rawVal.trim().toLowerCase();
+    const itagQuery = await ITag.where("username", "==", val).limit(1).get();
+
+    if (itagQuery.empty) {
+      res.status(200).json({
+        available: true,
+        message: "iTag username available",
+      });
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+      return;
+    }
+
+    res.status(200).json({
+      available: false,
+      message: "iTag username already exists",
+    });
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "iTag username already exists",
+      );
+    });
+  } catch (error) {
+    console.error("Error fetching iTag:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      available: false,
+      message: "Server error",
+    });
   }
 };
