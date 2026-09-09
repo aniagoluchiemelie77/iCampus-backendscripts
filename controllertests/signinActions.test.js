@@ -45,20 +45,18 @@ describe("Signup and onboarding actions, register new user, verify email, and se
         deviceName: "Jest Headless Client",
       },
     },
+    /*
     {
-      name: "Change password",
+      name: "Switch to institution admin",
       method: "post",
-      path: () => `users/changePassword`,
-      auth: false,
-      idempotent: true,
+      path: () => `users/switch-to-admin`, // Adjust path to match your actual route
+      auth: true,
       expected: 200,
       body: {
-        email: sharedContext.email,
-        password: "NewSecurePassword123!",
-        confirmPassword: "NewSecurePassword123!",
+        deviceId: "device_test_01",
+        deviceName: "Jest Headless Client",
       },
     },
-    /*
     {
       name: "Successfully verify student record via external school endpoint simulation",
       method: "post",

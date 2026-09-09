@@ -322,7 +322,9 @@ export function generateItagUsername(firstName, digitCount = 4) {
 }
 export const generateUniqueReferralCode = async (user) => {
   const nameToUse =
-    user?.userType === "enterprise" ? user?.organizationName : user?.firstName;
+    user?.userType === "enterprise"
+      ? user?.organizationName || user?.organizationname || "Enterprise"
+      : user?.firstName || user?.firstname || user?.email || "User";
 
   let code;
   let exists = true;

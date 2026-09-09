@@ -66,6 +66,7 @@ export const signUp = async (req, res) => {
   try {
     let existingUserQuery = User.where("email", "==", email);
     let institutionalQuery = null;
+    console.log("Step 1...");
     if (usertype === "student" && matriculation_number && department) {
       institutionalQuery = User.where("usertype", "==", "student")
         .where("matriculation_number", "==", matriculation_number)
@@ -75,7 +76,7 @@ export const signUp = async (req, res) => {
         .where("staff_id", "==", staff_id)
         .where("department", "==", department);
     }
-
+    console.log("Step 2...");
     const [uid, itagusername, location] = await Promise.all([
       Promise.resolve(generateUserUID()),
       Promise.resolve(generateItagUsername(firstname || lastname, 5)),
@@ -88,6 +89,7 @@ export const signUp = async (req, res) => {
         return geo.city ? `${geo.city}, ${geo.country}` : geo.country;
       }),
     ]);
+    console.log("Step 3...");
 
     const isVerified =
       usertype === "student" || usertype === "lecturer" || !!providerId;
@@ -102,10 +104,12 @@ export const signUp = async (req, res) => {
       generateUniqueReferralCode(req.body),
       iSCardEligible ? generateUniqueCardNumber() : Promise.resolve(null),
     ];
+    console.log("Step 4...");
 
     if (institutionalQuery) {
       queriesToRun.push(institutionalQuery.limit(1).get());
     }
+    console.log("Step 5...");
 
     const results = await Promise.all(queriesToRun);
     const emailSnapshot = results[0];
@@ -144,7 +148,7 @@ export const signUp = async (req, res) => {
         success: false,
       });
     }
-
+    console.log("Step 6...");
     const newUserObj = {
       uid,
       ...req.body,
@@ -162,7 +166,7 @@ export const signUp = async (req, res) => {
       twoFactorEnabled: false,
     };
     delete newUserObj.passwordConfirm;
-
+    console.log("Step 7...");
     const defaultPreferencesData = {
       userId: uid,
       theme: "light",
@@ -192,6 +196,7 @@ export const signUp = async (req, res) => {
       lastUsed: new Date(),
       createdAt: new Date(),
     };
+    console.log("Step 7...");
 
     const dbWrites = [
       User.doc(uid).set(newUserObj),
@@ -224,6 +229,7 @@ export const signUp = async (req, res) => {
     delete safeUser.iCashPin;
     safeUser.theme = defaultPreferencesData.theme;
     safeUser.sessions = [initialSession];
+    console.log("Successful...");
     res.status(200).json({
       message: "User created successfully",
       success: true,
@@ -279,6 +285,7 @@ export const AdminLogin = async (req, res) => {
       .limit(1)
       .get();
 
+    console.log("User found");
     if (adminSnapshot.empty) {
       return res.status(404).json({ error: "Admin credentials invalid." });
     }
@@ -294,6 +301,7 @@ export const AdminLogin = async (req, res) => {
     if (!isMatch) {
       return res.status(401).json({ error: "Invalid credentials" });
     }
+    console.log("Password matched");
 
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
       .split(",")[0]
@@ -302,7 +310,7 @@ export const AdminLogin = async (req, res) => {
     const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
 
     const adminUid = admin.uid || admin.id;
-
+    console.log("Location extracted");
     const sessionData = {
       userId: adminUid,
       deviceId,
@@ -312,6 +320,7 @@ export const AdminLogin = async (req, res) => {
       lastUsed: new Date(),
       updatedAt: new Date(),
     };
+    console.log("Session data prepared");
     const [existingSessionQuery, allSessionsSnapshot, tokens, _] =
       await Promise.all([
         UserSessions.where("userId", "==", adminUid)
@@ -327,6 +336,7 @@ export const AdminLogin = async (req, res) => {
       ]);
 
     const { accessToken, refreshToken } = tokens;
+    console.log("Tokens generated");
     sessionData.refreshToken = refreshToken;
 
     const sessionOperations = [];
@@ -339,6 +349,7 @@ export const AdminLogin = async (req, res) => {
       sessionData.createdAt = new Date();
       sessionOperations.push(UserSessions.doc(sessionId).set(sessionData));
     }
+    console.log("Session resolved");
 
     await Promise.all(sessionOperations);
 
@@ -346,6 +357,7 @@ export const AdminLogin = async (req, res) => {
     const safeAdmin = { ...admin };
     delete safeAdmin.password;
     safeAdmin.sessions = activeSessions;
+    console.log("Successful login");
     res.status(200).json({
       message: "Admin login successful",
       admin: safeAdmin,

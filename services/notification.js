@@ -962,6 +962,7 @@ export const createNotification = async ({
         "new_notification",
         notificationRecord || { title, message, payload },
       );
+      console.log("new_notification, to new user: ", recipientId);
     }
     if (canSendEmail && htmlContent && recipients.length > 0) {
       const targets = isCritical
