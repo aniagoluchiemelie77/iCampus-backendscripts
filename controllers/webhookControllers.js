@@ -448,4 +448,47 @@ export const handleQstashInboundEmailJobs = async (req, res) => {
   }
 };
 
+//Mock controller for institution user validation
+export const simulateExternalSchoolApi = async (req, res) => {
+  const apiKey = req.headers["x-icampus-api-key"];
+  const expectedSecret = process.env.MOCK_SCHOOL_SECRET || "test_shared_secret_123";
+
+  if (!apiKey || apiKey !== expectedSecret) {
+    return res.status(401).json({ message: "Unauthorized API key" });
+  }
+
+  const schoolId = req.query.school_id || req.body?.school_id || req.headers["x-school-id"] || "Unknown";
+  const matriculationNumber = req.query.matriculation_number || req.body?.matriculation_number || req.headers["x-matriculation-number"];
+  const staffId = req.query.staff_id || req.body?.staff_id || req.headers["x-staff-id"];
+  
+  const identifier = staffId || matriculationNumber || "Unknown";
+  const userType = staffId ? "LECTURER" : "STUDENT";
+
+  console.log(`🏫 [Mock School API] Received ${userType} verification request:`, {
+    schoolId,
+    identifierType: staffId ? "staff_id" : "matriculation_number",
+    identifier,
+    timestamp: new Date().toISOString()
+  });
+  if (staffId) {
+    return res.status(200).json({
+      first_name: "Adebayo",
+      last_name: "Johnson",
+      department: "Computer Science",
+      staff_id: staffId,
+      profile_picture_url: "https://icampus.test/avatars/adebayo.jpg",
+      email: "adebayo.johnson@unilag.edu.ng",
+      isOperational: true,
+    });
+  }
+  return res.status(200).json({
+    first_name: "Chinedu",
+    last_name: "Okafor",
+    faculty_dept: "Computer Science",
+    level: "400",
+    profile_picture_url: "https://icampus.test/avatars/chinedu.jpg",
+    email: "chinedu.okafor@unilag.edu.ng",
+    isStillInSchool: true,
+  });
+};
 //Tested and trusted using jest

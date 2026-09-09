@@ -11,10 +11,10 @@ let sharedContext = {
   sellerId: 'USER_001',
   secondProductId: 'PR-260904-0001-_001-Q1',
   secondSellerId: 'USER_001',
-  orderIdHome: 'ORD-02A57A78',
-  orderIdDropOff: 'ORD-02F5B036'
+  orderIdHome: 'ORD-E2634854',
 };
 
+/*
 describe("Buyer actions, log impression on product, toggle add to cart, toggle add as favorite, create an order for first user's product", () => {
   let accessToken;
 
@@ -52,6 +52,18 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
 
   const endpointsToTest = [
     {
+      name: "Cancel pending order and refund buyer",
+      method: "post",
+      path: () => `store/orders/cancel`,
+      auth: true,
+      idempotent: false,
+      expected: 200,
+      body: {
+        orderId: sharedContext.orderIdHome,
+        reason: "Changed my mind about the purchase"
+      }
+    },
+    {
       name: "Make an order of products",
       method: "post",
       path: () => `store/initialize-checkout`,
@@ -81,35 +93,22 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
     }
       }
     },
-    /*
     {
-      name: "Cancel pending order and refund buyer",
-      method: "post",
-      path: () => `store/cancel-order`,
+      name: "Clear Cart",
+      method: "delete",
+      path: () => `store/cart/delete-all`,
       auth: true,
-      idempotent: false,
+      idempotent: true,
       expected: 200,
-      body: {
-        orderId: sharedContext.orderId || "ORD_TEST123",
-        reason: "Changed my mind about the purchase"
-      }
-    }
-  {
-     name: "Clear Cart",
-     method: "delete",
-     path: () => `store/cart/delete-all`,
-     auth: true,
-     idempotent: true,
-     expected: 200,
-   },
-   {
-     name: "Clear Favorites",
-     method: "delete",
-     path: () => `store/favorites/delete-all`,
-     auth: true,
-     idempotent: true,
-     expected: 200,
-   },
+    },
+    {
+      name: "Clear Favorites",
+      method: "delete",
+      path: () => `store/favorites/delete-all`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+    },
     {
       name: "Bulk add items to user cart",
       method: "post",
@@ -144,7 +143,7 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
       idempotent: true,
       expected: 200
     },
-        {
+    {
       name: "Toggle Product impression",
       method: "patch",
       path: () =>
@@ -182,7 +181,6 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
         productId: sharedContext.productId,
       }
     },
-    */
   ];
 
   test("Run sequential dependency chain", async () => {
@@ -342,7 +340,6 @@ describe("Seller actions, complete order, mark as dropped off, get payout histor
     }
   }, 120000);
 });
-/*
 describe("First User, fetch all products, posts and courses ", () => {
   let accessToken;
 

@@ -678,11 +678,20 @@ export const fetchInstitutionByCountry = async (req, res) => {
     };
     res.json(responsePayload);
     setImmediate(() => {
-      client
-        .setEx(cacheKey, 86400, JSON.stringify(responsePayload))
-        .catch((cacheErr) =>
-          console.error("Redis setEx error:", cacheErr.message),
-        );
+      const cachePromise =
+        typeof client.setEx === "function"
+          ? client.setEx(cacheKey, 86400, JSON.stringify(responsePayload))
+          : typeof client.setex === "function"
+            ? client.setex(cacheKey, 86400, JSON.stringify(responsePayload))
+            : client.set(
+                cacheKey,
+                JSON.stringify(responsePayload),
+                "EX",
+                86400,
+              );
+      cachePromise.catch((err) =>
+        console.error("Redis cache write error:", err.message),
+      );
 
       logControllerPerformance(controllerName, action, startTime, "success");
     });
@@ -698,119 +707,6 @@ export const fetchInstitutionByCountry = async (req, res) => {
       );
     });
     return res.status(500).json({ message: "Failed to retrieve institutions" });
-  }
-};
-export const validateInstitution = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "validateInstitutionController";
-  const action = "validateInstitution";
-
-  try {
-    const { schoolName } = req.body;
-
-    if (!schoolName) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "School name required",
-        );
-      });
-      return res.status(400).json({ message: "School name required" });
-    }
-
-    const trimmedSchoolName = schoolName.trim();
-    const targetNormalized = trimmedSchoolName.toLowerCase();
-    const cacheKey = `institution:validate:${targetNormalized}`;
-
-    try {
-      const cached = await client.get(cacheKey);
-      if (cached) {
-        setImmediate(() => {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success",
-          );
-        });
-        return res.status(200).json({ cached: true, ...JSON.parse(cached) });
-      }
-    } catch (cacheErr) {
-      console.warn("Redis Cache Warning:", cacheErr.message);
-    }
-    const institutionSnapshot = await OperationalInstitutions.where(
-      "schoolName",
-      "==",
-      trimmedSchoolName,
-    )
-      .limit(1)
-      .get();
-
-    let institution = null;
-
-    if (!institutionSnapshot.empty) {
-      const doc = institutionSnapshot.docs[0];
-      institution = { id: doc.id, ...doc.data() };
-    } else {
-      const allSnapshot = await OperationalInstitutions.get();
-      allSnapshot.docs.forEach((doc) => {
-        const data = doc.data();
-        if (
-          data.schoolName &&
-          data.schoolName.trim().toLowerCase() === targetNormalized
-        ) {
-          institution = { id: doc.id, ...data };
-        }
-      });
-    }
-
-    if (!institution) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "iCampus not yet operational in this institution.",
-        );
-      });
-      return res.status(404).json({
-        verified: false,
-        message:
-          "iCampus not yet operational in this institution. Student/Lecturer verification is unavailable.",
-      });
-    }
-
-    const responsePayload = {
-      message: "Institution verified",
-      schoolName: institution.schoolName,
-      schoolCode: institution.schoolCode,
-      verified: true,
-      logo: institution.logo || null,
-    };
-    res.status(200).json(responsePayload);
-    setImmediate(() => {
-      client
-        .setEx(cacheKey, 86400, JSON.stringify(responsePayload))
-        .catch((err) => console.error("Redis setEx error:", err.message));
-
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Institution Validation Error:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ message: "Server error" });
   }
 };
 export const validateEmail = async (req, res) => {
@@ -1763,3 +1659,126 @@ export const switchToInstitutionAdmin = async (req, res) => {
 };
 
 //Tested and trusted using jest
+export const validateInstitution = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "validateInstitutionController";
+  const action = "validateInstitution";
+
+  try {
+    const { schoolName } = req.body;
+
+    if (!schoolName) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "School name required",
+        );
+      });
+      return res.status(400).json({ message: "School name required" });
+    }
+
+    const trimmedSchoolName = schoolName.trim();
+    const targetNormalized = trimmedSchoolName.toLowerCase();
+    const cacheKey = `institution:validate:${targetNormalized}`;
+
+    try {
+      const cached = await client.get(cacheKey);
+      if (cached) {
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        });
+        return res.status(200).json({ cached: true, ...JSON.parse(cached) });
+      }
+    } catch (cacheErr) {
+      console.warn("Redis Cache Warning:", cacheErr.message);
+    }
+    const institutionSnapshot = await OperationalInstitutions.where(
+      "schoolName",
+      "==",
+      trimmedSchoolName,
+    )
+      .limit(1)
+      .get();
+
+    let institution = null;
+
+    if (!institutionSnapshot.empty) {
+      const doc = institutionSnapshot.docs[0];
+      institution = { id: doc.id, ...doc.data() };
+    } else {
+      const allSnapshot = await OperationalInstitutions.get();
+      allSnapshot.docs.forEach((doc) => {
+        const data = doc.data();
+        if (
+          data.schoolName &&
+          data.schoolName.trim().toLowerCase() === targetNormalized
+        ) {
+          institution = { id: doc.id, ...data };
+        }
+      });
+    }
+
+    if (!institution) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "iCampus not yet operational in this institution.",
+        );
+      });
+      return res.status(404).json({
+        verified: false,
+        message:
+          "iCampus not yet operational in this institution. Student/Lecturer verification is unavailable.",
+      });
+    }
+
+    const responsePayload = {
+      message: "Institution verified",
+      schoolName: institution.schoolName,
+      schoolCode: institution.schoolCode,
+      verified: true,
+      logo: institution.logo || null,
+    };
+    res.status(200).json(responsePayload);
+    setImmediate(() => {
+      const cachePromise =
+        typeof client.setEx === "function"
+          ? client.setEx(cacheKey, 86400, JSON.stringify(responsePayload))
+          : typeof client.setex === "function"
+            ? client.setex(cacheKey, 86400, JSON.stringify(responsePayload))
+            : client.set(
+                cacheKey,
+                JSON.stringify(responsePayload),
+                "EX",
+                86400,
+              );
+      cachePromise.catch((err) =>
+        console.error("Redis cache write error:", err.message),
+      );
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Institution Validation Error:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ message: "Server error" });
+  }
+};

@@ -2,6 +2,8 @@ import { Product, Reviews, User } from "../tableDeclarations.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
 
+
+//Tested and trusted using jest
 export const fetchSellerReviews = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchSellerReviewsController";
@@ -143,5 +145,3 @@ export const fetchSellerReviews = async (req, res) => {
     });
   }
 };
-
-//Tested and trusted using jest

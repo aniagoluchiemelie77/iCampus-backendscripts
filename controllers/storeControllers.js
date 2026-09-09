@@ -27,6 +27,8 @@ import { TAX_RATE, DELIVERY_FEES } from "../constants/inAppConstants.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 
+
+//Tested and trusted using jest
 async function sendOrderNotifications(buyer, processedItems, transactionId) {
   if (!Array.isArray(processedItems) || processedItems.length === 0) {
     return;
@@ -435,270 +437,6 @@ export const cancelOrder = async (req, res) => {
     return res.status(400).json({ success: false, message: error.message });
   }
 };
-export const getDropOffStations = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "getDropOffStationsController";
-  const action = "getDropOffStations";
-  const CACHE_KEY = "stations:all_drop_off";
-
-  try {
-    const { lat, lng } = req.query;
-    let stations = [];
-    try {
-      const cachedData = await redis.get(CACHE_KEY);
-      if (cachedData) {
-        stations = typeof cachedData === "string" ? JSON.parse(cachedData) : cachedData;
-      }
-    } catch (cacheError) {
-      console.error("Cache read error, falling back to database:", cacheError);
-    }
-    if (!stations || stations.length === 0) {
-      const snapshot = await DropOffStation.get();
-      snapshot.forEach((doc) => {
-        stations.push({ id: doc.id, ...doc.data() });
-      });
-      try {
-        await redis.setex(CACHE_KEY, 1800, JSON.stringify(stations));
-      } catch (cacheSetError) {
-        console.error("Cache write error:", cacheSetError);
-      }
-    }
-
-    if (!lat || !lng) {
-      res.status(200).json({
-        success: true,
-        message: "Stations fetched successfully",
-        data: stations,
-      });
-
-      setImmediate(() => {
-        if (typeof logControllerPerformance === "function") {
-          logControllerPerformance(controllerName, action, startTime, "success");
-        }
-      });
-      return;
-    }
-
-    const userLat = parseFloat(lat);
-    const userLng = parseFloat(lng);
-    const stationsWithDistance = stations
-      .map((station) => {
-        const distance = calculateHaversineDistance(
-          userLat,
-          userLng,
-          station.latitude,
-          station.longitude,
-          "km",
-        );
-        return {
-          ...station,
-          distance: distance,
-        };
-      })
-      .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
-
-    res.status(200).json({
-      success: true,
-      message: "Closest stations fetched successfully",
-      data: stationsWithDistance,
-    });
-
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          error.message,
-        );
-      }
-    });
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error processing station data",
-    });
-  }
-};
-export const deleteProductController = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "deleteProductController";
-  const action = "deleteProduct";
-
-  try {
-    const userUid = req.user.id || req.user.uid;
-    const { productId } = req.params;
-
-    if (!productId) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing required product identification parameter.",
-        );
-      }
-      return res.status(400).json({
-        success: false,
-        message: "Missing required product identification parameter.",
-      });
-    }
-
-    const result = await db.runTransaction(async (transaction) => {
-      const productQuery = await Product.where("productId", "==", productId)
-        .where("sellerId", "==", userUid)
-        .limit(1)
-        .get();
-
-      if (productQuery.empty) {
-        throw new Error("Product record not found or unauthorized access.");
-      }
-
-      const productDoc = productQuery.docs[0];
-      const productData = productDoc.data();
-      transaction.delete(productDoc.ref);
-
-      return productData;
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Product entry successfully unlinked and purged.",
-      data: { productId },
-    });
-
-    setImmediate(async () => {
-      try {
-        await redis.del("catalog:all_products");
-        
-        const sellerQuery = await User.where("uid", "==", userUid).limit(1).get();
-        const mediaThumbnails = result.mediaUrls || result.thumbnails;
-        
-        if (mediaThumbnails) {
-          const thumbnailUrls = Array.isArray(mediaThumbnails)
-            ? mediaThumbnails
-            : [mediaThumbnails];
-
-          const bucket = storage().bucket();
-
-          const deletionPromises = thumbnailUrls.map(async (url) => {
-            if (url && url.includes("firebasestorage.googleapis.com")) {
-              try {
-                const decodedUrl = decodeURIComponent(url);
-                const pathStartIndex = decodedUrl.indexOf("/o/") + 3;
-                const pathEndIndex = decodedUrl.indexOf("?");
-                const filePath =
-                  pathEndIndex !== -1
-                    ? decodedUrl.substring(pathStartIndex, pathEndIndex)
-                    : decodedUrl.substring(pathStartIndex);
-
-                await bucket.file(filePath).delete();
-              } catch (parseError) {
-                console.error(
-                  `Error parsing or deleting Firebase file for URL: ${url}`,
-                  parseError,
-                );
-              }
-            }
-          });
-
-          await Promise.all(deletionPromises).catch((err) =>
-            console.error(
-              "Some file deletions failed during parallel cleanup:",
-              err,
-            ),
-          );
-        }
-
-        const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
-        const sellerEmail = seller ? seller.email : req.user.email;
-        const sellerName = seller ? seller.firstname : req.user.firstname;
-
-        const currentDate = new Date();
-        const formattedDate = currentDate.toLocaleDateString();
-        const formattedTime = currentDate.toLocaleTimeString();
-
-        await Promise.all([
-          createNotification({
-            notificationId: generateNotificationId("store"),
-            recipientId: userUid,
-            recipientEmail: sellerEmail,
-            category: "store",
-            actionType: "PRODUCT_DELETION",
-            title: "Product Listing Removed",
-            message: `Your marketplace item "${result.title}" has been successfully deleted.`,
-            entityId: productId,
-            entityType: "product",
-            sendEmail: false,
-            payload: {
-              username: sellerName,
-              productId: productId,
-              productName: result.title,
-              date: formattedDate,
-              time: formattedTime,
-            },
-          }).catch((err) =>
-            console.error("Non-blocking deletion log emission failure:", err),
-          ),
-          notifyAdmins(
-            { role: ["super_admin", "moderator"] },
-            {
-              notificationId: generateNotificationId("store"),
-              actionType: "PRODUCT_DELETION_ADMIN",
-              title: "Product Deletion Audit",
-              message: `Product "${result.title}" was deleted by seller ${userUid}.`,
-              payload: {
-                productId,
-                productName: result.title,
-                sellerId: userUid,
-              },
-            },
-            false,
-          ),
-        ]);
-
-        if (typeof logControllerPerformance === "function") {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success",
-          );
-        }
-      } catch (bgError) {
-        console.error("Background Product Deletion Tasks Error:", bgError);
-      }
-    });
-  } catch (error) {
-    console.error(
-      "Global crash layer hit in deleteProductController:",
-      error.message,
-    );
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    const statusCode = error.message.includes("not found") ? 404 : 500;
-    return res.status(statusCode).json({
-      success: false,
-      message: error.message || "Internal application routing anomaly.",
-    });
-  }
-};
-
-//Tested and trusted using jest
 export const saveProductController = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "saveProductController";
@@ -1559,8 +1297,8 @@ export const initializeCheckout = async (req, res) => {
           sellerEmail: sellerData.email,
           sellerId: sellerData.uid,
           product: productData,
-          buyerAddress: shippingContact.address,
-          buyerPhoneNumber: shippingContact.phone,
+          buyerAddress: shippingContact?.address || null,
+          buyerPhoneNumber: shippingContact?.phone || null,
           deliveryMethod: item.deliveryMethod,
         });
       }
@@ -2585,5 +2323,275 @@ export const requestPayout = async (req, res) => {
       );
     });
     return res.status(400).json({ success: false, message: error.message });
+  }
+};
+export const getDropOffStations = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getDropOffStationsController";
+  const action = "getDropOffStations";
+  const CACHE_KEY = "stations:all_drop_off";
+
+  try {
+    const { lat, lng } = req.query;
+    let stations = [];
+    try {
+      const cachedData = await redis.get(CACHE_KEY);
+      if (cachedData) {
+        stations =
+          typeof cachedData === "string" ? JSON.parse(cachedData) : cachedData;
+      }
+    } catch (cacheError) {
+      console.error("Cache read error, falling back to database:", cacheError);
+    }
+    if (!stations || stations.length === 0) {
+      const snapshot = await DropOffStation.get();
+      snapshot.forEach((doc) => {
+        stations.push({ id: doc.id, ...doc.data() });
+      });
+      try {
+        await redis.setex(CACHE_KEY, 1800, JSON.stringify(stations));
+      } catch (cacheSetError) {
+        console.error("Cache write error:", cacheSetError);
+      }
+    }
+
+    if (!lat || !lng) {
+      res.status(200).json({
+        success: true,
+        message: "Stations fetched successfully",
+        data: stations,
+      });
+
+      setImmediate(() => {
+        if (typeof logControllerPerformance === "function") {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        }
+      });
+      return;
+    }
+
+    const userLat = parseFloat(lat);
+    const userLng = parseFloat(lng);
+    const stationsWithDistance = stations
+      .map((station) => {
+        const distance = calculateHaversineDistance(
+          userLat,
+          userLng,
+          station.latitude,
+          station.longitude,
+          "km",
+        );
+        return {
+          ...station,
+          distance: distance,
+        };
+      })
+      .sort((a, b) => (a.distance ?? Infinity) - (b.distance ?? Infinity));
+
+    res.status(200).json({
+      success: true,
+      message: "Closest stations fetched successfully",
+      data: stationsWithDistance,
+    });
+
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      }
+    });
+  } catch (error) {
+    setImmediate(() => {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          error.message,
+        );
+      }
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error processing station data",
+    });
+  }
+};
+export const deleteProductController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deleteProductController";
+  const action = "deleteProduct";
+
+  try {
+    const userUid = req.user.id || req.user.uid;
+    const { productId } = req.params;
+
+    if (!productId) {
+      if (typeof logControllerPerformance === "function") {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required product identification parameter.",
+        );
+      }
+      return res.status(400).json({
+        success: false,
+        message: "Missing required product identification parameter.",
+      });
+    }
+
+    const result = await db.runTransaction(async (transaction) => {
+      const productQuery = await Product.where("productId", "==", productId)
+        .where("sellerId", "==", userUid)
+        .limit(1)
+        .get();
+
+      if (productQuery.empty) {
+        throw new Error("Product record not found or unauthorized access.");
+      }
+
+      const productDoc = productQuery.docs[0];
+      const productData = productDoc.data();
+      transaction.delete(productDoc.ref);
+
+      return productData;
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Product entry successfully unlinked and purged.",
+      data: { productId },
+    });
+
+    setImmediate(async () => {
+      try {
+        await redis.del("catalog:all_products");
+
+        const sellerQuery = await User.where("uid", "==", userUid)
+          .limit(1)
+          .get();
+        const mediaThumbnails = result.mediaUrls || result.thumbnails;
+
+        if (mediaThumbnails) {
+          const thumbnailUrls = Array.isArray(mediaThumbnails)
+            ? mediaThumbnails
+            : [mediaThumbnails];
+
+          const bucket = storage().bucket();
+
+          const deletionPromises = thumbnailUrls.map(async (url) => {
+            if (url && url.includes("firebasestorage.googleapis.com")) {
+              try {
+                const decodedUrl = decodeURIComponent(url);
+                const pathStartIndex = decodedUrl.indexOf("/o/") + 3;
+                const pathEndIndex = decodedUrl.indexOf("?");
+                const filePath =
+                  pathEndIndex !== -1
+                    ? decodedUrl.substring(pathStartIndex, pathEndIndex)
+                    : decodedUrl.substring(pathStartIndex);
+
+                await bucket.file(filePath).delete();
+              } catch (parseError) {
+                console.error(
+                  `Error parsing or deleting Firebase file for URL: ${url}`,
+                  parseError,
+                );
+              }
+            }
+          });
+
+          await Promise.all(deletionPromises).catch((err) =>
+            console.error(
+              "Some file deletions failed during parallel cleanup:",
+              err,
+            ),
+          );
+        }
+
+        const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
+        const sellerEmail = seller ? seller.email : req.user.email;
+        const sellerName = seller ? seller.firstname : req.user.firstname;
+
+        const currentDate = new Date();
+        const formattedDate = currentDate.toLocaleDateString();
+        const formattedTime = currentDate.toLocaleTimeString();
+
+        await Promise.all([
+          createNotification({
+            notificationId: generateNotificationId("store"),
+            recipientId: userUid,
+            recipientEmail: sellerEmail,
+            category: "store",
+            actionType: "PRODUCT_DELETION",
+            title: "Product Listing Removed",
+            message: `Your marketplace item "${result.title}" has been successfully deleted.`,
+            entityId: productId,
+            entityType: "product",
+            sendEmail: false,
+            payload: {
+              username: sellerName,
+              productId: productId,
+              productName: result.title,
+              date: formattedDate,
+              time: formattedTime,
+            },
+          }).catch((err) =>
+            console.error("Non-blocking deletion log emission failure:", err),
+          ),
+          notifyAdmins(
+            { role: ["super_admin", "moderator"] },
+            {
+              notificationId: generateNotificationId("store"),
+              actionType: "PRODUCT_DELETION_ADMIN",
+              title: "Product Deletion Audit",
+              message: `Product "${result.title}" was deleted by seller ${userUid}.`,
+              payload: {
+                productId,
+                productName: result.title,
+                sellerId: userUid,
+              },
+            },
+            false,
+          ),
+        ]);
+
+        if (typeof logControllerPerformance === "function") {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "success",
+          );
+        }
+      } catch (bgError) {
+        console.error("Background Product Deletion Tasks Error:", bgError);
+      }
+    });
+  } catch (error) {
+    console.error(
+      "Global crash layer hit in deleteProductController:",
+      error.message,
+    );
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    const statusCode = error.message.includes("not found") ? 404 : 500;
+    return res.status(statusCode).json({
+      success: false,
+      message: error.message || "Internal application routing anomaly.",
+    });
   }
 };

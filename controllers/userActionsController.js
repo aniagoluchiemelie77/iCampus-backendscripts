@@ -7,10 +7,8 @@ import {
   UserBankOrCardDetails,
   ITag,
   Follow,
-  Product,
   Course,
   PhoneNumberVerification,
-  Message,
   Notification,
   SupportTicket,
   Lectures,
@@ -35,7 +33,6 @@ import {
 } from "../utils/idGenerator.js";
 import axiosRetry from "axios-retry";
 import axios from "axios";
-import * as cheerio from "cheerio";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
@@ -168,180 +165,6 @@ const FAQ_DATA = [
   },
 ];
 
-export const createReviewController = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "ReviewController";
-  const action = "createReview";
-
-  try {
-    let reviewerId = req.user?.uid || req.user?.id;
-    if (!reviewerId) {
-      const authHeader = req.headers.authorization;
-      const token = authHeader?.startsWith("Bearer ")
-        ? authHeader.split(" ")[1]
-        : req.body?.token;
-
-      if (token) {
-        try {
-          const decoded = jwt.verify(token, process.env.JWT_SECRET);
-          reviewerId = decoded.id || decoded.uid;
-        } catch (err) {
-          setImmediate(() => {
-            logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "error",
-              "Invalid or expired authentication token",
-            );
-          });
-          return res.status(401).json({
-            success: false,
-            message: "Expired or invalid authentication token.",
-          });
-        }
-      }
-    }
-
-    if (!reviewerId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthenticated review submission",
-        );
-      });
-      return res.status(401).json({
-        success: false,
-        message: "Authentication required to submit a review.",
-      });
-    }
-
-    const {
-      targetId,
-      targetType,
-      orderId,
-      rating,
-      comment,
-      mediaUrls,
-      attributes,
-    } = req.body;
-
-    if (!targetId || !targetType || rating === undefined || rating === null) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing required tracking metrics",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "Missing required fields: targetId, targetType, and rating.",
-      });
-    }
-
-    const numericRating = Number(rating);
-    if (isNaN(numericRating) || numericRating < 1 || numericRating > 5) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid rating score",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "Rating must be a valid number between 1 and 5.",
-      });
-    }
-
-    let parsedMediaUrls = [];
-    if (mediaUrls) {
-      try {
-        parsedMediaUrls =
-          typeof mediaUrls === "string" ? JSON.parse(mediaUrls) : mediaUrls;
-        if (!Array.isArray(parsedMediaUrls))
-          parsedMediaUrls = [parsedMediaUrls];
-      } catch (e) {
-        parsedMediaUrls = [mediaUrls];
-      }
-    }
-
-    let parsedAttributes = {
-      accuracy: undefined,
-      deliverySpeed: undefined,
-      clarity: undefined,
-    };
-
-    if (attributes) {
-      try {
-        const rawAttrs =
-          typeof attributes === "string" ? JSON.parse(attributes) : attributes;
-        parsedAttributes = {
-          accuracy: rawAttrs?.accuracy ? Number(rawAttrs.accuracy) : undefined,
-          deliverySpeed: rawAttrs?.deliverySpeed
-            ? Number(rawAttrs.deliverySpeed)
-            : undefined,
-          clarity: rawAttrs?.clarity ? Number(rawAttrs.clarity) : undefined,
-        };
-      } catch (e) {
-        console.error("Attributes parsing layout mismatch anomaly:", e);
-      }
-    }
-
-    const newReviewDocRef = Reviews.doc();
-    const reviewData = {
-      reviewId: newReviewDocRef.id,
-      reviewerId,
-      targetId,
-      targetType,
-      orderId: orderId || null,
-      rating: numericRating,
-      comment: comment ? comment.trim() : "",
-      mediaUrls: parsedMediaUrls,
-      attributes: parsedAttributes,
-      createdAt: new Date(),
-    };
-
-    await newReviewDocRef.set(reviewData);
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-
-    return res.status(200).json({
-      success: true,
-      message: "Reviews validation metrics published successfully.",
-      reviewId: newReviewDocRef.id,
-    });
-  } catch (error) {
-    console.error(
-      "Global crash layer hit in createReviewController:",
-      error.message,
-    );
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      success: false,
-      message:
-        "Internal application routing anomaly during review storage commit pipeline.",
-    });
-  }
-};
 export const createNewPasswordInApp = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "InAppPasswordCreationController";
@@ -4227,6 +4050,180 @@ export const searchPosts = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to retrieve posts matching search parameter.",
+    });
+  }
+};
+export const createReviewController = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "ReviewController";
+  const action = "createReview";
+
+  try {
+    let reviewerId = req.user?.uid || req.user?.id;
+    if (!reviewerId) {
+      const authHeader = req.headers.authorization;
+      const token = authHeader?.startsWith("Bearer ")
+        ? authHeader.split(" ")[1]
+        : req.body?.token;
+
+      if (token) {
+        try {
+          const decoded = jwt.verify(token, process.env.JWT_SECRET);
+          reviewerId = decoded.id || decoded.uid;
+        } catch (err) {
+          setImmediate(() => {
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "error",
+              "Invalid or expired authentication token",
+            );
+          });
+          return res.status(401).json({
+            success: false,
+            message: "Expired or invalid authentication token.",
+          });
+        }
+      }
+    }
+
+    if (!reviewerId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthenticated review submission",
+        );
+      });
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required to submit a review.",
+      });
+    }
+
+    const {
+      targetId,
+      targetType,
+      orderId,
+      rating,
+      comment,
+      mediaUrls,
+      attributes,
+    } = req.body;
+
+    if (!targetId || !targetType || rating === undefined || rating === null) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required tracking metrics",
+        );
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Missing required fields: targetId, targetType, and rating.",
+      });
+    }
+
+    const numericRating = Number(rating);
+    if (isNaN(numericRating) || numericRating < 1 || numericRating > 5) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid rating score",
+        );
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Rating must be a valid number between 1 and 5.",
+      });
+    }
+
+    let parsedMediaUrls = [];
+    if (mediaUrls) {
+      try {
+        parsedMediaUrls =
+          typeof mediaUrls === "string" ? JSON.parse(mediaUrls) : mediaUrls;
+        if (!Array.isArray(parsedMediaUrls))
+          parsedMediaUrls = [parsedMediaUrls];
+      } catch (e) {
+        parsedMediaUrls = [mediaUrls];
+      }
+    }
+
+    let parsedAttributes = {
+      accuracy: undefined,
+      deliverySpeed: undefined,
+      clarity: undefined,
+    };
+
+    if (attributes) {
+      try {
+        const rawAttrs =
+          typeof attributes === "string" ? JSON.parse(attributes) : attributes;
+        parsedAttributes = {
+          accuracy: rawAttrs?.accuracy ? Number(rawAttrs.accuracy) : undefined,
+          deliverySpeed: rawAttrs?.deliverySpeed
+            ? Number(rawAttrs.deliverySpeed)
+            : undefined,
+          clarity: rawAttrs?.clarity ? Number(rawAttrs.clarity) : undefined,
+        };
+      } catch (e) {
+        console.error("Attributes parsing layout mismatch anomaly:", e);
+      }
+    }
+
+    const newReviewDocRef = Reviews.doc();
+    const reviewData = {
+      reviewId: newReviewDocRef.id,
+      reviewerId,
+      targetId,
+      targetType,
+      orderId: orderId || null,
+      rating: numericRating,
+      comment: comment ? comment.trim() : "",
+      mediaUrls: parsedMediaUrls,
+      attributes: parsedAttributes,
+      createdAt: new Date(),
+    };
+
+    await newReviewDocRef.set(reviewData);
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Reviews validation metrics published successfully.",
+      reviewId: newReviewDocRef.id,
+    });
+  } catch (error) {
+    console.error(
+      "Global crash layer hit in createReviewController:",
+      error.message,
+    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      success: false,
+      message:
+        "Internal application routing anomaly during review storage commit pipeline.",
     });
   }
 };
