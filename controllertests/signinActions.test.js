@@ -24,25 +24,25 @@ describe("Signup and onboarding actions, register new user, verify email, and se
 
   const endpointsToTest = [
     {
-      name: "Request email verification code",
+      name: "Register user",
       method: "post",
-      path: () => `users/verifyEmail`,
+      path: () => `users/register`,
       auth: false,
-      idempotent: true,
       expected: 200,
       body: {
-        email: tempUserEmail,
-      },
-    },
-    {
-      name: "Request forgot password verification code",
-      method: "post",
-      path: () => `users/forgotPassword`,
-      auth: false,
-      idempotent: true,
-      expected: 200,
-      body: {
-        email: sharedContext.email,
+        usertype: "student",
+        email: "chineduOkafor23@gmail.com",
+        firstname: "Chinedu",
+        lastname: "Okafor",
+        department: "Computer Science",
+        matriculation_number: "COS/1002/2026",
+        schoolCode: "FUPRE001",
+        schoolName: "Federal University of Petroleum Resources, Effurun",
+        current_level: "100",
+        password: "SecurePassword123!",
+        providerId: "password",
+        deviceId: "device_test_01",
+        deviceName: "Jest Headless Client",
       },
     },
     {
@@ -58,6 +58,7 @@ describe("Signup and onboarding actions, register new user, verify email, and se
         confirmPassword: "NewSecurePassword123!",
       },
     },
+    /*
     {
       name: "Successfully verify student record via external school endpoint simulation",
       method: "post",
@@ -80,29 +81,6 @@ describe("Signup and onboarding actions, register new user, verify email, and se
         staff_id: sharedContext.staff_id,
       },
     },
-    {
-      name: "Register user",
-      method: "post",
-      path: () => `users/register`,
-      auth: false,
-      expected: 200,
-      body: {
-        usertype: "student",
-        email: "chineduOkafor23@gmail.com",
-        firstname: "Chinedu",
-        lastname: "Okafor",
-        department: "Computer Science",
-        matriculation_number: "COS/1002/2026",
-        schoolCode: "FUPRE001",
-        schoolName: "Federal University of Petroleum Resources, Effurun",
-        current_level: "100",
-        password: "SecurePassword123!",
-        providerId: "password",
-        deviceId: "device_test_01",
-        deviceName: "Jest Headless Client",
-      },
-    },
-    /*
        {
       name: "Validate institution",
       method: "post",
@@ -113,6 +91,28 @@ describe("Signup and onboarding actions, register new user, verify email, and se
       body: {
         schoolName: "Federal University of Petroleum Resources, Effurun",
       },
+       {
+      name: "Request email verification code",
+      method: "post",
+      path: () => `users/verifyEmail`,
+      auth: false,
+      idempotent: true,
+      expected: 200,
+      body: {
+        email: "bahdmannatural@gmail.com",
+      },
+    },
+    {
+      name: "Request forgot password verification code",
+      method: "post",
+      path: () => `users/forgotPassword`,
+      auth: false,
+      idempotent: true,
+      expected: 200,
+      body: {
+        email: sharedContext.email,
+      },
+    },
     },
     */
   ];
@@ -158,18 +158,11 @@ describe("Signup and onboarding actions, register new user, verify email, and se
   }, 120000);
 });
 describe("Signup and onboarding actions, admin login and onboarding actions", () => {
-  let tempUserEmail;
-  let signupToken;
-
-  beforeAll(() => {
-    tempUserEmail = `test_signup_${Date.now()}@icampus.test`;
-  }, 30000);
-
   const endpointsToTest = [
     {
       name: "Admin login",
       method: "post",
-      path: () => `admins/admin-login`,
+      path: () => `users/admin-login`,
       auth: false,
       expected: 200,
       body: {

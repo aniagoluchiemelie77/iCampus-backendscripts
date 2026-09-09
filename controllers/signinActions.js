@@ -266,188 +266,6 @@ export const signUp = async (req, res) => {
     });
   }
 };
-export const Login = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "LoginController";
-  const action = "Login";
-  const credentials = req.body.credentials || req.body;
-
-  const {
-    identifier,
-    password,
-    deviceId,
-    deviceName,
-    socialProvider,
-    idToken,
-  } = credentials;
-
-  if (!identifier) {
-    return res.status(400).json({ error: "Identifier is required" });
-  }
-
-  try {
-    const userSnapshot = await User.where("email", "==", identifier)
-      .limit(1)
-      .get();
-
-    if (userSnapshot.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Account not found.",
-        );
-      });
-      return res
-        .status(404)
-        .json({ error: "Account not found. Please sign up first." });
-    }
-
-    const userDoc = userSnapshot.docs[0];
-    const user = { uid: userDoc.uid, ...userDoc.data() };
-    if (socialProvider === "google") {
-      const isValid = await verifyGoogleToken(idToken, identifier);
-      if (!isValid)
-        return res.status(401).json({ error: "Invalid Google token" });
-    } else if (socialProvider === "github") {
-      const isValid = await verifyGithubToken(idToken, identifier);
-      if (!isValid)
-        return res.status(401).json({ error: "Invalid GitHub token" });
-    } else {
-      let isMatch = false;
-      if (user.password && user.password.startsWith("$2")) {
-        isMatch = await bcrypt.compare(password, user.password);
-      } else {
-        isMatch = password === user.password;
-      }
-      if (!isMatch) {
-        return res.status(401).json({ error: "Invalid password" });
-      }
-    }
-
-    if (socialProvider && user.providerId !== socialProvider) {
-      return res.status(400).json({
-        error: `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
-      });
-    }
-
-    const [preferencesDoc, tokens] = await Promise.all([
-      userPrefs.doc(user.uid).get(),
-      generateTokens(user),
-    ]);
-
-    const { accessToken, refreshToken } = tokens;
-    const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
-    const safeUser = { ...user };
-    safeUser.hasIcashPin = Boolean(user.iCashPin);
-    delete safeUser.password;
-    delete safeUser.iCashPin;
-    delete safeUser.userAccountDetails;
-    console.log("Logging in...");
-    safeUser.theme = preferences ? preferences.theme : "light";
-    safeUser.sessions = [];
-    res.status(200).json({
-      message: "Login successful",
-      user: safeUser,
-      accessToken,
-      refreshToken,
-    });
-    setImmediate(async () => {
-      try {
-        const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
-          .split(",")[0]
-          .trim();
-        const geo = geoip.lookup(ip);
-        const location = geo.city ? `${geo.city}, ${geo.country}` : geo.country;
-        const sessionData = {
-          userId: user.uid,
-          deviceId,
-          deviceName,
-          ipAddress: ip,
-          location,
-          refreshToken,
-          lastUsed: new Date(),
-          updatedAt: new Date(),
-        };
-        const existingSessionQuery = await UserSessions.where(
-          "userId",
-          "==",
-          user.uid,
-        )
-          .where("deviceId", "==", deviceId)
-          .limit(1)
-          .get();
-
-        let isNewSession = false;
-        if (!existingSessionQuery.empty) {
-          const sessionDocRef = existingSessionQuery.docs[0].ref;
-          await sessionDocRef.set(sessionData, { merge: true });
-        } else {
-          isNewSession = true;
-          const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-          sessionData.sessionId = sessionId;
-          sessionData.createdAt = new Date();
-          await UserSessions.doc(sessionId).set(sessionData);
-        }
-
-        logControllerPerformance(controllerName, action, startTime, "success");
-
-        await verifyAndNotifyLogin(user, req, "USER_LOGIN_AUDIT").catch((err) =>
-          console.error("Audit error:", err),
-        );
-
-        if (isNewSession) {
-          const now = new Date();
-          await createNotification({
-            notificationId: generateNotificationId("security"),
-            recipientId: user.uid,
-            isRead: false,
-            recipientEmail: user.email,
-            recoveryEmails: user.recoveryEmails,
-            category: "auth",
-            actionType: "NEW_LOGIN",
-            title: "Security Alert: New Login",
-            payload: {
-              userName: user.firstname || user.firstName,
-              ipAddress: ip,
-              location,
-              date: now.toLocaleDateString(),
-              time: now.toLocaleTimeString(),
-              userId: user.uid,
-            },
-            message: `A login was detected from ${ip} in ${location}.`,
-            sendEmail: true,
-            saveToDb: true,
-          }).catch((err) =>
-            console.error("Background notification error:", err),
-          );
-
-          await addFlag(user.uid, "UNRECOGNIZED_LOCATION").catch((err) =>
-            console.error("Background flag error:", err),
-          );
-        }
-      } catch (bgError) {
-        console.error("Background session/audit processing error:", bgError);
-      }
-    });
-  } catch (error) {
-    console.error("Login Error:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    if (!res.headersSent) {
-      return res.status(500).json({ error: error.message || "Login error" });
-    }
-  }
-};
 export const AdminLogin = async (req, res) => {
   const credentials = req.body.credentials || req.body;
   const { identifier, password, deviceId, deviceName } = credentials;
@@ -540,59 +358,6 @@ export const AdminLogin = async (req, res) => {
     return res
       .status(500)
       .json({ error: "Internal server error during login" });
-  }
-};
-export const refreshToken = async (req, res) => {
-  const { refreshToken } = req.body;
-  if (!refreshToken) {
-    return res.status(401).json({ message: "Refresh Token Required" });
-  }
-
-  try {
-    const decoded = await verifyJwtAsync(
-      refreshToken,
-      process.env.REFRESH_TOKEN_SECRET,
-    );
-    const userId = decoded.id;
-    const userType = decoded.role || "user";
-
-    const collectionName = userType === "admin" ? "admins" : "users";
-    const userDoc = await db.collection(collectionName).doc(userId).get();
-
-    if (!userDoc.exists) {
-      return res.status(403).json({ message: "User not found" });
-    }
-
-    const userData = userDoc.data();
-    const storedTokens = userData.refreshTokens || [];
-    if (!storedTokens.includes(refreshToken)) {
-      return res.status(403).json({ message: "Invalid Refresh Token Session" });
-    }
-
-    const newAccessToken = jwt.sign(
-      { id: userId, email: userData.email, role: userType },
-      process.env.JWT_SECRET,
-      { expiresIn: "70m" },
-    );
-    if (userType === "users") {
-      const [preferencesDoc] = await Promise.all([userPrefs.doc(userId).get()]);
-      const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
-      const safeUser = { ...userData };
-      safeUser.hasIcashPin = Boolean(userData.iCashPin);
-      delete safeUser.password;
-      delete safeUser.iCashPin;
-      delete safeUser.userAccountDetails;
-      safeUser.theme = preferences ? preferences.theme : "light";
-    }
-
-    return res.json({
-      accessToken: newAccessToken,
-      refreshToken,
-      user: userType === "users" ? safeUser : null,
-    });
-  } catch (e) {
-    console.error("Refresh Token Error:", e.message);
-    return res.status(403).json({ message: "Token Expired or Invalid" });
   }
 };
 export const fetchInstitutionByCountry = async (req, res) => {
@@ -709,85 +474,6 @@ export const fetchInstitutionByCountry = async (req, res) => {
     return res.status(500).json({ message: "Failed to retrieve institutions" });
   }
 };
-export const validateEmail = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "validateEmailController";
-  const action = "validateEmail";
-
-  try {
-    const { email } = req.body;
-    if (!email) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Email is required",
-        );
-      });
-      return res.status(400).json({ message: "Email is required" });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
-    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
-    const docId = `ver_${crypto.createHash("md5").update(normalizedEmail).digest("hex")}`;
-    const docRef = EmailVerification.doc(docId);
-
-    const existingDoc = await docRef.get();
-
-    const verificationPayload = {
-      email: normalizedEmail,
-      code: hashedCode,
-      expiresAt,
-      updatedAt: new Date(),
-    };
-
-    if (!existingDoc.exists) {
-      verificationPayload.createdAt = new Date();
-    }
-    await docRef.set(verificationPayload, { merge: true });
-    res.status(200).json({
-      message: "Verification code sent",
-      codeSent: true,
-    });
-    setImmediate(() => {
-      const notificationJob = {
-        notificationId: generateNotificationId("auth"),
-        recipientEmail: normalizedEmail,
-        category: "auth",
-        actionType: "EMAIL_VERIFICATION",
-        title: "Verify your Email",
-        message: `Your verification code is ${code}. It expires in 15 minutes.`,
-        payload: { code },
-        sendEmail: true,
-        sendPush: false,
-        saveToDb: false,
-        isRead: false,
-      };
-
-      createNotification(notificationJob).catch((err) =>
-        console.error("Background verification email error:", err),
-      );
-
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Email verification error:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ message: "Server error" });
-  }
-};
 export const verifyEmailUsingCode = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "verifyEmailUsingCodeController";
@@ -892,147 +578,6 @@ export const verifyEmailUsingCode = async (req, res) => {
       );
     });
     return res.status(500).json({ message: "Server error", verified: false });
-  }
-};
-export const forgotPassword = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "forgotPasswordController";
-  const action = "forgotPassword";
-
-  try {
-    const { email } = req.body;
-    if (!email) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Email is required",
-        );
-      });
-      return res.status(400).json({ message: "Email is required" });
-    }
-
-    const normalizedEmail = email.trim().toLowerCase();
-    const userQueryPromise = User.where("email", "==", normalizedEmail)
-      .limit(1)
-      .get();
-    const docId = `ver_${crypto.createHash("md5").update(normalizedEmail).digest("hex")}`;
-    const verificationDocRef = EmailVerification.doc(docId);
-    const verificationDocPromise = verificationDocRef.get();
-
-    const [userSnapshot, verificationDocSnapshot] = await Promise.all([
-      userQueryPromise,
-      verificationDocPromise,
-    ]);
-
-    if (userSnapshot.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res.status(404).json({ message: "User with email not found" });
-    }
-
-    const userDoc = userSnapshot.docs[0];
-    const user = { id: userDoc.id, ...userDoc.data() };
-
-    if (verificationDocSnapshot.exists) {
-      const existingRecord = verificationDocSnapshot.data();
-      const updatedAtValue = existingRecord.updatedAt
-        ? existingRecord.updatedAt.toDate
-          ? existingRecord.updatedAt.toDate().getTime()
-          : new Date(existingRecord.updatedAt).getTime()
-        : 0;
-
-      const timeSinceLastSent = Date.now() - updatedAtValue;
-      if (timeSinceLastSent < 60000) {
-        setImmediate(() => {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Please wait before requesting another code.",
-          );
-        });
-        return res
-          .status(429)
-          .json({ message: "Please wait before requesting another code." });
-      }
-    }
-
-    const code = Math.floor(100000 + Math.random() * 900000).toString();
-    const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
-    const durationMs = 15 * 60 * 1000;
-    const expiresAt = new Date(Date.now() + durationMs);
-    const readableExpires = expiresAt.toLocaleString("en-US", {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
-    });
-
-    const verificationPayload = {
-      email: normalizedEmail,
-      code: hashedCode,
-      expiresAt,
-      updatedAt: new Date(),
-    };
-
-    if (!verificationDocSnapshot.exists) {
-      verificationPayload.createdAt = new Date();
-    }
-    await verificationDocRef.set(verificationPayload, { merge: true });
-    res.status(200).json({
-      message: "Verification code sent, check your email",
-      email: normalizedEmail,
-    });
-    setImmediate(() => {
-      createNotification({
-        notificationId: generateNotificationId("security"),
-        recipientId: user.uid || user.id,
-        isRead: false,
-        recipientEmail: normalizedEmail,
-        category: "security",
-        actionType: "PASSWORD_RESET_CODE",
-        title: "Password Reset Code",
-        message: `Your 6-digit verification code is ${code}. It expires in ${readableExpires}.`,
-        payload: {
-          code: code,
-          userName: user.firstname || "User",
-          expiryTime: readableExpires,
-        },
-        sendEmail: true,
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: false,
-      }).catch((err) =>
-        console.error("Forgot password notification failed:", err),
-      );
-
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Forgot Password Error:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const changePassword = async (req, res) => {
@@ -1222,275 +767,6 @@ export const changePassword = async (req, res) => {
       );
     });
     return res.status(500).json({ message: "Internal server error" });
-  }
-};
-export const verifyStudent = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "verifyStudentController";
-  const action = "verifyStudent";
-  const { school_id, matriculation_number } = req.body;
-
-  if (!school_id || !matriculation_number) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing school ID or matriculation number",
-      );
-    });
-    return res
-      .status(400)
-      .json({ message: "School ID and matriculation number are required" });
-  }
-
-  try {
-    const schoolConfigSnapshot = await SchoolConfiguration.where(
-      "schoolId",
-      "==",
-      school_id,
-    )
-      .limit(1)
-      .get();
-
-    if (schoolConfigSnapshot.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "iCampus is not active at this institution.",
-        );
-      });
-      return res
-        .status(400)
-        .json({ message: "iCampus is not active at this institution." });
-    }
-
-    const schoolConfig = schoolConfigSnapshot.docs[0].data();
-
-    if (
-      !schoolConfig.isOperational ||
-      !schoolConfig.externalApiConfig?.endpoint
-    ) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "iCampus is not active or improperly configured.",
-        );
-      });
-      return res
-        .status(400)
-        .json({ message: "iCampus is not active at this institution." });
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    let schoolApiResponse;
-    try {
-      schoolApiResponse = await fetch(schoolConfig.externalApiConfig.endpoint, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
-        },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!schoolApiResponse.ok) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Student record not found in school directory.",
-        );
-      });
-      return res
-        .status(404)
-        .json({ message: "Student record not found in school directory." });
-    }
-
-    const schoolStudent = await schoolApiResponse.json();
-    res.status(200).json({
-      firstname: schoolStudent.first_name,
-      lastname: schoolStudent.last_name,
-      department: schoolStudent.faculty_dept,
-      current_level: schoolStudent.level,
-      schoolAvatarUrl: schoolStudent.profile_picture_url,
-      email: schoolStudent.email,
-      isStillInSchool: schoolStudent.isStillInSchool,
-      matricNumber: matriculation_number,
-      isVerified: true,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (err) {
-    const errorMessage =
-      err.name === "AbortError"
-        ? "External school verification timed out."
-        : err.message;
-    console.error("External institutional verification failed:", errorMessage);
-
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        errorMessage,
-      );
-    });
-    return res
-      .status(err.name === "AbortError" ? 504 : 500)
-      .json({ message: "Unable to reach school verification system." });
-  }
-};
-export const verifyLecturer = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "verifyLecturerController";
-  const action = "verifyLecturer";
-  const { school_id, staff_id: incomingStaffId } = req.body;
-
-  if (!school_id || !incomingStaffId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing required fields",
-      );
-    });
-    return res
-      .status(400)
-      .json({ message: "Missing required fields", verified: false });
-  }
-
-  try {
-    const schoolConfigSnapshot = await SchoolConfiguration.where(
-      "schoolId",
-      "==",
-      school_id,
-    )
-      .limit(1)
-      .get();
-
-    if (schoolConfigSnapshot.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "iCampus is not operational or active at this institution.",
-        );
-      });
-      return res.status(400).json({
-        message: "iCampus is not operational or active at this institution.",
-        verified: false,
-      });
-    }
-
-    const schoolConfig = schoolConfigSnapshot.docs[0].data();
-
-    if (
-      !schoolConfig.isOperational ||
-      !schoolConfig.externalApiConfig?.endpoint
-    ) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "iCampus is not operational or active at this institution.",
-        );
-      });
-      return res.status(400).json({
-        message: "iCampus is not operational or active at this institution.",
-        verified: false,
-      });
-    }
-
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    let portalResponse;
-    try {
-      portalResponse = await fetch(schoolConfig.externalApiConfig.endpoint, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
-        },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
-
-    if (!portalResponse.ok) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Instructor credentials not found in school records",
-        );
-      });
-      return res.status(404).json({
-        message: "Instructor credentials not found in school records",
-        verified: false,
-      });
-    }
-
-    const externalLecturer = await portalResponse.json();
-    res.status(200).json({
-      firstname: externalLecturer.first_name,
-      lastname: externalLecturer.last_name,
-      department: externalLecturer.department,
-      staff_id: externalLecturer.staff_id,
-      schoolAvatarUrl: externalLecturer.profile_picture_url,
-      email: externalLecturer.email,
-      isVerified: true,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (err) {
-    const errorMessage =
-      err.name === "AbortError"
-        ? "External school verification timed out."
-        : err.message;
-    console.error("Lecturer Verification error:", errorMessage);
-
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        errorMessage,
-      );
-    });
-    return res
-      .status(err.name === "AbortError" ? 504 : 500)
-      .json({ message: "Server error during verification", verified: false });
   }
 };
 export const switchToInstitutionAdmin = async (req, res) => {
@@ -1780,5 +1056,729 @@ export const validateInstitution = async (req, res) => {
       );
     });
     return res.status(500).json({ message: "Server error" });
+  }
+};
+export const validateEmail = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "validateEmailController";
+  const action = "validateEmail";
+
+  try {
+    const { email } = req.body;
+    if (!email) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Email is required",
+        );
+      });
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
+    const expiresAt = new Date(Date.now() + 15 * 60 * 1000);
+    const docId = `ver_${crypto.createHash("md5").update(normalizedEmail).digest("hex")}`;
+    const docRef = EmailVerification.doc(docId);
+
+    const existingDoc = await docRef.get();
+
+    const verificationPayload = {
+      email: normalizedEmail,
+      code: hashedCode,
+      expiresAt,
+      updatedAt: new Date(),
+    };
+
+    if (!existingDoc.exists) {
+      verificationPayload.createdAt = new Date();
+    }
+    await docRef.set(verificationPayload, { merge: true });
+    res.status(200).json({
+      message: "Verification code sent",
+      codeSent: true,
+    });
+    setImmediate(() => {
+      const notificationJob = {
+        notificationId: generateNotificationId("auth"),
+        recipientEmail: normalizedEmail,
+        category: "auth",
+        actionType: "EMAIL_VERIFICATION",
+        title: "Verify your Email",
+        message: `Your verification code is ${code}. It expires in 15 minutes.`,
+        payload: { code },
+        sendEmail: true,
+        sendPush: false,
+        saveToDb: false,
+        isRead: false,
+      };
+
+      createNotification(notificationJob).catch((err) =>
+        console.error("Background verification email error:", err),
+      );
+
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Email verification error:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+export const forgotPassword = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "forgotPasswordController";
+  const action = "forgotPassword";
+
+  try {
+    const { email } = req.body;
+    if (!email) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Email is required",
+        );
+      });
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
+    const userQueryPromise = User.where("email", "==", normalizedEmail)
+      .limit(1)
+      .get();
+    const docId = `ver_${crypto.createHash("md5").update(normalizedEmail).digest("hex")}`;
+    const verificationDocRef = EmailVerification.doc(docId);
+    const verificationDocPromise = verificationDocRef.get();
+
+    const [userSnapshot, verificationDocSnapshot] = await Promise.all([
+      userQueryPromise,
+      verificationDocPromise,
+    ]);
+
+    if (userSnapshot.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res.status(404).json({ message: "User with email not found" });
+    }
+
+    const userDoc = userSnapshot.docs[0];
+    const user = { id: userDoc.id, ...userDoc.data() };
+
+    if (verificationDocSnapshot.exists) {
+      const existingRecord = verificationDocSnapshot.data();
+      const updatedAtValue = existingRecord.updatedAt
+        ? existingRecord.updatedAt.toDate
+          ? existingRecord.updatedAt.toDate().getTime()
+          : new Date(existingRecord.updatedAt).getTime()
+        : 0;
+
+      const timeSinceLastSent = Date.now() - updatedAtValue;
+      if (timeSinceLastSent < 60000) {
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Please wait before requesting another code.",
+          );
+        });
+        return res
+          .status(429)
+          .json({ message: "Please wait before requesting another code." });
+      }
+    }
+
+    const code = Math.floor(100000 + Math.random() * 900000).toString();
+    const hashedCode = crypto.createHash("sha256").update(code).digest("hex");
+    const durationMs = 15 * 60 * 1000;
+    const expiresAt = new Date(Date.now() + durationMs);
+    const readableExpires = expiresAt.toLocaleString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+
+    const verificationPayload = {
+      email: normalizedEmail,
+      code: hashedCode,
+      expiresAt,
+      updatedAt: new Date(),
+    };
+
+    if (!verificationDocSnapshot.exists) {
+      verificationPayload.createdAt = new Date();
+    }
+    await verificationDocRef.set(verificationPayload, { merge: true });
+    res.status(200).json({
+      message: "Verification code sent, check your email",
+      email: normalizedEmail,
+    });
+    setImmediate(() => {
+      createNotification({
+        notificationId: generateNotificationId("security"),
+        recipientId: user.uid || user.id,
+        isRead: false,
+        recipientEmail: normalizedEmail,
+        category: "security",
+        actionType: "PASSWORD_RESET_CODE",
+        title: "Password Reset Code",
+        message: `Your 6-digit verification code is ${code}. It expires in ${readableExpires}.`,
+        payload: {
+          code: code,
+          userName: user.firstname || "User",
+          expiryTime: readableExpires,
+        },
+        sendEmail: true,
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: false,
+      }).catch((err) =>
+        console.error("Forgot password notification failed:", err),
+      );
+
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Forgot Password Error:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ message: "Internal Server Error" });
+  }
+};
+export const verifyStudent = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyStudentController";
+  const action = "verifyStudent";
+  const { school_id, matriculation_number } = req.body;
+
+  if (!school_id || !matriculation_number) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing school ID or matriculation number",
+      );
+    });
+    return res
+      .status(400)
+      .json({ message: "School ID and matriculation number are required" });
+  }
+
+  try {
+    const schoolConfigSnapshot = await SchoolConfiguration.where(
+      "schoolId",
+      "==",
+      school_id,
+    )
+      .limit(1)
+      .get();
+
+    if (schoolConfigSnapshot.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "iCampus is not active at this institution.",
+        );
+      });
+      return res
+        .status(400)
+        .json({ message: "iCampus is not active at this institution." });
+    }
+
+    const schoolConfig = schoolConfigSnapshot.docs[0].data();
+
+    if (
+      !schoolConfig.isOperational ||
+      !schoolConfig.externalApiConfig?.endpoint
+    ) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "iCampus is not active or improperly configured.",
+        );
+      });
+      return res
+        .status(400)
+        .json({ message: "iCampus is not active at this institution." });
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    let schoolApiResponse;
+    try {
+      schoolApiResponse = await fetch(schoolConfig.externalApiConfig.endpoint, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!schoolApiResponse.ok) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Student record not found in school directory.",
+        );
+      });
+      return res
+        .status(404)
+        .json({ message: "Student record not found in school directory." });
+    }
+
+    const schoolStudent = await schoolApiResponse.json();
+    res.status(200).json({
+      firstname: schoolStudent.first_name,
+      lastname: schoolStudent.last_name,
+      department: schoolStudent.faculty_dept,
+      current_level: schoolStudent.level,
+      schoolAvatarUrl: schoolStudent.profile_picture_url,
+      email: schoolStudent.email,
+      isStillInSchool: schoolStudent.isStillInSchool,
+      matricNumber: matriculation_number,
+      isVerified: true,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (err) {
+    const errorMessage =
+      err.name === "AbortError"
+        ? "External school verification timed out."
+        : err.message;
+    console.error("External institutional verification failed:", errorMessage);
+
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        errorMessage,
+      );
+    });
+    return res
+      .status(err.name === "AbortError" ? 504 : 500)
+      .json({ message: "Unable to reach school verification system." });
+  }
+};
+export const verifyLecturer = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "verifyLecturerController";
+  const action = "verifyLecturer";
+  const { school_id, staff_id: incomingStaffId } = req.body;
+
+  if (!school_id || !incomingStaffId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Missing required fields",
+      );
+    });
+    return res
+      .status(400)
+      .json({ message: "Missing required fields", verified: false });
+  }
+
+  try {
+    const schoolConfigSnapshot = await SchoolConfiguration.where(
+      "schoolId",
+      "==",
+      school_id,
+    )
+      .limit(1)
+      .get();
+
+    if (schoolConfigSnapshot.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "iCampus is not operational or active at this institution.",
+        );
+      });
+      return res.status(400).json({
+        message: "iCampus is not operational or active at this institution.",
+        verified: false,
+      });
+    }
+
+    const schoolConfig = schoolConfigSnapshot.docs[0].data();
+
+    if (
+      !schoolConfig.isOperational ||
+      !schoolConfig.externalApiConfig?.endpoint
+    ) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "iCampus is not operational or active at this institution.",
+        );
+      });
+      return res.status(400).json({
+        message: "iCampus is not operational or active at this institution.",
+        verified: false,
+      });
+    }
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    let portalResponse;
+    try {
+      portalResponse = await fetch(schoolConfig.externalApiConfig.endpoint, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
+        },
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timeoutId);
+    }
+
+    if (!portalResponse.ok) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Instructor credentials not found in school records",
+        );
+      });
+      return res.status(404).json({
+        message: "Instructor credentials not found in school records",
+        verified: false,
+      });
+    }
+
+    const externalLecturer = await portalResponse.json();
+    res.status(200).json({
+      firstname: externalLecturer.first_name,
+      lastname: externalLecturer.last_name,
+      department: externalLecturer.department,
+      staff_id: externalLecturer.staff_id,
+      schoolAvatarUrl: externalLecturer.profile_picture_url,
+      email: externalLecturer.email,
+      isVerified: true,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (err) {
+    const errorMessage =
+      err.name === "AbortError"
+        ? "External school verification timed out."
+        : err.message;
+    console.error("Lecturer Verification error:", errorMessage);
+
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        errorMessage,
+      );
+    });
+    return res
+      .status(err.name === "AbortError" ? 504 : 500)
+      .json({ message: "Server error during verification", verified: false });
+  }
+};
+export const refreshToken = async (req, res) => {
+  const { refreshToken } = req.body;
+  if (!refreshToken) {
+    return res.status(401).json({ message: "Refresh Token Required" });
+  }
+
+  try {
+    const decoded = await verifyJwtAsync(
+      refreshToken,
+      process.env.REFRESH_TOKEN_SECRET,
+    );
+    const userId = decoded.id;
+    const userType = decoded.role || "user";
+
+    const collectionName = userType === "admin" ? "admins" : "users";
+    const userDoc = await db.collection(collectionName).doc(userId).get();
+
+    if (!userDoc.exists) {
+      return res.status(403).json({ message: "User not found" });
+    }
+
+    const userData = userDoc.data();
+    const storedTokens = userData.refreshTokens || [];
+    if (!storedTokens.includes(refreshToken)) {
+      return res.status(403).json({ message: "Invalid Refresh Token Session" });
+    }
+
+    const newAccessToken = jwt.sign(
+      { id: userId, email: userData.email, role: userType },
+      process.env.JWT_SECRET,
+      { expiresIn: "70m" },
+    );
+    if (userType === "users") {
+      const [preferencesDoc] = await Promise.all([userPrefs.doc(userId).get()]);
+      const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
+      const safeUser = { ...userData };
+      safeUser.hasIcashPin = Boolean(userData.iCashPin);
+      delete safeUser.password;
+      delete safeUser.iCashPin;
+      delete safeUser.userAccountDetails;
+      safeUser.theme = preferences ? preferences.theme : "light";
+    }
+
+    return res.json({
+      accessToken: newAccessToken,
+      refreshToken,
+      user: userType === "users" ? safeUser : null,
+    });
+  } catch (e) {
+    console.error("Refresh Token Error:", e.message);
+    return res.status(403).json({ message: "Token Expired or Invalid" });
+  }
+};
+export const Login = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "LoginController";
+  const action = "Login";
+  const credentials = req.body.credentials || req.body;
+
+  const {
+    identifier,
+    password,
+    deviceId,
+    deviceName,
+    socialProvider,
+    idToken,
+  } = credentials;
+
+  if (!identifier) {
+    return res.status(400).json({ error: "Identifier is required" });
+  }
+
+  try {
+    const userSnapshot = await User.where("email", "==", identifier)
+      .limit(1)
+      .get();
+
+    if (userSnapshot.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Account not found.",
+        );
+      });
+      return res
+        .status(404)
+        .json({ error: "Account not found. Please sign up first." });
+    }
+
+    const userDoc = userSnapshot.docs[0];
+    const user = { uid: userDoc.uid, ...userDoc.data() };
+    if (socialProvider === "google") {
+      const isValid = await verifyGoogleToken(idToken, identifier);
+      if (!isValid)
+        return res.status(401).json({ error: "Invalid Google token" });
+    } else if (socialProvider === "github") {
+      const isValid = await verifyGithubToken(idToken, identifier);
+      if (!isValid)
+        return res.status(401).json({ error: "Invalid GitHub token" });
+    } else {
+      let isMatch = false;
+      if (user.password && user.password.startsWith("$2")) {
+        isMatch = await bcrypt.compare(password, user.password);
+      } else {
+        isMatch = password === user.password;
+      }
+      if (!isMatch) {
+        return res.status(401).json({ error: "Invalid password" });
+      }
+    }
+
+    if (socialProvider && user.providerId !== socialProvider) {
+      return res.status(400).json({
+        error: `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
+      });
+    }
+
+    const [preferencesDoc, tokens] = await Promise.all([
+      userPrefs.doc(user.uid).get(),
+      generateTokens(user),
+    ]);
+
+    const { accessToken, refreshToken } = tokens;
+    const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
+    const safeUser = { ...user };
+    safeUser.hasIcashPin = Boolean(user.iCashPin);
+    delete safeUser.password;
+    delete safeUser.iCashPin;
+    delete safeUser.userAccountDetails;
+    console.log("Logging in...");
+    safeUser.theme = preferences ? preferences.theme : "light";
+    safeUser.sessions = [];
+    res.status(200).json({
+      message: "Login successful",
+      user: safeUser,
+      accessToken,
+      refreshToken,
+    });
+    setImmediate(async () => {
+      try {
+        const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
+          .split(",")[0]
+          .trim();
+        const geo = geoip.lookup(ip);
+        const location = geo.city ? `${geo.city}, ${geo.country}` : geo.country;
+        const sessionData = {
+          userId: user.uid,
+          deviceId,
+          deviceName,
+          ipAddress: ip,
+          location,
+          refreshToken,
+          lastUsed: new Date(),
+          updatedAt: new Date(),
+        };
+        const existingSessionQuery = await UserSessions.where(
+          "userId",
+          "==",
+          user.uid,
+        )
+          .where("deviceId", "==", deviceId)
+          .limit(1)
+          .get();
+
+        let isNewSession = false;
+        if (!existingSessionQuery.empty) {
+          const sessionDocRef = existingSessionQuery.docs[0].ref;
+          await sessionDocRef.set(sessionData, { merge: true });
+        } else {
+          isNewSession = true;
+          const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+          sessionData.sessionId = sessionId;
+          sessionData.createdAt = new Date();
+          await UserSessions.doc(sessionId).set(sessionData);
+        }
+
+        logControllerPerformance(controllerName, action, startTime, "success");
+
+        await verifyAndNotifyLogin(user, req, "USER_LOGIN_AUDIT").catch((err) =>
+          console.error("Audit error:", err),
+        );
+
+        if (isNewSession) {
+          const now = new Date();
+          await createNotification({
+            notificationId: generateNotificationId("security"),
+            recipientId: user.uid,
+            isRead: false,
+            recipientEmail: user.email,
+            recoveryEmails: user.recoveryEmails,
+            category: "auth",
+            actionType: "NEW_LOGIN",
+            title: "Security Alert: New Login",
+            payload: {
+              userName: user.firstname || user.firstName,
+              ipAddress: ip,
+              location,
+              date: now.toLocaleDateString(),
+              time: now.toLocaleTimeString(),
+              userId: user.uid,
+            },
+            message: `A login was detected from ${ip} in ${location}.`,
+            sendEmail: true,
+            saveToDb: true,
+          }).catch((err) =>
+            console.error("Background notification error:", err),
+          );
+
+          await addFlag(user.uid, "UNRECOGNIZED_LOCATION").catch((err) =>
+            console.error("Background flag error:", err),
+          );
+        }
+      } catch (bgError) {
+        console.error("Background session/audit processing error:", bgError);
+      }
+    });
+  } catch (error) {
+    console.error("Login Error:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    if (!res.headersSent) {
+      return res.status(500).json({ error: error.message || "Login error" });
+    }
   }
 };
