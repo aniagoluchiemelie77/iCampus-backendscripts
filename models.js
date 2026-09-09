@@ -422,8 +422,9 @@ export const userSchema = new mongoose.Schema({
 });
 export const adminSchema = new mongoose.Schema({
   uid: { type: String, index: true, required: true, unique: true },
-  firstname: { type: String, required: true },
-  lastname: { type: String, required: true },
+  firstname: { type: String },
+  lastname: { type: String },
+  organizationName: { type: String },
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   adminType: {

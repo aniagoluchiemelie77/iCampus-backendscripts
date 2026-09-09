@@ -313,7 +313,10 @@ export function generateStationId() {
   return `STN-${datePart}-${randomSuffix}`;
 }
 export function generateItagUsername(firstName, digitCount = 4) {
-  const cleanName = firstName.toLowerCase().replace(/[^a-z]/g, "");
+  const cleanName = firstName
+    .toLowerCase()
+    .replace(/[^a-z]/g, "")
+    .slice(0, 8);
   const min = Math.pow(10, digitCount - 1);
   const max = Math.pow(10, digitCount) - 1;
   const randomSuffix = Math.floor(Math.random() * (max - min + 1) + min);
@@ -387,7 +390,6 @@ export const generateUniqueCardNumber = async () => {
     const rawDigits = `${digits}${timestampSuffix}${randomSuffix}`.slice(0, 15);
     cardNumber = `7${rawDigits.match(/.{1,4}/g).join(" ")}`;
   }
-  console.log("Generated Card Number:", cardNumber);
   return cardNumber;
 };
 export function generateAdId(advertiserName) {
