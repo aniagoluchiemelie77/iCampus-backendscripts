@@ -1650,12 +1650,8 @@ export const Login = async (req, res) => {
       if (!isValid)
         return res.status(401).json({ error: "Invalid GitHub token" });
     } else {
-      let isMatch = false;
-      if (user.password && user.password.startsWith("$2")) {
-        isMatch = await bcrypt.compare(password, user.password);
-      } else {
-        isMatch = password === user.password;
-      }
+      let isMatch;
+      isMatch = await bcrypt.compare(password, user.password);
       if (!isMatch) {
         return res.status(401).json({ error: "Invalid password" });
       }
