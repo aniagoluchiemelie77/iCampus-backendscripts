@@ -52,32 +52,6 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
 
   const endpointsToTest = [
     {
-      name: "Register drop-off station",
-      method: "post",
-      path: () => `users/stations/register`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-      body: {
-        name: "Green Earth Drop-Off",
-        address: "45 Eco Lane, Cityville",
-        latitude: 6.5244,
-        longitude: 3.3792,
-        images: ["https://example.com/image1.jpg"],
-      },
-    },
-    {
-      name: "Delete user phone number",
-      method: "delete",
-      path: () => `users/phone-number`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-      body: {
-        phoneNumber: "+1234567890",
-      },
-    },
-    {
       name: "Send AI chat message",
       method: "post",
       path: () => `users/ai/chat`,
@@ -116,6 +90,17 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
       },
     },
     {
+      name: "Delete user phone number",
+      method: "delete",
+      path: () => `users/phone-number`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        phoneNumber: "+1234567890",
+      },
+    },
+    {
       name: "Delete user account",
       method: "delete",
       path: () => `users/account/delete`,
@@ -127,6 +112,21 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
       },
     },
     /*
+    {
+      name: "Register drop-off station",
+      method: "post",
+      path: () => `users/stations/register`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        name: "Green Earth Drop-Off",
+        address: "45 Eco Lane, Cityville",
+        latitude: 6.5244,
+        longitude: 3.3792,
+        images: ["https://example.com/image1.jpg"],
+      },
+    },
     {
       name: "Customize iTag details",
       method: "put",

@@ -43,6 +43,8 @@ import {
   USD_EQUIVALENCE_OF_1_ICASH,
   EXCEPTION_ACCOUNT_LIMITS,
 } from "../constants/inAppConstants.js";
+import dotenv from "dotenv";
+dotenv.config();
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 axiosRetry(axios, { retries: 3 });
@@ -1532,149 +1534,6 @@ export const createQuickMeeting = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, message: "Internal Server Error" });
-  }
-};
-export const registerDropOffStation = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "registerDropOffStationController";
-  const action = "registerDropOffStation";
-
-  try {
-    const { name, address, images, latitude, longitude } = req.body;
-    const userId = req.user?.id || req.user?.uid;
-
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user identifier",
-        );
-      });
-      return res
-        .status(401)
-        .json({ success: false, message: "Unauthorized user identifier" });
-    }
-
-    if (
-      !name ||
-      !address ||
-      latitude === undefined ||
-      longitude === undefined
-    ) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing required station fields.",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "Missing required station fields." });
-    }
-
-    const stationId =
-      typeof generateStationId === "function"
-        ? generateStationId()
-        : `STN-${Date.now()}`;
-    const ticketRefId =
-      typeof generateTicketId === "function"
-        ? generateTicketId(userId)
-        : `TKT-${Date.now()}`;
-    const now = new Date();
-
-    const newRequest = {
-      id: stationId,
-      userId,
-      name,
-      address,
-      images: Array.isArray(images) ? images : [],
-      latitude,
-      longitude,
-      status: "pending",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const newTicket = {
-      userId,
-      ticketRefId,
-      source: "in-app",
-      category: "technical",
-      summary: `New Station Registration: ${name}`,
-      originalMessage: `User ${userId} requests to register drop-off station ${name} at ${address} with coordinates: ${latitude} ${longitude}.`,
-      severity: "high",
-      status: "open",
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    await Promise.all([
-      DropOffStation.doc(stationId).set(newRequest),
-      SupportTicket.add(newTicket),
-      typeof createNotification === "function"
-        ? createNotification({
-            notificationId:
-              typeof generateNotificationId === "function"
-                ? generateNotificationId("store")
-                : `NOTIF-${Date.now()}`,
-            recipientId: userId,
-            isRead: false,
-            category: "store",
-            actionType: "STATION_REQUEST_RECEIVED",
-            title: "Drop-off Station Registration Request Received",
-            message:
-              "Your drop-off station request has been received and is under review. Expect a reply within 5 days.",
-            payload: {
-              requestId: stationId,
-              address: newRequest.address,
-            },
-          })
-        : Promise.resolve(),
-      typeof notifyAdmins === "function"
-        ? notifyAdmins(
-            { role: ["super_admin", "moderator"] },
-            {
-              notificationId:
-                typeof generateNotificationId === "function"
-                  ? generateNotificationId("store")
-                  : `NOTIF-ADM-${Date.now()}`,
-              actionType: "NEW_STATION_REGISTRATION",
-              title: "New Station Request",
-              message: `New drop-off station "${name}" submitted by user ${userId}.`,
-              payload: { ticketRefId, requestId: stationId, name, userId },
-            },
-            true,
-          ).catch((err) => console.error("Admin notification failed:", err))
-        : Promise.resolve(),
-    ]);
-
-    res.status(200).json({
-      success: true,
-      message: "Request submitted successfully",
-      stationId,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Register Drop-Off Station Error:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
@@ -4225,5 +4084,148 @@ export const searchUserUsingUidOrNameQuery = async (req, res) => {
       );
     });
     return res.status(500).json({ message: error.message, success: false });
+  }
+};
+export const registerDropOffStation = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "registerDropOffStationController";
+  const action = "registerDropOffStation";
+
+  try {
+    const { name, address, images, latitude, longitude } = req.body;
+    const userId = req.user?.id || req.user?.uid;
+
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user identifier",
+        );
+      });
+      return res
+        .status(401)
+        .json({ success: false, message: "Unauthorized user identifier" });
+    }
+
+    if (
+      !name ||
+      !address ||
+      latitude === undefined ||
+      longitude === undefined
+    ) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing required station fields.",
+        );
+      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required station fields." });
+    }
+
+    const stationId =
+      typeof generateStationId === "function"
+        ? generateStationId()
+        : `STN-${Date.now()}`;
+    const ticketRefId =
+      typeof generateTicketId === "function"
+        ? generateTicketId(userId)
+        : `TKT-${Date.now()}`;
+    const now = new Date();
+
+    const newRequest = {
+      id: stationId,
+      userId,
+      name,
+      address,
+      images: Array.isArray(images) ? images : [],
+      latitude,
+      longitude,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    const newTicket = {
+      userId,
+      ticketRefId,
+      source: "in-app",
+      category: "technical",
+      summary: `New Station Registration: ${name}`,
+      originalMessage: `User ${userId} requests to register drop-off station ${name} at ${address} with coordinates: ${latitude} ${longitude}.`,
+      severity: "high",
+      status: "open",
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await Promise.all([
+      DropOffStation.doc(stationId).set(newRequest),
+      SupportTicket.add(newTicket),
+      typeof createNotification === "function"
+        ? createNotification({
+            notificationId:
+              typeof generateNotificationId === "function"
+                ? generateNotificationId("store")
+                : `NOTIF-${Date.now()}`,
+            recipientId: userId,
+            isRead: false,
+            category: "store",
+            actionType: "STATION_REQUEST_RECEIVED",
+            title: "Drop-off Station Registration Request Received",
+            message:
+              "Your drop-off station request has been received and is under review. Expect a reply within 5 days.",
+            payload: {
+              requestId: stationId,
+              address: newRequest.address,
+            },
+          })
+        : Promise.resolve(),
+      typeof notifyAdmins === "function"
+        ? notifyAdmins(
+            { role: ["super_admin", "moderator"] },
+            {
+              notificationId:
+                typeof generateNotificationId === "function"
+                  ? generateNotificationId("store")
+                  : `NOTIF-ADM-${Date.now()}`,
+              actionType: "NEW_STATION_REGISTRATION",
+              title: "New Station Request",
+              message: `New drop-off station "${name}" submitted by user ${userId}.`,
+              payload: { ticketRefId, requestId: stationId, name, userId },
+            },
+            true,
+          ).catch((err) => console.error("Admin notification failed:", err))
+        : Promise.resolve(),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      message: "Request submitted successfully",
+      stationId,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Register Drop-Off Station Error:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
