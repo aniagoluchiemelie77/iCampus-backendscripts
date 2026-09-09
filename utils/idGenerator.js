@@ -322,7 +322,7 @@ export function generateItagUsername(firstName, digitCount = 4) {
 }
 export const generateUniqueReferralCode = async (user) => {
   const nameToUse =
-    user?.userType === "enterprise"
+    user?.usertype === "enterprise"
       ? user?.organizationName || user?.organizationname || "Enterprise"
       : user?.firstName || user?.firstname || user?.email || "User";
 
@@ -335,11 +335,12 @@ export const generateUniqueReferralCode = async (user) => {
     attempts++;
     code = generateReferralCode(nameToUse, attempts > 1 ? attempts : undefined);
 
-    const userWithCode = await User.findOne({ referralCode: code })
-      .select("_id")
-      .lean();
+    // Replaced Mongoose .findOne() with Firestore query syntax
+    const querySnapshot = await User.where("referralCode", "==", code)
+      .limit(1)
+      .get();
 
-    if (!userWithCode) {
+    if (querySnapshot.empty) {
       exists = false;
     }
   }

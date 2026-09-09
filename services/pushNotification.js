@@ -1,5 +1,5 @@
 import admin from "firebase-admin";
-import { User } from "../tableDeclarations.js";
+import { User, Admin } from "../tableDeclarations.js";
 import { theme } from "./emailTheme.js";
 
 export const sendPushNotification = async (
@@ -14,10 +14,17 @@ export const sendPushNotification = async (
       console.warn("Push notification skipped: Missing recipientId.");
       return;
     }
-
-    const querySnapshot = await User.where("uid", "==", recipientId)
+    let querySnapshot = await User.where("uid", "==", recipientId)
       .limit(1)
       .get();
+
+    let targetCollection = User;
+    if (querySnapshot.empty) {
+      querySnapshot = await Admin.where("uid", "==", recipientId)
+        .limit(1)
+        .get();
+      targetCollection = Admin;
+    }
 
     if (querySnapshot.empty) {
       console.log("No user found for recipient:", recipientId);
@@ -77,9 +84,14 @@ export const sendPushNotification = async (
         `[FCM_CLEANUP] Removing stale token for recipient: ${recipientId}`,
       );
       try {
-        const querySnapshot = await User.where("uid", "==", recipientId)
+        let querySnapshot = await User.where("uid", "==", recipientId)
           .limit(1)
           .get();
+        if (querySnapshot.empty) {
+          querySnapshot = await Admin.where("uid", "==", recipientId)
+            .limit(1)
+            .get();
+        }
         if (!querySnapshot.empty) {
           await querySnapshot.docs[0].ref.update({
             fcmToken: null,
