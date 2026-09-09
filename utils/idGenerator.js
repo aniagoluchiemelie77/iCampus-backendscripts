@@ -387,7 +387,7 @@ export const generateUniqueCardNumber = async () => {
     const rawDigits = `${digits}${timestampSuffix}${randomSuffix}`.slice(0, 15);
     cardNumber = `7${rawDigits.match(/.{1,4}/g).join(" ")}`;
   }
-
+  console.log("Generated Card Number:", cardNumber);
   return cardNumber;
 };
 export function generateAdId(advertiserName) {

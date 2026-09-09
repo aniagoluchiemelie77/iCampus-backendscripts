@@ -312,7 +312,6 @@ export const userSchema = new mongoose.Schema({
   website: String,
   jobTitle: String,
   schoolCode: String,
-  usertype: String,
   isFirstLogin: Boolean,
   username: String,
   firstname: String,

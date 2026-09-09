@@ -38,244 +38,6 @@ import { promisify } from "util";
 const verifyJwtAsync = promisify(jwt.verify);
 axiosRetry(axios, { retries: 3 });
 
-export const signUp = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "signUpController";
-  const action = "signUp";
-
-  const {
-    usertype,
-    email,
-    matriculation_number,
-    staff_id,
-    department,
-    password,
-    firstname,
-    lastname,
-    deviceId,
-    deviceName,
-    providerId,
-  } = req.body;
-
-  if (!email) {
-    return res
-      .status(400)
-      .json({ message: "Email is required", success: false });
-  }
-
-  try {
-    let existingUserQuery = User.where("email", "==", email);
-    let institutionalQuery = null;
-    console.log("Step 1...");
-    if (usertype === "student" && matriculation_number && department) {
-      institutionalQuery = User.where("usertype", "==", "student")
-        .where("matriculation_number", "==", matriculation_number)
-        .where("department", "==", department);
-    } else if (usertype === "lecturer" && staff_id && department) {
-      institutionalQuery = User.where("usertype", "==", "lecturer")
-        .where("staff_id", "==", staff_id)
-        .where("department", "==", department);
-    }
-    console.log("Step 2...");
-    const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
-    const ip = rawIp ? rawIp.split(",")[0].trim() : "";
-    const geo = geoip.lookup(ip);
-    const location = !geo
-      ? "Unknown Location"
-      : geo.city
-        ? `${geo.city}, ${geo.country}`
-        : geo.country;
-    const [uid, itagusername] = await Promise.all([
-      Promise.resolve(generateUserUID()),
-      Promise.resolve(generateItagUsername(firstname || lastname, 5)),
-    ]);
-    console.log("Step 3...");
-
-    const isVerified =
-      usertype === "student" || usertype === "lecturer" || !!providerId;
-    const iSCardEligible = ["student", "lecturer", "otherUser"].includes(
-      usertype,
-    );
-    const queriesToRun = [
-      existingUserQuery.limit(1).get(),
-      password && password !== "SOCIAL_AUTH"
-        ? bcrypt.hash(password, 10)
-        : Promise.resolve(null),
-      generateUniqueReferralCode(req.body),
-      iSCardEligible ? generateUniqueCardNumber() : Promise.resolve(null),
-    ];
-    console.log("Step 4...");
-
-    if (institutionalQuery) {
-      queriesToRun.push(institutionalQuery.limit(1).get());
-    }
-    console.log("Step 5...");
-
-    const results = await Promise.all(queriesToRun);
-    const emailSnapshot = results[0];
-    const hashedPassword = results[1];
-    const referralCode = results[2];
-    const newCardNumber = results[3];
-    const institutionalSnapshot = institutionalQuery ? results[4] : null;
-    if (!emailSnapshot.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Email already in use.",
-        );
-      });
-      return res.status(409).json({
-        message: "An account with this email already exists.",
-        success: false,
-      });
-    }
-
-    if (institutionalSnapshot && !institutionalSnapshot.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Institutional ID already in use.",
-        );
-      });
-      return res.status(409).json({
-        message: "An account with this institutional ID already exists.",
-        success: false,
-      });
-    }
-    console.log("Step 6...");
-    const newUserObj = {
-      uid,
-      ...req.body,
-      itagusername,
-      referralCode,
-      password: hashedPassword,
-      isVerified,
-      providerId: providerId || "",
-      createdAt: new Date(),
-      updatedAt: new Date(),
-      hasIcashPin: false,
-      tier: "free",
-      pointsBalance: 0.0,
-      hasSubscribed: false,
-      twoFactorEnabled: false,
-    };
-    delete newUserObj.passwordConfirm;
-    console.log("Step 7...");
-    const defaultPreferencesData = {
-      userId: uid,
-      theme: "light",
-      notifications: {
-        auth: true,
-        social: true,
-        classroom: true,
-        store: true,
-        finance: true,
-        profile: true,
-        security: true,
-      },
-      channels: { push: true, email: true, socket: true },
-      language: "en",
-      quietHours: { enabled: false },
-      updatedAt: new Date(),
-    };
-
-    const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-    const initialSession = {
-      sessionId,
-      userId: uid,
-      deviceId,
-      deviceName,
-      ipAddress: ip,
-      location,
-      lastUsed: new Date(),
-      createdAt: new Date(),
-    };
-    console.log("Step 7...");
-
-    const dbWrites = [
-      User.doc(uid).set(newUserObj),
-      userPrefs.doc(uid).set(defaultPreferencesData),
-      UserSessions.doc(sessionId).set(initialSession),
-    ];
-
-    if (iSCardEligible && newCardNumber) {
-      const itagId = `itag_${uid}`;
-      const newITagData = {
-        userId: uid,
-        username: itagusername,
-        cardHolderName: `${firstname} ${lastname}`,
-        cardNumber: newCardNumber,
-        tier: "free",
-        createdAt: new Date(),
-      };
-      dbWrites.push(ITag.doc(itagId).set(newITagData));
-    }
-    const [_, __, ___, ____, tokens] = await Promise.all([
-      ...dbWrites,
-      generateTokens({ uid, usertype, email, ...newUserObj }),
-    ]);
-
-    const { accessToken, refreshToken } = tokens;
-    initialSession.refreshToken = refreshToken;
-
-    const safeUser = { ...newUserObj };
-    delete safeUser.password;
-    delete safeUser.iCashPin;
-    safeUser.theme = defaultPreferencesData.theme;
-    safeUser.sessions = [initialSession];
-    console.log("Successful...");
-    res.status(200).json({
-      message: "User created successfully",
-      success: true,
-      user: safeUser,
-      accessToken,
-      refreshToken,
-    });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-      UserSessions.doc(sessionId)
-        .update({ refreshToken })
-        .catch((err) => console.error("Session token update error:", err));
-      createNotification({
-        notificationId: generateNotificationId("signup"),
-        recipientId: uid,
-        isRead: false,
-        category: "signup",
-        actionType: "WELCOME_USER",
-        title: "Welcome to iCampus!",
-        message: `Hi ${firstname}, we're excited to have you here!`,
-        payload: { userName: firstname },
-        recipientEmail: email,
-        sendEmail: true,
-        sendPush: true,
-        saveToDb: true,
-      }).catch((err) =>
-        console.error("Background welcome notification error:", err),
-      );
-    });
-  } catch (error) {
-    console.error("❌ Insert failed:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      message: error.message || "Failed to save user",
-      success: false,
-    });
-  }
-};
 export const fetchInstitutionByCountry = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchInstitutionByCountryController";
@@ -1792,5 +1554,269 @@ export const AdminLogin = async (req, res) => {
     return res
       .status(500)
       .json({ error: "Internal server error during login" });
+  }
+};
+export const signUp = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "signUpController";
+  const action = "signUp";
+
+  const {
+    usertype,
+    email,
+    matriculation_number,
+    staff_id,
+    department,
+    password,
+    firstname,
+    lastname,
+    deviceId,
+    deviceName,
+    organizationName,
+    providerId,
+  } = req.body;
+
+  if (!email) {
+    return res
+      .status(400)
+      .json({ message: "Email is required", success: false });
+  }
+
+  try {
+    let existingUserQuery = User.where("email", "==", email);
+    let institutionalQuery = null;
+    console.log("Step 1...");
+    if (usertype === "student" && matriculation_number && department) {
+      institutionalQuery = User.where("usertype", "==", "student")
+        .where("matriculation_number", "==", matriculation_number)
+        .where("department", "==", department);
+    } else if (usertype === "lecturer" && staff_id && department) {
+      institutionalQuery = User.where("usertype", "==", "lecturer")
+        .where("staff_id", "==", staff_id)
+        .where("department", "==", department);
+    }
+    console.log("Step 2...");
+    const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
+    const ip = rawIp ? rawIp.split(",")[0].trim() : "";
+    const geo = geoip.lookup(ip);
+    const location = !geo
+      ? "Unknown Location"
+      : geo.city
+        ? `${geo.city}, ${geo.country}`
+        : geo.country;
+
+    const displayNameForGen =
+      firstname || lastname || organizationName || "User";
+
+    const [uid, itagusername] = await Promise.all([
+      Promise.resolve(generateUserUID()),
+      Promise.resolve(generateItagUsername(displayNameForGen, 5)),
+    ]);
+    console.log("Step 3...");
+    const isVerified = usertype === "student" || usertype === "lecturer";
+
+    const iSCardEligible = [
+      "student",
+      "lecturer",
+      "otherUser",
+      "enterprise",
+    ].includes(usertype);
+    console.log("User Type:", usertype, "| iSCardEligible:", iSCardEligible);
+
+    const queriesToRun = [
+      existingUserQuery.limit(1).get(),
+      password && password !== "SOCIAL_AUTH"
+        ? bcrypt.hash(password, 10)
+        : Promise.resolve(null),
+      generateUniqueReferralCode(req.body),
+      iSCardEligible ? generateUniqueCardNumber() : Promise.resolve(null),
+    ];
+
+    console.log("Step 4...");
+
+    if (institutionalQuery) {
+      queriesToRun.push(institutionalQuery.limit(1).get());
+    }
+    console.log("Step 5...");
+
+    const results = await Promise.all(queriesToRun);
+    const emailSnapshot = results[0];
+    const hashedPassword = results[1];
+    const referralCode = results[2];
+    const newCardNumber = results[3];
+    const institutionalSnapshot = institutionalQuery ? results[4] : null;
+    if (!emailSnapshot.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Email already in use.",
+        );
+      });
+      return res.status(409).json({
+        message: "An account with this email already exists.",
+        success: false,
+      });
+    }
+
+    if (institutionalSnapshot && !institutionalSnapshot.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Institutional ID already in use.",
+        );
+      });
+      return res.status(409).json({
+        message: "An account with this institutional ID already exists.",
+        success: false,
+      });
+    }
+    console.log("Step 6...");
+    const newUserObj = {
+      uid,
+      ...req.body,
+      itagusername,
+      referralCode,
+      password: hashedPassword,
+      isVerified,
+      providerId: providerId || "",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      hasIcashPin: false,
+      tier: "free",
+      pointsBalance: 0.0,
+      hasSubscribed: false,
+      twoFactorEnabled: false,
+    };
+    delete newUserObj.passwordConfirm;
+    console.log("Step 7...");
+    const defaultPreferencesData = {
+      userId: uid,
+      theme: "light",
+      notifications: {
+        auth: true,
+        social: true,
+        classroom: true,
+        store: true,
+        finance: true,
+        profile: true,
+        security: true,
+      },
+      channels: { push: true, email: true, socket: true },
+      language: "en",
+      quietHours: { enabled: false },
+      updatedAt: new Date(),
+    };
+
+    const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const initialSession = {
+      sessionId,
+      userId: uid,
+      deviceId,
+      deviceName,
+      ipAddress: ip,
+      location,
+      lastUsed: new Date(),
+      createdAt: new Date(),
+    };
+    console.log("Step 7...");
+
+    const dbWrites = [
+      User.doc(uid).set(newUserObj),
+      userPrefs.doc(uid).set(defaultPreferencesData),
+      UserSessions.doc(sessionId).set(initialSession),
+    ];
+
+    if (iSCardEligible && newCardNumber) {
+      const itagId = `itag_${uid}`;
+      const cardHolder =
+        firstname && lastname
+          ? `${firstname} ${lastname}`
+          : organizationName || email.split("@")[0];
+
+      const newITagData = {
+        userId: uid,
+        username: itagusername,
+        cardHolderName: cardHolder,
+        cardNumber: newCardNumber,
+        tier: "free",
+        createdAt: new Date(),
+      };
+
+      console.log("Pushing ITag write for:", itagId, newITagData);
+      dbWrites.push(ITag.doc(itagId).set(newITagData));
+    } else {
+      console.log(
+        "Skipped ITag write. Eligible:",
+        iSCardEligible,
+        "Card Number:",
+        newCardNumber,
+      );
+    }
+    const [_, __, ___, ____, tokens] = await Promise.all([
+      ...dbWrites,
+      generateTokens({ uid, usertype, email, ...newUserObj }),
+    ]);
+
+    const { accessToken, refreshToken } = tokens;
+    initialSession.refreshToken = refreshToken;
+
+    const safeUser = { ...newUserObj };
+    delete safeUser.password;
+    delete safeUser.iCashPin;
+    safeUser.theme = defaultPreferencesData.theme;
+    safeUser.sessions = [initialSession];
+    console.log("Successful...");
+    res.status(200).json({
+      message: "User created successfully",
+      success: true,
+      user: safeUser,
+      accessToken,
+      refreshToken,
+    });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+      UserSessions.doc(sessionId)
+        .update({ refreshToken })
+        .catch((err) => console.error("Session token update error:", err));
+
+      const welcomeName = firstname || organizationName || "there";
+      createNotification({
+        notificationId: generateNotificationId("signup"),
+        recipientId: uid,
+        isRead: false,
+        category: "signup",
+        actionType: "WELCOME_USER",
+        title: "Welcome to iCampus!",
+        message: `Hi ${welcomeName}, we're excited to have you here!`,
+        payload: { userName: welcomeName },
+        recipientEmail: email,
+        sendEmail: true,
+        sendPush: true,
+        saveToDb: true,
+      }).catch((err) =>
+        console.error("Background welcome notification error:", err),
+      );
+    });
+  } catch (error) {
+    console.error("❌ Insert failed:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      message: error.message || "Failed to save user",
+      success: false,
+    });
   }
 };
