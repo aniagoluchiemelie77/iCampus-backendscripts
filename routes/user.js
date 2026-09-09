@@ -166,7 +166,12 @@ router.post(
   uploadCourseDetailsManually,
 );
 router.post("/online-classes/create", protect, createQuickMeeting);
-router.post("/stations/register", protect, registerDropOffStation);
+router.post(
+  "/stations/register",
+  protect,
+  idempotencyMiddleware,
+  registerDropOffStation,
+);
 router.get("/ads/fetch-active", protect, getAds);
 router.get("/fetch-sessions", protect, fetchUserSessions);
 router.get("/preferences", protect, getUserPreferences);

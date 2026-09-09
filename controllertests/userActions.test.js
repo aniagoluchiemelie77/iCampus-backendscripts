@@ -52,52 +52,30 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
 
   const endpointsToTest = [
     {
-      name: "Customize iTag details",
-      method: "put",
-      path: () => `users/update-itag`,
+      name: "Register drop-off station",
+      method: "post",
+      path: () => `users/stations/register`,
       auth: true,
       idempotent: true,
       expected: 200,
       body: {
-        updates: {
-          username: "chinedu_kiv",
-          designOptions: {
-            backgroundColor: "#eee",
-          },
-        },
+        name: "Green Earth Drop-Off",
+        address: "45 Eco Lane, Cityville",
+        latitude: 6.5244,
+        longitude: 3.3792,
+        images: ["https://example.com/image1.jpg"],
       },
     },
     {
-      name: "Search user using UID or query term",
-      method: "get",
-      path: () => `users/search?q=Alice&viewerRole=user&viewerTier=pro`,
+      name: "Delete user phone number",
+      method: "delete",
+      path: () => `users/phone-number`,
       auth: true,
+      idempotent: true,
       expected: 200,
-      body: null,
-    },
-    {
-      name: "Handle unified course search lookup",
-      method: "get",
-      path: () => `users/courses/search?q=petr`,
-      auth: true,
-      expected: 200,
-      body: null,
-    },
-    {
-      name: "Handle unified resource search lookup",
-      method: "get",
-      path: () => `users/courses/resources/search?q=petro`,
-      auth: true,
-      expected: 200,
-      body: null,
-    },
-    {
-      name: "Refresh user details and generate new tokens",
-      method: "get",
-      path: () => `users/refresh-user-details`,
-      auth: true,
-      expected: 200,
-      body: {},
+      body: {
+        phoneNumber: "+1234567890",
+      },
     },
     {
       name: "Send AI chat message",
@@ -149,6 +127,54 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
       },
     },
     /*
+    {
+      name: "Customize iTag details",
+      method: "put",
+      path: () => `users/update-itag`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        updates: {
+          username: "chinedu_kiv",
+          designOptions: {
+            backgroundColor: "#eee",
+          },
+        },
+      },
+    },
+    {
+      name: "Search user using UID or query term",
+      method: "get",
+      path: () => `users/search?q=Alice&viewerRole=user&viewerTier=pro`,
+      auth: true,
+      expected: 200,
+      body: null,
+    },
+    {
+      name: "Handle unified course search lookup",
+      method: "get",
+      path: () => `users/courses/search?q=petr`,
+      auth: true,
+      expected: 200,
+      body: null,
+    },
+    {
+      name: "Handle unified resource search lookup",
+      method: "get",
+      path: () => `users/courses/resources/search?q=petro`,
+      auth: true,
+      expected: 200,
+      body: null,
+    },
+    {
+      name: "Refresh user details and generate new tokens",
+      method: "get",
+      path: () => `users/refresh-user-details`,
+      auth: true,
+      expected: 200,
+      body: {},
+    },
     {
       name: "Verify password in-app",
       method: "post",

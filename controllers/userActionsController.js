@@ -668,130 +668,6 @@ export const deletePhoneNumber = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
-export const customizeItag = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "customizeItagController";
-  const action = "customizeItag";
-
-  try {
-    const userId = req.user?.uid || req.user?.id;
-    const { updates } = req.body;
-
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User ID is required",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "User ID is required" });
-    }
-
-    if (!updates || typeof updates !== "object") {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid or missing update payload",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "Valid updates payload is required.",
-      });
-    }
-
-    const sanitizedUsername = updates.username
-      ? updates.username.trim().toLowerCase()
-      : null;
-    const [itagQuery, usernameQuery] = await Promise.all([
-      ITag.where("userId", "==", userId).limit(1).get(),
-      sanitizedUsername
-        ? ITag.where("username", "==", sanitizedUsername).get()
-        : Promise.resolve(null),
-    ]);
-
-    if (itagQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "iTag not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "iTag not found" });
-    }
-
-    const itagDoc = itagQuery.docs[0];
-
-    if (usernameQuery && !usernameQuery.empty) {
-      const usernameExists = usernameQuery.docs.some(
-        (doc) => doc.id !== itagDoc.id,
-      );
-      if (usernameExists) {
-        setImmediate(() => {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Username already exists",
-          );
-        });
-        return res
-          .status(400)
-          .json({ success: false, message: "Username already exists" });
-      }
-    }
-
-    const processedUpdates = {
-      ...updates,
-      ...(sanitizedUsername ? { username: sanitizedUsername } : {}),
-      updatedAt: new Date(),
-    };
-
-    await itagDoc.ref.update(processedUpdates);
-    const updatedITag = {
-      id: itagDoc.id,
-      ...itagDoc.data(),
-      ...processedUpdates,
-    };
-    res.status(200).json({
-      success: true,
-      message: "iTag updated successfully",
-      data: updatedITag,
-    });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Update Error:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
-    });
-  }
-};
 export const revokeLoggedInDeviceSession = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "revokeLoggedInDeviceController";
@@ -1180,130 +1056,6 @@ export const resetIcashPin = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
-export const searchUserUsingUidOrNameQuery = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "searchUserUsingUidOrNameQueryController";
-  const action = "searchUserUsingUidOrNameQuery";
-  const { q, uid, viewerRole, viewerTier } = req.query;
-
-  const isAdmin = viewerRole === "admin";
-
-  try {
-    let users = [];
-
-    if (uid) {
-      const userQuery = await User.where("uid", "==", uid).limit(1).get();
-      if (!userQuery.empty) {
-        users.push({ id: userQuery.docs[0].id, ...userQuery.docs[0].data() });
-      }
-    } else if (q && typeof q === "string" && q.trim().length > 0) {
-      const snapshot = await User.get();
-      const searchTerm = q.trim().toLowerCase();
-
-      snapshot.forEach((doc) => {
-        const data = doc.data();
-        const firstname = (data.firstname || "").toLowerCase();
-        const lastname = (data.lastname || "").toLowerCase();
-        const username = (data.username || "").toLowerCase();
-
-        let isMatch =
-          firstname.includes(searchTerm) ||
-          lastname.includes(searchTerm) ||
-          username.includes(searchTerm);
-
-        if (isAdmin && !isMatch) {
-          const userUid = (data.uid || "").toLowerCase();
-          const itagusername = (data.itagusername || "").toLowerCase();
-          const schoolCode = (data.schoolCode || "").toLowerCase();
-          const email = (data.email || "").toLowerCase();
-          const department = (data.department || "").toLowerCase();
-          const matricNumber = (data.matricNumber || "").toLowerCase();
-          const staffId = (data.staffId || "").toLowerCase();
-
-          isMatch =
-            userUid.includes(searchTerm) ||
-            itagusername.includes(searchTerm) ||
-            schoolCode.includes(searchTerm) ||
-            email.includes(searchTerm) ||
-            department.includes(searchTerm) ||
-            matricNumber.includes(searchTerm) ||
-            staffId.includes(searchTerm);
-        }
-
-        if (isMatch) {
-          users.push({ id: doc.id, ...data });
-        }
-      });
-      users = users.slice(0, 20);
-    } else {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Query or UID required",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "Query or UID required" });
-    }
-
-    const safeResults = users.map((u) => {
-      const isPro = viewerTier === "pro" || viewerTier === "premium";
-      const isEnterprise = viewerRole === "enterprise";
-
-      return {
-        uid: u.uid,
-        firstname: u.firstname,
-        email: u.email,
-        username: u.username,
-        lastname: u.lastname,
-        profilePic: u.profilePic,
-        usertype: u.usertype,
-        tier: u.tier,
-        isVerified: u.isVerified,
-        organizationName: u.organizationName || "",
-        displayScore:
-          isEnterprise || isPro ? Math.round(u.currentIScore || 0) : "Locked",
-        bio: isAdmin ? u.bio : "",
-        pointsBalance: isAdmin ? u.pointsBalance : "",
-        pendingSalesBalance: isAdmin ? u.pendingSalesBalance : "",
-        website: isAdmin ? u.website : "",
-        headline: isAdmin ? u.headline : "",
-        department: isAdmin ? u.department : "",
-        staffId: isAdmin ? u.staffId : "",
-        matricNumber: isAdmin ? u.matricNumber : "",
-        itagusername: isAdmin ? u.itagusername : "",
-        schoolName: isAdmin ? u.schoolName : "",
-        country: isAdmin ? u.country : "",
-        current_level: isAdmin ? u.current_level : "",
-        isSuspended: isAdmin ? u.isSuspended : "",
-        twoFactorEnabled: isAdmin ? u.twoFactorEnabled : "",
-      };
-    });
-
-    res
-      .status(200)
-      .json({ success: true, data: uid ? safeResults[0] : safeResults });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Search Users Controller Error:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ message: error.message, success: false });
-  }
-};
 export const createPersonaVerifyInquiry = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "createPersonaVerifyInquiryController";
@@ -1424,345 +1176,6 @@ export const createPersonaVerifyInquiry = async (req, res) => {
     });
   }
 };
-export const handleUnifiedCourseSearch = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "handleUnifiedCourseSearchController";
-  const action = "handleUnifiedCourseSearch";
-
-  try {
-    const searchQuery = req.query.q;
-    if (
-      !searchQuery ||
-      typeof searchQuery !== "string" ||
-      searchQuery.trim().length < 2
-    ) {
-      return res.status(200).json({ success: true, courses: [] });
-    }
-
-    const searchTerm = searchQuery.toLowerCase().trim();
-    const institutionalSnapshot = await Course.get();
-    const institutionalCourses = [];
-
-    institutionalSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const courseTitle = (data.courseTitle || "").toLowerCase();
-      const courseCode = (data.courseCode || "").toLowerCase();
-      const department = (data.department || "").toLowerCase();
-
-      if (
-        courseTitle.includes(searchTerm) ||
-        courseCode.includes(searchTerm) ||
-        department.includes(searchTerm)
-      ) {
-        institutionalCourses.push({ id: doc.id, ...data });
-      }
-    });
-
-    const limitedInstitutional = institutionalCourses.slice(0, 25);
-    const allLecturerUids = [
-      ...new Set(
-        limitedInstitutional
-          .map((course) => course.lecturerIds?.[course.lecturerIds.length - 1])
-          .filter(Boolean),
-      ),
-    ];
-
-    let lecturerMap = {};
-    if (allLecturerUids.length > 0) {
-      const chunks = [];
-      for (let i = 0; i < allLecturerUids.length; i += 30) {
-        chunks.push(allLecturerUids.slice(i, i + 30));
-      }
-
-      for (const chunk of chunks) {
-        const lecturerSnapshot = await User.where("uid", "in", chunk).get();
-        lecturerSnapshot.forEach((doc) => {
-          const user = doc.data();
-          lecturerMap[user.uid] =
-            `${user.firstname || ""} ${user.lastname || ""}`.trim();
-        });
-      }
-    }
-
-    const normalizedInstitutional = limitedInstitutional.map((course) => {
-      const mappedInstructors = course.lecturerIds
-        ?.map((uid) => lecturerMap[uid])
-        .filter(Boolean)
-        .join(", ");
-
-      return {
-        id: course.courseId || course.id,
-        title: course.courseTitle,
-        code: course.courseCode,
-        semester: course.semester,
-        session: course.session,
-        creditLoad: course.credits,
-        isPremiumPaid: false,
-        price: 0,
-        thumbnail: course.thumbnailUrl || null,
-        studentsCount: course.studentsEnrolled?.length || 0,
-        isActive: course.isActive ?? true,
-        instructors:
-          mappedInstructors || course.instructorName || "Course Instructor",
-      };
-    });
-
-    const dynamicUnifiedResults = normalizedInstitutional.sort((a, b) =>
-      a.title.localeCompare(b.title),
-    );
-
-    res.status(200).json({
-      success: true,
-      courses: dynamicUnifiedResults,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Institutional course search failure:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      success: false,
-      message: "Internal server lookup engine exception error.",
-    });
-  }
-};
-export const handleUnifiedResourceSearch = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "handleUnifiedResourceSearchController";
-  const action = "handleUnifiedResourceSearch";
-
-  try {
-    const searchQuery = req.query.q;
-    if (
-      !searchQuery ||
-      typeof searchQuery !== "string" ||
-      searchQuery.trim().length < 2
-    ) {
-      return res.status(200).json({ success: true, resources: [] });
-    }
-
-    const searchTerm = searchQuery.toLowerCase().trim();
-    const institutionalSnapshot = await Course.get();
-    const institutionalMatches = [];
-
-    institutionalSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const courseTitle = (data.courseTitle || "").toLowerCase();
-      const courseCode = (data.courseCode || "").toLowerCase();
-      const resources = Array.isArray(data.resources) ? data.resources : [];
-
-      const hasMatchingResource = resources.some((url) => {
-        if (typeof url !== "string") return false;
-        try {
-          const rawFileName = url.split("/").pop() || "";
-          const cleanedFileName = decodeURIComponent(rawFileName)
-            .split("?")[0]
-            .toLowerCase();
-          return cleanedFileName.includes(searchTerm);
-        } catch {
-          return false;
-        }
-      });
-
-      if (
-        courseTitle.includes(searchTerm) ||
-        courseCode.includes(searchTerm) ||
-        hasMatchingResource
-      ) {
-        institutionalMatches.push({ id: doc.id, ...data });
-      }
-    });
-
-    const limitedInstitutional = institutionalMatches.slice(0, 30);
-    const normalizedInstitutional = [];
-
-    limitedInstitutional.forEach((course) => {
-      const resources = Array.isArray(course.resources) ? course.resources : [];
-      if (resources.length === 0) return;
-
-      const courseTitle = course.courseTitle || "";
-      const courseCode = course.courseCode || "";
-
-      resources.forEach((url) => {
-        if (typeof url !== "string") return;
-
-        let cleanedFileName = "Untitled Material";
-        try {
-          const rawFileName = url.split("/").pop() || "Untitled Material";
-          cleanedFileName = decodeURIComponent(rawFileName).split("?")[0];
-        } catch {
-          cleanedFileName = "Untitled Material";
-        }
-
-        const matchesQuery =
-          courseTitle.toLowerCase().includes(searchTerm) ||
-          courseCode.toLowerCase().includes(searchTerm) ||
-          cleanedFileName.toLowerCase().includes(searchTerm);
-
-        if (matchesQuery) {
-          const base64Hash = Buffer.from(url)
-            .toString("base64")
-            .substring(0, 8);
-
-          const fileFormat =
-            url.split(".").pop()?.split("?")[0]?.toLowerCase() || "pdf";
-
-          normalizedInstitutional.push({
-            id: `${course.courseId || course.id}-${base64Hash}`,
-            title: cleanedFileName.split("-").pop() || cleanedFileName,
-            url: url,
-            format: fileFormat,
-            isPremiumPaid: false,
-            price: 0,
-            metaSource: `${courseCode} • Institutional`,
-            courseId: course.courseId || course.id,
-          });
-        }
-      });
-    });
-
-    const unifiedResources = normalizedInstitutional.sort((a, b) =>
-      a.title.localeCompare(b.title),
-    );
-
-    res.status(200).json({
-      success: true,
-      resources: unifiedResources,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error(
-      "Institutional resource library lookup down: ",
-      error.message,
-    );
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      success: false,
-      message: "Internal engine error resolving resource records.",
-    });
-  }
-};
-export const refreshUserDetails = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "refreshUserDetailsController";
-  const action = "refreshUserDetails";
-
-  try {
-    const uid = req.user?.uid || req.user?.id;
-    if (!uid) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized: Missing user identifier",
-        );
-      });
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: Missing user identifier",
-      });
-    }
-
-    const prefCollection =
-      typeof userPrefs !== "undefined" ? userPrefs : UserPrefs;
-
-    const [userQuery, prefQuery] = await Promise.all([
-      User.where("uid", "==", uid).limit(1).get(),
-      prefCollection
-        ? prefCollection.where("userId", "==", uid).limit(1).get()
-        : { empty: true },
-    ]);
-
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const userData = userDoc.data();
-
-    const { password, iCashPin, userAccountDetails, ...safeUserData } =
-      userData;
-
-    let theme = "light";
-    if (!prefQuery.empty && prefQuery.docs && prefQuery.docs[0]) {
-      const prefData = prefQuery.docs[0].data();
-      if (prefData.theme) {
-        theme = prefData.theme;
-      }
-    }
-
-    const safeUser = {
-      id: userDoc.id,
-      ...safeUserData,
-      theme,
-    };
-
-    const { accessToken, refreshToken } = await generateTokens({
-      uid,
-      ...userData,
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Refresh successful",
-      user: safeUser,
-      accessToken,
-      refreshToken,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in user refresh handler:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal server error" });
-  }
-};
 export const aiChat = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "aiChatController";
@@ -1796,7 +1209,7 @@ export const aiChat = async (req, res) => {
     }
 
     const { type = "general", data = {} } = context;
-    const model = genAI.getGenerativeModel({ model: "gemini-3.6-flash" });
+    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
 
     let systemInstruction = "";
     if (type === "support") {
@@ -4225,5 +3638,592 @@ export const verifyPasswordInapp = async (req, res) => {
       );
     });
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const handleUnifiedCourseSearch = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "handleUnifiedCourseSearchController";
+  const action = "handleUnifiedCourseSearch";
+
+  try {
+    const searchQuery = req.query.q;
+    if (
+      !searchQuery ||
+      typeof searchQuery !== "string" ||
+      searchQuery.trim().length < 2
+    ) {
+      return res.status(200).json({ success: true, courses: [] });
+    }
+
+    const searchTerm = searchQuery.toLowerCase().trim();
+    const institutionalSnapshot = await Course.get();
+    const institutionalCourses = [];
+
+    institutionalSnapshot.forEach((doc) => {
+      const data = doc.data();
+      const courseTitle = (data.courseTitle || "").toLowerCase();
+      const courseCode = (data.courseCode || "").toLowerCase();
+      const department = (data.department || "").toLowerCase();
+
+      if (
+        courseTitle.includes(searchTerm) ||
+        courseCode.includes(searchTerm) ||
+        department.includes(searchTerm)
+      ) {
+        institutionalCourses.push({ id: doc.id, ...data });
+      }
+    });
+
+    const limitedInstitutional = institutionalCourses.slice(0, 25);
+    const allLecturerUids = [
+      ...new Set(
+        limitedInstitutional
+          .map((course) => course.lecturerIds?.[course.lecturerIds.length - 1])
+          .filter(Boolean),
+      ),
+    ];
+
+    let lecturerMap = {};
+    if (allLecturerUids.length > 0) {
+      const chunks = [];
+      for (let i = 0; i < allLecturerUids.length; i += 30) {
+        chunks.push(allLecturerUids.slice(i, i + 30));
+      }
+
+      for (const chunk of chunks) {
+        const lecturerSnapshot = await User.where("uid", "in", chunk).get();
+        lecturerSnapshot.forEach((doc) => {
+          const user = doc.data();
+          lecturerMap[user.uid] =
+            `${user.firstname || ""} ${user.lastname || ""}`.trim();
+        });
+      }
+    }
+
+    const normalizedInstitutional = limitedInstitutional.map((course) => {
+      const mappedInstructors = course.lecturerIds
+        ?.map((uid) => lecturerMap[uid])
+        .filter(Boolean)
+        .join(", ");
+
+      return {
+        id: course.courseId || course.id,
+        title: course.courseTitle,
+        code: course.courseCode,
+        semester: course.semester,
+        session: course.session,
+        creditLoad: course.credits,
+        isPremiumPaid: false,
+        price: 0,
+        thumbnail: course.thumbnailUrl || null,
+        studentsCount: course.studentsEnrolled?.length || 0,
+        isActive: course.isActive ?? true,
+        instructors:
+          mappedInstructors || course.instructorName || "Course Instructor",
+      };
+    });
+
+    const dynamicUnifiedResults = normalizedInstitutional.sort((a, b) =>
+      a.title.localeCompare(b.title),
+    );
+
+    res.status(200).json({
+      success: true,
+      courses: dynamicUnifiedResults,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Institutional course search failure:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server lookup engine exception error.",
+    });
+  }
+};
+export const handleUnifiedResourceSearch = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "handleUnifiedResourceSearchController";
+  const action = "handleUnifiedResourceSearch";
+
+  try {
+    const searchQuery = req.query.q;
+    if (
+      !searchQuery ||
+      typeof searchQuery !== "string" ||
+      searchQuery.trim().length < 2
+    ) {
+      return res.status(200).json({ success: true, resources: [] });
+    }
+
+    const searchTerm = searchQuery.toLowerCase().trim();
+    const institutionalSnapshot = await Course.get();
+    const institutionalMatches = [];
+
+    institutionalSnapshot.forEach((doc) => {
+      const data = doc.data();
+      const courseTitle = (data.courseTitle || "").toLowerCase();
+      const courseCode = (data.courseCode || "").toLowerCase();
+      const resources = Array.isArray(data.resources) ? data.resources : [];
+
+      const hasMatchingResource = resources.some((url) => {
+        if (typeof url !== "string") return false;
+        try {
+          const rawFileName = url.split("/").pop() || "";
+          const cleanedFileName = decodeURIComponent(rawFileName)
+            .split("?")[0]
+            .toLowerCase();
+          return cleanedFileName.includes(searchTerm);
+        } catch {
+          return false;
+        }
+      });
+
+      if (
+        courseTitle.includes(searchTerm) ||
+        courseCode.includes(searchTerm) ||
+        hasMatchingResource
+      ) {
+        institutionalMatches.push({ id: doc.id, ...data });
+      }
+    });
+
+    const limitedInstitutional = institutionalMatches.slice(0, 30);
+    const normalizedInstitutional = [];
+
+    limitedInstitutional.forEach((course) => {
+      const resources = Array.isArray(course.resources) ? course.resources : [];
+      if (resources.length === 0) return;
+
+      const courseTitle = course.courseTitle || "";
+      const courseCode = course.courseCode || "";
+
+      resources.forEach((url) => {
+        if (typeof url !== "string") return;
+
+        let cleanedFileName = "Untitled Material";
+        try {
+          const rawFileName = url.split("/").pop() || "Untitled Material";
+          cleanedFileName = decodeURIComponent(rawFileName).split("?")[0];
+        } catch {
+          cleanedFileName = "Untitled Material";
+        }
+
+        const matchesQuery =
+          courseTitle.toLowerCase().includes(searchTerm) ||
+          courseCode.toLowerCase().includes(searchTerm) ||
+          cleanedFileName.toLowerCase().includes(searchTerm);
+
+        if (matchesQuery) {
+          const base64Hash = Buffer.from(url)
+            .toString("base64")
+            .substring(0, 8);
+
+          const fileFormat =
+            url.split(".").pop()?.split("?")[0]?.toLowerCase() || "pdf";
+
+          normalizedInstitutional.push({
+            id: `${course.courseId || course.id}-${base64Hash}`,
+            title: cleanedFileName.split("-").pop() || cleanedFileName,
+            url: url,
+            format: fileFormat,
+            isPremiumPaid: false,
+            price: 0,
+            metaSource: `${courseCode} • Institutional`,
+            courseId: course.courseId || course.id,
+          });
+        }
+      });
+    });
+
+    const unifiedResources = normalizedInstitutional.sort((a, b) =>
+      a.title.localeCompare(b.title),
+    );
+
+    res.status(200).json({
+      success: true,
+      resources: unifiedResources,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error(
+      "Institutional resource library lookup down: ",
+      error.message,
+    );
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Internal engine error resolving resource records.",
+    });
+  }
+};
+export const refreshUserDetails = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "refreshUserDetailsController";
+  const action = "refreshUserDetails";
+
+  try {
+    const uid = req.user?.uid || req.user?.id;
+    if (!uid) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized: Missing user identifier",
+        );
+      });
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized: Missing user identifier",
+      });
+    }
+
+    const prefCollection =
+      typeof userPrefs !== "undefined" ? userPrefs : UserPrefs;
+
+    const [userQuery, prefQuery] = await Promise.all([
+      User.where("uid", "==", uid).limit(1).get(),
+      prefCollection
+        ? prefCollection.where("userId", "==", uid).limit(1).get()
+        : { empty: true },
+    ]);
+
+    if (userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const userDoc = userQuery.docs[0];
+    const userData = userDoc.data();
+
+    const { password, iCashPin, userAccountDetails, ...safeUserData } =
+      userData;
+
+    let theme = "light";
+    if (!prefQuery.empty && prefQuery.docs && prefQuery.docs[0]) {
+      const prefData = prefQuery.docs[0].data();
+      if (prefData.theme) {
+        theme = prefData.theme;
+      }
+    }
+
+    const safeUser = {
+      id: userDoc.id,
+      ...safeUserData,
+      theme,
+    };
+
+    const { accessToken, refreshToken } = await generateTokens({
+      uid,
+      ...userData,
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Refresh successful",
+      user: safeUser,
+      accessToken,
+      refreshToken,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error in user refresh handler:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res
+      .status(500)
+      .json({ success: false, message: "Internal server error" });
+  }
+};
+export const customizeItag = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "customizeItagController";
+  const action = "customizeItag";
+
+  try {
+    const userId = req.user?.uid || req.user?.id;
+    const { updates } = req.body;
+
+    if (!userId) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User ID is required",
+        );
+      });
+      return res
+        .status(400)
+        .json({ success: false, message: "User ID is required" });
+    }
+
+    if (!updates || typeof updates !== "object") {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid or missing update payload",
+        );
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Valid updates payload is required.",
+      });
+    }
+
+    const sanitizedUsername = updates.username
+      ? updates.username.trim().toLowerCase()
+      : null;
+    const [itagQuery, usernameQuery] = await Promise.all([
+      ITag.where("userId", "==", userId).limit(1).get(),
+      sanitizedUsername
+        ? ITag.where("username", "==", sanitizedUsername).get()
+        : Promise.resolve(null),
+    ]);
+
+    if (itagQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "iTag not found",
+        );
+      });
+      return res
+        .status(404)
+        .json({ success: false, message: "iTag not found" });
+    }
+
+    const itagDoc = itagQuery.docs[0];
+
+    if (usernameQuery && !usernameQuery.empty) {
+      const usernameExists = usernameQuery.docs.some(
+        (doc) => doc.id !== itagDoc.id,
+      );
+      if (usernameExists) {
+        setImmediate(() => {
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Username already exists",
+          );
+        });
+        return res
+          .status(400)
+          .json({ success: false, message: "Username already exists" });
+      }
+    }
+
+    const processedUpdates = {
+      ...updates,
+      ...(sanitizedUsername ? { username: sanitizedUsername } : {}),
+      updatedAt: new Date(),
+    };
+
+    await itagDoc.ref.update(processedUpdates);
+    const updatedITag = {
+      id: itagDoc.id,
+      ...itagDoc.data(),
+      ...processedUpdates,
+    };
+    res.status(200).json({
+      success: true,
+      message: "iTag updated successfully",
+      data: updatedITag,
+    });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Update Error:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+export const searchUserUsingUidOrNameQuery = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "searchUserUsingUidOrNameQueryController";
+  const action = "searchUserUsingUidOrNameQuery";
+  const { q, uid, viewerRole, viewerTier } = req.query;
+
+  const isAdmin = viewerRole === "admin";
+
+  try {
+    let users = [];
+
+    if (uid) {
+      const userQuery = await User.where("uid", "==", uid).limit(1).get();
+      if (!userQuery.empty) {
+        users.push({ id: userQuery.docs[0].id, ...userQuery.docs[0].data() });
+      }
+    } else if (q && typeof q === "string" && q.trim().length > 0) {
+      const snapshot = await User.get();
+      const searchTerm = q.trim().toLowerCase();
+
+      snapshot.forEach((doc) => {
+        const data = doc.data();
+        const firstname = (data.firstname || "").toLowerCase();
+        const lastname = (data.lastname || "").toLowerCase();
+        const username = (data.username || "").toLowerCase();
+
+        let isMatch =
+          firstname.includes(searchTerm) ||
+          lastname.includes(searchTerm) ||
+          username.includes(searchTerm);
+
+        if (isAdmin && !isMatch) {
+          const userUid = (data.uid || "").toLowerCase();
+          const itagusername = (data.itagusername || "").toLowerCase();
+          const schoolCode = (data.schoolCode || "").toLowerCase();
+          const email = (data.email || "").toLowerCase();
+          const department = (data.department || "").toLowerCase();
+          const matricNumber = (data.matricNumber || "").toLowerCase();
+          const staffId = (data.staffId || "").toLowerCase();
+
+          isMatch =
+            userUid.includes(searchTerm) ||
+            itagusername.includes(searchTerm) ||
+            schoolCode.includes(searchTerm) ||
+            email.includes(searchTerm) ||
+            department.includes(searchTerm) ||
+            matricNumber.includes(searchTerm) ||
+            staffId.includes(searchTerm);
+        }
+
+        if (isMatch) {
+          users.push({ id: doc.id, ...data });
+        }
+      });
+      users = users.slice(0, 20);
+    } else {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Query or UID required",
+        );
+      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Query or UID required" });
+    }
+
+    const safeResults = users.map((u) => {
+      const isPro = viewerTier === "pro" || viewerTier === "premium";
+      const isEnterprise = viewerRole === "enterprise";
+
+      return {
+        uid: u.uid,
+        firstname: u.firstname,
+        email: u.email,
+        username: u.username,
+        lastname: u.lastname,
+        profilePic: u.profilePic,
+        usertype: u.usertype,
+        tier: u.tier,
+        isVerified: u.isVerified,
+        organizationName: u.organizationName || "",
+        displayScore:
+          isEnterprise || isPro ? Math.round(u.currentIScore || 0) : "Locked",
+        bio: isAdmin ? u.bio : "",
+        pointsBalance: isAdmin ? u.pointsBalance : "",
+        pendingSalesBalance: isAdmin ? u.pendingSalesBalance : "",
+        website: isAdmin ? u.website : "",
+        headline: isAdmin ? u.headline : "",
+        department: isAdmin ? u.department : "",
+        staffId: isAdmin ? u.staffId : "",
+        matricNumber: isAdmin ? u.matricNumber : "",
+        itagusername: isAdmin ? u.itagusername : "",
+        schoolName: isAdmin ? u.schoolName : "",
+        country: isAdmin ? u.country : "",
+        current_level: isAdmin ? u.current_level : "",
+        isSuspended: isAdmin ? u.isSuspended : "",
+        twoFactorEnabled: isAdmin ? u.twoFactorEnabled : "",
+      };
+    });
+
+    res
+      .status(200)
+      .json({ success: true, data: uid ? safeResults[0] : safeResults });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Search Users Controller Error:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({ message: error.message, success: false });
   }
 };
