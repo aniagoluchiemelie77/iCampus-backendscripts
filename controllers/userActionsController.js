@@ -453,7 +453,7 @@ export const deleteRecoveryEmail = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "deleteRecoveryEmailController";
   const action = "deleteRecoveryEmail";
-  const { emailToDelete } = req.body;
+  const { emailToDelete } = req.body || {};
   const userUid = req.user?.uid || req.user?.id;
 
   if (!userUid) {
@@ -666,136 +666,6 @@ export const deletePhoneNumber = async (req, res) => {
       );
     });
     return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const toggleBlockedUsers = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "toggleBlockUsersController";
-  const action = "toggleBlockUsers";
-  const { targetUserId, targetUid } = req.body;
-  const resolvedTargetId = targetUserId || targetUid;
-  const userId = req.user?.uid || req.user?.id;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, error: "Unauthorized user context." });
-  }
-
-  if (!resolvedTargetId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Target user ID is required",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, error: "Target user ID is required" });
-  }
-
-  if (userId === resolvedTargetId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Self-blocking attempted",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, error: "You cannot block yourself." });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res.status(404).json({ success: false, error: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const userData = userDoc.data();
-    const blockedUsers = userData.blockedUsers || [];
-    const isBlocked = blockedUsers.includes(resolvedTargetId);
-
-    if (isBlocked) {
-      const updatedBlockedUsers = blockedUsers.filter(
-        (id) => id !== resolvedTargetId,
-      );
-      await userDoc.ref.update({
-        blockedUsers: updatedBlockedUsers,
-        updatedAt: new Date(),
-      });
-
-      res.status(200).json({ success: true, action: "unblocked" });
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-    } else {
-      const updatedBlockedUsers = [...blockedUsers];
-      if (!updatedBlockedUsers.includes(resolvedTargetId)) {
-        updatedBlockedUsers.push(resolvedTargetId);
-      }
-
-      const updatePromise = userDoc.ref.update({
-        blockedUsers: updatedBlockedUsers,
-        updatedAt: new Date(),
-      });
-      const [forwardFollowQuery, backwardFollowQuery] = await Promise.all([
-        Follow.where("followerId", "==", userId)
-          .where("followingId", "==", resolvedTargetId)
-          .get(),
-        Follow.where("followerId", "==", resolvedTargetId)
-          .where("followingId", "==", userId)
-          .get(),
-        updatePromise,
-      ]);
-
-      const batch = db.batch();
-      forwardFollowQuery.forEach((doc) => batch.delete(doc.ref));
-      backwardFollowQuery.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
-
-      res.status(200).json({ success: true, action: "blocked" });
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-    }
-  } catch (err) {
-    console.error("Error in toggleBlockedUsers:", err);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      );
-    });
-    return res.status(500).json({ success: false, error: err.message });
   }
 };
 export const customizeItag = async (req, res) => {
@@ -4225,5 +4095,135 @@ export const icashPinSetup = async (req, res) => {
       );
     });
     return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const toggleBlockedUsers = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "toggleBlockUsersController";
+  const action = "toggleBlockUsers";
+  const { targetUserId, targetUid } = req.body;
+  const resolvedTargetId = targetUserId || targetUid;
+  const userId = req.user?.uid || req.user?.id;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, error: "Unauthorized user context." });
+  }
+
+  if (!resolvedTargetId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Target user ID is required",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, error: "Target user ID is required" });
+  }
+
+  if (userId === resolvedTargetId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Self-blocking attempted",
+      );
+    });
+    return res
+      .status(400)
+      .json({ success: false, error: "You cannot block yourself." });
+  }
+
+  try {
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+    if (userQuery.empty) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res.status(404).json({ success: false, error: "User not found" });
+    }
+
+    const userDoc = userQuery.docs[0];
+    const userData = userDoc.data();
+    const blockedUsers = userData.blockedUsers || [];
+    const isBlocked = blockedUsers.includes(resolvedTargetId);
+
+    if (isBlocked) {
+      const updatedBlockedUsers = blockedUsers.filter(
+        (id) => id !== resolvedTargetId,
+      );
+      await userDoc.ref.update({
+        blockedUsers: updatedBlockedUsers,
+        updatedAt: new Date(),
+      });
+
+      res.status(200).json({ success: true, action: "unblocked" });
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+    } else {
+      const updatedBlockedUsers = [...blockedUsers];
+      if (!updatedBlockedUsers.includes(resolvedTargetId)) {
+        updatedBlockedUsers.push(resolvedTargetId);
+      }
+
+      const updatePromise = userDoc.ref.update({
+        blockedUsers: updatedBlockedUsers,
+        updatedAt: new Date(),
+      });
+      const [forwardFollowQuery, backwardFollowQuery] = await Promise.all([
+        Follow.where("followerId", "==", userId)
+          .where("followingId", "==", resolvedTargetId)
+          .get(),
+        Follow.where("followerId", "==", resolvedTargetId)
+          .where("followingId", "==", userId)
+          .get(),
+        updatePromise,
+      ]);
+
+      const batch = db.batch();
+      forwardFollowQuery.forEach((doc) => batch.delete(doc.ref));
+      backwardFollowQuery.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+
+      res.status(200).json({ success: true, action: "blocked" });
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+    }
+  } catch (err) {
+    console.error("Error in toggleBlockedUsers:", err);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      );
+    });
+    return res.status(500).json({ success: false, error: err.message });
   }
 };

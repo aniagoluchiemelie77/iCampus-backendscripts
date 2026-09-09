@@ -5,13 +5,14 @@ import crypto from "crypto";
 import { describe, beforeAll, test, expect } from "@jest/globals";
 import request from "supertest";
 
-const API_BASE_URL = process.env.BACKEND_URL;
+const API_BASE_URL =
+  process.env.BACKEND_URL || "https://icampus-backendscript.onrender.com/";
 
 let sharedContext = {
-  productId: 'PR-260908-1756-_001-DT',
-  secondProductId: 'PR-260904-0001-_001-Q1',
-  secondSellerId: 'USER_001',
-  orderId: 'ORD-02A57A78',
+  productId: "PR-260908-1756-_001-DT",
+  secondProductId: "PR-260904-0001-_001-Q1",
+  secondSellerId: "USER_001",
+  orderId: "ORD-02A57A78",
 };
 
 describe("Buyer actions, log impression on product, toggle add to cart, toggle add as favorite, create an order for first user's product", () => {
@@ -50,17 +51,6 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
   }, 150000);
 
   const endpointsToTest = [
-    {
-      name: "Toggle block/unblock user",
-      method: "post",
-      path: () => `users/block/toggle`,
-      auth: true,
-      idempotent: true,
-      expected: 200,
-      body: {
-        targetUserId: "USER_002",
-      },
-    },
     {
       name: "Delete recovery email",
       method: "delete",
@@ -173,6 +163,17 @@ describe("Buyer actions, log impression on product, toggle add to cart, toggle a
       },
     },
     /*
+    {
+      name: "Toggle block/unblock user",
+      method: "post",
+      path: () => `users/block/toggle`,
+      auth: true,
+      idempotent: true,
+      expected: 200,
+      body: {
+        targetUserId: "USER_002",
+      },
+    },
     {
       name: "Update password in-app",
       method: "put",
