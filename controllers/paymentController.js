@@ -2,7 +2,6 @@ import axios from "axios";
 import {
   User,
   Transactions,
-  AccountStatement,
   PaymentMethods,
   TaxEntries,
 } from "../tableDeclarations.js";
@@ -13,10 +12,7 @@ import {
 } from "../utils/idGenerator.js";
 import { createNotification } from "../services/notification.js";
 import { fetchLiveRateBackend } from "../utils/foreignAPIGetters.js";
-import { theme } from "../services/emailTheme.js";
-import { storage, db } from "../config/firebaseAdmin.js";
-import { generateStatementPDF } from "../templates/transactionHistoryTemplate.js";
-import { sendEmail } from "../services/emailService.js";
+import { db } from "../config/firebaseAdmin.js";
 import { encryptCardDetails } from "../utils/encryptionHelper.js";
 import { USD_SUBSCRIPTION_PRICES } from "../constants/inAppConstants.js";
 import { notifyAdmins } from "../services/adminNotification.js";
@@ -1012,181 +1008,6 @@ export const verifySubscriptionFlwPayment = async (req, res) => {
       status: "error",
       message: "Internal server error during verification",
     });
-  }
-};
-export const generateTransactionHistory = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "generateTransactionHistoryController";
-  const action = "generateTransactionHistory";
-
-  try {
-    const { colors } = theme;
-    const { startDate, endDate } = req.body || {};
-    const userId = req.user?.id || req.user?.uid;
-
-    if (!userId || !startDate || !endDate) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing mandatory parameters or user identification.",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "Missing mandatory parameters or user identification.",
-      });
-    }
-
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-
-    const [userQuery, statementQuery, txQuery] = await Promise.all([
-      User.where("uid", "==", userId).limit(1).get(),
-      AccountStatement.where("userId", "==", userId)
-        .where("startDate", "==", start)
-        .where("endDate", "==", end)
-        .limit(1)
-        .get(),
-      Transactions.where("userId", "==", userId)
-        .where("createdAt", ">=", start)
-        .where("createdAt", "<=", end)
-        .orderBy("createdAt", "desc")
-        .get(),
-    ]);
-
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const user = userQuery.docs[0].data();
-    const bucket = storage.bucket();
-    const filePath = `statements/${userId}/AccountStatement-${start.getTime()}-${end.getTime()}.pdf`;
-    const file = bucket.file(filePath);
-
-    let firebaseUrl;
-    let income = 0;
-    let expense = 0;
-    let pdfBuffer;
-
-    if (!statementQuery.empty) {
-      const existingStatement = statementQuery.docs[0].data();
-      firebaseUrl = existingStatement.pdfUrl;
-      income = existingStatement.income || 0;
-      expense = existingStatement.expense || 0;
-
-      const [downloadBuffer] = await file.download();
-      pdfBuffer = downloadBuffer;
-    } else {
-      const history = [];
-      txQuery.forEach((doc) => {
-        const data = doc.data();
-        if (data.payType === "in") {
-          income += data.amountICash || 0;
-        } else if (data.payType === "out") {
-          expense += data.amountICash || 0;
-        }
-        history.push(data);
-      });
-
-      pdfBuffer = await generateStatementPDF({
-        user,
-        start,
-        end,
-        income,
-        expense,
-        history,
-      });
-      const statementId = `stmt-${userId}-${start.getTime()}-${end.getTime()}`;
-      firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${file.name}`;
-
-      await Promise.all([
-        file.save(pdfBuffer, {
-          metadata: { contentType: "application/pdf" },
-          public: true,
-        }),
-        AccountStatements.doc(statementId).set({
-          statementId,
-          userId,
-          startDate: start,
-          endDate: end,
-          pdfUrl: firebaseUrl,
-          income,
-          expense,
-          createdAt: new Date(),
-        }),
-      ]);
-    }
-    res.json({
-      success: true,
-      message: "Account Statement processed successfully!",
-      pdfUrl: firebaseUrl,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-    setImmediate(async () => {
-      try {
-        const emailHtml = `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; padding: 20px;">
-            <h2 style="color: ${colors.primary};">Your iCash Account Statement is Ready</h2>
-            <p style="color: ${colors.text};">Hi ${user.firstname},</p>
-            <p style="color: ${colors.text};">Attached is your transaction report for <b>${start.toDateString()}</b> to <b>${end.toDateString()}</b>.</p>
-            <hr/>
-            <p><b>Summary:</b></p>
-            <p style="color: ${colors.success};">Total Received: ${income.toLocaleString()} iCash</p>
-            <p style="color: ${colors.primary};">Total Spent: ${expense.toLocaleString()} iCash</p>
-            <br/>
-            <p style="color: ${colors.text};">Thank you for using iCampus.</p>
-          </div>
-        `;
-
-        await sendEmail({
-          to: user.email,
-          subject: `iCash Account Statement: ${user.firstname}`,
-          text: `Your iCash statement from ${start.toLocaleDateString()} is attached.`,
-          html: emailHtml,
-          attachments: [
-            {
-              filename: `iCash_Statement_${start.toISOString().split("T")[0]}.pdf`,
-              content: pdfBuffer,
-            },
-          ],
-        });
-      } catch (err) {
-        console.error(
-          "Background email dispatch failure for account statement:",
-          err,
-        );
-      }
-    });
-  } catch (error) {
-    console.error("Account Statement Flow Error:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, error: error.message });
   }
 };
 export const initiateFlwCharge = async (req, res) => {

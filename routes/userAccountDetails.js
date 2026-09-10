@@ -6,7 +6,6 @@ import {
   initializeWithdraw,
   handleP2pTransfers,
   verifySubscriptionFlwPayment,
-  generateTransactionHistory,
   validatePaymentOTP,
 } from "../controllers/paymentController.js";
 import {
@@ -39,12 +38,6 @@ router.post(
   protect,
   idempotencyMiddleware,
   handleP2pTransfers,
-);
-router.post(
-  "/transactions/export",
-  protect,
-  idempotencyMiddleware,
-  generateTransactionHistory,
 );
 router.post(
   "/payments/verify-otp",
