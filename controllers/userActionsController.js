@@ -907,45 +907,23 @@ export const aiChat = async (req, res) => {
       Academic Context: ${type === "course" ? `Course: ${data.courseTitle || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.`;
     }
 
-    // Safely map prior history contents and append the current user message
-    const contents = [];
-    if (Array.isArray(history)) {
-      for (const h of history) {
-        if (h.role && (h.parts || h.text)) {
-          contents.push({
-            role: h.role === "assistant" ? "model" : h.role,
-            parts: Array.isArray(h.parts) ? h.parts : [{ text: h.text || "" }],
-          });
-        }
-      }
-    }
-    // Push the current user message to complete the contents array
-    contents.push({ role: "user", parts: [{ text: message }] });
+    const formattedHistory = Array.isArray(history)
+      ? history.map((h) => ({
+          role: h.role,
+          parts: h.parts || [{ text: h.text }],
+        }))
+      : [];
 
-    // Generate content utilizing standard generateContent configuration
-    const response = await ai.models.generateContent({
+    const chat = ai.chats.create({
       model: "gemini-3.8-flash",
+      history: formattedHistory,
       config: {
         systemInstruction: systemInstruction,
       },
-      contents: contents,
     });
 
-    const replyText = response.text;
-    if (!replyText) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "AI Engine returned empty chat response.",
-      );
-      return res.status(500).json({
-        success: false,
-        error: "AI Engine returned empty chat response.",
-      });
-    }
-
+    const result = await chat.sendMessage(message);
+    const replyText = result.response.text();
     let finalReply;
     let aiResponse;
     const ticketRefId =
@@ -988,11 +966,9 @@ export const aiChat = async (req, res) => {
       finalReply = aiResponse.reply || replyText;
     }
 
-    res.status(200).json({
-      success: true,
-      reply: finalReply,
-      ticketId: createdTicketId,
-    });
+    res
+      .status(200)
+      .json({ success: true, reply: finalReply, ticketId: createdTicketId });
 
     setImmediate(() => {
       const backgroundTasks = [];
@@ -1045,10 +1021,9 @@ export const aiChat = async (req, res) => {
       "error",
       error.message,
     );
-    return res.status(500).json({
-      success: false,
-      error: "Failed to fetch response",
-    });
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch response" });
   }
 };
 export const createQuickMeeting = async (req, res) => {
