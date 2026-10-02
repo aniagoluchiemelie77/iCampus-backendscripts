@@ -14,8 +14,7 @@
   "dependencies": {
     "@deepgram/sdk": "^5.0.0",
     "@google-cloud/vision": "^5.3.7",
-    "@google/genai": "^2.7.0",
-    "@google/generative-ai": "^0.24.1",
+    "@google/genai": "^2.27.0",
     "@upstash/qstash": "^2.11.2",
     "@upstash/redis": "^1.38.0",
     "amqplib": "^0.10.9",

@@ -26,18 +26,15 @@ import {
 import {
   EXCEPTION_COST_IN_ICASH,
   EXCEPTION_ACCOUNT_LIMITS,
-  EXCEPTION_LECTURER_DIVIDEND_IN_ICASH,
 } from "../constants/inAppConstants.js";
 import { generateAttendancePDF } from "../templates/courseAttendanceTemplate.js";
 import { GoogleGenAI } from "@google/genai";
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import axios from "axios";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 import { setImmediate } from "timers";
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
   year: "numeric",
@@ -1162,7 +1159,7 @@ export const compareStudentFacesWithGemini = async (req, res) => {
       '{"verified": boolean, "reason": "brief plain text explanation for audit logs"}';
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-3.8-flash",
       config: {
         responseMimeType: "application/json",
         temperature: 0.2,
@@ -1277,7 +1274,8 @@ export const uploadCourseMaterial = async (req, res) => {
     const course = courseQuery.docs[0].data();
 
     const isAuthorized =
-      course.lecturerIds && course.lecturerIds.includes(currentUserId);
+      Array.isArray(course.lecturerIds) &&
+      course.lecturerIds.includes(currentUserId);
     if (!isAuthorized) {
       logControllerPerformance(
         controllerName,
@@ -2793,8 +2791,8 @@ export const uploadCourseDetails = async (req, res) => {
     const requesterUid = req.user?.uid || req.user?.id;
     const userType = req.user?.usertype;
 
-    const model = genAI.getGenerativeModel({
-      model: "gemini-1.5-flash",
+    const model = ai.models.generateContent({
+      model: "gemini-3.8-flash",
       generationConfig: { responseMimeType: "application/json" },
     });
 

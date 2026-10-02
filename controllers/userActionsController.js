@@ -30,7 +30,7 @@ import {
 } from "../utils/idGenerator.js";
 import axiosRetry from "axios-retry";
 import axios from "axios";
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenAI } from "@google/genai";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
@@ -38,11 +38,10 @@ import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 import { db } from "../config/firebaseAdmin.js";
 import { EXCEPTION_ACCOUNT_LIMITS } from "../constants/inAppConstants.js";
 import { embedPostWithAuthorDetails } from "../utils/reposterPriorityChecker.js";
-import { embedUserWithInstitutionTier } from "../utils/embedFunctions.js";
 import dotenv from "dotenv";
 dotenv.config();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
 axiosRetry(axios, { retries: 3 });
 
 const FAQ_DATA = [
@@ -908,11 +907,6 @@ export const aiChat = async (req, res) => {
       Academic Context: ${type === "course" ? `Course: ${data.courseTitle || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.`;
     }
 
-    // 2. Instantiate model with proper configuration configuration object
-    const model = genAI.getGenerativeModel({
-      model: "gemini-flash-latest",
-      systemInstruction: systemInstruction,
-    });
     const formattedHistory = Array.isArray(history)
       ? history.map((h) => ({
           role: h.role,
@@ -920,8 +914,12 @@ export const aiChat = async (req, res) => {
         }))
       : [];
 
-    const chat = model.startChat({
+    const chat = ai.chats.create({
+      model: "gemini-3.8-flash",
       history: formattedHistory,
+      config: {
+        systemInstruction: systemInstruction,
+      },
     });
 
     const result = await chat.sendMessage(message);
