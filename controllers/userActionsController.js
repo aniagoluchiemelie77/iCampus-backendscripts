@@ -920,7 +920,7 @@ export const aiChat = async (req, res) => {
       },
     });
 
-    const result = await chat.sendMessage({ message });
+    const result = await chat.sendMessage(message);
     const replyText = result.text;
 
     if (!replyText) {
