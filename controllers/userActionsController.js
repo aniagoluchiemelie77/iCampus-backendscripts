@@ -16,8 +16,6 @@ import {
   PostReposters,
   Comments,
 } from "../tableDeclarations.js";
-import { icashPinResetTemplate } from "../services/emailTemplates.js";
-import { sendEmail } from "../services/emailService.js";
 import twilio from "twilio";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
@@ -27,7 +25,6 @@ import { addFlag } from "../utils/flagger.js";
 import { setImmediate } from "timers";
 import {
   generateNotificationId,
-  generateTokens,
   generateTicketId,
   generateStationId,
 } from "../utils/idGenerator.js";
@@ -39,10 +36,9 @@ import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 import { db } from "../config/firebaseAdmin.js";
-import {
-  USD_EQUIVALENCE_OF_1_ICASH,
-  EXCEPTION_ACCOUNT_LIMITS,
-} from "../constants/inAppConstants.js";
+import { EXCEPTION_ACCOUNT_LIMITS } from "../constants/inAppConstants.js";
+import { embedPostWithAuthorDetails } from "../utils/reposterPriorityChecker.js";
+import { embedUserWithInstitutionTier } from "../utils/embedFunctions.js";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -50,12 +46,6 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 axiosRetry(axios, { retries: 3 });
 
 const FAQ_DATA = [
-  {
-    id: "icash-1",
-    question: "What is iCash?",
-    answer:
-      "iCash is the unified digital medium of exchange used across the iCampus platform and future subsidiaries of Aniagolu Global Tech Services Ltd. It ensures a stable internal economy by keeping transactions independent of volatile local currencies.",
-  },
   {
     id: "acad-1",
     question: "What are Lecture Exceptions and how do they work?",
@@ -75,11 +65,6 @@ const FAQ_DATA = [
       "When purchasing a physical item for home delivery, you provide your delivery address and phone number during checkout. Once your package arrives, the seller will scan a unique QR code generated on your phone. This scan verifies that you received the item, minimizes fraud, and releases the payment to the seller.",
   },
   {
-    id: "icash-2",
-    question: "What is the exchange rate for iCash?",
-    answer: `iCash operates on a fixed exchange rate where 1 iCash equals exactly ${USD_EQUIVALENCE_OF_1_ICASH} USD (or its equivalent value in your local currency). Local currency inputs are automatically converted at the prevailing market rate into USD before iCash is issued.`,
-  },
-  {
     id: "acad-2",
     question: "How many free Lecture Exceptions do I get each month?",
     answer: `Your monthly allotment depends on your subscription tier:\n Free Tier: ${EXCEPTION_ACCOUNT_LIMITS.free} free exception per month.\n• Pro Tier: ${EXCEPTION_ACCOUNT_LIMITS.pro} free exceptions per month.\n• Premium Tier: ${EXCEPTION_ACCOUNT_LIMITS.premium} free exceptions per month.`,
@@ -97,22 +82,10 @@ const FAQ_DATA = [
       "If you choose to receive your purchased product at a selected drop-off location during checkout, the seller will be notified immediately to drop the product at your selected locatio. Once it arrives, you will be notified, then head to the station, and the agent scans the generated order QR code from your device to confirm pickup. This instantly dispatches payment to both the seller and the agent (their cut).",
   },
   {
-    id: "icash-3",
-    question: "How secure are my iCash transactions?",
-    answer:
-      "Security is handled at an architectural level using a Zero-Trust protocol. All debits require Multi-Factor Authorization (MFA) via Biometric Fingerprint/Face Detection or a high-entropy 6-digit Transaction PIN. Data is also fully protected using end-to-end AES-256 encryption.",
-  },
-  {
     id: "acad-3",
     question: "What happens if I exhaust my free monthly exceptions?",
     answer:
       "If you have exhausted your free monthly allowance, you can purchase additional exceptions at a cost of 0.5 iCash each. Please note that if a lecturer disapproves or cancels a purchased exception, no refunds are issued.",
-  },
-  {
-    id: "icash-4",
-    question: "How does the platform prevent fraud and double-spending?",
-    answer:
-      'iCampus runs a centralized ledger utilizing atomic transactions, meaning a wallet cannot start a second transaction until the first is fully processed or rolled back. Additionally, "Velocity Triggers" automatically freeze and flag your account for review if an unusual number of high-value transfers occur within 60 seconds.',
   },
   {
     id: "acad-4",
@@ -126,13 +99,7 @@ const FAQ_DATA = [
     question:
       "Why can’t I see my sales earnings in my primary wallet immediately?",
     answer:
-      "All earnings from sales or agent commissions are securely held in your Sales Hub payout balance. To access and withdraw these funds, you must meet two security criteria: your identity must be verified, and Two-Factor Authentication (2FA) must be enabled.",
-  },
-  {
-    id: "icash-5",
-    question: "Are there any fees associated with using iCash?",
-    answer:
-      "Yes, the ecosystem applies standard transaction fees: an App Tax of 15% on peer-to-peer services/in-app purchases, and a 1% processing withdrawal fee when you convert your iCash back into local fiat currency.",
+      "All earnings from sales or agent commissions are securely held in your Sales Hub payout balance. To access and withdraw these funds, you must meet one security criteria: your identity must be verified.",
   },
   {
     id: "acad-5",
@@ -146,18 +113,6 @@ const FAQ_DATA = [
     question: "Who needs to undergo identity verification for payouts?",
     answer:
       'Students and lecturers are automatically verified by the platform system. However, if your account is registered as an "Enterprise" or "Other" user tier, you must complete a persona verification check before you can access your Sales Hub payouts.',
-  },
-  {
-    id: "icash-6",
-    question: "Can I track my transaction history?",
-    answer:
-      "Absolutely. Every single movement of iCash generates a unique, unchangeable Transaction Hash on an immutable ledger. You will also receive real-time push notifications the exact millisecond any transaction is initiated.",
-  },
-  {
-    id: "iap-6",
-    question: "What security is required to withdraw or transfer iCash?",
-    answer:
-      "To protect your earnings and funds from unauthorized access, any iCash withdrawal or peer-to-peer (P2P) transfer strictly requires you to input your secure 6-digit Transaction PIN.",
   },
   {
     id: "iap-7",
@@ -778,286 +733,6 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
       .json({ success: false, error: "Could not revoke session" });
   }
 };
-export const requestIcashPinReset = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "requestIcashPinResetController";
-  const action = "requestIcashPinReset";
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user context." });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const user = userDoc.data();
-
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    const hashedOtp = crypto.createHash("sha256").update(otp).digest("hex");
-    const otpExpires = new Date(Date.now() + 10 * 60 * 1000);
-
-    await userDoc.ref.update({
-      resetPinOTP: hashedOtp,
-      resetPinOTPExpires: otpExpires,
-      updatedAt: new Date(),
-    });
-
-    try {
-      const htmlContent = icashPinResetTemplate(user.firstname || "User", otp);
-      await sendEmail({
-        to: user.email,
-        subject: "IMPORTANT: iCash PIN Reset Code",
-        text: `Your reset code is ${otp}`,
-        html: htmlContent,
-      });
-      res
-        .status(200)
-        .json({ success: true, message: "OTP sent to your registered email." });
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-    } catch (err) {
-      await userDoc.ref.update({
-        resetPinOTP: null,
-        resetPinOTPExpires: null,
-        updatedAt: new Date(),
-      });
-
-      console.error("Email Dispatch Error:", err);
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Email could not be sent.",
-        );
-      });
-      return res
-        .status(500)
-        .json({ success: false, message: "Email could not be sent." });
-    }
-  } catch (error) {
-    console.error("Error in requestIcashPinReset:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const resetIcashPin = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "resetIcashPinController";
-  const action = "resetIcashPin";
-  const { otp, newPin } = req.body;
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user context." });
-  }
-
-  if (!otp || !newPin || typeof newPin !== "string" || newPin.length < 4) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid payload parameters",
-      );
-    });
-    return res.status(400).json({
-      success: false,
-      message: "OTP and a valid new PIN are required.",
-    });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const user = userDoc.data();
-
-    let otpExpiresTime = null;
-    if (user.resetPinOTPExpires) {
-      otpExpiresTime = user.resetPinOTPExpires.toDate
-        ? user.resetPinOTPExpires.toDate().getTime()
-        : new Date(user.resetPinOTPExpires).getTime();
-    }
-
-    const hashedInputOtp = crypto
-      .createHash("sha256")
-      .update(otp)
-      .digest("hex");
-
-    if (
-      !user.resetPinOTP ||
-      user.resetPinOTP !== hashedInputOtp ||
-      !otpExpiresTime ||
-      otpExpiresTime <= Date.now()
-    ) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid or expired OTP.",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "Invalid or expired OTP." });
-    }
-
-    const suspiciousActivity = user.suspiciousActivity || [];
-    if (suspiciousActivity.length > 0) {
-      await addFlag(userId, "PIN_RESET_WHILE_SUSPICIOUS");
-      if (suspiciousActivity.length > 3) {
-        setImmediate(() => {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Account security in review. Please contact support to help reset PIN.",
-          );
-        });
-        return res.status(403).json({
-          success: false,
-          message:
-            "Account security in review. Please contact support to help reset PIN.",
-        });
-      }
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPin = await bcrypt.hash(newPin, salt);
-    await userDoc.ref.update({
-      iCashPin: hashedPin,
-      resetPinOTP: null,
-      resetPinOTPExpires: null,
-      iCashAttempts: 0,
-      updatedAt: new Date(),
-    });
-
-    const now = new Date();
-    const formattedDate = now.toLocaleDateString();
-    const formattedTime = now.toLocaleTimeString();
-
-    await Promise.all([
-      createNotification({
-        notificationId: generateNotificationId("security"),
-        recipientEmail: user.email,
-        isRead: false,
-        recoveryEmails: user.recoveryEmails,
-        recipientId: user.uid,
-        category: "security",
-        actionType: "ICASH_PIN_RESET",
-        title: "iCash PIN Reset",
-        message: `Your iCash PIN has been successfully reset.`,
-        payload: {
-          userName: user.firstname || "iCampus User",
-          date: formattedDate,
-          time: formattedTime,
-        },
-        sendEmail: true,
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
-      }),
-      notifyAdmins(
-        { role: ["super_admin", "support"] },
-        {
-          notificationId: generateNotificationId("security"),
-          actionType: "ICASH_PIN_RESET_AUDIT",
-          payload: {
-            userUid: user.uid,
-            userName: `${user.firstname || ""} ${user.lastname || ""}`.trim(),
-          },
-          senderId: "system",
-        },
-        false,
-      ).catch((err) => console.error("Admin audit notification failed:", err)),
-    ]);
-    res
-      .status(200)
-      .json({ success: true, message: "PIN updated successfully." });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in resetIcashPin:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
 export const createPersonaVerifyInquiry = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "createPersonaVerifyInquiryController";
@@ -1211,8 +886,6 @@ export const aiChat = async (req, res) => {
     }
 
     const { type = "general", data = {} } = context;
-    const model = genAI.getGenerativeModel({ model: "gemini-flash-latest" });
-
     let systemInstruction = "";
     if (type === "support") {
       systemInstruction = `You are iAssistant, the official Support AI for iCampus. 
@@ -1235,21 +908,22 @@ export const aiChat = async (req, res) => {
       Academic Context: ${type === "course" ? `Course: ${data.courseTitle || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.`;
     }
 
-    const chat = model.startChat({
-      history: [
-        {
-          role: "user",
-          parts: [{ text: systemInstruction + "\nConfirm you are ready." }],
-        },
-        {
-          role: "model",
-          parts: [
-            { text: "Understood. I am ready to assist you in this context." },
-          ],
-        },
-        ...(Array.isArray(history) ? history : []),
-      ],
+    // 2. Instantiate model with proper configuration configuration object
+    const model = genAI.getGenerativeModel({
+      model: "gemini-flash-latest",
+      systemInstruction: systemInstruction,
     });
+    const formattedHistory = Array.isArray(history)
+      ? history.map((h) => ({
+          role: h.role,
+          parts: h.parts || [{ text: h.text }],
+        }))
+      : [];
+
+    const chat = model.startChat({
+      history: formattedHistory,
+    });
+
     const result = await chat.sendMessage(message);
     const replyText = result.response.text();
     let finalReply;
@@ -1293,9 +967,11 @@ export const aiChat = async (req, res) => {
     } else {
       finalReply = aiResponse.reply || replyText;
     }
+
     res
       .status(200)
       .json({ success: true, reply: finalReply, ticketId: createdTicketId });
+
     setImmediate(() => {
       const backgroundTasks = [];
 
@@ -1637,6 +1313,7 @@ export const searchPosts = async (req, res) => {
         }
       });
     }
+
     const formattedPosts = await Promise.all(
       limitedPosts.map(async (post) => {
         const postComments = post.comments || [];
@@ -1650,9 +1327,10 @@ export const searchPosts = async (req, res) => {
           typeof getPriorityReposter === "function"
             ? await getPriorityReposter(post.repostersDetails || [], userId)
             : null;
+        const postWithAuthor = await embedPostWithAuthorDetails(post);
 
         return {
-          ...post,
+          ...postWithAuthor,
           comments: commentsWithUsers,
           commentsCount: commentsWithUsers.length,
           repostsCount:
@@ -1663,11 +1341,13 @@ export const searchPosts = async (req, res) => {
         };
       }),
     );
+
     res.status(200).json({
       success: true,
       count: formattedPosts.length,
       posts: formattedPosts,
     });
+
     setImmediate(() => {
       if (typeof logControllerPerformance === "function") {
         logControllerPerformance(controllerName, action, startTime, "success");
@@ -2285,310 +1965,6 @@ export const patchUserPreferences = async (req, res) => {
       .json({ success: false, error: "Server error updating preferences" });
   }
 };
-export const verifyIcashPin = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "verifyIcashPinController";
-  const action = "verifyIcashPin";
-  const { pin } = req.body;
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user context." });
-  }
-
-  if (!pin || typeof pin !== "string") {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "PIN is required",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, message: "PIN is required." });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const user = userDoc.data();
-
-    if (user.isSuspended) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "This account is already suspended.",
-        );
-      });
-      return res.status(403).json({
-        success: false,
-        isSuspended: true,
-        message: "This account is already suspended.",
-      });
-    }
-
-    let lockoutTimestamp = null;
-    if (user.iCashLockoutUntil) {
-      lockoutTimestamp = user.iCashLockoutUntil.toDate
-        ? user.iCashLockoutUntil.toDate().getTime()
-        : new Date(user.iCashLockoutUntil).getTime();
-    }
-
-    if (lockoutTimestamp && lockoutTimestamp > Date.now()) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Locked. Try again",
-        );
-      });
-      return res.status(403).json({
-        success: false,
-        message: `Locked. Try again after ${moment(lockoutTimestamp).format("LT")}`,
-      });
-    }
-
-    if (!user.iCashPin) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "iCash PIN not set",
-        );
-      });
-      return res.status(401).json({ success: false, message: "Invalid PIN" });
-    }
-
-    const isMatch = await bcrypt.compare(pin, user.iCashPin);
-    if (!isMatch) {
-      const currentAttempts = (user.iCashAttempts || 0) + 1;
-
-      if (currentAttempts >= 5) {
-        await Promise.all([
-          addFlag(userId, "FAILED_PIN_ATTEMPT"),
-          userDoc.ref.update({
-            isSuspended: true,
-            iCashAttempts: 0,
-            updatedAt: new Date(),
-          }),
-          notifyAdmins(
-            { role: ["moderator", "super_admin"] },
-            {
-              notificationId: generateNotificationId("security"),
-              category: "security",
-              actionType: "ACCOUNT_SUSPENDED_SECURITY",
-              payload: {
-                userId,
-                reason: "Excessive failed iCash PIN attempts",
-              },
-              senderId: "system",
-            },
-            false,
-          ),
-        ]);
-
-        setImmediate(() => {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Maximum attempts reached. Account suspended for security.",
-          );
-        });
-        return res.status(403).json({
-          success: false,
-          isSuspended: true,
-          message: "Maximum attempts reached. Account suspended for security.",
-        });
-      }
-
-      await Promise.all([
-        addFlag(userId, "FAILED_PIN_ATTEMPT"),
-        userDoc.ref.update({
-          iCashAttempts: currentAttempts,
-          updatedAt: new Date(),
-        }),
-      ]);
-
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid PIN.",
-        );
-      });
-      return res.status(401).json({
-        success: false,
-        message: "Invalid PIN",
-        attemptsRemaining: 5 - currentAttempts,
-      });
-    }
-
-    await userDoc.ref.update({
-      iCashAttempts: 0,
-      iCashLockoutUntil: null,
-      updatedAt: new Date(),
-    });
-    res
-      .status(200)
-      .json({ success: true, message: "PIN verified successfully" });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in verifyIcashPin:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const icashPinSetup = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "icashPinSetupController";
-  const action = "icashPinSetup";
-  const { pin } = req.body;
-  const userId = req.user?.id || req.user?.uid;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, message: "Unauthorized user context." });
-  }
-
-  if (!pin || typeof pin !== "string" || pin.length < 4) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Invalid PIN format",
-      );
-    });
-    return res.status(400).json({
-      success: false,
-      message: "A valid PIN of at least 4 digits is required.",
-    });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const user = userDoc.data();
-
-    if (user.iCashPin) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "PIN already exists. Use the 'Reset PIN' flow to change it.",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "PIN already exists. Use the 'Reset PIN' flow to change it.",
-      });
-    }
-
-    const salt = await bcrypt.genSalt(10);
-    const hashedPin = await bcrypt.hash(pin, salt);
-
-    await userDoc.ref.update({
-      iCashPin: hashedPin,
-      twoFactorEnabled: true,
-      updatedAt: new Date(),
-    });
-    res.status(200).json({ success: true, message: "iCash PIN secured." });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in icashPinSetup:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
 export const toggleBlockedUsers = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "toggleBlockUsersController";
@@ -3137,74 +2513,6 @@ export const checkAccountState = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
-export const verifyiTagUsernameAvailability = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "verifyiTagUsernameAvailabilityController";
-  const action = "verifyiTagUsernameAvailability";
-
-  try {
-    const rawVal = req.params?.val;
-
-    if (!rawVal || typeof rawVal !== "string") {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing or invalid username parameter",
-        );
-      });
-      return res.status(400).json({
-        available: false,
-        message: "Missing or invalid username parameter",
-      });
-    }
-
-    const val = rawVal.trim().toLowerCase();
-    const itagQuery = await ITag.where("username", "==", val).limit(1).get();
-
-    if (itagQuery.empty) {
-      res.status(200).json({
-        available: true,
-        message: "iTag username available",
-      });
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-      return;
-    }
-
-    res.status(200).json({
-      available: false,
-      message: "iTag username already exists",
-    });
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "iTag username already exists",
-      );
-    });
-  } catch (error) {
-    console.error("Error fetching iTag:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      available: false,
-      message: "Server error",
-    });
-  }
-};
 export const markNotificationAsRead = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "markNotificationAsReadController";
@@ -3735,230 +3043,6 @@ export const handleUnifiedResourceSearch = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Internal engine error resolving resource records.",
-    });
-  }
-};
-export const refreshUserDetails = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "refreshUserDetailsController";
-  const action = "refreshUserDetails";
-
-  try {
-    const uid = req.user?.uid || req.user?.id;
-    if (!uid) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized: Missing user identifier",
-        );
-      });
-      return res.status(401).json({
-        success: false,
-        message: "Unauthorized: Missing user identifier",
-      });
-    }
-
-    const prefCollection =
-      typeof userPrefs !== "undefined" ? userPrefs : UserPrefs;
-
-    const [userQuery, prefQuery] = await Promise.all([
-      User.where("uid", "==", uid).limit(1).get(),
-      prefCollection
-        ? prefCollection.where("userId", "==", uid).limit(1).get()
-        : { empty: true },
-    ]);
-
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const userData = userDoc.data();
-
-    const { password, iCashPin, userAccountDetails, ...safeUserData } =
-      userData;
-
-    let theme = "light";
-    if (!prefQuery.empty && prefQuery.docs && prefQuery.docs[0]) {
-      const prefData = prefQuery.docs[0].data();
-      if (prefData.theme) {
-        theme = prefData.theme;
-      }
-    }
-
-    const safeUser = {
-      id: userDoc.id,
-      ...safeUserData,
-      theme,
-    };
-
-    const { accessToken, refreshToken } = await generateTokens({
-      uid,
-      ...userData,
-    });
-
-    res.status(200).json({
-      success: true,
-      message: "Refresh successful",
-      user: safeUser,
-      accessToken,
-      refreshToken,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in user refresh handler:", error.message);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res
-      .status(500)
-      .json({ success: false, message: "Internal server error" });
-  }
-};
-export const customizeItag = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "customizeItagController";
-  const action = "customizeItag";
-
-  try {
-    const userId = req.user?.uid || req.user?.id;
-    const { updates } = req.body;
-
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User ID is required",
-        );
-      });
-      return res
-        .status(400)
-        .json({ success: false, message: "User ID is required" });
-    }
-
-    if (!updates || typeof updates !== "object") {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid or missing update payload",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "Valid updates payload is required.",
-      });
-    }
-
-    const sanitizedUsername = updates.username
-      ? updates.username.trim().toLowerCase()
-      : null;
-    const [itagQuery, usernameQuery] = await Promise.all([
-      ITag.where("userId", "==", userId).limit(1).get(),
-      sanitizedUsername
-        ? ITag.where("username", "==", sanitizedUsername).get()
-        : Promise.resolve(null),
-    ]);
-
-    if (itagQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "iTag not found",
-        );
-      });
-      return res
-        .status(404)
-        .json({ success: false, message: "iTag not found" });
-    }
-
-    const itagDoc = itagQuery.docs[0];
-
-    if (usernameQuery && !usernameQuery.empty) {
-      const usernameExists = usernameQuery.docs.some(
-        (doc) => doc.id !== itagDoc.id,
-      );
-      if (usernameExists) {
-        setImmediate(() => {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Username already exists",
-          );
-        });
-        return res
-          .status(400)
-          .json({ success: false, message: "Username already exists" });
-      }
-    }
-
-    const processedUpdates = {
-      ...updates,
-      ...(sanitizedUsername ? { username: sanitizedUsername } : {}),
-      updatedAt: new Date(),
-    };
-
-    await itagDoc.ref.update(processedUpdates);
-    const updatedITag = {
-      id: itagDoc.id,
-      ...itagDoc.data(),
-      ...processedUpdates,
-    };
-    res.status(200).json({
-      success: true,
-      message: "iTag updated successfully",
-      data: updatedITag,
-    });
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Update Error:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({
-      success: false,
-      message: "Internal server error",
     });
   }
 };

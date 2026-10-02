@@ -7,14 +7,10 @@ import {
   courseCompletionEmailTemplate,
   newOrderTemplate,
   passwordResetTemplate,
-  lectureScheduledTemplate,
   loginAlertTemplate,
   passwordResetSuccessTemplate,
   testCreatedTemplate,
   emailVerificationTemplate,
-  iCashSuccessfulPinResetTemplate,
-  iCashPurchaseTemplate,
-  iCashWithdrawalTemplate,
   subscriptionUpgradeTemplate,
   marketplacePurchaseTemplate,
   orderCompletedTemplate,
@@ -62,11 +58,7 @@ export const createNotification = async ({
     if (!querySnapshot.empty) {
       prefs = querySnapshot.docs[0].data();
     }
-    const isCritical = [
-      "NEW_LOGIN",
-      "ICASH_WITHDRAWAL",
-      "PASSWORD_CHANGED",
-    ].includes(actionType);
+    const isCritical = ["NEW_LOGIN", "PASSWORD_CHANGED"].includes(actionType);
 
     const verifiedRecoveries = recoveryEmails
       .filter((item) => item.isVerified)
@@ -133,6 +125,7 @@ export const createNotification = async ({
             payload.buyerPhoneNumber,
             payload.date,
             payload.time,
+            payload.currency,
           );
         }
         break;
@@ -198,6 +191,7 @@ export const createNotification = async ({
             payload.amount,
             payload.orderId,
             payload.role,
+            payload.currency,
           );
         }
         break;
@@ -251,15 +245,6 @@ export const createNotification = async ({
             payload.amount,
             payload.currency,
             payload.transactionId,
-          );
-        }
-        break;
-      case "ICASH_PIN_RESET":
-        subject = "Security Alert: iCash PIN Reset";
-        if (canSendEmail) {
-          htmlContent = iCashSuccessfulPinResetTemplate(
-            payload.userName,
-            new Date().toLocaleString(),
           );
         }
         break;
@@ -485,6 +470,7 @@ export const createNotification = async ({
             payload.transactionId,
             payload.date,
             payload.time,
+            payload.currency,
           );
         }
         title = title || "Sales Payout Successful";
@@ -500,43 +486,12 @@ export const createNotification = async ({
             payload.productName,
             payload.amount,
             payload.orderId,
-            payload.productType,
-            payload.fileUrl,
             payload.transactionId,
             payload.date,
             payload.time,
           );
         }
         break;
-      case "ICASH_PURCHASE":
-        subject = `Credit Alert: ${payload.amountICash.toLocaleString()} iCash purchased`;
-        if (canSendEmail) {
-          htmlContent = iCashPurchaseTemplate(
-            payload.userName,
-            payload.amountICash,
-            payload.amountLocal,
-            payload.currency,
-            payload.transactionId || "N/A",
-          );
-        }
-        break;
-      case "ICASH_WITHDRAWAL":
-        subject = `Debit Alert: ${payload.amountICash.toLocaleString()} iCash Withdrawn`;
-        if (canSendEmail) {
-          htmlContent = iCashWithdrawalTemplate(
-            payload.userName,
-            payload.amountICash,
-            payload.amountLocal,
-            payload.currency,
-            payload.transactionId || "N/A",
-          );
-        }
-        title = title || "Withdrawal Successful";
-        message =
-          message ||
-          `You have successfully withdrawn ${payload.currency} ${payload.amountLocal.toLocaleString()}.`;
-        break;
-
       //navigate to PostDetailScreen, param: postId = payload.postId
       case "POST_UPDATED":
         category = "social";
@@ -630,6 +585,12 @@ export const createNotification = async ({
         subject = "Someone viewed your profile";
         break;
 
+      //navigate to ProductDetailScreen, param: productId = payload.productId
+      case "NEW_PRODUCT":
+        subject = `New Listing introduced to store!`;
+        title = payload.userName || "Seller";
+        message = `${payload.userName} has published a brand new item: "${payload.productName}"! Check it out now.`;
+        break;
       //admin notifications
       case "NEW_ADMIN_CREATED":
         title = title || "New Administrator Alert";
@@ -720,7 +681,7 @@ export const createNotification = async ({
         title = title || "Payout Audit";
         message =
           message ||
-          `A payout of ${payload.amount} iCash was credited to user ${payload.userId}.`;
+          `A payout of  ${payload.amount} ${payload.currency} was credited to user ${payload.userId}.`;
         break;
       case "PRODUCT_CREATION":
       case "PRODUCT_UPDATE":
@@ -757,12 +718,6 @@ export const createNotification = async ({
         subject = "Security Alert: Account Deleted";
         title = "User Account Deletion";
         message = `User ${payload.userUid} has permanently deleted their account. Reason provided: ${payload.reason || "None"}.`;
-        break;
-      case "ICASH_PIN_RESET_AUDIT":
-        category = "security";
-        subject = "Security Audit: iCash PIN Reset";
-        title = "Security Alert";
-        message = `The iCash PIN for user ${payload.userName} (UID: ${payload.userUid}) was successfully reset.`;
         break;
       case "AI_SUPPORT_ESCALATION":
         category = "social";
@@ -809,41 +764,11 @@ export const createNotification = async ({
         title = "Content Moderation Alert";
         message = `An automated system flagged a post (ID: ${payload.postId}) for ${payload.reason} with ${payload.confidence}% confidence. Post has been hidden pending review.`;
         break;
-      case "FINANCIAL_SECURITY_ALERT":
-        category = "security";
-        subject = "CRITICAL: Potential Financial Fraud Attempt";
-        title = "Price Spoofing Detected";
-        message = `Alert: User ${payload.userId} attempted an iCash purchase that failed integrity checks. Amount requested: ${payload.attemptedAmount}. IP: ${payload.ipAddress}. Investigation recommended.`;
-        break;
-        if (
-          canSendEmail &&
-          typeof financialSecurityAlertTemplate === "function"
-        ) {
-          htmlContent = financialSecurityAlertTemplate(payload);
-        }
-      case "WITHDRAWAL_SUCCESS_AUDIT":
-        category = "finance";
-        subject = "Audit: Successful Withdrawal";
-        title = "New Withdrawal Processed";
-        message = `User ${payload.userId} has successfully withdrawn ${payload.currency} ${payload.amount}. Transaction ID: ${payload.transactionId}.`;
-        break;
       case "WITHDRAWAL_FAILED_AUDIT":
         category = "finance";
         subject = "Alert: Withdrawal Failed";
         title = "Withdrawal Failure";
         message = `A withdrawal attempt for User ${payload.userId} (ID: ${payload.transactionId}) failed. Funds were reverted.`;
-        break;
-      case "P2P_TRANSFER_AUDIT":
-        category = "finance";
-        subject = "Financial Audit: P2P Transfer";
-        title = "P2P Transaction Logged";
-        message = `A P2P transfer of ${payload.amount} iCash occurred between ${payload.senderId} and ${payload.recipientId}. Ref: ${payload.transactionRef}.`;
-        break;
-      case "ACCOUNT_SUSPENDED_SECURITY":
-        category = "security";
-        subject = "CRITICAL: Account Suspended";
-        title = "Automatic Security Suspension";
-        message = `User ${payload.userId} has been suspended due to: ${payload.reason}.`;
         break;
       case "SECURITY_FLAG_RAISED":
         category = "security";

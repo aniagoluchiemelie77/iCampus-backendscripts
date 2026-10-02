@@ -337,292 +337,6 @@ export const passwordResetTemplate = (userName, code, expiryTime) => {
 
   return body;
 };
-export const icashPinResetTemplate = (userName, code) => {
-  const safeUserName = sanitize(userName);
-  const safeCode = sanitize(code);
-
-  const body = `
-    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
-      <tr>
-        <td align="center" style="padding: 0;">
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 500px; text-align: center;">
-            <tr>
-              <td align="center" style="padding-bottom: 16px;">
-                <!--[if mso]>
-                <v:roundrect xmlns:v="urn:schemas-microsoft-com:vml" xmlns:w="urn:schemas-microsoft-com:office:word" href="#" style="height:28px;v-text-anchor:middle;width:170px;" arcsize="50%" fillcolor="${colors.primary}" stroke="f">
-                  <w:anchorlock/>
-                  <center style="color:#ffffff;font-family:Arial,sans-serif;font-size:11px;font-weight:bold;">Secure Transaction Service</center>
-                </v:roundrect>
-                <![endif]-->
-                <span class="badge" style="background-color: ${colors.primary}; color: #ffffff; padding: 6px 16px; border-radius: 20px; font-family: Helvetica, Arial, sans-serif; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; display: inline-block;">
-                  Secure Transaction Service
-                </span>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px;">
-                  Hello ${safeUserName},
-                </p>
-                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px; margin-vertical: 20px;">
-                  We received a request to reset your <strong>iCash Security PIN</strong>. Use the authorization code below to proceed:
-                </p>
-              </td>
-            </tr>
-            <tr>
-              <td align="center" bgcolor="#fff5f0" style="background-color: #fff5f0; border: 1px dashed ${theme.colors.primary}; padding: 24px; border-radius: 12px;">
-                <span style="font-family: 'Courier New', Courier, monospace, Helvetica, Arial, sans-serif; font-size: 34px; font-weight: 800; letter-spacing: 8px; color: ${colors.primary}; display: inline-block;">
-                  ${safeCode}
-                </span>
-              </td>
-            </tr>
-            <tr>
-              <td align="left" style="padding-top: 24px;">
-                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8fafc; border-left: 4px solid #ef4444; border-radius: 0 8px 8px 0;">
-                  <tr>
-                    <td style="padding: 16px;">
-                      <p style="font-family: Helvetica, Arial, sans-serif; font-size: 13px; line-height: 18px; color: ${colors.text || "#333333"}; margin: 0;">
-                        <strong>Security Alert:</strong> This code will expire in <strong>10 minutes</strong>. If you did not initiate this request, your iCash funds may be at risk. Please change your iCampus password immediately or contact support.
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding-top: 30px;">
-                <p style="font-family: Helvetica, Arial, sans-serif; font-size: 12px; line-height: 16px; color: ${colors.secondary || "#888888"}; margin: 0;">
-                  Sent securely by iCampus Fintech Division.
-                </p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  `;
-
-  return body;
-};
-export const iCashPurchaseTemplate = (
-  userName,
-  amountICash,
-  amountLocal,
-  currency,
-  transactionId,
-) => {
-  const formatNumber = (val) => {
-    const num = Number(val);
-    return isNaN(num) ? String(val || "0") : num.toLocaleString();
-  };
-
-  const safeUserName = sanitize(userName);
-  const safeCurrency = sanitize(currency);
-  const safeTransactionId = sanitize(transactionId);
-  const formattedICash = formatNumber(amountICash);
-  const formattedLocal = formatNumber(amountLocal);
-
-  const body = `
-    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
-      <tr>
-        <td align="center" style="padding: 0;">
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 500px; text-align: center;">
-            <tr>
-              <td align="center" style="padding-bottom: 20px;">
-                <span style="background-color: ${colors.primary}; color: #ffffff; padding: 6px 16px; border-radius: 20px; font-family: Helvetica, Arial, sans-serif; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; display: inline-block;">
-                  Transaction Confirmed
-                </span>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 15px; line-height: 20px; margin-bottom: 20px;">Hello ${safeUserName},</p>
-                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 15px; line-height: 20px; margin-bottom: 20px;">Your iCash wallet has been successfully credited.</p>
-              </td>
-            </tr>
-            <tr>
-              <td align="center" bgcolor="#f0f9ff" style="background-color: #f0f9ff; border: 1px solid #bae6fd; padding: 28px; border-radius: 16px;">
-                <p style="font-family: Helvetica, Arial, sans-serif; font-size: 13px; color: ${colors.text || "#333333"}; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px 0;">Total iCash Added</p>
-                <span style="font-family: Helvetica, Arial, sans-serif; font-size: 38px; font-weight: 800; color: ${colors.primary}; display: inline-block; line-height: 1;">
-                  ${formattedICash}
-                </span>
-              </td>
-            </tr>
-            <tr>
-              <td align="left" style="padding-top: 25px;">
-                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fafafa; border-radius: 12px; border: 1px solid #f1f5f9;">
-                  <tr>
-                    <td style="padding: 20px;">
-                      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Helvetica, Arial, sans-serif; font-size: 14px; border-collapse: collapse;">
-                        <tr>
-                          <td style="padding: 8px 0; color: ${colors.text || "#333333"};">Amount Paid</td>
-                          <td style="padding: 8px 0; text-align: right; color: ${colors.text || "#333333"}; font-weight: bold;">${safeCurrency} ${formattedLocal}</td>
-                        </tr>
-                        <tr>
-                          <td style="padding: 8px 0; color: #64748b; border-top: 1px solid #edf2f7;">Transaction ID</td>
-                          <td style="padding: 8px 0; text-align: right; color: #64748b; font-family: 'Courier New', Courier, monospace; border-top: 1px solid #edf2f7;">${safeTransactionId}</td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding-top: 25px;">
-                <p style="font-family: Helvetica, Arial, sans-serif; font-size: 13px; line-height: 18px; color: ${colors.secondary || "#666666"}; margin: 0;">
-                  Your new balance is now updated in your iCash Dashboard.<br />
-                  Thank you for choosing <strong>iCampus</strong>.
-                </p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  `;
-
-  return body;
-};
-export const iCashWithdrawalTemplate = (
-  userName,
-  amountICash,
-  amountLocal,
-  currency,
-  transactionId,
-) => {
-  const formatNumber = (val) => {
-    const num = Number(val);
-    return isNaN(num) ? String(val || "0") : num.toLocaleString();
-  };
-
-  const safeUserName = sanitize(userName);
-  const safeCurrency = sanitize(currency);
-  const safeTransactionId = sanitize(transactionId);
-  const formattedICash = formatNumber(amountICash);
-  const formattedLocal = formatNumber(amountLocal);
-
-  const body = `
-    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
-      <tr>
-        <td align="center" style="padding: 0;">
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 500px; text-align: center;">
-            <tr>
-              <td align="center" style="padding-bottom: 20px;">
-                <span style="background-color: ${colors.primary}; color: #ffffff; padding: 6px 16px; border-radius: 20px; font-family: Helvetica, Arial, sans-serif; font-size: 11px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; display: inline-block;">
-                  Payout Processed
-                </span>
-              </td>
-            </tr>
-            <tr>
-              <td>
-                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 15px; line-height: 20px;">Hello ${safeUserName},</p>
-                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 15px; line-height: 20px; margin: 0px 20px;">Your withdrawal request has been completed.</p>
-              </td>
-            </tr>
-            <tr>
-              <td align="center" bgcolor="#f8fafc" style="background-color: #f8fafc; border: 1px solid #e2e8f0; padding: 28px; border-radius: 16px;">
-                <p style="font-family: Helvetica, Arial, sans-serif; font-size: 13px; color: ${colors.text || "#333333"}; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 8px 0;">iCash Debited</p>
-                <span style="font-family: Helvetica, Arial, sans-serif; font-size: 38px; font-weight: 800; color: ${colors.secondary}; display: inline-block; line-height: 1;">
-                  -${formattedICash}
-                </span>
-              </td>
-            </tr>
-            <tr>
-              <td align="left" style="padding-top: 25px;">
-                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fafafa; border-radius: 12px; border: 1px solid #f1f5f9;">
-                  <tr>
-                    <td style="padding: 20px;">
-                      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="font-family: Helvetica, Arial, sans-serif; font-size: 14px; border-collapse: collapse;">
-                        <tr>
-                          <td style="padding: 8px 0; color: ${colors.text || "#333333"};">Amount Sent</td>
-                          <td style="padding: 8px 0; text-align: right; color: ${colors.secondary}; font-weight: bold;">${safeCurrency} ${formattedLocal}</td>
-                        </tr>
-                        <tr>
-                          <td style="padding: 8px 0; color: #64748b; border-top: 1px solid #edf2f7;">Transaction ID</td>
-                          <td style="padding: 8px 0; text-align: right; color: #64748b; font-family: 'Courier New', Courier, monospace; border-top: 1px solid #edf2f7;">${safeTransactionId}</td>
-                        </tr>
-                        <tr>
-                          <td style="padding: 8px 0; color: #64748b; border-top: 1px solid #edf2f7;">Status</td>
-                          <td style="padding: 8px 0; text-align: right; color: ${colors.success || "#10b981"}; font-weight: bold; border-top: 1px solid #edf2f7;">SUCCESS</td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding-top: 25px;">
-                <p style="font-family: Helvetica, Arial, sans-serif; font-size: 13px; line-height: 18px; color: ${colors.secondary || "#666666"}; margin: 0;">
-                  The funds should reflect in your bank account shortly depending on your bank's processing time.<br />
-                  Keep building with <strong>iCampus</strong>.
-                </p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  `;
-
-  return body;
-};
-export const iCashSuccessfulPinResetTemplate = (userName, time) => {
-  const sanitizeEmailHref = (email) => {
-    if (typeof email !== "string") return "#";
-    const trimmed = email.trim();
-    if (trimmed.toLowerCase().startsWith("javascript:")) return "#";
-    const safeEmail = sanitize(trimmed);
-    return safeEmail.startsWith("mailto:") ? safeEmail : `mailto:${safeEmail}`;
-  };
-
-  const safeUserName = sanitize(userName);
-  const safeTime = sanitize(time);
-  const supportEmailHref = sanitizeEmailHref(branding?.supportEmailMain);
-  const supportEmailDisplay = sanitize(branding?.supportEmailMain || "Support");
-
-  const body = `
-    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
-      <tr>
-        <td align="center" style="padding: 0;">
-          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 500px; text-align: center;">
-            <tr>
-              <td>
-                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px;">Hello ${safeUserName},</p>
-                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px; margin: 0px 20px;">Your iCash PIN was changed on ${safeTime}.</p>
-              </td>
-            </tr>
-            <tr>
-              <td align="left" style="padding-top: 10px;">
-                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fff7ed; border: 1px solid #ffedd5; border-radius: 12px;">
-                  <tr>
-                    <td style="padding: 20px;">
-                      <p style="margin: 0; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px; color: ${colors.text || "#333333"};">
-                        <strong>Didn't make this change?</strong><br />
-                        If you did not authorize this PIN reset, please contact <a href="${supportEmailHref}" style="color: ${colors.primary}; text-decoration: underline; font-weight: bold;">${supportEmailDisplay}</a> immediately.
-                      </p>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding-top: 25px;">
-                <p style="font-family: Helvetica, Arial, sans-serif; font-size: 13px; line-height: 18px; color: ${colors.secondary || "#666666"}; margin: 0;">
-                  Secure transactions are our priority.<br />
-                  Thank you for keeping your account safe with <strong>iCampus</strong>.
-                </p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  `;
-
-  return body;
-};
 export const subscriptionUpgradeTemplate = (
   userName,
   tier,
@@ -744,6 +458,7 @@ export const newOrderTemplate = (
   buyerPhoneNumber,
   date,
   time,
+  currency,
 ) => {
   const formatNumber = (val) => {
     const num = Number(val);
@@ -760,6 +475,7 @@ export const newOrderTemplate = (
   const safeBuyerPhone = sanitize(buyerPhoneNumber);
   const safeDate = sanitize(date);
   const safeTime = sanitize(time);
+  const safeCurrency = sanitize(currency);
 
   const isHomeDelivery = method === "home_delivery";
 
@@ -815,7 +531,7 @@ export const newOrderTemplate = (
                   </tr>
                   <tr>
                     <td style="padding-bottom: 12px; color: ${colors.primary}; font-size: 16px;">
-                      <strong>Total Earnings:</strong> ${formattedAmount} iCash
+                      <strong>Total Earnings:</strong> ${safeCurrency} ${formattedAmount}
                     </td>
                   </tr>
                   <tr>
@@ -850,8 +566,6 @@ export const marketplacePurchaseTemplate = (
   productName,
   amount,
   orderId,
-  type,
-  fileUrl,
   date,
   time,
 ) => {
@@ -859,53 +573,13 @@ export const marketplacePurchaseTemplate = (
     const num = Number(val);
     return isNaN(num) ? String(val || "0") : num.toLocaleString();
   };
-  const sanitizeUrl = (url) => {
-    if (typeof url !== "string") return "#";
-    const trimmed = url.trim();
-    if (trimmed.toLowerCase().startsWith("javascript:")) return "#";
-    return sanitize(trimmed);
-  };
 
   const safeUserName = sanitize(userName);
   const safeProductName = sanitize(productName);
   const formattedAmount = formatNumber(amount);
   const safeOrderId = sanitize(orderId);
-  const safeType = sanitize(type);
-  const safeFileUrl = sanitizeUrl(fileUrl);
   const safeDate = sanitize(date);
   const safeTime = sanitize(time);
-
-  let instructions = "";
-  if (safeType === "course") {
-    instructions = `
-      <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px; margin: 0;">This course has been added to your library. You can access it anytime under the <strong>"My Downloads"</strong> section in the iCampus app.</p>
-    `;
-  } else if (safeType === "physical") {
-    instructions = `
-      <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px; margin: 0;">Please head to your chosen collection point if it's not home delivery. Present the <strong>QR Code</strong> found in your order details to the seller or agent to collect your item.</p>
-    `;
-  } else if (safeType === "file") {
-    instructions = `
-      <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
-        <tr>
-          <td align="center" style="padding: 20px 0;">
-            <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px; margin: 0 0 16px 0;">Your file is ready for download:</p>
-            <table role="presentation" border="0" cellpadding="0" cellspacing="0">
-              <tr>
-                <td align="center" bgcolor="${colors.primary}" style="border-radius: 5px;">
-                  <a href="${safeFileUrl}" target="_blank" style="background-color: ${colors.primary}; color: ${colors.white || "#ffffff"}; padding: 14px 25px; text-decoration: none; border-radius: 5px; font-family: Helvetica, Arial, sans-serif; font-weight: bold; font-size: 14px; display: inline-block; border: 1px solid ${colors.primary};">Download File</a>
-                </td>
-              </tr>
-            </table>
-            <p style="font-family: Helvetica, Arial, sans-serif; font-size: 12px; line-height: 16px; color: ${colors.secondary || "#666666"}; margin: 16px 0 0 0;">
-              If the button doesn't work, copy and paste this link into your browser:<br />
-              <span style="word-break: break-all; color: ${colors.primary};"><a href="${safeFileUrl}" style="color: ${colors.primary}; text-decoration: underline;">${safeFileUrl}</a></span>
-            </p>
-          </td>
-        </tr>
-      </table>
-    `;
-  }
 
   const body = `
     <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
@@ -936,7 +610,7 @@ export const marketplacePurchaseTemplate = (
             </tr>
             <tr>
               <td style="padding-top: 20px;">
-                ${instructions}
+                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 20px; margin: 0;">Please head to your chosen collection point if it's not home delivery. Present the <strong>QR Code</strong> found in your order details to the seller or agent to collect your item.</p>
               </td>
             </tr>
             <tr>
@@ -959,6 +633,7 @@ export const orderCompletedTemplate = (
   amount,
   orderId,
   role,
+  currency,
 ) => {
   const formatNumber = (val) => {
     const num = Number(val);
@@ -970,6 +645,7 @@ export const orderCompletedTemplate = (
   const formattedAmount = formatNumber(amount);
   const safeOrderId = sanitize(orderId);
   const safeRole = sanitize(role);
+  const safeCurrency = sanitize(currency);
 
   const isAgent = safeRole === "agent";
 
@@ -998,7 +674,7 @@ export const orderCompletedTemplate = (
                   </tr>
                   <tr>
                     <td style="color: ${colors.primary}; font-size: 15px; font-weight: bold;">
-                      <strong>Amount Credited:</strong> ${formattedAmount} iCash
+                      <strong>Amount Credited:</strong> ${safeCurrency} ${formattedAmount}
                     </td>
                   </tr>
                 </table>
@@ -1163,7 +839,7 @@ export const orderCancelledEmailTemplate = (
               <td style="padding-top: 20px;">
                 <p style="color: ${colors.secondary || "#666666"}; font-family: Helvetica, Arial, sans-serif; font-size: 13px; line-height: 18px; margin: 0 0 10px 0;"><strong>Order Cancellation Date:</strong> ${safeDate} &bull; ${safeTime}</p>
                 <p style="color: ${colors.secondary || "#666666"}; font-family: Helvetica, Arial, sans-serif; font-size: 13px; line-height: 18px; margin: 0;">
-                  No further action is required on your part. If you have already dispatched this item, please contact support immediately.
+                  No further action is required on your part. If you have already dispatched this item, please proceed to retrieve or contact support immediately.
                 </p>
               </td>
             </tr>
@@ -1259,6 +935,7 @@ export const salesPayoutTemplate = (
   transactionId,
   date,
   time,
+  currency,
 ) => {
   const formatNumber = (val) => {
     const num = Number(val);
@@ -1267,6 +944,7 @@ export const salesPayoutTemplate = (
 
   const safeUsername = sanitize(username);
   const formattedAmount = formatNumber(amount);
+  const formattedCurrency = sanitize(currency);
   const safeTransactionId = sanitize(transactionId);
   const safeDate = sanitize(date);
   const safeTime = sanitize(time);
@@ -1279,7 +957,7 @@ export const salesPayoutTemplate = (
             <tr>
               <td>
                 <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 15px; line-height: 20px; margin: 5px 0;">Hi ${safeUsername},</p>
-                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 15px; line-height: 20px; margin: 0 0 20px 0;">Your request to move your sales proceeds to your main wallet has been processed. The funds are now available for immediate use.</p>
+                <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 15px; line-height: 20px; margin: 0 0 20px 0;">Your request to withdraw your sales proceeds has been processed and the funds have been transferred to your bank account.</p>
               </td>
             </tr>
             <tr>
@@ -1288,7 +966,7 @@ export const salesPayoutTemplate = (
                   <tr>
                     <td style="padding: 20px;">
                       <p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 12px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; margin: 0 0 4px 0;">Amount Transferred</p>
-                      <p style="color: ${colors.primary}; font-family: Helvetica, Arial, sans-serif; font-size: 24px; font-weight: bold; margin: 0 0 12px 0;">${formattedAmount} iCash</p>
+                      <p style="color: ${colors.primary}; font-family: Helvetica, Arial, sans-serif; font-size: 24px; font-weight: bold; margin: 0 0 12px 0;"> ${formattedCurrency} ${formattedAmount}</p>
                       
                       <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
                         <tr>
@@ -1299,22 +977,6 @@ export const salesPayoutTemplate = (
                           </td>
                         </tr>
                       </table>
-                    </td>
-                  </tr>
-                </table>
-              </td>
-            </tr>
-            <tr>
-              <td align="left" style="padding-top: 20px;">
-                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #fff9e6; border: 1px solid #ffeeba; border-radius: 5px;">
-                  <tr>
-                    <td style="padding: 16px;">
-                      <p style="margin: 0 0 6px 0; font-family: Helvetica, Arial, sans-serif; font-size: 14px; font-weight: bold; color: ${colors.text || "#333333"};">What can you do now?</p>
-                      <ul style="font-family: Helvetica, Arial, sans-serif; font-size: 13px; line-height: 18px; margin: 0; padding-left: 20px; color: ${colors.text || "#333333"};">
-                        <li style="margin-bottom: 4px;">Purchase course materials or items on the Marketplace.</li>
-                        <li style="margin-bottom: 4px;">Send iCash to other users on iCampus.</li>
-                        <li>Withdraw funds to your linked bank account or card.</li>
-                      </ul>
                     </td>
                   </tr>
                 </table>

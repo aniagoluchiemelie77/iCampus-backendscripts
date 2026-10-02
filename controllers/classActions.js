@@ -3287,7 +3287,7 @@ export const uploadCourseDetailsManually = async (req, res) => {
   const controllerName = "uploadCourseDetailsManuallyController";
   const action = "uploadCourseDetailsManually";
   try {
-    const { courseTitle, courseCode, credits } = req.body;
+    const { courseTitle, courseCode, credits, semester, session } = req.body;
     const uid = req.user?.uid || req.user?.id;
     const usertype = req.user?.usertype;
     const schoolName = req.user?.schoolName;
@@ -3363,6 +3363,8 @@ export const uploadCourseDetailsManually = async (req, res) => {
         courseCode: trimmedCode,
         courseTitle: trimmedTitle,
         credits: parseInt(credits, 10) || 0,
+        semester: semester || null,
+        session: session || null,
         schoolName: schoolName,
         department: department || "General",
         isActive: true,

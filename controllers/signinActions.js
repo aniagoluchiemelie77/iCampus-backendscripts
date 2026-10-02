@@ -1,7 +1,6 @@
 import {
   User,
   OperationalInstitutions,
-  ITag,
   EmailVerification,
   SchoolConfiguration,
   userPrefs,
@@ -16,11 +15,8 @@ import geoip from "geoip-lite";
 import { setImmediate } from "timers";
 import {
   generateNotificationId,
-  generateUniqueCardNumber,
   generateUserUID,
   generateTokens,
-  generateUniqueReferralCode,
-  generateItagUsername,
 } from "../utils/idGenerator.js";
 import {
   verifyGoogleToken,
@@ -35,6 +31,7 @@ import { verifyAndNotifyLogin } from "../utils/suspiciousActivityDetector.js";
 import { addFlag } from "../utils/flagger.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { promisify } from "util";
+import { embedUserWithInstitutionTier } from "../utils/embedFunctions.js";
 const verifyJwtAsync = promisify(jwt.verify);
 axiosRetry(axios, { retries: 3 });
 
@@ -1082,7 +1079,7 @@ export const refreshToken = async (req, res) => {
       return res.status(403).json({ message: "User not found" });
     }
 
-    const userData = userDoc.data();
+    const userData = { uid: userDoc.id, ...userDoc.data() };
     const storedTokens = userData.refreshTokens || [];
     if (!storedTokens.includes(refreshToken)) {
       return res.status(403).json({ message: "Invalid Refresh Token Session" });
@@ -1093,13 +1090,14 @@ export const refreshToken = async (req, res) => {
       process.env.JWT_SECRET,
       { expiresIn: "70m" },
     );
+
+    let safeUser = null;
     if (userType === "users") {
+      const enrichedUser = await embedUserWithInstitutionTier(userData);
       const [preferencesDoc] = await Promise.all([userPrefs.doc(userId).get()]);
       const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
-      const safeUser = { ...userData };
-      safeUser.hasIcashPin = Boolean(userData.iCashPin);
+      safeUser = { ...enrichedUser };
       delete safeUser.password;
-      delete safeUser.iCashPin;
       delete safeUser.userAccountDetails;
       safeUser.theme = preferences ? preferences.theme : "light";
     }
@@ -1176,7 +1174,7 @@ export const Login = async (req, res) => {
         error: `This account was created using ${user.providerId || "a password"}. Please log in using that method.`,
       });
     }
-
+    const enrichedUser = await embedUserWithInstitutionTier(user);
     const [preferencesDoc, tokens] = await Promise.all([
       userPrefs.doc(user.uid).get(),
       generateTokens(user),
@@ -1184,20 +1182,19 @@ export const Login = async (req, res) => {
 
     const { accessToken, refreshToken } = tokens;
     const preferences = preferencesDoc.exists ? preferencesDoc.data() : null;
-    const safeUser = { ...user };
-    safeUser.hasIcashPin = Boolean(user.iCashPin);
+    const safeUser = { ...enrichedUser };
     delete safeUser.password;
-    delete safeUser.iCashPin;
     delete safeUser.userAccountDetails;
-    console.log("Logging in...");
     safeUser.theme = preferences ? preferences.theme : "light";
     safeUser.sessions = [];
+
     res.status(200).json({
       message: "Login successful",
       user: safeUser,
       accessToken,
       refreshToken,
     });
+
     setImmediate(async () => {
       try {
         const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
@@ -1433,24 +1430,13 @@ export const signUp = async (req, res) => {
     const displayNameForGen =
       firstname || lastname || organizationName || "User";
 
-    const [uid, itagusername] = await Promise.all([
-      Promise.resolve(generateUserUID()),
-      Promise.resolve(generateItagUsername(displayNameForGen, 5)),
-    ]);
+    const [uid] = await Promise.all([Promise.resolve(generateUserUID())]);
     const isVerified = usertype === "student" || usertype === "lecturer";
-    const iSCardEligible = [
-      "student",
-      "lecturer",
-      "otherUser",
-      "enterprise",
-    ].includes(usertype);
     const queriesToRun = [
       existingUserQuery.limit(1).get(),
       password && password !== "SOCIAL_AUTH"
         ? bcrypt.hash(password, 10)
         : Promise.resolve(null),
-      generateUniqueReferralCode(req.body),
-      iSCardEligible ? generateUniqueCardNumber() : Promise.resolve(null),
     ];
     if (institutionalQuery) {
       queriesToRun.push(institutionalQuery.limit(1).get());
@@ -1458,8 +1444,6 @@ export const signUp = async (req, res) => {
     const results = await Promise.all(queriesToRun);
     const emailSnapshot = results[0];
     const hashedPassword = results[1];
-    const referralCode = results[2];
-    const newCardNumber = results[3];
     const institutionalSnapshot = institutionalQuery ? results[4] : null;
     if (!emailSnapshot.empty) {
       setImmediate(() => {
@@ -1495,16 +1479,12 @@ export const signUp = async (req, res) => {
     const newUserObj = {
       uid,
       ...req.body,
-      itagusername,
-      referralCode,
       password: hashedPassword,
       isVerified,
       providerId: providerId || "",
       createdAt: new Date(),
       updatedAt: new Date(),
-      hasIcashPin: false,
       tier: "free",
-      pointsBalance: 0.0,
       hasSubscribed: false,
       twoFactorEnabled: false,
       isInstitutionAdmin: false,
@@ -1543,30 +1523,6 @@ export const signUp = async (req, res) => {
       userPrefs.doc(uid).set(defaultPreferencesData),
       UserSessions.doc(sessionId).set(initialSession),
     ];
-    if (iSCardEligible && newCardNumber) {
-      const itagId = `itag_${uid}`;
-      const cardHolder =
-        firstname && lastname
-          ? `${firstname} ${lastname}`
-          : organizationName || email.split("@")[0];
-
-      const newITagData = {
-        userId: uid,
-        username: itagusername,
-        cardHolderName: cardHolder,
-        cardNumber: newCardNumber,
-        tier: "free",
-        createdAt: new Date(),
-      };
-      dbWrites.push(ITag.doc(itagId).set(newITagData));
-    } else {
-      console.log(
-        "Skipped ITag write. Eligible:",
-        iSCardEligible,
-        "Card Number:",
-        newCardNumber,
-      );
-    }
     const [_, __, ___, ____, tokens] = await Promise.all([
       ...dbWrites,
       generateTokens({ uid, usertype, email, ...newUserObj }),
@@ -1577,7 +1533,6 @@ export const signUp = async (req, res) => {
 
     const safeUser = { ...newUserObj };
     delete safeUser.password;
-    delete safeUser.iCashPin;
     safeUser.theme = defaultPreferencesData.theme;
     safeUser.sessions = [initialSession];
     res.status(200).json({

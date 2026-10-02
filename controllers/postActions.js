@@ -15,7 +15,10 @@ import { extractMentions } from "../utils/postMentionsRegex.js";
 import { storage, db } from "../config/firebaseAdmin.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { scan } from "../services/visionAi.js";
-import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
+import {
+  getPriorityReposter,
+  embedPostWithAuthorDetails,
+} from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
 import { calculateRankingScore } from "../utils/postRanker.js";
@@ -110,28 +113,17 @@ export const fetchPostUsingPostId = async (req, res) => {
       });
       return res.status(404).json({ error: "Post not found" });
     }
+    if (!post.originalAuthor) {
+      post.originalAuthor = post.userId?.uid || post.userId;
+    }
 
-    const authorId = post.originalAuthor || post.userId?.uid || post.userId;
     const targetPostId = isRepost ? repostData.postId : postId;
-    const [userQuery, commentsSnapshot, repostersSnapshot] = await Promise.all([
-      authorId
-        ? User.where("uid", "==", authorId).limit(1).get()
-        : Promise.resolve(null),
+    const [commentsSnapshot, repostersSnapshot] = await Promise.all([
       Comments.where("postId", "==", targetPostId).get(),
       PostReposters.where("postId", "==", targetPostId).get(),
     ]);
+    await embedPostWithAuthorDetails(post);
 
-    let authorDetails = null;
-    if (userQuery && !userQuery.empty) {
-      const uData = userQuery.docs[0].data();
-      authorDetails = {
-        firstname: uData.firstname || null,
-        lastname: uData.lastname || null,
-        username: uData.username || null,
-        tier: uData.tier || null,
-        organizationName: uData.organizationName || null,
-      };
-    }
     const commentUserIds = [
       ...new Set(
         commentsSnapshot.docs.map((doc) => doc.data().userId).filter(Boolean),
@@ -141,7 +133,7 @@ export const fetchPostUsingPostId = async (req, res) => {
 
     if (commentUserIds.length > 0) {
       const commentUsersPromises = commentUserIds.map(async (cUserId) => {
-        const uSnap = await Users.where("uid", "==", cUserId).limit(1).get();
+        const uSnap = await User.where("uid", "==", cUserId).limit(1).get();
         if (!uSnap.empty) {
           const cuData = uSnap.docs[0].data();
           return {
@@ -176,11 +168,11 @@ export const fetchPostUsingPostId = async (req, res) => {
       typeof getPriorityReposter === "function"
         ? await getPriorityReposter(repostersDetails, userId)
         : null;
+
     res.status(200).json({
-      ...post,
+      ...post, 
       ...(isRepost ? repostData : {}),
       isRepost,
-      authorDetails,
       comments,
       repostersDetails,
       featuredReposter,

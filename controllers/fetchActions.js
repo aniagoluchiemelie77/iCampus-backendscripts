@@ -22,9 +22,11 @@ import { generateNotificationId } from "../utils/idGenerator.js";
 import { setImmediate } from "timers";
 import axiosRetry from "axios-retry";
 import axios from "axios";
-import * as cheerio from "cheerio";
 import { CATEGORY_ROLES } from "../constants/inAppConstants.js";
-import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
+import {
+  getPriorityReposter,
+  embedPostWithAuthorDetails,
+} from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 axiosRetry(axios, { retries: 3 });
 
@@ -109,117 +111,6 @@ export const fetchConnections = async (req, res) => {
       ),
     );
     res.status(500).json({ success: false, message: error.message });
-  }
-};
-export const fetchUserTransactionHistory = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchUserTransactionHistoryController";
-  const action = "fetchUserTransactionHistory";
-  try {
-    const userId = req.user.uid;
-    const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 20;
-
-    const querySnapshot = await Transactions.where("userId", "==", userId)
-      .orderBy("createdAt", "desc")
-      .get();
-
-    const allDocs = querySnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    const total = allDocs.length;
-    const totalPages = Math.ceil(total / limit);
-    const startIndex = (page - 1) * limit;
-    const transactions = allDocs.slice(startIndex, startIndex + limit);
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-
-    res.status(200).json({
-      success: true,
-      data: transactions,
-      pagination: {
-        totalItems: total,
-        totalPages: totalPages,
-        currentPage: page,
-        hasNextPage: page < totalPages,
-      },
-    });
-  } catch (error) {
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: error.message });
-  }
-};
-export const fetchItagByUsername = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchItagByUsernameController";
-  const action = "fetchItagByUsername";
-  try {
-    const { username } = req.params;
-    const querySnapshot = await ITag.where(
-      "username",
-      "==",
-      username.toLowerCase(),
-    )
-      .limit(1)
-      .get();
-
-    if (querySnapshot.empty) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        ),
-      );
-      return res.status(404).json({ message: "User not found" });
-    }
-
-    const iTagData = querySnapshot.docs[0].data();
-    const maskedNumber = iTagData.cardNumber
-      ? iTagData.cardNumber.replace(/\d(?=\d{4})/g, "*")
-      : "";
-    const isPremium = iTagData.tier === "premium";
-    const isUser = iTagData.userId === req.user.id;
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-
-    res.status(200).json({
-      userId: iTagData.userId,
-      username: iTagData.username,
-      cardHolderName: iTagData.cardHolderName,
-      cardNumber: maskedNumber,
-      tier: iTagData.tier,
-      designOptions: iTagData.designOptions,
-      isPremium,
-      isUser,
-    });
-  } catch (error) {
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Internal Server Error",
-      ),
-    );
-    res.status(500).json({ message: "Internal Server Error" });
   }
 };
 export const fetchUserNotifications = async (req, res) => {
@@ -438,8 +329,7 @@ export const fetchProfileInformation = async (req, res) => {
     }
 
     const rawTargetUserData = targetUserSnapshot.docs[0].data();
-    const { password, refreshTokens, iCashPin, ...targetUser } =
-      rawTargetUserData;
+    const { password, refreshTokens, ...targetUser } = rawTargetUserData;
     const targetUid = targetUser.uid;
 
     const viewerDoc = await User.doc(viewerUid).get();
@@ -484,6 +374,7 @@ export const fetchProfileInformation = async (req, res) => {
         snap.docs.map((doc) => {
           const u = doc.data();
           return {
+            uid: u.uid || doc.id,
             firstname: u.firstname,
             lastname: u.lastname,
             username: u.username,
@@ -499,44 +390,61 @@ export const fetchProfileInformation = async (req, res) => {
 
     const attachCommentsAndCountsToPosts = async (postsList) => {
       if (!postsList || !postsList.length) return [];
+      const postDataPromises = postsList.map(async (post) => {
+        const targetPostId = post.postId || post.id;
+        const [commentsSnapshot, repostersSnapshot] = await Promise.all([
+          Comments.where("postId", "==", targetPostId).get(),
+          PostReposters.where("postId", "==", targetPostId).get(),
+        ]);
+        return { post, commentsSnapshot, repostersSnapshot };
+      });
 
-      return Promise.all(
-        postsList.map(async (post) => {
-          const targetPostId = post.postId;
-          const [commentsSnapshot, repostersSnapshot] = await Promise.all([
-            Comments.where("postId", "==", targetPostId).get(),
-            PostReposters.where("postId", "==", targetPostId).get(),
-          ]);
-
-          const commentUserPromises = commentsSnapshot.docs.map(async (doc) => {
+      const resolvedPosts = await Promise.all(postDataPromises);
+      const allCommentUserIds = new Set();
+      resolvedPosts.forEach(({ commentsSnapshot }) => {
+        commentsSnapshot.docs.forEach((doc) => {
+          const commentData = doc.data();
+          if (commentData.userId) allCommentUserIds.add(commentData.userId);
+        });
+      });
+      const commentAuthorMap = new Map();
+      const uniqueCommentUserIds = [...allCommentUserIds];
+      if (uniqueCommentUserIds.length > 0) {
+        const userChunks = [];
+        for (let i = 0; i < uniqueCommentUserIds.length; i += 30) {
+          userChunks.push(uniqueCommentUserIds.slice(i, i + 30));
+        }
+        const userResults = await Promise.all(
+          userChunks.map((chunk) => User.where("uid", "in", chunk).get()),
+        );
+        userResults.forEach((snap) => {
+          snap.docs.forEach((doc) => {
+            const cuData = doc.data();
+            commentAuthorMap.set(cuData.uid || doc.id, {
+              uid: cuData.uid || doc.id,
+              firstname: cuData.firstname,
+              lastname: cuData.lastname,
+              username: cuData.username,
+              profilePic: cuData.profilePic,
+            });
+          });
+        });
+      }
+      return resolvedPosts.map(
+        ({ post, commentsSnapshot, repostersSnapshot }) => {
+          const comments = commentsSnapshot.docs.map((doc) => {
             const commentData = doc.data();
-            let commentUser = null;
-            if (commentData.userId) {
-              const commentUserQuery = await Users.where(
-                "uid",
-                "==",
-                commentData.userId,
-              )
-                .limit(1)
-                .get();
-              if (!commentUserQuery.empty) {
-                const cuData = commentUserQuery.docs[0].data();
-                commentUser = {
-                  uid: cuData.uid,
-                  firstname: cuData.firstname,
-                  lastname: cuData.lastname,
-                  username: cuData.username,
-                  profilePic: cuData.profilePic,
-                };
-              }
-            }
+            const commentUser = commentData.userId
+              ? commentAuthorMap.get(commentData.userId) || commentData.userId
+              : null;
+
             return {
+              id: doc.id,
               ...commentData,
-              userId: commentUser || commentData.userId,
+              userId: commentUser,
             };
           });
 
-          const comments = await Promise.all(commentUserPromises);
           const repostersCount = repostersSnapshot.size;
           const commentsCount = commentsSnapshot.size;
 
@@ -549,7 +457,7 @@ export const fetchProfileInformation = async (req, res) => {
                 ? post.repostsCount
                 : repostersCount,
           };
-        }),
+        },
       );
     };
 
@@ -2417,8 +2325,6 @@ export const fetchPosts = async (req, res) => {
   const limit = parseInt(req.query.limit) || 15;
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
   const userId = req.user?.uid || req.user?.id;
-  console.log("Ignoring...");
-  return res.status(200).json([]);
   try {
     let query = Posts.where("status", "!=", "hidden")
       .orderBy("rankingScore", "desc")
@@ -2457,7 +2363,22 @@ export const fetchPosts = async (req, res) => {
             userSnap.docs.forEach((doc) => {
               const userData = doc.data();
               const { password, iCashPin, ...safeData } = userData;
-              authorMap.set(userData.uid || doc.id, safeData);
+              const formattedAuthor = {
+                uid: userData.uid || doc.id,
+                firstname: safeData.firstname || safeData.firstName || "",
+                lastname: safeData.lastname || safeData.lastName,
+                username: safeData.username,
+                tier: safeData.tier || "free",
+                organizationName: safeData.organizationName,
+                profilePic: Array.isArray(safeData.profilePic)
+                  ? safeData.profilePic.map(String)
+                  : safeData?.profilePic
+                    ? [String(safeData.profilePic)]
+                    : [],
+                isVerified: safeData.isVerified || false,
+              };
+
+              authorMap.set(userData.uid || doc.id, formattedAuthor);
             });
           }),
         ),
@@ -2490,9 +2411,19 @@ export const fetchPosts = async (req, res) => {
     }
 
     await Promise.all(fetchTasks);
+
     const processedPosts = await Promise.all(
       rawPosts.map(async (post) => {
-        const authorDetails = authorMap.get(post.originalAuthor) || {};
+        let authorDetails = post.originalAuthor
+          ? authorMap.get(post.originalAuthor)
+          : null;
+        const postWithDetails = { ...post };
+        if (authorDetails) {
+          postWithDetails.postAuthorsDetails = authorDetails;
+        } else if (typeof embedPostWithAuthorDetails === "function") {
+          await embedPostWithAuthorDetails(postWithDetails);
+        }
+
         const repostersDetails = repostersMap.get(post.id) || [];
         const targetPostId = post.postId || post.id;
 
@@ -2504,8 +2435,7 @@ export const fetchPosts = async (req, res) => {
         const commentsCount = commentsSnapshot.size;
 
         return {
-          ...post,
-          authorDetails,
+          ...postWithDetails,
           repostersDetails,
           commentsCount,
           featuredReposter: await getPriorityReposter(repostersDetails, userId),

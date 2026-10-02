@@ -862,6 +862,7 @@ export const createInstitution = async (req, res) => {
     domainWhitelist,
     isOperational,
     countryCode,
+    tier,
   } = req.body;
 
   try {
@@ -881,6 +882,7 @@ export const createInstitution = async (req, res) => {
       schoolCode: schoolId,
       logo,
       createdAt: now,
+      tier: tier || "free",
     };
 
     const configData = {

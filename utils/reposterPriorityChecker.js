@@ -1,4 +1,4 @@
-import { Follow } from "../tableDeclarations.js";
+import { Follow, User } from "../tableDeclarations.js";
 
 export const getPriorityReposter = async (repostersDetails, currentUserId) => {
   if (!Array.isArray(repostersDetails) || repostersDetails.length === 0)
@@ -52,4 +52,50 @@ export const getPriorityReposter = async (repostersDetails, currentUserId) => {
     repostersDetails[Math.floor(Math.random() * repostersDetails.length)] ||
     null
   );
+};
+export const embedPostWithAuthorDetails = async (post) => {
+  if (!post || !post.originalAuthor) {
+    return post;
+  }
+  const authorId =
+    typeof post.originalAuthor === "string"
+      ? post.originalAuthor
+      : post.originalAuthor?.uid || post.originalAuthor?.id;
+
+  if (!authorId) {
+    post.postAuthorsDetails = null;
+    return post;
+  }
+
+  try {
+    const userDoc = await User.doc(authorId).get();
+    if (!userDoc.exists) {
+      post.postAuthorsDetails = null;
+      return post;
+    }
+    const userData = userDoc.data();
+    const authorDetails = {
+      uid: userDoc.id,
+      firstname: userData?.firstname || userData?.firstName || "",
+      lastname: userData?.lastname || userData?.lastName,
+      username: userData?.username,
+      tier: userData?.tier || "free",
+      organizationName: userData?.organizationName,
+      profilePic: Array.isArray(userData?.profilePic)
+        ? userData.profilePic.map(String)
+        : userData?.profilePic
+          ? [String(userData.profilePic)]
+          : [],
+      isVerified: userData?.isVerified || false,
+    };
+    post.postAuthorsDetails = authorDetails;
+  } catch (error) {
+    console.error(
+      `Failed to fetch author details for post ${post.postId || "unknown"}:`,
+      error,
+    );
+    post.postAuthorsDetails = null;
+  }
+
+  return post;
 };

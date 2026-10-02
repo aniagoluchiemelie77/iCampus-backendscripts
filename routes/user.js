@@ -1,5 +1,4 @@
 import express from "express";
-import { initiateFlwCharge } from "../controllers/paymentController.js";
 import {
   authLimiter,
   protect,
@@ -15,7 +14,6 @@ import {
   fetchCourseAssignments,
   fetchCourseLectures,
   fetchLectureExceptionsLecturerView,
-  fetchBanksUsingCountryCode,
   fetchOngoingLectures,
   fetchCourseDetailsForOngoingLecture,
   fetchAllExceptionsForOngoingLecture,
@@ -24,6 +22,7 @@ import {
   getAds,
   fetchUserSessions,
   getUserPreferences,
+  fetchBanksUsingCountryCode,
 } from "../controllers/fetchActions.js";
 import { uploadCourseDetailsManually } from "../controllers/classActions.js";
 import {
@@ -37,19 +36,16 @@ import {
   updateEmails,
   toggleBlockedUsers,
   deletePhoneNumber,
-  customizeItag,
   verifyPasswordInapp,
   revokeLoggedInDeviceSession,
   patchUserPreferences,
   sendPhoneNumberOTP,
   toggleFollowingUsers,
   updateUserProfile,
-  verifyiTagUsernameAvailability,
   searchUserUsingUidOrNameQuery,
   checkAccountState,
   handleUnifiedCourseSearch,
   toggleTheme,
-  refreshUserDetails,
   aiChat,
   createQuickMeeting,
   registerDropOffStation,
@@ -70,6 +66,7 @@ import {
 } from "../controllers/signinActions.js";
 import { upload } from "../workers/multerWorker.js";
 import { uploadCourseDetails } from "../controllers/classActions.js";
+import { initiateFlwCharge } from "../controllers/paymentController.js";
 
 const router = express.Router();
 router.patch(
@@ -90,18 +87,11 @@ router.post(
   idempotencyMiddleware,
   toggleFollowingUsers,
 );
-router.put("/update-itag", protect, idempotencyMiddleware, customizeItag);
 router.patch(
   "/update-profile",
   protect,
   idempotencyMiddleware,
   updateUserProfile,
-);
-router.post(
-  "/payments/initiate-charge",
-  protect,
-  idempotencyMiddleware,
-  initiateFlwCharge,
 );
 router.post(
   "/block/toggle",
@@ -117,6 +107,12 @@ router.patch(
   patchUserPreferences,
 );
 router.delete("/account/delete", protect, idempotencyMiddleware, deleteAccount);
+router.post(
+  "/payments/initiate-charge",
+  protect,
+  idempotencyMiddleware,
+  initiateFlwCharge,
+);
 router.post(
   "/password/verify",
   protect,
@@ -158,7 +154,6 @@ router.get("/courses/search", protect, handleUnifiedCourseSearch);
 router.get("/courses/resources/search", protect, handleUnifiedResourceSearch);
 router.post("/reviews/create", idempotencyMiddleware, createReviewController);
 router.put("/preferences/toggleTheme", protect, toggleTheme);
-router.get("/refresh-user-details", protect, refreshUserDetails);
 router.post(
   "/courses/manual-create",
   protect,
@@ -244,16 +239,16 @@ router.get(
 router.get("/courses/:courseId/assignments", protect, fetchCourseAssignments);
 router.get("/courses/lectures/:lectureId", fetchCourseLectures);
 router.get("/profile/search/:identifier", protect, fetchProfileInformation);
-router.get("/check-itag/:val", protect, verifyiTagUsernameAvailability);
-router.get("/payments/banks/:countryCode", protect, fetchBanksUsingCountryCode);
 router.get(
   "/courses/:courseId/fetch-all-lectures",
   protect,
   fetchAllLecturesByCourseId,
 );
+router.get("/payments/banks/:countryCode", protect, fetchBanksUsingCountryCode);
+
 export default router;
 
 //npx nodemon index.js
 //email: alice@icampus.edu
 //password: icampusUser01
-//npm test controllertests/${filename} 
+//npm test controllertests/${filename}

@@ -1,90 +1,14 @@
 import axios from "axios";
-import {
-  User,
-  Transactions,
-  PaymentMethods,
-  TaxEntries,
-} from "../tableDeclarations.js";
+import { User, PaymentMethods } from "../tableDeclarations.js";
 import { setImmediate } from "timers";
-import {
-  generateTransactionId,
-  generateNotificationId,
-} from "../utils/idGenerator.js";
+import { generateNotificationId } from "../utils/idGenerator.js";
 import { createNotification } from "../services/notification.js";
-import { fetchLiveRateBackend } from "../utils/foreignAPIGetters.js";
-import { db } from "../config/firebaseAdmin.js";
-import { encryptCardDetails } from "../utils/encryptionHelper.js";
 import { USD_SUBSCRIPTION_PRICES } from "../constants/inAppConstants.js";
 import { notifyAdmins } from "../services/adminNotification.js";
-import { executeTransferWithRetry } from "../utils/withdrawalRetryHelper.js";
-import {
-  checkAndFlagHeavyActivity,
-  addFlag,
-  checkAndFlagWithdrawals,
-} from "../utils/flagger.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+import { encryptCardDetails } from "../utils/encryptionHelper.js";
+import { TAX_RATE } from "../constants/inAppConstants.js";
 
-export const getSavedMethods = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "getSavedMethodsController";
-  const action = "getSavedMethods";
-
-  try {
-    const userId = req.params.userId || req.user?.id || req.user?.uid;
-
-    if (!userId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized or missing user identifier",
-        );
-      });
-      return res
-        .status(401)
-        .json({ error: "Unauthorized or missing user identifier" });
-    }
-
-    const methodsQuery = await PaymentMethods.where(
-      "userId",
-      "==",
-      userId,
-    ).get();
-
-    const methods = methodsQuery.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    methods.sort((a, b) => {
-      const timeA = a.createdAt?.toDate
-        ? a.createdAt.toDate().getTime()
-        : new Date(a.createdAt || 0).getTime();
-      const timeB = b.createdAt?.toDate
-        ? b.createdAt.toDate().getTime()
-        : new Date(b.createdAt || 0).getTime();
-      return timeB - timeA;
-    });
-    res.status(200).json(methods);
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res.status(500).json({ error: error.message });
-  }
-};
 export const createPaymentMethod = async (userId, cardDetails) => {
   const startTime = Date.now();
   const controllerName = "createPaymentMethodController";
@@ -134,676 +58,6 @@ export const createPaymentMethod = async (userId, cardDetails) => {
         err.message,
       );
     });
-  }
-};
-export const initializeBuy = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "initializeBuyController";
-  const action = "initializeBuy";
-  const {
-    amount,
-    currency,
-    userId,
-    paymentToken,
-    methodType,
-    country,
-    iCashAmount,
-  } = req.body || {};
-
-  const resolvedUserId = userId || req.user?.id || req.user?.uid;
-
-  if (!country) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Country information is required to calculate exchange rates.",
-      );
-    });
-    return res.status(400).json({
-      status: "error",
-      message: "Country information is required to calculate exchange rates.",
-    });
-  }
-
-  if (!amount || !paymentToken) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Missing payment details",
-      );
-    });
-    return res
-      .status(400)
-      .json({ status: "error", message: "Missing payment details" });
-  }
-
-  try {
-    const [rateData, userQuery] = await Promise.all([
-      fetchLiveRateBackend(country),
-      (!req.user?.email || !req.user?.firstname) && resolvedUserId
-        ? User.where("uid", "==", resolvedUserId).limit(1).get()
-        : Promise.resolve(null),
-    ]);
-
-    const { rate } = rateData || {};
-    if (!rate) {
-      throw new Error("Unable to fetch live exchange rate.");
-    }
-
-    const expectedInUsd = amount / rate;
-    const EXCHANGE_RATE_USD = 0.74;
-    const expectedICash = expectedInUsd / EXCHANGE_RATE_USD;
-    const margin = 1.05;
-
-    if (iCashAmount > expectedICash * margin) {
-      console.error(
-        `Security Alert: Price spoofing detected for User ${resolvedUserId}`,
-      );
-      setImmediate(async () => {
-        try {
-          await notifyAdmins(
-            { role: ["super_admin", "finance"] },
-            {
-              notificationId: generateNotificationId("security"),
-              actionType: "FINANCIAL_SECURITY_ALERT",
-              payload: {
-                userId: resolvedUserId,
-                attemptedAmount: iCashAmount,
-                expectedAmount: expectedICash,
-                ipAddress: req.ip,
-              },
-              senderId: "system",
-            },
-            true,
-          );
-        } catch (err) {
-          console.error(
-            "Failed to notify admins of financial security alert:",
-            err,
-          );
-        }
-      });
-
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Transaction integrity check failed. Please try again.",
-        );
-      });
-
-      return res.status(400).json({
-        status: "error",
-        message: "Transaction integrity check failed. Please try again.",
-      });
-    }
-
-    let userEmail = req.user?.email;
-    let userFirstname = req.user?.firstname;
-    let userLastname = req.user?.lastname;
-
-    if (userQuery && !userQuery.empty) {
-      const userData = userQuery.docs[0].data();
-      userEmail = userEmail || userData.email;
-      userFirstname = userFirstname || userData.firstname;
-      userLastname = userLastname || userData.lastname;
-    }
-
-    const flwPayload = {
-      token: paymentToken,
-      currency: currency || "NGN",
-      amount: amount,
-      email: userEmail,
-      first_name: userFirstname,
-      last_name: userLastname,
-      tx_ref: `iCampus-BUY-${Date.now()}`,
-      ip: req.ip,
-      meta: {
-        userId: resolvedUserId,
-        type: "icash_purchase",
-        methodType,
-        iCashAmount,
-      },
-    };
-
-    const response = await axios.post(
-      "https://api.flutterwave.com/v3/tokenized-charges",
-      flwPayload,
-      {
-        headers: {
-          Authorization: `Bearer ${process.env.FLUTTERWAVE_CLIENT_SECRET}`,
-          "Content-Type": "application/json",
-        },
-      },
-    );
-
-    const result = response.data;
-
-    if (result.status === "success") {
-      res.status(200).json({
-        status: "success",
-        message: "Charge initiated",
-        authorization_url: result.meta?.authorization?.redirect || null,
-        data: result.data,
-      });
-
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-    } else {
-      res.status(400).json({ status: "error", message: result.message });
-
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          result.message,
-        );
-      });
-    }
-  } catch (error) {
-    console.error(
-      "Tokenized Charge Error:",
-      error.response?.data || error.message,
-    );
-
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.response?.data || error.message,
-      );
-    });
-
-    return res.status(500).json({
-      status: "error",
-      message: error.response?.data?.message || "Internal Server Error",
-    });
-  }
-};
-export const initializeWithdraw = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "initializeWithdrawController";
-  const action = "initializeWithdraw";
-  const userId = req.user.uid || req.user.id;
-  const { iCashAmount, amountToReceive, fee, currency, bankDetails } = req.body;
-  const idempotencyKey = `wd-${userId}-${Date.now().toString().substring(0, 10)}`;
-  const transactionId = generateTransactionId("withdraw");
-  const title = `${iCashAmount} iCash Withdrawal`;
-
-  try {
-    const [userQuery, isFlagged] = await Promise.all([
-      User.where("uid", "==", userId).limit(1).get(),
-      checkAndFlagWithdrawals(userId),
-    ]);
-
-    if (userQuery.empty) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User profile record could not be resolved.",
-        );
-      }
-      return res
-        .status(404)
-        .json({ message: "User profile record not found." });
-    }
-
-    if (isFlagged) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Too many withdrawal requests. Please contact support.",
-        );
-      }
-      return res.status(403).json({
-        message: "Too many withdrawal requests. Please contact support.",
-      });
-    }
-
-    const userDocRef = userQuery.docs[0].ref;
-    const user = userQuery.docs[0].data();
-
-    if ((user.iCashBalance || 0) < iCashAmount) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Insufficient iCash balance.",
-        );
-      }
-      return res.status(403).json({ message: "Insufficient iCash balance." });
-    }
-
-    const updatedBalance = (user.iCashBalance || 0) - iCashAmount;
-
-    const now = new Date();
-    await Promise.all([
-      userDocRef.update({
-        iCashBalance: updatedBalance,
-        updatedAt: now,
-      }),
-      Transactions.doc(transactionId).set({
-        transactionId,
-        userId,
-        type: "withdraw",
-        amountICash: iCashAmount,
-        amountLocal: amountToReceive,
-        fee,
-        payType: "out",
-        title,
-        currency,
-        status: "pending",
-        reference: idempotencyKey,
-        metadata: bankDetails,
-        createdAt: now,
-        updatedAt: now,
-      }),
-    ]);
-
-    const response = await executeTransferWithRetry({
-      account_bank: bankDetails.bankCode,
-      account_number: bankDetails.accountNumber,
-      amount: amountToReceive,
-      currency: currency,
-      narration: "iCampus iCash Withdrawal",
-      reference: idempotencyKey,
-      callback_url: `${process.env.BACKEND_URL}webhooks/handleFlutterwaveWebhook`,
-      debit_currency: "NGN",
-    });
-
-    if (response.data.status === "success") {
-      const taxEntryId = generateTransactionId("appTax");
-      const taxDocRef = TaxEntries.doc(taxEntryId);
-      await Promise.all([
-        Transactions.doc(transactionId).update({
-          status: "success",
-          updatedAt: new Date(),
-        }),
-        taxDocRef.set({
-          transactionReference: idempotencyKey,
-          taxType: "withdrawal_tax",
-          amount: fee,
-          currency: "iCash",
-          date: now,
-          sourceDetails: {
-            userId: userId,
-            relatedTransactionId: transactionId,
-            iCashAmountDeducted: iCashAmount,
-            localAmountReceived: amountToReceive,
-          },
-          createdAt: now,
-        }),
-      ]);
-      res.status(200).json({
-        status: "success",
-        message: "Transfer initiated successfully",
-        data: response.data.data,
-      });
-      setImmediate(async () => {
-        try {
-          const userName = user.firstname || "iCampus User";
-          await Promise.all([
-            createNotification({
-              notificationId: generateNotificationId("finance"),
-              recipientId: userId,
-              isRead: false,
-              recipientEmail: user.email,
-              category: "finance",
-              actionType: "ICASH_WITHDRAWAL",
-              title,
-              message: `Withdrawal of ${currency} ${amountToReceive} for ${iCashAmount} iCash is successful.`,
-              payload: {
-                userName,
-                amountLocal: amountToReceive,
-                amountICash: iCashAmount,
-                currency,
-                transactionId,
-              },
-              sendEmail: true,
-              sendPush: true,
-              sendSocket: true,
-              saveToDb: true,
-            }),
-            notifyAdmins(
-              { role: ["finance", "super_admin"] },
-              {
-                notificationId: generateNotificationId("finance"),
-                actionType: "WITHDRAWAL_SUCCESS_AUDIT",
-                payload: {
-                  userId,
-                  amount: amountToReceive,
-                  currency,
-                  transactionId,
-                },
-                senderId: "system",
-              },
-              false,
-            ).catch(console.error),
-          ]);
-
-          if (typeof logControllerPerformance === "function") {
-            logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "success",
-            );
-          }
-        } catch (bgError) {
-          console.error("Background Withdrawal Success Tasks Error:", bgError);
-        }
-      });
-    } else {
-      const refundedBalance = updatedBalance + iCashAmount;
-      await Promise.all([
-        userDocRef.update({
-          iCashBalance: refundedBalance,
-          updatedAt: new Date(),
-        }),
-        Transactions.doc(transactionId).update({
-          status: "failed",
-          updatedAt: new Date(),
-        }),
-      ]);
-
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          response.data.message || "Flutterwave declined the transfer.",
-        );
-      }
-      return res.status(400).json({
-        status: "error",
-        message: response.data.message || "Flutterwave declined the transfer.",
-      });
-    }
-  } catch (error) {
-    console.error("Withdrawal Error:", error.response?.data || error.message);
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.response?.data?.message || error.message,
-      );
-    }
-
-    if (error.response || error.request) {
-      const rollbackQuery = await User.where("uid", "==", userId)
-        .limit(1)
-        .get();
-      if (!rollbackQuery.empty) {
-        const rollbackRef = rollbackQuery.docs[0].ref;
-        const currentData = rollbackQuery.docs[0].data();
-        await Promise.all([
-          rollbackRef.update({
-            iCashBalance: (currentData.iCashBalance || 0) + iCashAmount,
-            updatedAt: new Date(),
-          }),
-          Transactions.doc(transactionId).update({
-            status: "failed",
-            updatedAt: new Date(),
-          }),
-        ]);
-      }
-    }
-
-    if (error.code === 11000) {
-      return res.status(409).json({ message: "Request already in progress." });
-    }
-
-    setImmediate(() => {
-      notifyAdmins(
-        { role: ["finance", "super_admin"] },
-        {
-          notificationId: generateNotificationId("finance"),
-          actionType: "WITHDRAWAL_FAILED_AUDIT",
-          payload: { userId, amount: amountToReceive, currency, transactionId },
-          senderId: "system",
-        },
-        false,
-      ).catch(console.error);
-    });
-
-    return res.status(500).json({
-      status: "error",
-      message: error.response?.data?.message || "Internal Server Error",
-    });
-  }
-};
-export const handleP2pTransfers = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "handleP2pTransfersController";
-  const action = "handleP2pTransfers";
-
-  try {
-    const { recipientId, amount, description, recipientiTagName } = req.body;
-    const senderId = req.user.id || req.user.uid;
-
-    if (!amount || amount <= 0) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid amount",
-        );
-      }
-      return res.status(400).json({ message: "Invalid amount" });
-    }
-    if (senderId === recipientId) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Cannot send to yourself",
-        );
-      }
-      return res.status(400).json({ message: "Cannot send to yourself" });
-    }
-
-    const transactionRef = `P2P-${uuidv4().substring(0, 8).toUpperCase()}`;
-    const senderTransactionId = generateTransactionId("p2p_sent");
-    const receipientTransactionId = generateTransactionId("p2p_received");
-
-    let senderData, recipientData;
-
-    await db.runTransaction(async (t) => {
-      const [senderQuery, recipientQuery] = await Promise.all([
-        User.where("uid", "==", senderId).limit(1).get(),
-        User.where("uid", "==", recipientId)
-          .where("itagusername", "==", recipientiTagName)
-          .limit(1)
-          .get(),
-      ]);
-
-      if (senderQuery.empty) {
-        throw new Error("Sender not found");
-      }
-      if (recipientQuery.empty) {
-        throw new Error("Recipient not found");
-      }
-
-      const senderDoc = senderQuery.docs[0];
-      const recipientDoc = recipientQuery.docs[0];
-
-      senderData = senderDoc.data();
-      recipientData = recipientDoc.data();
-
-      const senderBalance =
-        senderData.iCashBalance ?? senderData.pointsBalance ?? 0;
-      if (senderBalance < amount) {
-        throw new Error("Insufficient iCash balance");
-      }
-
-      const newSenderBalance = senderBalance - amount;
-      const recipientBalance =
-        recipientData.iCashBalance ?? recipientData.pointsBalance ?? 0;
-      const newRecipientBalance = recipientBalance + amount;
-
-      t.update(senderDoc.ref, {
-        iCashBalance: newSenderBalance,
-        pointsBalance: newSenderBalance,
-        updatedAt: new Date(),
-      });
-      t.update(recipientDoc.ref, {
-        iCashBalance: newRecipientBalance,
-        pointsBalance: newRecipientBalance,
-        updatedAt: new Date(),
-      });
-
-      const now = new Date();
-      t.set(Transactions.doc(senderTransactionId), {
-        transactionId: senderTransactionId,
-        userId: senderId,
-        type: "p2p_sent",
-        amountICash: amount,
-        status: "success",
-        payType: "out",
-        title: "iCash Sent",
-        reference: transactionRef,
-        metadata: {
-          recipientId,
-          note: description,
-          recipientItag: recipientData.itagusername,
-        },
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      t.set(Transactions.doc(receipientTransactionId), {
-        transactionId: receipientTransactionId,
-        userId: recipientId,
-        type: "p2p_received",
-        amountICash: amount,
-        status: "success",
-        payType: "in",
-        title: "iCash Received",
-        reference: `${transactionRef}-REC`,
-        metadata: {
-          senderId: senderId,
-          note: description,
-          senderItag: senderData.itagusername,
-        },
-        createdAt: now,
-        updatedAt: now,
-      });
-    });
-    res.status(200).json({ message: "Transfer successful", transactionRef });
-    setImmediate(async () => {
-      try {
-        await checkAndFlagHeavyActivity(senderId);
-
-        const senderNotificationId = generateNotificationId("finance");
-        const receipientNotificationId = generateNotificationId("finance");
-
-        await Promise.all([
-          createNotification({
-            notificationId: senderNotificationId,
-            recipientId: senderId,
-            isRead: false,
-            category: "financial",
-            actionType: "ICASH_WITHDRAWAL",
-            title: "iCash Sent Successfully",
-            message: `You sent ${amount.toLocaleString()} iCash to ${recipientData.username || recipientData.firstname}.`,
-            payload: {
-              userName: senderData.firstname,
-              amountICash: amount,
-              amountLocal: 0,
-              currency: "iCash",
-              transactionId: senderTransactionId,
-            },
-            sendSocket: true,
-            sendPush: true,
-            saveToDb: true,
-          }),
-          createNotification({
-            notificationId: receipientNotificationId,
-            recipientId: recipientId,
-            isRead: false,
-            category: "financial",
-            actionType: "ICASH_PURCHASE",
-            title: "iCash Received!",
-            message: `You received ${amount.toLocaleString()} iCash from ${senderData.username || senderData.firstname}.`,
-            payload: {
-              userName: recipientData.firstname,
-              amountICash: amount,
-              transactionId: receipientTransactionId,
-            },
-            sendSocket: true,
-            sendPush: true,
-            saveToDb: true,
-          }),
-          notifyAdmins(
-            { role: ["finance", "super_admin"] },
-            {
-              notificationId: generateNotificationId("finance"),
-              actionType: "P2P_TRANSFER_AUDIT",
-              payload: {
-                senderId: senderId,
-                recipientId: recipientId,
-                amount: amount,
-                transactionRef: transactionRef,
-              },
-              senderId: "system",
-            },
-            false,
-          ).catch(console.error),
-        ]);
-
-        if (typeof logControllerPerformance === "function") {
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "success",
-          );
-        }
-      } catch (bgError) {
-        console.error("Background P2P Tasks Error:", bgError);
-      }
-    });
-  } catch (error) {
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    return res
-      .status(500)
-      .json({ message: error.message || "Internal Server Error" });
   }
 };
 export const verifySubscriptionFlwPayment = async (req, res) => {
@@ -1014,8 +268,10 @@ export const initiateFlwCharge = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "initiateFlwChargeController";
   const action = "initiateFlwCharge";
-  const { paymentType, cardData, isInternational, currencyCode } =
-    req.body || {};
+  const { paymentType, paymentData } = req.body || {};
+  const { cardData, isInternational, currencyCode, amount, meta } =
+    paymentData || {};
+
   const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
   const ENCRYPTION_KEY = process.env.FLUTTERWAVE_CLIENT_EKEY;
   const userId = req.user?.uid || req.user?.id;
@@ -1024,17 +280,29 @@ export const initiateFlwCharge = async (req, res) => {
     let userEmail = req.user?.email;
     let userFirstname = req.user?.firstname;
     let userLastname = req.user?.lastname;
-    if ((!userEmail || !userFirstname) && userId) {
-      const userQuery = await User.where("uid", "==", userId).limit(1).get();
-      if (!userQuery.empty) {
-        const userData = userQuery.docs[0].data();
-        userEmail = userEmail || userData.email;
-        userFirstname = userFirstname || userData.firstname;
-        userLastname = userLastname || userData.lastname;
-      }
+    let userOrgName = req.user?.organizationName;
+
+    let userPromise = Promise.resolve(null);
+    if ((!userEmail || (!userFirstname && !userOrgName)) && userId) {
+      userPromise = User.where("uid", "==", userId).limit(1).get();
+    }
+    const [userQuery] = await Promise.all([userPromise]);
+
+    if (userQuery && !userQuery.empty) {
+      const userData = userQuery.docs[0].data();
+      userEmail = userEmail || userData.email;
+      userFirstname = userFirstname || userData.firstname;
+      userLastname = userLastname || userData.lastname;
+      userOrgName = userOrgName || userData.organizationName;
     }
 
     let finalPayload = {};
+    let flwEndpointType = paymentType;
+    const resolvedBusinessName =
+      userOrgName ||
+      `${userFirstname || ""} ${userLastname || ""}`.trim() ||
+      "Marketplace Vendor";
+
     if (paymentType === "card" && cardData) {
       const cardObject = JSON.stringify({
         card_number: cardData.number?.replace(/\s/g, "") || "",
@@ -1049,41 +317,94 @@ export const initiateFlwCharge = async (req, res) => {
         billing_country: cardData.country || "US",
       });
       const encryptedData = encryptCardDetails(ENCRYPTION_KEY, cardObject);
+      const chargeAmount = amount ? amount.toString() : "50";
+      const txRefPrefix =
+        meta?.purpose === "checkout_payment" ? "checkout" : "link-card";
       finalPayload = {
         client: encryptedData,
         currency: currencyCode || "NGN",
-        amount: "50",
+        amount: chargeAmount,
         fullname:
           cardData.name ||
           `${userFirstname || ""} ${userLastname || ""}`.trim() ||
           "User",
         email: userEmail,
-        tx_ref: `link-card-${Date.now()}`,
-        meta: {
-          userId: userId,
-          purpose: "linking_card",
-        },
+        tx_ref: `${txRefPrefix}-${Date.now()}`,
+        meta,
         authorization: {
           mode: isInternational ? "avs_noauth" : "pin",
         },
       };
+    } else if (paymentType === "account") {
+      if (meta?.purpose === "checkout_payment") {
+        flwEndpointType = "account";
+        const chargeAmount = amount ? amount.toString() : "50";
+        finalPayload = {
+          account_bank: paymentData?.account_bank,
+          account_number: paymentData?.account_number,
+          amount: chargeAmount,
+          currency: currencyCode || "NGN",
+          email: userEmail,
+          tx_ref: `checkout-bank-${Date.now()}`,
+          fullname: resolvedBusinessName,
+          meta,
+        };
+        targetUrl = `https://api.flutterwave.com/v3/charges?type=account`;
+      } else {
+        flwEndpointType = null;
+        finalPayload = {
+          account_bank: paymentData.account_bank,
+          account_number: paymentData.account_number,
+          business_name: resolvedBusinessName,
+          split_type: "percentage",
+          split_value: TAX_RATE * 100,
+        };
+        targetUrl = "https://api.flutterwave.com/v3/subaccounts";
+      }
     } else {
-      finalPayload = req.body.paymentData;
+      finalPayload = paymentData;
+      targetUrl = `https://api.flutterwave.com/v3/charges?type=${flwEndpointType}`;
     }
-
-    const flwResponse = await fetch(
-      `https://api.flutterwave.com/v3/charges?type=${paymentType}`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${SECRET_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(finalPayload),
+    const flwResponse = await fetch(targetUrl, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${SECRET_KEY}`,
+        "Content-Type": "application/json",
       },
-    );
+      body: JSON.stringify(finalPayload),
+    });
 
     const data = await flwResponse.json();
+    if (
+      paymentType === "account" &&
+      flwResponse.status === 200 &&
+      data.status === "success"
+    ) {
+      const subaccountId = data.data.subaccount_id;
+      const bankCode = paymentData.account_bank;
+      const accountNumber = paymentData.account_number;
+
+      setImmediate(async () => {
+        try {
+          await User.where("uid", "==", userId)
+            .get()
+            .then((snapshot) => {
+              if (!snapshot.empty) {
+                snapshot.docs[0].ref.update({
+                  subaccountId,
+                  bankCode,
+                  accountNumber,
+                });
+              }
+            });
+        } catch (dbErr) {
+          console.error(
+            "Failed to save payout bank details to user profile:",
+            dbErr.message,
+          );
+        }
+      });
+    }
 
     res.status(flwResponse.status).json({ success: true, data });
 
@@ -1103,99 +424,8 @@ export const initiateFlwCharge = async (req, res) => {
     });
     return res.status(500).json({
       success: false,
-      message: "Internal Server Error Processing Payment",
+      message: "Internal Server Error Processing Request",
     });
   }
 };
-export const validatePaymentOTP = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "validatePaymentOTPController";
-  const action = "validatePaymentOTP";
-
-  try {
-    const { otpCode, flw_ref, type } = req.body || {};
-    if (!otpCode || !flw_ref) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "OTP and Reference are required.",
-        );
-      });
-      return res.status(400).json({
-        success: false,
-        message: "OTP and Reference are required.",
-      });
-    }
-
-    const response = await axios.post(
-      "https://api.flutterwave.com/v3/validate-charge",
-      {
-        otp: otpCode,
-        flw_ref: flw_ref,
-        type: type || "card",
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.FLUTTERWAVE_CLIENT_SECRET}`,
-        },
-      },
-    );
-
-    if (response.data.status === "success") {
-      res.status(200).json({
-        success: true,
-        message: "Payment verified successfully",
-        data: response.data.data,
-      });
-
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-    } else {
-      const message = response.data.message || "Verification failed";
-      res.status(400).json({
-        success: false,
-        message,
-      });
-
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          message,
-        );
-      });
-    }
-  } catch (error) {
-    console.error(
-      "Flutterwave OTP Error:",
-      error.response?.data || error.message,
-    );
-
-    const errorMessage = error.response?.data || error.message;
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        errorMessage,
-      );
-    });
-
-    return res.status(error.response?.status || 500).json({
-      success: false,
-      message:
-        error.response?.data?.message ||
-        "Internal Server Error during verification",
-    });
-  }
-};
-
 //Tested and trusted using jest

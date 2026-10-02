@@ -1,4 +1,3 @@
-import { ITag, User } from "../tableDeclarations.js";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import { promisify } from "util";
@@ -312,86 +311,6 @@ export function generateStationId() {
   const randomSuffix = Math.floor(1000 + Math.random() * 9000);
   return `STN-${datePart}-${randomSuffix}`;
 }
-export function generateItagUsername(firstName, digitCount = 4) {
-  const cleanName = firstName
-    .toLowerCase()
-    .replace(/[^a-z]/g, "")
-    .slice(0, 8);
-  const min = Math.pow(10, digitCount - 1);
-  const max = Math.pow(10, digitCount) - 1;
-  const randomSuffix = Math.floor(Math.random() * (max - min + 1) + min);
-
-  return `${cleanName}${randomSuffix}`;
-}
-export const generateUniqueReferralCode = async (user) => {
-  const nameToUse =
-    user?.usertype === "enterprise"
-      ? user?.organizationName || user?.organizationname || "Enterprise"
-      : user?.firstName || user?.firstname || user?.email || "User";
-
-  let code;
-  let exists = true;
-  let attempts = 0;
-  const maxAttempts = 5;
-
-  while (exists && attempts < maxAttempts) {
-    attempts++;
-    code = generateReferralCode(nameToUse, attempts > 1 ? attempts : undefined);
-
-    // Replaced Mongoose .findOne() with Firestore query syntax
-    const querySnapshot = await User.where("referralCode", "==", code)
-      .limit(1)
-      .get();
-
-    if (querySnapshot.empty) {
-      exists = false;
-    }
-  }
-  if (exists) {
-    const randomSuffix = Math.random()
-      .toString(36)
-      .substring(2, 8)
-      .toUpperCase();
-    code = `${generateReferralCode(nameToUse)}_${randomSuffix}`;
-  }
-
-  return code;
-};
-export const generateUniqueCardNumber = async () => {
-  let isUnique = false;
-  let cardNumber = "";
-  let attempts = 0;
-  const maxAttempts = 5;
-
-  while (!isUnique && attempts < maxAttempts) {
-    attempts++;
-    const digits = Math.floor(
-      Math.random() * 900000000000000 + 100000000000000,
-    ).toString();
-
-    const formatted = `7${digits.match(/.{1,4}/g).join(" ")}`;
-
-    const querySnapshot = await ITag.where("cardNumber", "==", formatted)
-      .limit(1)
-      .get();
-
-    if (querySnapshot.empty) {
-      cardNumber = formatted;
-      isUnique = true;
-    }
-  }
-  if (!isUnique) {
-    const timestampSuffix = Date.now().toString().slice(-4);
-    const randomSuffix = Math.floor(Math.random() * 90) + 10;
-    const digits = Math.floor(
-      Math.random() * 9000000000000 + 1000000000000,
-    ).toString();
-
-    const rawDigits = `${digits}${timestampSuffix}${randomSuffix}`.slice(0, 15);
-    cardNumber = `7${rawDigits.match(/.{1,4}/g).join(" ")}`;
-  }
-  return cardNumber;
-};
 export function generateAdId(advertiserName) {
   const cleanName = advertiserName
     ? advertiserName

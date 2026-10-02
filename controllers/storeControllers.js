@@ -26,7 +26,8 @@ import fs from "fs/promises";
 import { TAX_RATE, DELIVERY_FEES } from "../constants/inAppConstants.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
-
+import axios from "axios";
+import { convertAmount } from "../utils/currency.js";
 
 //Tested and trusted using jest
 async function sendOrderNotifications(buyer, processedItems, transactionId) {
@@ -59,10 +60,7 @@ async function sendOrderNotifications(buyer, processedItems, transactionId) {
               category: "store",
               actionType: "NEW_ORDER",
               title: "New Sale",
-              message:
-                product.type === "physical"
-                  ? `Item: ${product.title}. Deliver to: ${order.selectedStation?.name || "Assigned Station"}.`
-                  : `Your digital product "${product.title}" has been purchased.`,
+              message: `Item: ${product.title}. Deliver to: ${order.selectedStation?.name || "Assigned Station"}.`,
               entityId: order.orderId,
               entityType: "order",
               payload: {
@@ -77,6 +75,7 @@ async function sendOrderNotifications(buyer, processedItems, transactionId) {
                 buyerPhoneNumber,
                 date: formattedDate,
                 time: formattedTime,
+                currency: order.amountPaidCurrencyCode,
               },
               sendPush: true,
               sendEmail: true,
@@ -99,19 +98,13 @@ async function sendOrderNotifications(buyer, processedItems, transactionId) {
               category: "finance",
               actionType: "MARKET_PURCHASE_DEBIT",
               title: "Purchase Confirmed",
-              message: `Your purchase of ${product.title} was successful. ${
-                fileUrl
-                  ? "Download File"
-                  : "Scan your QR code at the station or to seller to complete the transaction."
-              }`,
+              message: `Your purchase of ${product.title} was successful.`,
               entityId: order.orderId,
               entityType: "order",
               payload: {
                 orderId: order.orderId,
                 productName: product.title,
-                productType: product.type,
                 amount: order.amountPaid,
-                fileUrl: fileUrl || null,
                 userName: buyer.firstname || "User",
                 transactionId,
                 date: formattedDate,
@@ -223,7 +216,6 @@ async function processNotificationFanOut(
               category: "store",
               actionType: "NEW_PRODUCT",
               title: sellerName || "Seller",
-              message: `has published a brand new item: "${product.title}"! Check it out now.`,
               entityId: product.productId,
               entityType: "product",
               sendEmail: true,
@@ -232,6 +224,7 @@ async function processNotificationFanOut(
                 productType: product.type,
                 productName: product.title,
                 userName: sellerName || "Seller",
+                followerFirstname: follower.firstname || "Follower",
               },
             }).catch((err) =>
               console.error("Follower fan-out notification error:", err),
@@ -256,6 +249,7 @@ export const cancelOrder = async (req, res) => {
   const action = "cancelOrder";
   const { orderId, reason } = req.body;
   const userId = req.user?.id || req.user?.uid;
+  const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
 
   if (!userId) {
     setImmediate(() => {
@@ -289,51 +283,82 @@ export const cancelOrder = async (req, res) => {
   }
 
   try {
-    const result = await db.runTransaction(async (transaction) => {
-      const orderDocRef = ProductOrder.doc(orderId);
-      const orderDoc = await transaction.get(orderDocRef);
+    const orderDocRef = ProductOrder.doc(orderId);
+    const orderDoc = await orderDocRef.get();
 
-      if (!orderDoc.exists) {
-        throw new Error(
-          "Order not found or you do not have permission to cancel it.",
-        );
-      }
+    if (!orderDoc.exists) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Order not found." });
+    }
 
-      const order = orderDoc.data();
+    const order = orderDoc.data();
 
-      if (order.buyerId !== userId || order.status !== "pending_delivery") {
-        throw new Error(
-          "Order not found or you do not have permission to cancel it.",
-        );
-      }
-      const [buyerQuery, sellerQuery, productQuery] = await Promise.all([
-        User.where("uid", "==", order.buyerId).limit(1).get(),
-        User.where("uid", "==", order.sellerId).limit(1).get(),
-        Product.where("productId", "==", order.productId).limit(1).get(),
-      ]);
-
-      if (buyerQuery.empty) {
-        throw new Error("User not found.");
-      }
-      if (sellerQuery.empty) {
-        throw new Error("Seller not found.");
-      }
-
-      const buyerDoc = buyerQuery.docs[0];
-      const buyer = buyerDoc.data();
-      const sellerDoc = sellerQuery.docs[0];
-      const seller = sellerDoc.data();
-
-      const productDoc = !productQuery.empty ? productQuery.docs[0] : null;
-      const productData = productDoc ? productDoc.data() : null;
-      const productTitle = productData ? productData.title : "Product";
-
-      const newPointsBalance = (buyer.pointsBalance || 0) + order.amountPaid;
-      transaction.update(buyerDoc.ref, {
-        pointsBalance: newPointsBalance,
-        updatedAt: new Date(),
+    if (order.buyerId !== userId || order.status !== "pending_delivery") {
+      return res.status(403).json({
+        success: false,
+        message: "Order not found or you do not have permission to cancel it.",
       });
+    }
 
+    const [buyerQuery, sellerQuery, productQuery] = await Promise.all([
+      User.where("uid", "==", order.buyerId).limit(1).get(),
+      User.where("uid", "==", order.sellerId).limit(1).get(),
+      Product.where("productId", "==", order.productId).limit(1).get(),
+    ]);
+
+    if (buyerQuery.empty || sellerQuery.empty) {
+      return res.status(404).json({
+        success: false,
+        message: "Buyer or seller profile not found.",
+      });
+    }
+
+    const buyerDoc = buyerQuery.docs[0];
+    const buyer = buyerDoc.data();
+    const sellerDoc = sellerQuery.docs[0];
+    const seller = sellerDoc.data();
+
+    const productDoc = !productQuery.empty ? productQuery.docs[0] : null;
+    const productData = productDoc ? productDoc.data() : null;
+    const productTitle = productData ? productData.title : "Product";
+    const flwTransactionIdOrRef = order.flwRef || order.transactionReference;
+
+    if (!flwTransactionIdOrRef) {
+      throw new Error(
+        "Missing gateway transaction reference required for automated refund.",
+      );
+    }
+
+    const refundResponse = await fetch(
+      `https://api.flutterwave.com/v3/transactions/${flwTransactionIdOrRef}/refund`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          amount: order.amountPaid,
+        }),
+      },
+    );
+
+    const refundData = await refundResponse.json();
+
+    if (!refundResponse.ok || refundData.status !== "success") {
+      console.error("Flutterwave Refund Failed:", refundData);
+      return res.status(400).json({
+        success: false,
+        message:
+          refundData.message ||
+          "Failed to process gateway refund. Order cancellation aborted.",
+      });
+    }
+    const refundTxId = generateTransactionId("refund");
+    const refundTxRef = Transactions.doc(refundTxId);
+
+    await db.runTransaction(async (transaction) => {
       if (productDoc && productData && productData.type === "physical") {
         const currentStock = productData.amountInStock || 0;
         const refundQuantity = order.quantity || 1;
@@ -343,37 +368,29 @@ export const cancelOrder = async (req, res) => {
           updatedAt: new Date(),
         });
       }
-
       transaction.update(orderDocRef, {
         status: "cancelled",
         cancellationReason: reason,
         updatedAt: new Date(),
       });
-
-      const refundTxId = generateTransactionId("refund");
-      const refundTxRef = Transactions.doc(refundTxId);
       transaction.set(refundTxRef, {
         transactionId: refundTxId,
         userId: buyer.uid,
         type: "refund",
-        amountICash: order.amountPaid,
+        amount: order.amountPaid,
+        currency: order.amountPaidCurrencyCode || "NGN",
         status: "success",
         payType: "in",
-        title: `Refund of payment for ${productTitle}`,
+        title: `Gateway Refund for ${productTitle}`,
         reference: `REF-${orderId}`,
         createdAt: new Date(),
       });
-
-      return {
-        seller,
-        buyer,
-        productTitle,
-        refundTxId,
-      };
     });
+
     res.status(200).json({
       success: true,
-      message: "Order cancelled, buyer refunded, and seller notified.",
+      message:
+        "Order successfully cancelled and monetary refund initiated via payment gateway.",
     });
 
     setImmediate(() => {
@@ -388,18 +405,18 @@ export const cancelOrder = async (req, res) => {
         await Promise.all([
           createNotification({
             notificationId: generateNotificationId("store"),
-            recipientId: result.seller.uid,
-            recipientEmail: result.seller.email,
+            recipientId: seller.uid,
+            recipientEmail: seller.email,
             isRead: false,
             category: "store",
             actionType: "ORDER_CANCELLED",
             title: "Order Cancelled by Buyer",
-            message: `The order for "${result.productTitle}" (#${orderId}) was cancelled. Reason: ${reason}`,
+            message: `The order for "${productTitle}" (#${orderId}) was cancelled. Reason: ${reason}`,
             payload: {
               orderId: orderId,
-              productName: result.productTitle,
+              productName: productTitle,
               reason: reason,
-              buyerName: result.buyer.firstname || "Buyer",
+              buyerName: buyer.firstname || "Buyer",
               date: formattedDate,
               time: formattedTime,
             },
@@ -410,9 +427,9 @@ export const cancelOrder = async (req, res) => {
             {
               notificationId: generateNotificationId("store"),
               actionType: "ORDER_CANCELLED_ADMIN",
-              title: "Order Cancelled Audit",
-              message: `Order #${orderId} has been cancelled. Buyer ${result.buyer.uid} refunded.`,
-              payload: { orderId, sellerId: result.seller.uid, reason },
+              title: "Order Cancelled & Gateway Refunded",
+              message: `Order #${orderId} has been cancelled. Gateway refund processed for buyer ${buyer.uid}.`,
+              payload: { orderId, sellerId: seller.uid, reason },
             },
             false,
           ),
@@ -425,6 +442,7 @@ export const cancelOrder = async (req, res) => {
       }
     });
   } catch (error) {
+    console.error("Cancel Order Error:", error.message);
     setImmediate(() => {
       logControllerPerformance(
         controllerName,
@@ -527,6 +545,8 @@ export const saveProductController = async (req, res) => {
 
     const seller = !sellerQuery.empty ? sellerQuery.docs[0].data() : null;
     const sellerName = seller ? seller.firstname : "A creator you follow";
+    const sellerNationality = seller?.country || "Nigeria";
+    const sellerCurrency = seller?.currencyCode || "NGN";
 
     let productData;
 
@@ -536,7 +556,9 @@ export const saveProductController = async (req, res) => {
         description,
         type,
         amountInStock,
-        priceInPoints: Number(price),
+        price: Number(price),
+        currency: sellerCurrency,
+        nationalityOfSeller: sellerNationality,
         physicalDetails,
         mediaUrls: productThumbnails,
         updatedAt: new Date(),
@@ -556,7 +578,9 @@ export const saveProductController = async (req, res) => {
         description,
         type,
         amountInStock,
-        priceInPoints: Number(price),
+        price: Number(price),
+        currency: sellerCurrency,
+        nationalityOfSeller: sellerNationality,
         physicalDetails,
         mediaUrls: productThumbnails,
         impressions: 0,
@@ -567,16 +591,19 @@ export const saveProductController = async (req, res) => {
       };
       await productDocRef.set(productData);
     }
-    res.status(isEditing ? 200 : 200).json({
+
+    res.status(200).json({
       success: true,
       message: isEditing
         ? "Product entry successfully patched."
         : "Product entry successfully saved.",
       data: productData,
     });
+
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
     });
+
     setImmediate(async () => {
       try {
         const currentDate = new Date();
@@ -712,7 +739,7 @@ export const fetchAllProducts = async (req, res) => {
         id: doc.id,
         title: data.title,
         isAvailable: data.isAvailable,
-        priceInPoints: data.priceInPoints,
+        price: data.price,
         mediaUrls: data.mediaUrls,
         productId: data.productId,
         category: data.category,
@@ -1159,33 +1186,116 @@ export const initializeCheckout = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "initializeCheckoutController";
   const action = "initializeCheckout";
-  const { items, totals, shippingContact } = req.body;
+  const {
+    items,
+    totals,
+    shippingContact,
+    transactionId: flwTransactionId,
+  } = req.body;
   const buyerId = req.user.id || req.user.uid;
   const PAYOUT_FACTOR = 1 - TAX_RATE;
 
   try {
+    if (!flwTransactionId) {
+      return res.status(400).json({
+        success: false,
+        message: "Transaction ID or reference is missing.",
+      });
+    }
+
+    const verifyResponse = await axios.get(
+      `https://api.flutterwave.com/v3/transactions/${flwTransactionId}/verify`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.FLW_SECRET_KEY}`,
+        },
+      },
+    );
+
+    const responseData = verifyResponse.data;
+    if (
+      responseData.status !== "success" ||
+      responseData.data.status !== "successful"
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payment verification failed. The transaction was not successful.",
+      });
+    }
+
+    const paidAmount = Number(responseData.data.amount);
+    const paidCurrency = responseData.data.currency;
+    const expectedGrandTotal = Number(totals.grandTotal);
+
+    if (paidCurrency !== totals.currency) {
+      return res.status(400).json({
+        success: false,
+        message: "Security violation: Currency mismatch with payment gateway.",
+      });
+    }
+    const resolvedItemsPromises = items.map(async (item) => {
+      const [productQuery, sellerQuery] = await Promise.all([
+        Product.where("productId", "==", item.productId).limit(1).get(),
+        User.where("uid", "==", item.sellerId).limit(1).get(),
+      ]);
+
+      if (productQuery.empty || sellerQuery.empty) {
+        throw new Error("Product or Seller info not found.");
+      }
+
+      const productDoc = productQuery.docs[0];
+      const productData = productDoc.data();
+      const sellerDoc = sellerQuery.docs[0];
+      const sellerData = sellerDoc.data();
+      const sellerCurrency =
+        productData.currency || sellerData.currencyCode || "NGN";
+      const buyerCurrency = totals.currency || "NGN";
+      const unitPriceInBuyerCurrency = await convertAmount(
+        productData.price,
+        sellerCurrency,
+        buyerCurrency,
+      );
+
+      return {
+        item,
+        productDoc,
+        productData,
+        sellerDoc,
+        sellerData,
+        sellerCurrency,
+        unitPriceInBuyerCurrency,
+      };
+    });
+
+    const resolvedItems = await Promise.all(resolvedItemsPromises);
+    let calculatedSubtotal = 0;
+    for (const resolved of resolvedItems) {
+      calculatedSubtotal +=
+        resolved.unitPriceInBuyerCurrency * resolved.item.quantity;
+    }
+
+    const deliveryFee = Number(totals.delivery || 0);
+    const calculatedGrandTotal = Number(
+      (calculatedSubtotal + deliveryFee).toFixed(2),
+    );
+
+    if (
+      Math.abs(paidAmount - calculatedGrandTotal) > 1 ||
+      Math.abs(expectedGrandTotal - calculatedGrandTotal) > 1
+    ) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Security violation: Calculated grand total does not match paid amount.",
+      });
+    }
+
     const processedResults = await db.runTransaction(async (transaction) => {
       const buyerQuery = await User.where("uid", "==", buyerId).limit(1).get();
       if (buyerQuery.empty) {
-        throw new Error(
-          "Insufficient iCash balance to complete purchase or user not found.",
-        );
+        throw new Error("Buyer user profile not found.");
       }
-      const buyerDoc = buyerQuery.docs[0];
-      const buyerData = buyerDoc.data();
-      const currentBalance = buyerData.pointsBalance || 0;
-
-      if (currentBalance < totals.grandTotal) {
-        throw new Error(
-          "Insufficient iCash balance to complete purchase or user not found.",
-        );
-      }
-
-      const newBuyerBalance = currentBalance - totals.grandTotal;
-      transaction.update(buyerDoc.ref, {
-        pointsBalance: newBuyerBalance,
-        updatedAt: new Date(),
-      });
 
       const buyerTxId = generateTransactionId("payment");
       const buyerTransactionRef = Transactions.doc(buyerTxId);
@@ -1193,39 +1303,28 @@ export const initializeCheckout = async (req, res) => {
         transactionId: buyerTxId,
         userId: buyerId,
         type: "payment",
-        amountICash: totals.grandTotal,
+        amount: calculatedGrandTotal,
+        currency: totals.currency || "NGN",
         status: "success",
         payType: "out",
+        gatewayReference: flwTransactionId || null,
         title: `Purchase of ${items.length} item(s)`,
         reference: `REF-${buyerTxId}`,
         createdAt: new Date(),
       };
       transaction.set(buyerTransactionRef, buyerTransaction);
-      const itemPromises = items.map(async (item) => {
-        const [productQuery, sellerQuery] = await Promise.all([
-          Product.where("productId", "==", item.productId).limit(1).get(),
-          User.where("uid", "==", item.sellerId).limit(1).get(),
-        ]);
 
-        if (productQuery.empty || sellerQuery.empty) {
-          throw new Error("Product or Seller info not found.");
-        }
-
-        return {
-          item,
-          productDoc: productQuery.docs[0],
-          productData: productQuery.docs[0].data(),
-          sellerDoc: sellerQuery.docs[0],
-          sellerData: sellerQuery.docs[0].data(),
-        };
-      });
-
-      const resolvedItems = await Promise.all(itemPromises);
       const results = [];
 
       for (const resolved of resolvedItems) {
-        const { item, productDoc, productData, sellerDoc, sellerData } =
-          resolved;
+        const {
+          item,
+          productDoc,
+          productData,
+          sellerDoc,
+          sellerData,
+          unitPriceInBuyerCurrency,
+        } = resolved;
 
         const orderId = `ORD-${uuidv4().split("-")[0].toUpperCase()}`;
         const isDropOff = item.deliveryMethod === "drop_off";
@@ -1233,9 +1332,11 @@ export const initializeCheckout = async (req, res) => {
           isDropOff && item.selectedStation
             ? item.selectedStation.agentId
             : null;
-        const itemTotal = item.price * item.quantity;
-        const netEarnings = itemTotal * PAYOUT_FACTOR;
-        const productTaxAmount = itemTotal - netEarnings;
+
+        const itemTotalInBuyerCurrency =
+          unitPriceInBuyerCurrency * item.quantity;
+        const netEarnings = itemTotalInBuyerCurrency * PAYOUT_FACTOR;
+        const productTaxAmount = itemTotalInBuyerCurrency - netEarnings;
 
         if (productTaxAmount > 0) {
           const taxEntryId = generateTransactionId("appTax");
@@ -1245,7 +1346,7 @@ export const initializeCheckout = async (req, res) => {
             transactionReference: `REF-${buyerTxId}`,
             taxType: "product_tax",
             amount: productTaxAmount,
-            currency: "iCash",
+            currency: totals.currency || "NGN",
             date: new Date(),
             sourceDetails: {
               buyerId: buyerId,
@@ -1282,22 +1383,22 @@ export const initializeCheckout = async (req, res) => {
           sellerId: item.sellerId,
           productId: item.productId,
           productName: productData.title,
-          amountPaid: itemTotal,
+          amountPaid: itemTotalInBuyerCurrency,
           quantity: item.quantity,
-          status:
-            productData.type === "physical" ? "pending_delivery" : "completed",
+          status: "pending_delivery",
           deliveryMethod: item.deliveryMethod,
           verificationQrCode: orderId,
           agentId: stationAgentId,
+          amountPaidCurrencyCode: totals.currency,
           selectedStation: item.selectedStation || null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date(),
+          flwRef: flwTransactionId,
         };
         transaction.set(newOrderRef, newOrder);
 
         results.push({
           order: newOrder,
-          fileUrl: newOrder.fileUrl,
           sellerEmail: sellerData.email,
           sellerId: sellerData.uid,
           product: productData,
@@ -1309,6 +1410,7 @@ export const initializeCheckout = async (req, res) => {
 
       return { processedResults: results, buyerTxId };
     });
+
     res.status(200).json({
       success: true,
       data: processedResults.processedResults.map((r) => r.order),
@@ -1340,6 +1442,7 @@ export const initializeCheckout = async (req, res) => {
                 transactionId: processedResults.buyerTxId,
                 itemCount: items.length,
                 buyerId,
+                flwRef: processedResults.flwTransactionId,
               },
             },
             false,
@@ -1557,15 +1660,42 @@ export const getPendingOrders = async (req, res) => {
         .status(401)
         .json({ success: false, message: "Unauthorized user identifier" });
     }
+    const [buyerSnapshot, sellerSnapshot] = await Promise.all([
+      ProductOrder.where("buyerId", "==", userId)
+        .where("status", "in", [
+          "pending_delivery",
+          "dropped_off",
+          "dropped_off",
+          "cancelled",
+        ])
+        .get(),
+      ProductOrder.where("sellerId", "==", userId)
+        .where("status", "in", [
+          "pending_delivery",
+          "dropped_off",
+          "dropped_off",
+          "cancelled",
+        ])
+        .get(),
+    ]);
 
-    const snapshot = await ProductOrder.where("buyerId", "==", userId)
-      .where("status", "in", ["pending_delivery", "dropped_off"])
-      .orderBy("createdAt", "desc")
-      .get();
+    const orderMap = new Map();
 
-    const orders = [];
-    snapshot.forEach((doc) => {
-      orders.push(doc.data());
+    buyerSnapshot.forEach((doc) => {
+      orderMap.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+
+    sellerSnapshot.forEach((doc) => {
+      orderMap.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+    const orders = Array.from(orderMap.values()).sort((a, b) => {
+      const timeA = a.createdAt?.toMillis
+        ? a.createdAt.toMillis()
+        : new Date(a.createdAt || 0).getTime();
+      const timeB = b.createdAt?.toMillis
+        ? b.createdAt.toMillis()
+        : new Date(b.createdAt || 0).getTime();
+      return timeB - timeA;
     });
 
     res.status(200).json({ success: true, data: orders });
@@ -1592,6 +1722,7 @@ export const completeOrderDelivery = async (req, res) => {
   const action = "completeOrderDelivery";
   const { orderId } = req.body;
   const scannerUid = req.user?.id || req.user?.uid;
+  let orderDetails;
 
   if (!scannerUid) {
     setImmediate(() => {
@@ -1634,6 +1765,7 @@ export const completeOrderDelivery = async (req, res) => {
       }
 
       const order = orderDoc.data();
+      orderDetails = order;
       const salesIncrement = order.quantity || 1;
 
       if (
@@ -1777,7 +1909,7 @@ export const completeOrderDelivery = async (req, res) => {
         notificationPromises.push(
           createNotification({
             notificationId: generateNotificationId("store"),
-            recipientId: order.buyerId || result.buyer?.uid,
+            recipientId: orderDetails.buyerId || result.buyer?.uid,
             category: "store",
             actionType: "ORDER_REVIEW_REQUEST",
             title: "Share your experience",
@@ -1801,13 +1933,14 @@ export const completeOrderDelivery = async (req, res) => {
             category: "finance",
             actionType: "ORDER_COMPLETED",
             title: "Payment Received",
-            message: `Your sale for ${result.productTitle} has been completed and funds released, proceed to payout to withdraw to your iCash wallet.`,
+            message: `Your sale for ${result.productTitle} has been completed and funds released, proceed to payout to withdraw to your added bank account.`,
             payload: {
               amount: result.sellerEarnings,
               userName: result.seller.firstname,
               productName: result.productTitle,
               orderId: orderId,
               role: "seller",
+              currency: orderDetails.amountPaidCurrencyCode,
             },
             sendEmail: true,
           }),
@@ -2159,6 +2292,7 @@ export const requestPayout = async (req, res) => {
   const action = "requestPayout";
   const { amount } = req.body;
   const userId = req.user.id || req.user.uid;
+  const SECRET_KEY = process.env.FLUTTERWAVE_CLIENT_SECRET;
 
   if (!userId) {
     setImmediate(() => {
@@ -2191,73 +2325,126 @@ export const requestPayout = async (req, res) => {
   }
 
   try {
-    const result = await db.runTransaction(async (transaction) => {
-      const userQuery = await User.where("uid", "==", userId).limit(1).get();
-      if (userQuery.empty) {
-        throw new Error("User not found.");
+    const userQuery = await User.where("uid", "==", userId).limit(1).get();
+    if (userQuery.empty) {
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found." });
+    }
+
+    const userDoc = userQuery.docs[0];
+    const user = userDoc.data();
+    const currentPendingBalance = user.pendingSalesBalance || 0;
+
+    if (currentPendingBalance < amount) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Insufficient pending balance." });
+    }
+
+    if (!user.bankCode || !user.accountNumber) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Payout bank account details are missing. Please re-link your bank.",
+      });
+    }
+
+    const payoutId = generatePayoutId(userId);
+    const reference = `REF-${payoutId}`;
+    const transferResponse = await fetch(
+      "https://api.flutterwave.com/v3/transfers",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${SECRET_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          account_bank: user.bankCode,
+          account_number: user.accountNumber,
+          amount: amount,
+          currency: user.currencyCode || "NGN",
+          reference: reference,
+          narration: `Marketplace Sales Payout (${payoutId})`,
+          debit_currency: user.currencyCode || "NGN",
+        }),
+      },
+    );
+
+    const transferData = await transferResponse.json();
+
+    if (!transferResponse.ok || transferData.status !== "success") {
+      console.error("Flutterwave Transfer Failed:", transferData);
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          transferData.message || "Transfer failed",
+        );
+      });
+      return res.status(400).json({
+        success: false,
+        message:
+          transferData.message ||
+          "Flutterwave transfer failed. Balance was not deducted.",
+      });
+    }
+    const transactionId = generateTransactionId("payment");
+    const newPendingBalance = currentPendingBalance - amount;
+    const payoutHistory = user.payoutHistory || [];
+    payoutHistory.push(payoutId);
+
+    await db.runTransaction(async (transaction) => {
+      const freshUserSnap = await transaction.get(userDoc.ref);
+      const freshUserData = freshUserSnap.data();
+      const freshBalance = freshUserData.pendingSalesBalance || 0;
+
+      if (freshBalance < amount) {
+        throw new Error("Balance changed during transfer processing.");
       }
-
-      const userDoc = userQuery.docs[0];
-      const user = userDoc.data();
-      const currentPendingBalance = user.pendingSalesBalance || 0;
-
-      if (currentPendingBalance < amount) {
-        throw new Error("Insufficient pending balance.");
-      }
-      const newPendingBalance = currentPendingBalance - amount;
-      const newPointsBalance = (user.pointsBalance || 0) + amount;
-      const payoutHistory = user.payoutHistory || [];
-
-      const payoutId = generatePayoutId(userId);
-      const transactionId = generateTransactionId("payment");
-
-      payoutHistory.push(payoutId);
 
       transaction.update(userDoc.ref, {
-        pendingSalesBalance: newPendingBalance,
-        pointsBalance: newPointsBalance,
+        pendingSalesBalance: freshBalance - amount,
         payoutHistory: payoutHistory,
         updatedAt: new Date(),
       });
 
       const payoutRef = Payout.doc(payoutId);
-      const newPayoutData = {
+      transaction.set(payoutRef, {
         payoutId,
         sellerUid: userId,
+        bankCode: user.bankCode,
+        accountNumber: user.accountNumber,
         amount: amount,
-        status: "completed",
-        method: "Internal Transfer",
-        reference: `REF-${payoutId}`,
-        processedAt: new Date(),
+        status: "success",
+        method: "Bank Transfer",
+        currency: user.currencyCode || "NGN",
+        reference: reference,
         createdAt: new Date(),
-      };
-      transaction.set(payoutRef, newPayoutData);
+      });
 
       const transactionRef = Transactions.doc(transactionId);
-      const newTransactionData = {
+      transaction.set(transactionRef, {
         transactionId,
         userId,
-        type: "payment",
-        amountICash: amount,
+        type: "payout",
+        amount: amount,
+        currency: user.currencyCode || "NGN",
         status: "success",
-        payType: "in",
-        title: `Sales Payout`,
-        reference: `REF-${payoutId}`,
+        payType: "out",
+        title: `Sales Payout to Bank`,
+        reference: reference,
         createdAt: new Date(),
-      };
-      transaction.set(transactionRef, newTransactionData);
-
-      return {
-        user,
-        newPointsBalance,
-        payoutId,
-        transactionId,
-      };
+      });
     });
+
     res.status(200).json({
       success: true,
-      newPointsBalance: result.newPointsBalance,
-      transactionId: result.transactionId,
+      message: "Payout initiated successfully",
+      transactionId,
     });
 
     setImmediate(() => {
@@ -2269,25 +2456,26 @@ export const requestPayout = async (req, res) => {
         const formattedDate = currentDate.toLocaleDateString();
         const formattedTime = currentDate.toLocaleTimeString();
 
-        const notificationPromises = [
+        await Promise.all([
           createNotification({
             notificationId: generateNotificationId("store"),
             recipientId: userId,
             isRead: false,
             category: "finance",
             actionType: "SALES_PAYOUT_SUCCESS",
-            title: "Sales Payout Credited",
-            message: `${amount.toLocaleString()} iCash from your sales has been added to your wallet.`,
-            recipientEmail: result.user.email,
+            title: "Payout Initiated",
+            message: `Your withdrawal request of ${user.currencyCode || "NGN"} ${amount.toLocaleString()} is being processed to your bank account.`,
+            recipientEmail: user.email,
             sendEmail: true,
             sendPush: true,
             payload: {
-              username: result.user.firstname || result.user.lastname || "User",
+              username: user.firstname || user.lastname || "User",
               amount: amount,
-              payoutId: result.payoutId,
-              transactionId: result.transactionId,
+              payoutId,
+              transactionId,
               date: formattedDate,
               time: formattedTime,
+              currency: user.currencyCode || "NGN",
             },
           }),
           notifyAdmins(
@@ -2295,28 +2483,25 @@ export const requestPayout = async (req, res) => {
             {
               notificationId: generateNotificationId("store"),
               actionType: "SALES_PAYOUT_ADMIN_ALERT",
-              title: "New Sales Payout Processed",
-              message: `User ${result.user.uid} successfully withdrew ${amount} iCash to their wallet.`,
+              title: "New Bank Payout Disbursed",
+              message: `User ${userId} withdrew ${user.currencyCode || "NGN"} ${amount.toLocaleString()} via Flutterwave transfer.`,
               payload: {
-                userId: result.user.uid,
+                userId,
                 amount,
-                payoutId: result.payoutId,
-                transactionId: result.transactionId,
+                payoutId,
+                transactionId,
+                currency: user.currencyCode || "NGN",
               },
             },
             false,
           ),
-        ];
-
-        await Promise.all(notificationPromises);
+        ]);
       } catch (err) {
-        console.error(
-          "Background notification pipeline failure in requestPayout:",
-          err,
-        );
+        console.error("Background notification failure in requestPayout:", err);
       }
     });
   } catch (error) {
+    console.error("Payout Server Error:", error.message);
     setImmediate(() => {
       logControllerPerformance(
         controllerName,
@@ -2326,7 +2511,10 @@ export const requestPayout = async (req, res) => {
         error.message,
       );
     });
-    return res.status(400).json({ success: false, message: error.message });
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal Server Error Processing Request",
+    });
   }
 };
 export const getDropOffStations = async (req, res) => {

@@ -11,6 +11,18 @@ const reposterSchema = new mongoose.Schema({
   organizationName: { type: String, default: null },
   profilePic: [String],
   repostedAt: { type: Date, default: Date.now },
+  isVerified: { type: Boolean, default: false },
+});
+const postAuthorSchema = new mongoose.Schema({
+  uid: { type: String, required: true },
+  postId: { type: String, required: true },
+  firstname: { type: String, default: null },
+  lastname: { type: String, default: null },
+  username: { type: String, default: null },
+  tier: { type: String, required: true },
+  organizationName: { type: String, default: null },
+  profilePic: [String],
+  isVerified: { type: Boolean, default: false },
 });
 
 export const attendanceSchema = new mongoose.Schema({
@@ -293,6 +305,7 @@ export const userSchema = new mongoose.Schema({
   headline: { type: String },
   uid: { type: String, index: true, required: true },
   bio: { type: String },
+  subaccountId: { type: String, default: null },
   tier: {
     type: String,
     enum: ["free", "pro", "premium"],
@@ -303,11 +316,14 @@ export const userSchema = new mongoose.Schema({
     enum: ["student", "lecturer", "otherUser", "enterprise"],
     default: null,
   },
-  itagusername: { type: String, unique: true },
-  referralCode: { type: String, unique: true, required: true },
   profilePic: [String],
   likes: [{ type: String }],
   bookmarks: [{ type: String }],
+  institutionTier: {
+    type: String,
+    enum: ["free", "pro", "premium"],
+    default: "free",
+  }, //Embeded on fetch
   organizationName: String,
   website: String,
   jobTitle: String,
@@ -327,12 +343,6 @@ export const userSchema = new mongoose.Schema({
     required: true,
   },
   department: String,
-  pointsBalance: {
-    type: Number,
-    default: 0,
-    get: (v) => parseFloat(v.toFixed(2)),
-    set: (v) => parseFloat(v.toFixed(2)),
-  },
   pendingSalesBalance: {
     type: Number,
     default: 0,
@@ -343,6 +353,7 @@ export const userSchema = new mongoose.Schema({
   blockedUsers: [{ type: String }],
   createdAt: Date,
   country: String,
+  currencyCode: String,
   current_level: String,
   schoolAvatarUrl: String,
   matricNumber: String,
@@ -368,33 +379,15 @@ export const userSchema = new mongoose.Schema({
   salesHistory: [{ type: String }],
   coursesEnrolled: [{ type: String }],
   coursesTeaching: [{ type: String }],
-  userAccountDetails: [
-    {
-      type: String,
-      ref: "UserBankOrCardDetails",
-    },
-  ],
   isStillInSchool: { type: Boolean, default: true },
   completedTests: [{ type: String }],
-  iCashPin: { type: String, select: false },
-  iCashLockoutUntil: { type: Date, default: null },
-  iCashAttempts: { type: Number, default: 0 },
   twoFactorEnabled: { type: Boolean, default: false },
-  resetPinOTP: { type: String },
-  resetPinOTPExpires: { type: Date },
   isSuspended: { type: Boolean, default: false },
   suspiciousActivity: [
     {
       type: {
         type: String,
-        enum: [
-          "UNRECOGNIZED_LOCATION",
-          "HEAVY_TRANSFER",
-          "HEAVY_WITHDRAWAL_ATTEMPT",
-          "SESSION_REVOKED",
-          "PIN_RESET_WHILE_SUSPICIOUS",
-          "FAILED_PIN_ATTEMPT",
-        ],
+        enum: ["UNRECOGNIZED_LOCATION", "SESSION_REVOKED"],
       },
       timestamp: { type: Date, default: Date.now },
     },
@@ -498,7 +491,7 @@ export const productSchema = new mongoose.Schema({
   category: { type: String },
   title: { type: String, required: true },
   description: { type: String },
-  priceInPoints: { type: Number, default: 0 },
+  price: { type: Number, default: 0 },
   mediaUrls: [{ type: String }],
   physicalDetails: {
     colors: [{ type: String, default: null }],
@@ -524,6 +517,8 @@ export const productSchema = new mongoose.Schema({
   favCount: { type: Number, default: 0 },
   isAvailable: { type: Boolean, default: true },
   createdAt: { type: Date, default: null },
+  currency: { type: String, required: true },
+  nationalityOfSeller: { type: String, required: true },
 });
 export const orderSchema = new mongoose.Schema({
   orderId: { type: String, required: true, index: true },
@@ -531,6 +526,8 @@ export const orderSchema = new mongoose.Schema({
   sellerId: { type: String, required: true },
   productId: { type: String, required: true },
   amountPaid: { type: Number, required: true },
+  flwRef: { type: String, required: true },
+  amountPaidCurrencyCode: { type: String, required: true },
   quantity: { type: Number, required: true },
   agentId: { type: String, default: null },
   status: {
@@ -689,6 +686,11 @@ export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
   currentiScoreAvg: { type: Number },
   previousiScoreAvg: { type: Number },
   createdAt: { type: Date, default: () => new Date() },
+  tier: {
+    type: String,
+    enum: ["free", "pro", "premium"],
+    default: "free",
+  },
 });
 export const postSchema = new mongoose.Schema(
   {
@@ -720,6 +722,7 @@ export const postSchema = new mongoose.Schema(
     originalPostId: { type: String, default: null },
     originalAuthor: { type: String, default: null },
     repostersDetails: [reposterSchema],
+    postAuthorsDetails: postAuthorSchema, //Added every fetch
     sharesCount: { type: Number, default: 0 },
     postType: {
       type: String,
@@ -880,80 +883,6 @@ export const transactionSchema = new mongoose.Schema({
   },
   createdAt: { type: Date, default: Date.now },
 });
-export const paymentMethodSchema = new mongoose.Schema({
-  userId: { type: String, required: true },
-  method: { type: String, enum: ["card", "bank"], required: true },
-  paymentToken: { type: String, required: true },
-  lastFourDigits: { type: String },
-  cardBrand: { type: String },
-  bankName: { type: String },
-  bankAccNumber: { type: String },
-  bankCode: { type: String },
-  accountHolderName: { type: String },
-  country: { type: String },
-  isDefault: { type: Boolean, default: false },
-  expiryMonth: { type: String },
-  expiryYear: { type: String },
-  billingAddressDetails: {
-    state: String,
-    city: String,
-    street: String,
-    zip: String,
-  },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now },
-});
-export const iTagSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: String,
-      required: true,
-      unique: true,
-    },
-    username: {
-      type: String,
-      required: true,
-      trim: true,
-      unique: true,
-    },
-    cardHolderName: {
-      type: String,
-      required: true,
-      uppercase: true,
-    },
-    cardNumber: {
-      type: String,
-      required: true,
-    },
-    layoutType: {
-      type: Number,
-      enum: [1, 2, 3],
-      default: 1,
-    },
-    tier: {
-      type: String,
-      enum: ["pro", "premium", "free"],
-      default: "free",
-    },
-    designOptions: {
-      backgroundColor: {
-        type: String,
-        default: "#ffffff",
-      },
-      backgroundImage: {
-        type: String,
-        default: null,
-      },
-      glassmorphismOpacity: {
-        type: Number,
-        default: 0.2,
-        min: 0,
-        max: 1,
-      },
-    },
-  },
-  { timestamps: true },
-);
 export const deletedUserSchema = new mongoose.Schema({
   uid: { type: String, required: true },
   reason: { type: String },
@@ -972,15 +901,6 @@ export const certificateSchema = new mongoose.Schema({
   courseTitle: String,
   pdfUrl: String,
   issuedAt: { type: Date, default: Date.now },
-});
-export const statementSchema = new mongoose.Schema({
-  userId: { type: String, required: true, index: true },
-  startDate: { type: Date, required: true },
-  endDate: { type: Date, required: true },
-  pdfUrl: { type: String, required: true },
-  income: Number,
-  expense: Number,
-  generatedAt: { type: Date, default: Date.now },
 });
 export const schoolConfigurationSchema = new mongoose.Schema(
   {
