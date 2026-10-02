@@ -906,24 +906,35 @@ export const aiChat = async (req, res) => {
       Your purpose is to help students and lecturers understand educational material. 
       Academic Context: ${type === "course" ? `Course: ${data.courseTitle || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.`;
     }
+    let contents;
+    try {
+      if (Array.isArray(history) && history.length > 0) {
+        contents = history
+          .map((h) => ({
+            role: h.role === "assistant" ? "model" : h.role || "user",
+            parts: [{ text: h.parts?.[0]?.text || h.text || "" }],
+          }))
+          .filter((h) => h.parts[0].text.trim().length > 0);
 
-    const formattedHistory = Array.isArray(history)
-      ? history.map((h) => ({
-          role: h.role,
-          parts: h.parts || [{ text: h.text }],
-        }))
-      : [];
+        contents.push({ role: "user", parts: [{ text: message }] });
+      } else {
+        contents = message;
+      }
+    } catch (err) {
+      contents = message;
+    }
 
-    const chat = ai.chats.create({
+    const response = await ai.models.generateContent({
       model: "gemini-3.8-flash",
-      history: formattedHistory,
       config: {
         systemInstruction: systemInstruction,
       },
+      contents: contents,
     });
 
-    const result = await chat.sendMessage(message);
-    const replyText = result.response.text();
+    const replyText =
+      response.text ||
+      "I'm sorry, I couldn't generate a response at this time.";
     let finalReply;
     let aiResponse;
     const ticketRefId =
