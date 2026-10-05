@@ -486,46 +486,50 @@ export const fetchLecturerEnrolledCourses = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchLecturerEnrolledCoursesController";
   const action = "fetchLecturerEnrolledCourses";
-
-  console.log("--- 1. LECTURER COURSES REQUEST START ---");
-  console.log("Query Parameters:", req.query);
-  console.log("Lecturer ID from token:", req.user?.uid);
-
   try {
     const { semester, session, page = 1, limit = 10 } = req.query;
     const lecturerId = req.user?.uid;
     const pageNum = parseInt(page);
     const limitNum = parseInt(limit);
     const skip = (pageNum - 1) * limitNum;
+    let queryRef = Course.where("lecturerIds", "array-contains", lecturerId)
+      .where("isActive", "==", true);
 
-    const query = { lecturerIds: lecturerId, isActive: true };
-    if (semester && semester !== "All") query.semester = semester;
-    if (session && session !== "All") query.session = session;
+    if (semester && semester !== "All") {
+      queryRef = queryRef.where("semester", "==", semester);
+    }
+    if (session && session !== "All") {
+      queryRef = queryRef.where("session", "==", session);
+    }
+    queryRef = queryRef.orderBy("createdAt", "desc").limit(limitNum);
 
-    console.log("--- 2. Built Mongoose query object:", query);
+    if (skip > 0) {
+      queryRef = queryRef.offset(skip);
+    }
+    const snapshot = await queryRef.get();
 
-    const courses = await Course.find(query)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limitNum)
-      .lean();
+    if (snapshot.empty) {
+      console.log("--- 3. Query finished. Found documents count: 0 ---");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
+      return res.status(200).json([]);
+    }
+
+    const courses = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      courseId: doc.id,
+      ...doc.data(),
+    }));
 
     console.log(
       `--- 3. Query finished. Found documents count: ${courses.length} ---`,
     );
 
-    const results = courses.map((course) => ({
-      ...course,
-    }));
-
-    console.log(
-      `--- 4. Success. Returning ${results.length} lecturer courses ---`,
-    );
-
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
-    res.status(200).json(results);
+    return res.status(200).json(courses);
   } catch (error) {
     console.error("--- ❌ LECTURER COURSES ERROR CAUGHT ---");
     console.error("Error Message:", error.message);
@@ -540,7 +544,7 @@ export const fetchLecturerEnrolledCourses = async (req, res) => {
         error.message,
       ),
     );
-    res.status(500).json({ message: "Error fetching lecturer courses" });
+    return res.status(500).json({ message: "Error fetching lecturer courses" });
   }
 };
 export const fetchAllAdmins = async (req, res) => {
