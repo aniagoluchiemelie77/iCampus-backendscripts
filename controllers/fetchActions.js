@@ -1033,18 +1033,25 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
       "array-contains",
       userId,
     ).where("isActive", "==", true);
-    console.log("Step 2: Built Firestore query reference:", queryRef);
+    console.log("Step 2: Built Firestore query reference");
 
     if (semester && semester !== "All") {
       queryRef = queryRef.where("semester", "==", semester);
+      console.log(`Filtering by semester: ${semester}`);
     }
     if (session && session !== "All") {
       queryRef = queryRef.where("session", "==", session);
+      console.log(`Filtering by session: ${session}`);
     }
+    console.log(
+      `Step 3: Applying ordering and pagination. Page: ${pageNum}, Limit: ${limitNum}, Skip: ${skip}`,
+    );
     queryRef = queryRef.orderBy("createdAt", "desc").limit(limitNum);
+    console.log(`Applying limit: ${limitNum} courses per page`);
 
     if (skip > 0) {
       queryRef = queryRef.offset(skip);
+      console.log(`Applying pagination: skip ${skip} courses`);
     }
 
     const snapshot = await queryRef.get();
