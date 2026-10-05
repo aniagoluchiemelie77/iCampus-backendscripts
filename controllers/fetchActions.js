@@ -103,536 +103,6 @@ export const fetchSingleNotification = async (req, res) => {
     });
   }
 };
-export const fetchProfileInformation = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchProfileInformationController";
-  const action = "fetchProfileInformation";
-
-  try {
-    const { identifier } = req.params;
-    const viewerUid = req.user.uid;
-    const { viewerTier, viewerRole, viewerFirstname } = req.query;
-
-    const targetUserSnapshot = await User.where(
-      Filter.or(
-        Filter.where("uid", "==", identifier),
-        Filter.where("username", "==", identifier),
-        Filter.where("firstname", "==", identifier),
-        Filter.where("lastname", "==", identifier),
-      ),
-    )
-      .limit(1)
-      .get();
-
-    if (targetUserSnapshot.empty) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        ),
-      );
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
-    }
-
-    const rawTargetUserData = targetUserSnapshot.docs[0].data();
-    const { password, refreshTokens, ...targetUser } = rawTargetUserData;
-    const targetUid = targetUser.uid;
-
-    const viewerDoc = await User.doc(viewerUid).get();
-    const viewerData = viewerDoc.exists ? viewerDoc.data() : null;
-
-    const isBlockedByViewer = (viewerData?.blockedUsers || []).includes(
-      targetUid,
-    );
-    const isViewerBlockedByTarget = (targetUser.blockedUsers || []).includes(
-      viewerUid,
-    );
-
-    if (isBlockedByViewer || isViewerBlockedByTarget) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found or you have restricted access to this profile.",
-        ),
-      );
-      return res.status(403).json({
-        success: false,
-        message:
-          "User not found or you have restricted access to this profile.",
-        isBlocked: true,
-        targetUid: targetUid,
-      });
-    }
-
-    const fetchUsersByUids = async (uids) => {
-      if (!uids || !uids.length) return [];
-      const chunks = [];
-      for (let i = 0; i < uids.length; i += 30) {
-        chunks.push(uids.slice(i, i + 30));
-      }
-      const results = await Promise.all(
-        chunks.map((chunk) => User.where("uid", "in", chunk).get()),
-      );
-      return results.flatMap((snap) =>
-        snap.docs.map((doc) => {
-          const u = doc.data();
-          return {
-            uid: u.uid || doc.id,
-            firstname: u.firstname,
-            lastname: u.lastname,
-            username: u.username,
-            profilePic: u.profilePic,
-            tier: u.tier,
-            isVerified: u.isVerified,
-            usertype: u.usertype,
-            organizationName: u.organizationName,
-          };
-        }),
-      );
-    };
-
-    const attachCommentsAndCountsToPosts = async (postsList) => {
-      if (!postsList || !postsList.length) return [];
-      const postDataPromises = postsList.map(async (post) => {
-        const targetPostId = post.postId || post.id;
-        const [commentsSnapshot, repostersSnapshot] = await Promise.all([
-          Comments.where("postId", "==", targetPostId).get(),
-          PostReposters.where("postId", "==", targetPostId).get(),
-        ]);
-        return { post, commentsSnapshot, repostersSnapshot };
-      });
-
-      const resolvedPosts = await Promise.all(postDataPromises);
-      const allCommentUserIds = new Set();
-      resolvedPosts.forEach(({ commentsSnapshot }) => {
-        commentsSnapshot.docs.forEach((doc) => {
-          const commentData = doc.data();
-          if (commentData.userId) allCommentUserIds.add(commentData.userId);
-        });
-      });
-      const commentAuthorMap = new Map();
-      const uniqueCommentUserIds = [...allCommentUserIds];
-      if (uniqueCommentUserIds.length > 0) {
-        const userChunks = [];
-        for (let i = 0; i < uniqueCommentUserIds.length; i += 30) {
-          userChunks.push(uniqueCommentUserIds.slice(i, i + 30));
-        }
-        const userResults = await Promise.all(
-          userChunks.map((chunk) => User.where("uid", "in", chunk).get()),
-        );
-        userResults.forEach((snap) => {
-          snap.docs.forEach((doc) => {
-            const cuData = doc.data();
-            commentAuthorMap.set(cuData.uid || doc.id, {
-              uid: cuData.uid || doc.id,
-              firstname: cuData.firstname,
-              lastname: cuData.lastname,
-              username: cuData.username,
-              profilePic: cuData.profilePic,
-            });
-          });
-        });
-      }
-      return resolvedPosts.map(
-        ({ post, commentsSnapshot, repostersSnapshot }) => {
-          const comments = commentsSnapshot.docs.map((doc) => {
-            const commentData = doc.data();
-            const commentUser = commentData.userId
-              ? commentAuthorMap.get(commentData.userId) || commentData.userId
-              : null;
-
-            return {
-              id: doc.id,
-              ...commentData,
-              userId: commentUser,
-            };
-          });
-
-          const repostersCount = repostersSnapshot.size;
-          const commentsCount = commentsSnapshot.size;
-
-          return {
-            ...post,
-            comments,
-            commentsCount,
-            repostsCount:
-              post.repostsCount !== undefined
-                ? post.repostsCount
-                : repostersCount,
-          };
-        },
-      );
-    };
-
-    const fetchPostsByIds = async (postIds) => {
-      if (!postIds || !postIds.length) return [];
-      const chunks = [];
-      for (let i = 0; i < postIds.length; i += 30) {
-        chunks.push(postIds.slice(i, i + 30));
-      }
-      const results = await Promise.all(
-        chunks.map((chunk) => Posts.where("postId", "in", chunk).get()),
-      );
-      const posts = results.flatMap((snap) =>
-        snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
-      );
-
-      const getTime = (p) =>
-        p.createdAt?.toMillis
-          ? p.createdAt.toMillis()
-          : new Date(p.createdAt).getTime();
-
-      const sortedPosts = posts.sort((a, b) => getTime(b) - getTime(a));
-      return await attachCommentsAndCountsToPosts(sortedPosts);
-    };
-
-    const [
-      followersSnap,
-      followingSnap,
-      isFollowingSnap,
-      coursesSnap,
-      userPostsSnap,
-      repostsSnap,
-      bookmarkedPosts,
-    ] = await Promise.all([
-      Follow.where("followingId", "==", targetUid).get(),
-      Follow.where("followerId", "==", targetUid).get(),
-      Follow.where("followerId", "==", viewerUid)
-        .where("followingId", "==", targetUid)
-        .limit(1)
-        .get(),
-      targetUser.usertype === "lecturer" || targetUser.usertype === "otherUser"
-        ? Course.where("lecturerIds", "array-contains", targetUid).get()
-        : null,
-      Posts.where("originalAuthor", "==", targetUid).get(),
-      PostReposters.where("uid", "==", targetUid).get(),
-      fetchPostsByIds(targetUser.bookmarks || []),
-    ]);
-
-    const followerIds = followersSnap.docs.map((doc) => doc.data().followerId);
-    const followingIds = followingSnap.docs.map(
-      (doc) => doc.data().followingId,
-    );
-
-    const [followerDetails, followingDetails] = await Promise.all([
-      fetchUsersByUids(followerIds),
-      fetchUsersByUids(followingIds),
-    ]);
-
-    const courses = coursesSnap
-      ? coursesSnap.docs.map((doc) => {
-          const c = doc.data();
-          return {
-            id: doc.id,
-            courseTitle: c.courseTitle,
-            courseCode: c.courseCode,
-            thumbnailUrl: c.thumbnailUrl,
-            session: c.session,
-            semester: c.semester,
-            isActive: c.isActive,
-            description: c.description,
-            rating: c.rating,
-            price: c.price,
-            enrolledCount: c.studentsEnrolled ? c.studentsEnrolled.length : 0,
-          };
-        })
-      : [];
-
-    const authoredPosts = userPostsSnap.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    const [formattedAuthoredPosts, originalRepostedPosts] = await Promise.all([
-      attachCommentsAndCountsToPosts(authoredPosts),
-      fetchPostsByIds(repostsSnap.docs.map((doc) => doc.data().postId)),
-    ]);
-
-    const formattedReposts = originalRepostedPosts.map((post) => ({
-      ...post,
-      isRepost: true,
-    }));
-
-    const getTime = (item) =>
-      item.createdAt?.toMillis
-        ? item.createdAt.toMillis()
-        : new Date(item.createdAt).getTime();
-
-    const userPosts = [...formattedAuthoredPosts, ...formattedReposts].sort(
-      (a, b) => getTime(b) - getTime(a),
-    );
-    const isOwner = viewerUid === targetUid;
-    const isPremiumViewer = viewerTier === "premium";
-
-    if (!isOwner && !isPremiumViewer) {
-      createNotification({
-        notificationId: generateNotificationId("profile"),
-        recipientId: targetUid,
-        isRead: false,
-        category: "social",
-        actionType: "PROFILE_VIEW",
-        title: "Profile View",
-        message: `${viewerFirstname || "Someone"} viewed your profile`,
-        payload: { viewerUid, userName: viewerFirstname },
-        sendPush: true,
-        sendSocket: true,
-        saveToDb: true,
-      }).catch((err) => console.error("Notification Error:", err));
-    }
-
-    const canSeeScore =
-      isOwner || viewerRole === "enterprise" || viewerTier !== "free";
-
-    const profileData = {
-      ...targetUser,
-      currentIScore: canSeeScore ? targetUser.currentIScore : "Locked",
-      followersList: followerDetails,
-      followersCount: followerDetails.length,
-      followingList: followingDetails,
-      followingCount: followingDetails.length,
-      isFollowing: !isFollowingSnap.empty,
-      courses,
-      posts: userPosts,
-      bookmarkedPosts,
-      bookmarksCount: targetUser.bookmarks?.length || 0,
-      likesCount: targetUser.likes?.length || 0,
-    };
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json({
-      success: true,
-      data: profileData,
-    });
-  } catch (error) {
-    console.error("Comprehensive Profile Fetch Error:", error.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const fetchBlockedUsers = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchBlockedUsersController";
-  const action = "fetchBlockedUsers";
-  try {
-    const userDoc = await User.doc(req.user.uid).get();
-
-    if (!userDoc.exists) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        ),
-      );
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const userData = userDoc.data();
-    const blockedIds = userData.blockedUsers || [];
-
-    if (blockedIds.length === 0) {
-      setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "success"),
-      );
-      return res.status(200).json([]);
-    }
-
-    const chunks = [];
-    for (let i = 0; i < blockedIds.length; i += 30) {
-      chunks.push(blockedIds.slice(i, i + 30));
-    }
-
-    const userResults = await Promise.all(
-      chunks.map((chunk) => User.where("uid", "in", chunk).get()),
-    );
-
-    const blockedList = userResults.flatMap((userSnapshot) =>
-      userSnapshot.docs.map((doc) => {
-        const u = doc.data();
-        return {
-          uid: u.uid,
-          firstname: u.firstname || "",
-          lastname: u.lastname || "",
-          username: u.username || "",
-          profilePic: u.profilePic || "",
-          tier: u.tier || "",
-          organizationName: u.organizationName || "",
-        };
-      }),
-    );
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json(blockedList);
-  } catch (err) {
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      ),
-    );
-    res.status(500).json({ error: err.message });
-  }
-};
-export const fetchLectureExceptions = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchLectureExceptionsController";
-  const action = "fetchLectureExceptions";
-
-  try {
-    const { courseId } = req.query;
-    const userId = req.user.uid;
-    const userRole = req.user.usertype;
-
-    if (!courseId) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "courseId is required",
-        ),
-      );
-      return res.status(400).json({ message: "courseId is required" });
-    }
-
-    let exceptionsQuery = Exceptions.where("courseId", "==", courseId);
-
-    if (userRole === "student") {
-      exceptionsQuery = exceptionsQuery.where("studentId", "==", userId);
-    } else if (userRole === "lecturer") {
-      const courseSnapshot = await Course.where("courseId", "==", courseId)
-        .where("lecturerIds", "array-contains", userId)
-        .limit(1)
-        .get();
-
-      if (courseSnapshot.empty) {
-        setImmediate(() =>
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Access denied. You do not teach this course.",
-          ),
-        );
-        return res.status(403).json({
-          success: false,
-          message: "Access denied. You do not teach this course.",
-        });
-      }
-    } else {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user type",
-        ),
-      );
-      return res.status(403).json({ message: "Unauthorized user type" });
-    }
-
-    const snapshot = await exceptionsQuery.orderBy("createdAt", "desc").get();
-    const exceptions = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json({
-      success: true,
-      count: exceptions.length,
-      exceptions,
-    });
-  } catch (error) {
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: error.message });
-  }
-};
-export const fetchCourseAssignments = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchCourseAssignmentsController";
-  const action = "fetchCourseAssignments";
-
-  try {
-    const courseSnapshot = await Course.where(
-      "courseId",
-      "==",
-      req.params.courseId,
-    )
-      .limit(1)
-      .get();
-
-    if (courseSnapshot.empty) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Course not found",
-        ),
-      );
-      return res.status(404).json({ message: "Course not found" });
-    }
-
-    const courseData = courseSnapshot.docs[0].data();
-    const assignments = courseData.assignments || [];
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json(assignments);
-  } catch (error) {
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: error.message });
-  }
-};
 // Start
 export const fetchCourseLectures = async (req, res) => {
   const controllerStartTime = Date.now();
@@ -783,6 +253,45 @@ export const fetchLectureExceptionsLecturerView = async (req, res) => {
   }
 };
 //End
+export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllExceptionsForOngoingLectureController";
+  const action = "fetchAllExceptionsForOngoingLecture";
+  try {
+    const { lectureId } = req.params;
+    const snapshot = await Exceptions.where("lectureId", "==", lectureId)
+      .orderBy("date", "desc")
+      .get();
+
+    if (snapshot.empty) {
+      console.log(`No exceptions found for lectureId: ${lectureId}`);
+      return res
+        .status(404)
+        .json({ message: "No exceptions found for this lecture" });
+    }
+
+    const exceptions = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json(exceptions);
+  } catch (error) {
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ message: "Failed to fetch course exceptions" });
+  }
+};
 export const fetchBanksUsingCountryCode = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchBanksUsingCountryCodeController";
@@ -813,191 +322,6 @@ export const fetchBanksUsingCountryCode = async (req, res) => {
       ),
     );
     res.status(500).json({ status: "error", message: "Failed to fetch banks" });
-  }
-};
-export const fetchOngoingLectures = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchOngoingLecturesController";
-  const action = "fetchOngoingLectures";
-
-  try {
-    const userId = req.user.id || req.user.uid;
-    const [enrolledCoursesSnap, taughtCoursesSnap] = await Promise.all([
-      Course.where("studentsEnrolled", "array-contains", userId).get(),
-      Course.where("lecturerIds", "array-contains", userId).get(),
-    ]);
-
-    const courseIdSet = new Set();
-    enrolledCoursesSnap.docs.forEach((doc) => {
-      const data = doc.data();
-      if (data.courseId) courseIdSet.add(data.courseId);
-    });
-    taughtCoursesSnap.docs.forEach((doc) => {
-      const data = doc.data();
-      if (data.courseId) courseIdSet.add(data.courseId);
-    });
-
-    const enrolledOrTaughtCourseIds = Array.from(courseIdSet);
-
-    if (enrolledOrTaughtCourseIds.length === 0) {
-      setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "success"),
-      );
-      return res.status(200).json({ ongoing: false });
-    }
-
-    const chunks = [];
-    for (let i = 0; i < enrolledOrTaughtCourseIds.length; i += 30) {
-      chunks.push(enrolledOrTaughtCourseIds.slice(i, i + 30));
-    }
-
-    const lectureSnaps = await Promise.all(
-      chunks.map((chunk) =>
-        Lectures.where("status", "==", "ongoing")
-          .where("courseId", "in", chunk)
-          .limit(1)
-          .get(),
-      ),
-    );
-
-    let ongoingLectureDoc = null;
-    for (const snap of lectureSnaps) {
-      if (!snap.empty) {
-        ongoingLectureDoc = snap.docs[0];
-        break;
-      }
-    }
-
-    if (ongoingLectureDoc) {
-      const lectureData = ongoingLectureDoc.data();
-      let populatedCourse = null;
-
-      if (lectureData.courseId) {
-        const courseSnap = await Course.where(
-          "courseId",
-          "==",
-          lectureData.courseId,
-        )
-          .limit(1)
-          .get();
-        if (!courseSnap.empty) {
-          populatedCourse = {
-            id: courseSnap.docs[0].id,
-            ...courseSnap.docs[0].data(),
-          };
-        }
-      }
-
-      const formattedLecture = {
-        id: ongoingLectureDoc.id,
-        ...lectureData,
-        courseId: populatedCourse || lectureData.courseId,
-      };
-
-      setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "success"),
-      );
-      return res.status(200).json({
-        ongoing: true,
-        lecture: formattedLecture,
-      });
-    }
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json({ ongoing: false });
-  } catch (err) {
-    console.error("Error fetching ongoing lecture:", err.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      ),
-    );
-    res.status(500).json({ error: err.message });
-  }
-};
-export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchCourseDetailsForOngoingLectureController";
-  const action = "fetchCourseDetailsForOngoingLecture";
-  try {
-    const { courseId } = req.params;
-    const courseSnapshot = await Course.where("courseId", "==", courseId)
-      .limit(1)
-      .get();
-
-    if (courseSnapshot.empty) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Course not found",
-        ),
-      );
-      return res.status(404).json({ message: "Course not found" });
-    }
-
-    const courseDoc = courseSnapshot.docs[0];
-    const course = {
-      id: courseDoc.id,
-      ...courseDoc.data(),
-    };
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json(course);
-  } catch (error) {
-    console.error("Fetch Course Error:", error.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: "Internal server error" });
-  }
-};
-export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchAllExceptionsForOngoingLectureController";
-  const action = "fetchAllExceptionsForOngoingLecture";
-  try {
-    const { lectureId } = req.params;
-    const snapshot = await Exceptions.where("lectureId", "==", lectureId)
-      .orderBy("date", "desc")
-      .get();
-
-    const exceptions = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json(exceptions);
-  } catch (error) {
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: "Failed to fetch course exceptions" });
   }
 };
 export const fetchCourseDetails = async (req, res) => {
@@ -2453,5 +1777,688 @@ export const fetchUserNotifications = async (req, res) => {
       ),
     );
     res.status(500).json({ message: "Server error", success: false });
+  }
+};
+export const fetchProfileInformation = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchProfileInformationController";
+  const action = "fetchProfileInformation";
+
+  try {
+    const { identifier } = req.params;
+    const viewerUid = req.user.uid;
+    const { viewerTier, viewerRole, viewerFirstname } = req.query;
+
+    const targetUserSnapshot = await User.where(
+      Filter.or(
+        Filter.where("uid", "==", identifier),
+        Filter.where("username", "==", identifier),
+        Filter.where("firstname", "==", identifier),
+        Filter.where("lastname", "==", identifier),
+      ),
+    )
+      .limit(1)
+      .get();
+
+    if (targetUserSnapshot.empty) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        ),
+      );
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
+    }
+
+    const rawTargetUserData = targetUserSnapshot.docs[0].data();
+    const { password, refreshTokens, ...targetUser } = rawTargetUserData;
+    const targetUid = targetUser.uid;
+
+    const viewerDoc = await User.doc(viewerUid).get();
+    const viewerData = viewerDoc.exists ? viewerDoc.data() : null;
+
+    const isBlockedByViewer = (viewerData?.blockedUsers || []).includes(
+      targetUid,
+    );
+    const isViewerBlockedByTarget = (targetUser.blockedUsers || []).includes(
+      viewerUid,
+    );
+
+    if (isBlockedByViewer || isViewerBlockedByTarget) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found or you have restricted access to this profile.",
+        ),
+      );
+      return res.status(403).json({
+        success: false,
+        message:
+          "User not found or you have restricted access to this profile.",
+        isBlocked: true,
+        targetUid: targetUid,
+      });
+    }
+
+    const fetchUsersByUids = async (uids) => {
+      if (!uids || !uids.length) return [];
+      const chunks = [];
+      for (let i = 0; i < uids.length; i += 30) {
+        chunks.push(uids.slice(i, i + 30));
+      }
+      const results = await Promise.all(
+        chunks.map((chunk) => User.where("uid", "in", chunk).get()),
+      );
+      return results.flatMap((snap) =>
+        snap.docs.map((doc) => {
+          const u = doc.data();
+          return {
+            uid: u.uid || doc.id,
+            firstname: u.firstname,
+            lastname: u.lastname,
+            username: u.username,
+            profilePic: u.profilePic,
+            tier: u.tier,
+            isVerified: u.isVerified,
+            usertype: u.usertype,
+            organizationName: u.organizationName,
+          };
+        }),
+      );
+    };
+
+    const attachCommentsAndCountsToPosts = async (postsList) => {
+      if (!postsList || !postsList.length) return [];
+      const postDataPromises = postsList.map(async (post) => {
+        const targetPostId = post.postId || post.id;
+        const [commentsSnapshot, repostersSnapshot] = await Promise.all([
+          Comments.where("postId", "==", targetPostId).get(),
+          PostReposters.where("postId", "==", targetPostId).get(),
+        ]);
+        return { post, commentsSnapshot, repostersSnapshot };
+      });
+
+      const resolvedPosts = await Promise.all(postDataPromises);
+      const allCommentUserIds = new Set();
+      resolvedPosts.forEach(({ commentsSnapshot }) => {
+        commentsSnapshot.docs.forEach((doc) => {
+          const commentData = doc.data();
+          if (commentData.userId) allCommentUserIds.add(commentData.userId);
+        });
+      });
+      const commentAuthorMap = new Map();
+      const uniqueCommentUserIds = [...allCommentUserIds];
+      if (uniqueCommentUserIds.length > 0) {
+        const userChunks = [];
+        for (let i = 0; i < uniqueCommentUserIds.length; i += 30) {
+          userChunks.push(uniqueCommentUserIds.slice(i, i + 30));
+        }
+        const userResults = await Promise.all(
+          userChunks.map((chunk) => User.where("uid", "in", chunk).get()),
+        );
+        userResults.forEach((snap) => {
+          snap.docs.forEach((doc) => {
+            const cuData = doc.data();
+            commentAuthorMap.set(cuData.uid || doc.id, {
+              uid: cuData.uid || doc.id,
+              firstname: cuData.firstname,
+              lastname: cuData.lastname,
+              username: cuData.username,
+              profilePic: cuData.profilePic,
+            });
+          });
+        });
+      }
+      return resolvedPosts.map(
+        ({ post, commentsSnapshot, repostersSnapshot }) => {
+          const comments = commentsSnapshot.docs.map((doc) => {
+            const commentData = doc.data();
+            const commentUser = commentData.userId
+              ? commentAuthorMap.get(commentData.userId) || commentData.userId
+              : null;
+
+            return {
+              id: doc.id,
+              ...commentData,
+              userId: commentUser,
+            };
+          });
+
+          const repostersCount = repostersSnapshot.size;
+          const commentsCount = commentsSnapshot.size;
+
+          return {
+            ...post,
+            comments,
+            commentsCount,
+            repostsCount:
+              post.repostsCount !== undefined
+                ? post.repostsCount
+                : repostersCount,
+          };
+        },
+      );
+    };
+
+    const fetchPostsByIds = async (postIds) => {
+      if (!postIds || !postIds.length) return [];
+      const chunks = [];
+      for (let i = 0; i < postIds.length; i += 30) {
+        chunks.push(postIds.slice(i, i + 30));
+      }
+      const results = await Promise.all(
+        chunks.map((chunk) => Posts.where("postId", "in", chunk).get()),
+      );
+      const posts = results.flatMap((snap) =>
+        snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+      );
+
+      const getTime = (p) =>
+        p.createdAt?.toMillis
+          ? p.createdAt.toMillis()
+          : new Date(p.createdAt).getTime();
+
+      const sortedPosts = posts.sort((a, b) => getTime(b) - getTime(a));
+      return await attachCommentsAndCountsToPosts(sortedPosts);
+    };
+
+    const [
+      followersSnap,
+      followingSnap,
+      isFollowingSnap,
+      coursesSnap,
+      userPostsSnap,
+      repostsSnap,
+      bookmarkedPosts,
+    ] = await Promise.all([
+      Follow.where("followingId", "==", targetUid).get(),
+      Follow.where("followerId", "==", targetUid).get(),
+      Follow.where("followerId", "==", viewerUid)
+        .where("followingId", "==", targetUid)
+        .limit(1)
+        .get(),
+      targetUser.usertype === "lecturer" || targetUser.usertype === "otherUser"
+        ? Course.where("lecturerIds", "array-contains", targetUid).get()
+        : null,
+      Posts.where("originalAuthor", "==", targetUid).get(),
+      PostReposters.where("uid", "==", targetUid).get(),
+      fetchPostsByIds(targetUser.bookmarks || []),
+    ]);
+
+    const followerIds = followersSnap.docs.map((doc) => doc.data().followerId);
+    const followingIds = followingSnap.docs.map(
+      (doc) => doc.data().followingId,
+    );
+
+    const [followerDetails, followingDetails] = await Promise.all([
+      fetchUsersByUids(followerIds),
+      fetchUsersByUids(followingIds),
+    ]);
+
+    const courses = coursesSnap
+      ? coursesSnap.docs.map((doc) => {
+          const c = doc.data();
+          return {
+            id: doc.id,
+            courseTitle: c.courseTitle,
+            courseCode: c.courseCode,
+            thumbnailUrl: c.thumbnailUrl,
+            session: c.session,
+            semester: c.semester,
+            isActive: c.isActive,
+            description: c.description,
+            rating: c.rating,
+            price: c.price,
+            enrolledCount: c.studentsEnrolled ? c.studentsEnrolled.length : 0,
+          };
+        })
+      : [];
+
+    const authoredPosts = userPostsSnap.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    const [formattedAuthoredPosts, originalRepostedPosts] = await Promise.all([
+      attachCommentsAndCountsToPosts(authoredPosts),
+      fetchPostsByIds(repostsSnap.docs.map((doc) => doc.data().postId)),
+    ]);
+
+    const formattedReposts = originalRepostedPosts.map((post) => ({
+      ...post,
+      isRepost: true,
+    }));
+
+    const getTime = (item) =>
+      item.createdAt?.toMillis
+        ? item.createdAt.toMillis()
+        : new Date(item.createdAt).getTime();
+
+    const userPosts = [...formattedAuthoredPosts, ...formattedReposts].sort(
+      (a, b) => getTime(b) - getTime(a),
+    );
+    const isOwner = viewerUid === targetUid;
+    const isPremiumViewer = viewerTier === "premium";
+
+    if (!isOwner && !isPremiumViewer) {
+      createNotification({
+        notificationId: generateNotificationId("profile"),
+        recipientId: targetUid,
+        isRead: false,
+        category: "social",
+        actionType: "PROFILE_VIEW",
+        title: "Profile View",
+        message: `${viewerFirstname || "Someone"} viewed your profile`,
+        payload: { viewerUid, userName: viewerFirstname },
+        sendPush: true,
+        sendSocket: true,
+        saveToDb: true,
+      }).catch((err) => console.error("Notification Error:", err));
+    }
+
+    const canSeeScore =
+      isOwner || viewerRole === "enterprise" || viewerTier !== "free";
+
+    const profileData = {
+      ...targetUser,
+      currentIScore: canSeeScore ? targetUser.currentIScore : "Locked",
+      followersList: followerDetails,
+      followersCount: followerDetails.length,
+      followingList: followingDetails,
+      followingCount: followingDetails.length,
+      isFollowing: !isFollowingSnap.empty,
+      courses,
+      posts: userPosts,
+      bookmarkedPosts,
+      bookmarksCount: targetUser.bookmarks?.length || 0,
+      likesCount: targetUser.likes?.length || 0,
+    };
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json({
+      success: true,
+      data: profileData,
+    });
+  } catch (error) {
+    console.error("Comprehensive Profile Fetch Error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+export const fetchBlockedUsers = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchBlockedUsersController";
+  const action = "fetchBlockedUsers";
+  try {
+    const userDoc = await User.doc(req.user.uid).get();
+
+    if (!userDoc.exists) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        ),
+      );
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const userData = userDoc.data();
+    const blockedIds = userData.blockedUsers || [];
+
+    if (blockedIds.length === 0) {
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
+      return res.status(200).json([]);
+    }
+
+    const chunks = [];
+    for (let i = 0; i < blockedIds.length; i += 30) {
+      chunks.push(blockedIds.slice(i, i + 30));
+    }
+
+    const userResults = await Promise.all(
+      chunks.map((chunk) => User.where("uid", "in", chunk).get()),
+    );
+
+    const blockedList = userResults.flatMap((userSnapshot) =>
+      userSnapshot.docs.map((doc) => {
+        const u = doc.data();
+        return {
+          uid: u.uid,
+          firstname: u.firstname || "",
+          lastname: u.lastname || "",
+          username: u.username || "",
+          profilePic: u.profilePic || "",
+          tier: u.tier || "",
+          organizationName: u.organizationName || "",
+        };
+      }),
+    );
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json(blockedList);
+  } catch (err) {
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      ),
+    );
+    res.status(500).json({ error: err.message });
+  }
+};
+export const fetchLectureExceptions = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchLectureExceptionsController";
+  const action = "fetchLectureExceptions";
+
+  try {
+    const { courseId } = req.query;
+    const userId = req.user.uid;
+    const userRole = req.user.usertype;
+
+    if (!courseId) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "courseId is required",
+        ),
+      );
+      return res.status(400).json({ message: "courseId is required" });
+    }
+
+    let exceptionsQuery = Exceptions.where("courseId", "==", courseId);
+
+    if (userRole === "student") {
+      exceptionsQuery = exceptionsQuery.where("studentId", "==", userId);
+    } else if (userRole === "lecturer") {
+      const courseSnapshot = await Course.where("courseId", "==", courseId)
+        .where("lecturerIds", "array-contains", userId)
+        .limit(1)
+        .get();
+
+      if (courseSnapshot.empty) {
+        setImmediate(() =>
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Access denied. You do not teach this course.",
+          ),
+        );
+        return res.status(403).json({
+          success: false,
+          message: "Access denied. You do not teach this course.",
+        });
+      }
+    } else {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user type",
+        ),
+      );
+      return res.status(403).json({ message: "Unauthorized user type" });
+    }
+
+    const snapshot = await exceptionsQuery.orderBy("createdAt", "desc").get();
+    const exceptions = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json({
+      success: true,
+      count: exceptions.length,
+      exceptions,
+    });
+  } catch (error) {
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ message: error.message });
+  }
+};
+export const fetchCourseAssignments = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchCourseAssignmentsController";
+  const action = "fetchCourseAssignments";
+
+  try {
+    const courseSnapshot = await Course.where(
+      "courseId",
+      "==",
+      req.params.courseId,
+    )
+      .limit(1)
+      .get();
+
+    if (courseSnapshot.empty) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
+
+    const courseData = courseSnapshot.docs[0].data();
+    const assignments = courseData.assignments || [];
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json(assignments);
+  } catch (error) {
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ message: error.message });
+  }
+};
+export const fetchOngoingLectures = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchOngoingLecturesController";
+  const action = "fetchOngoingLectures";
+
+  try {
+    const userId = req.user.id || req.user.uid;
+    const [enrolledCoursesSnap, taughtCoursesSnap] = await Promise.all([
+      Course.where("studentsEnrolled", "array-contains", userId).get(),
+      Course.where("lecturerIds", "array-contains", userId).get(),
+    ]);
+
+    const courseIdSet = new Set();
+    enrolledCoursesSnap.docs.forEach((doc) => {
+      const data = doc.data();
+      if (data.courseId) courseIdSet.add(data.courseId);
+    });
+    taughtCoursesSnap.docs.forEach((doc) => {
+      const data = doc.data();
+      if (data.courseId) courseIdSet.add(data.courseId);
+    });
+
+    const enrolledOrTaughtCourseIds = Array.from(courseIdSet);
+
+    if (enrolledOrTaughtCourseIds.length === 0) {
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
+      return res.status(200).json({ ongoing: false });
+    }
+
+    const chunks = [];
+    for (let i = 0; i < enrolledOrTaughtCourseIds.length; i += 30) {
+      chunks.push(enrolledOrTaughtCourseIds.slice(i, i + 30));
+    }
+
+    const lectureSnaps = await Promise.all(
+      chunks.map((chunk) =>
+        Lectures.where("status", "==", "ongoing")
+          .where("courseId", "in", chunk)
+          .limit(1)
+          .get(),
+      ),
+    );
+
+    let ongoingLectureDoc = null;
+    for (const snap of lectureSnaps) {
+      if (!snap.empty) {
+        ongoingLectureDoc = snap.docs[0];
+        break;
+      }
+    }
+
+    if (ongoingLectureDoc) {
+      const lectureData = ongoingLectureDoc.data();
+      let populatedCourse = null;
+
+      if (lectureData.courseId) {
+        const courseSnap = await Course.where(
+          "courseId",
+          "==",
+          lectureData.courseId,
+        )
+          .limit(1)
+          .get();
+        if (!courseSnap.empty) {
+          populatedCourse = {
+            id: courseSnap.docs[0].id,
+            ...courseSnap.docs[0].data(),
+          };
+        }
+      }
+
+      const formattedLecture = {
+        id: ongoingLectureDoc.id,
+        ...lectureData,
+        courseId: populatedCourse || lectureData.courseId,
+      };
+
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
+      return res.status(200).json({
+        ongoing: true,
+        lecture: formattedLecture,
+      });
+    }
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json({ ongoing: false });
+  } catch (err) {
+    console.error("Error fetching ongoing lecture:", err.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        err.message,
+      ),
+    );
+    res.status(500).json({ error: err.message });
+  }
+};
+export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchCourseDetailsForOngoingLectureController";
+  const action = "fetchCourseDetailsForOngoingLecture";
+  try {
+    const { courseId } = req.params;
+    const courseSnapshot = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
+
+    if (courseSnapshot.empty) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
+
+    const courseDoc = courseSnapshot.docs[0];
+    const course = {
+      id: courseDoc.id,
+      ...courseDoc.data(),
+    };
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json(course);
+  } catch (error) {
+    console.error("Fetch Course Error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ message: "Internal server error" });
   }
 };
