@@ -30,79 +30,6 @@ import {
 import { logControllerPerformance } from "../utils/eventLogger.js";
 axiosRetry(axios, { retries: 3 });
 
-export const fetchSingleNotification = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchSingleNotificationController";
-  const action = "fetchSingleNotification";
-  try {
-    console.log("Step 1: Fetching single notification...");
-    const { id } = req.params;
-    const userId = req.user.uid;
-    const querySnapshot = await Notification.where("notificationId", "==", id)
-      .where("recipientId", "==", userId)
-      .limit(1)
-      .get();
-
-    if (querySnapshot.empty) {
-      console.log("Notification not found...");
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Notification not found",
-        ),
-      );
-      return res.status(404).json({
-        message: "Notification not found",
-        notification: null,
-      });
-    }
-
-    const docRef = querySnapshot.docs[0].ref;
-    const notificationData = querySnapshot.docs[0].data();
-    console.log("Step 2: Processing notification data...");
-    if (!notificationData.isRead) {
-      docRef
-        .update({ isRead: true })
-        .catch((err) =>
-          console.error("Failed to mark notification as read:", err.message),
-        );
-      notificationData.isRead = true;
-    }
-    console.log("Step 3: Notification data processed.");
-
-    const notification = {
-      id: querySnapshot.docs[0].id,
-      ...notificationData,
-    };
-    console.log("Step 4: Returning notification data...");
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json({
-      success: true,
-      notification,
-    });
-  } catch (error) {
-    console.error("Error fetching single notification:", error.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({
-      success: false,
-      message: "Server error fetching notification details",
-    });
-  }
-};
 // Start
 export const fetchCourseLectures = async (req, res) => {
   const controllerStartTime = Date.now();
@@ -482,71 +409,6 @@ export const fetchLecturersLecturesTimeline = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-export const fetchLecturerEnrolledCourses = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchLecturerEnrolledCoursesController";
-  const action = "fetchLecturerEnrolledCourses";
-  try {
-    const { semester, session, page = 1, limit = 10 } = req.query;
-    const lecturerId = req.user?.uid;
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
-    let queryRef = Course.where("lecturerIds", "array-contains", lecturerId)
-      .where("isActive", "==", true);
-
-    if (semester && semester !== "All") {
-      queryRef = queryRef.where("semester", "==", semester);
-    }
-    if (session && session !== "All") {
-      queryRef = queryRef.where("session", "==", session);
-    }
-    queryRef = queryRef.orderBy("createdAt", "desc").limit(limitNum);
-
-    if (skip > 0) {
-      queryRef = queryRef.offset(skip);
-    }
-    const snapshot = await queryRef.get();
-
-    if (snapshot.empty) {
-      console.log("--- 3. Query finished. Found documents count: 0 ---");
-      setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "success"),
-      );
-      return res.status(200).json([]);
-    }
-
-    const courses = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      courseId: doc.id,
-      ...doc.data(),
-    }));
-
-    console.log(
-      `--- 3. Query finished. Found documents count: ${courses.length} ---`,
-    );
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    return res.status(200).json(courses);
-  } catch (error) {
-    console.error("--- ❌ LECTURER COURSES ERROR CAUGHT ---");
-    console.error("Error Message:", error.message);
-    console.error("Error Stack:", error.stack);
-
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    return res.status(500).json({ message: "Error fetching lecturer courses" });
-  }
-};
 export const fetchAllAdmins = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllAdminsController";
@@ -835,30 +697,6 @@ export const adminFetchUserNotifications = async (req, res) => {
     res.status(500).json({ message: "Server error", success: false });
   }
 };
-export const getAds = async (req, res) => {
-  try {
-    const snapshot = await Ads.where("isActive", "==", true)
-      .orderBy("createdAt", "desc")
-      .limit(10)
-      .get();
-
-    const ads = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    return res.status(200).json({
-      success: true,
-      data: ads,
-    });
-  } catch (error) {
-    console.error("Fetch Ads Error:", error);
-    return res.status(500).json({
-      success: false,
-      error: "Internal server error",
-    });
-  }
-};
 export const getSupportTicketByRefId = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getSupportTicketByRefIdController";
@@ -1014,79 +852,6 @@ export const fetchUserSessions = async (req, res) => {
       ),
     );
     res.status(500).json({ success: false, message: error.message });
-  }
-};
-export const fetchStudentsEnrolledCourses = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchStudentsEnrolledCoursesController";
-  const action = "fetchStudentsEnrolledCourses";
-  try {
-    console.log("Step 1: Fetching student enrolled courses...");
-    const { semester, session, page = 1, limit = 10 } = req.query;
-    const userId = req.user?.uid;
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
-
-    let queryRef = Course.where(
-      "studentsEnrolled",
-      "array-contains",
-      userId,
-    ).where("isActive", "==", true);
-    console.log("Step 2: Built Firestore query reference");
-
-    if (semester && semester !== "All") {
-      queryRef = queryRef.where("semester", "==", semester);
-      console.log(`Filtering by semester: ${semester}`);
-    }
-    if (session && session !== "All") {
-      queryRef = queryRef.where("session", "==", session);
-      console.log(`Filtering by session: ${session}`);
-    }
-    console.log(
-      `Step 3: Applying ordering and pagination. Page: ${pageNum}, Limit: ${limitNum}, Skip: ${skip}`,
-    );
-    queryRef = queryRef.orderBy("createdAt", "desc").limit(limitNum);
-    console.log(`Applying limit: ${limitNum} courses per page`);
-
-    if (skip > 0) {
-      queryRef = queryRef.offset(skip);
-      console.log(`Applying pagination: skip ${skip} courses`);
-    }
-    console.log("Step 4: Executing Firestore query...");
-
-    const snapshot = await queryRef.get();
-
-    if (snapshot.empty) {
-      console.log("Step 3: No courses found for the student.");
-      setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "success"),
-      );
-      return res.status(200).json([]);
-    }
-    console.log(`Step 4: Found ${snapshot.size} courses for the student.`);
-    const paginatedCourses = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      courseId: doc.id,
-      ...doc.data(),
-    }));
-    console.log("Step 5: Returning paginated courses");
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json(paginatedCourses);
-  } catch (error) {
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: "Error fetching your courses" });
   }
 };
 
@@ -2486,5 +2251,243 @@ export const getUserPreferences = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, error: "Server error fetching preferences" });
+  }
+};
+export const fetchStudentsEnrolledCourses = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchStudentsEnrolledCoursesController";
+  const action = "fetchStudentsEnrolledCourses";
+  try {
+    console.log("Step 1: Fetching student enrolled courses...");
+    const { semester, session, page = 1, limit = 10 } = req.query;
+    const userId = req.user?.uid;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    let queryRef = Course.where(
+      "studentsEnrolled",
+      "array-contains",
+      userId,
+    ).where("isActive", "==", true);
+    console.log("Step 2: Built Firestore query reference");
+
+    if (semester && semester !== "All") {
+      queryRef = queryRef.where("semester", "==", semester);
+      console.log(`Filtering by semester: ${semester}`);
+    }
+    if (session && session !== "All") {
+      queryRef = queryRef.where("session", "==", session);
+      console.log(`Filtering by session: ${session}`);
+    }
+    console.log(
+      `Step 3: Applying ordering and pagination. Page: ${pageNum}, Limit: ${limitNum}, Skip: ${skip}`,
+    );
+    queryRef = queryRef.orderBy("createdAt", "desc").limit(limitNum);
+    console.log(`Applying limit: ${limitNum} courses per page`);
+
+    if (skip > 0) {
+      queryRef = queryRef.offset(skip);
+      console.log(`Applying pagination: skip ${skip} courses`);
+    }
+    console.log("Step 4: Executing Firestore query...");
+
+    const snapshot = await queryRef.get();
+
+    if (snapshot.empty) {
+      console.log("Step 3: No courses found for the student.");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
+      return res.status(200).json([]);
+    }
+    console.log(`Step 4: Found ${snapshot.size} courses for the student.`);
+    const paginatedCourses = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      courseId: doc.id,
+      ...doc.data(),
+    }));
+    console.log("Step 5: Returning paginated courses");
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json(paginatedCourses);
+  } catch (error) {
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ message: "Error fetching your courses" });
+  }
+};
+export const getAds = async (req, res) => {
+  try {
+    const snapshot = await Ads.where("isActive", "==", true)
+      .orderBy("createdAt", "desc")
+      .limit(10)
+      .get();
+
+    const ads = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: ads,
+    });
+  } catch (error) {
+    console.error("Fetch Ads Error:", error);
+    return res.status(500).json({
+      success: false,
+      error: "Internal server error",
+    });
+  }
+};
+export const fetchSingleNotification = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchSingleNotificationController";
+  const action = "fetchSingleNotification";
+  try {
+    console.log("Step 1: Fetching single notification...");
+    const { id } = req.params;
+    const userId = req.user.uid;
+    const querySnapshot = await Notification.where("notificationId", "==", id)
+      .where("recipientId", "==", userId)
+      .limit(1)
+      .get();
+
+    if (querySnapshot.empty) {
+      console.log("Notification not found...");
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Notification not found",
+        ),
+      );
+      return res.status(404).json({
+        message: "Notification not found",
+        notification: null,
+      });
+    }
+
+    const docRef = querySnapshot.docs[0].ref;
+    const notificationData = querySnapshot.docs[0].data();
+    console.log("Step 2: Processing notification data...");
+    if (!notificationData.isRead) {
+      docRef
+        .update({ isRead: true })
+        .catch((err) =>
+          console.error("Failed to mark notification as read:", err.message),
+        );
+      notificationData.isRead = true;
+    }
+    console.log("Step 3: Notification data processed.");
+
+    const notification = {
+      id: querySnapshot.docs[0].id,
+      ...notificationData,
+    };
+    console.log("Step 4: Returning notification data...");
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json({
+      success: true,
+      notification,
+    });
+  } catch (error) {
+    console.error("Error fetching single notification:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({
+      success: false,
+      message: "Server error fetching notification details",
+    });
+  }
+};
+export const fetchLecturerEnrolledCourses = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchLecturerEnrolledCoursesController";
+  const action = "fetchLecturerEnrolledCourses";
+  try {
+    const { semester, session, page = 1, limit = 10 } = req.query;
+    const lecturerId = req.user?.uid;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+    let queryRef = Course.where(
+      "lecturerIds",
+      "array-contains",
+      lecturerId,
+    ).where("isActive", "==", true);
+
+    if (semester && semester !== "All") {
+      queryRef = queryRef.where("semester", "==", semester);
+    }
+    if (session && session !== "All") {
+      queryRef = queryRef.where("session", "==", session);
+    }
+    queryRef = queryRef.orderBy("createdAt", "desc").limit(limitNum);
+
+    if (skip > 0) {
+      queryRef = queryRef.offset(skip);
+    }
+    const snapshot = await queryRef.get();
+
+    if (snapshot.empty) {
+      console.log("--- 3. Query finished. Found documents count: 0 ---");
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
+      return res.status(200).json([]);
+    }
+
+    const courses = snapshot.docs.map((doc) => ({
+      id: doc.id,
+      courseId: doc.id,
+      ...doc.data(),
+    }));
+
+    console.log(
+      `--- 3. Query finished. Found documents count: ${courses.length} ---`,
+    );
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    return res.status(200).json(courses);
+  } catch (error) {
+    console.error("--- ❌ LECTURER COURSES ERROR CAUGHT ---");
+    console.error("Error Message:", error.message);
+    console.error("Error Stack:", error.stack);
+
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    return res.status(500).json({ message: "Error fetching lecturer courses" });
   }
 };

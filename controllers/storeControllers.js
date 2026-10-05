@@ -926,6 +926,7 @@ export const togglefavoriteActionController = async (req, res) => {
   const userId = req.user.id || req.user.uid;
 
   if (!productId) {
+    console.log("Missing required productId in request body.");
     if (typeof logControllerPerformance === "function") {
       logControllerPerformance(
         controllerName,
@@ -941,16 +942,25 @@ export const togglefavoriteActionController = async (req, res) => {
   }
 
   try {
+    console.log("Step 1: Starting transaction for favorite toggle:", {
+      productId,
+    });
     const result = await db.runTransaction(async (transaction) => {
       const userQuery = await User.where("uid", "==", userId).limit(1).get();
       if (userQuery.empty) {
         throw new Error("User not found");
       }
+      console.log(
+        `Step 2: User found, proceeding with favorite toggle for userId: ${userId}`,
+      );
 
       const userDoc = userQuery.docs[0];
       const userData = userDoc.data();
       const favorites = userData.favorites || [];
       const isFavorited = favorites.includes(productId);
+      console.log(
+        `Step 3: Current favorite status for productId ${productId}: ${isFavorited ? "Favorited" : "Not Favorited"}`,
+      );
       const updatedFavorites = isFavorited
         ? favorites.filter((id) => id !== productId)
         : [...favorites, productId];
@@ -959,6 +969,10 @@ export const togglefavoriteActionController = async (req, res) => {
         favorites: updatedFavorites,
         updatedAt: new Date(),
       });
+      console.log(
+        `Step 4: Updated favorites list for userId ${userId}:`,
+        updatedFavorites,
+      );
 
       return {
         isFavorited,
@@ -1007,6 +1021,7 @@ export const toggleCartActionController = async (req, res) => {
   const userId = req.user.id || req.user.uid;
 
   if (!productId || !action) {
+    console.log("Missing required productId or action.");
     if (typeof logControllerPerformance === "function") {
       logControllerPerformance(
         controllerName,
@@ -1023,11 +1038,21 @@ export const toggleCartActionController = async (req, res) => {
   }
 
   try {
+    console.log("Step 1: Starting transaction for cart action:", {
+      productId,
+      action,
+      selectedSize,
+      selectedColor,
+      quantity,
+    });
     const result = await db.runTransaction(async (transaction) => {
       const userQuery = await User.where("uid", "==", userId).limit(1).get();
       if (userQuery.empty) {
         throw new Error("User not found");
       }
+      console.log(
+        `Step 2: User found, proceeding with cart update for userId: ${userId}`,
+      );
 
       const userDoc = userQuery.docs[0];
       const userData = userDoc.data();
@@ -1035,6 +1060,9 @@ export const toggleCartActionController = async (req, res) => {
       let updatedCart = [...cart];
 
       if (action === "add") {
+        console.log(
+          `Step 3: Adding product to cart: ${productId}, Size: ${selectedSize}, Color: ${selectedColor}, Quantity: ${quantity}`,
+        );
         const existingIndex = updatedCart.findIndex(
           (item) =>
             item.productId === productId &&
@@ -1049,6 +1077,9 @@ export const toggleCartActionController = async (req, res) => {
               (updatedCart[existingIndex].quantity || 1) + Number(quantity),
           };
         } else {
+          console.log(
+            `Step 4: Product not in cart, adding new entry for productId: ${productId}`,
+          );
           updatedCart.push({
             productId,
             quantity: Number(quantity),
@@ -1057,10 +1088,14 @@ export const toggleCartActionController = async (req, res) => {
           });
         }
       } else if (action === "remove") {
+        console.log(`Step 5: Removing product from cart: ${productId}`);
         updatedCart = updatedCart.filter(
           (item) => item.productId !== productId,
         );
       } else if (action === "update") {
+        console.log(
+          `Step 6: Updating product in cart: ${productId}, Quantity: ${quantity}`,
+        );
         const existingIndex = updatedCart.findIndex(
           (item) => item.productId === productId,
         );
@@ -1072,12 +1107,17 @@ export const toggleCartActionController = async (req, res) => {
           };
         }
       }
-
+      console.log(
+        `Step 7: Final updated cart for userId ${userId}:`,
+        updatedCart,
+      );
       transaction.update(userDoc.ref, {
         cart: updatedCart,
         updatedAt: new Date(),
       });
-
+      console.log(
+        `Step 8: Cart update transaction completed for userId ${userId}`,
+      );
       return updatedCart;
     });
     res.status(200).json({
