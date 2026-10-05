@@ -7,12 +7,12 @@ import request from "supertest";
 
 const API_BASE_URL = process.env.BACKEND_URL;
 let sharedContext = {
-  postId: "PST-260901-2232-733D",
+  courseId: "CRSE-PROD0414-260828",
   pollPostId: "PST-260901-2232-X80P",
   commentId: "c4howqkg5",
 };
 
-describe("First User, delete his/her post and like third user's comment", () => {
+describe("Lecturer", () => {
   let accessToken;
 
   beforeAll(async () => {
@@ -30,8 +30,8 @@ describe("First User, delete his/her post and like third user's comment", () => 
       .set("Accept", "application/json")
       .set("X-Test-Bypass", process.env.TEST_SECRET || "")
       .send({
-        identifier: process.env.TEST_USER_EMAIL,
-        password: process.env.TEST_USER_PASSWORD,
+        identifier: process.env.TEST_USER_EMAIL_SECOND,
+        password: process.env.TEST_USER_PASSWORD_SECOND,
         deviceId: "9cb67e14404773b6",
         deviceName: "Infinix Infinix X689C",
       })
@@ -49,20 +49,49 @@ describe("First User, delete his/her post and like third user's comment", () => 
 
   const endpointsToTest = [
     {
-      name: "Like Comment",
+      name: "Create Lecture Schedule",
       method: "post",
       path: () =>
-        `posts/${sharedContext.postId}/comments/${sharedContext.commentId}/like`,
+        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
       auth: true,
       idempotent: true,
+      body: {
+        courseId: sharedContext.courseId,
+        date: "2026-06-01",
+        startTime: "09:00",
+        endTime: "11:00",
+        location: "Room 402",
+        topicName: "Cementation and Well Completion Introduction",
+        lectureType: "Physical",
+        repeatWeeks: 2,
+      },
       expected: 200,
     },
     {
-      name: "Delete Post",
-      method: "delete",
-      path: () => `posts/${sharedContext.postId}/delete`,
+      name: "Create Course Content (Add Topic)",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
       auth: true,
       idempotent: true,
+      body: {
+        topic: "Cementation and Well Completion Introduction",
+        lectureId: "lecture_sample_01",
+      },
+      expected: 200,
+    },
+    {
+      name: "Edit Course Content (Update Topic)",
+      method: "put",
+      path: () =>
+        `users/lecturers/class/courses/editCourseContent/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: true,
+      body: {
+        index: 0,
+        updatedTopic: "Advanced Data Structures & Algorithms",
+        lectureId: "lecture_sample_01",
+      },
       expected: 200,
     },
   ];

@@ -35,16 +35,6 @@ import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 import { setImmediate } from "timers";
 
 const ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
-const now = new Date();
-const formattedDate = now.toLocaleDateString("en-US", {
-  year: "numeric",
-  month: "long",
-  day: "numeric",
-});
-const formattedTime = now.toLocaleTimeString("en-US", {
-  hour: "2-digit",
-  minute: "2-digit",
-});
 
 const checkContentAuthorization = async (userId, course, lectureId = null) => {
   if (course.lecturerIds && course.lecturerIds.includes(userId)) {

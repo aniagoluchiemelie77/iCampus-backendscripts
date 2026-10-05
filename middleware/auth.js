@@ -69,8 +69,7 @@ export const idempotencyMiddleware = async (req, res, next) => {
       const data = doc.data();
       if (data.status === "PROCESSING") {
         return res.status(409).json({
-          error:
-            "A request with this idempotency key is already being processed. Please wait.",
+          error: "Request already processing, please wait.",
         });
       }
       if (data.status === "COMPLETED") {
