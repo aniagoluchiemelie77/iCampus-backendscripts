@@ -3,7 +3,6 @@ import {
   User,
   Posts,
   Transactions,
-  ITag,
   Notification,
   Course,
   Exceptions,
@@ -30,205 +29,12 @@ import {
 import { logControllerPerformance } from "../utils/eventLogger.js";
 axiosRetry(axios, { retries: 3 });
 
-export const fetchConnections = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchConnectionsController";
-  const action = "fetchConnections";
-
-  try {
-    const currentUserId = req.user.uid;
-    const connectionsSnapshot = await Follow.where(
-      "followerId",
-      "==",
-      currentUserId,
-    ).get();
-
-    if (connectionsSnapshot.empty) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "success",
-          "No connections found.",
-        ),
-      );
-      return res.json({ success: true, data: [] });
-    }
-
-    const followingUids = connectionsSnapshot.docs.map(
-      (doc) => doc.data().followingId,
-    );
-
-    if (!followingUids.length) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "success",
-          "No connections found.",
-        ),
-      );
-      return res.json({ success: true, data: [] });
-    }
-
-    const chunks = [];
-    for (let i = 0; i < followingUids.length; i += 30) {
-      chunks.push(followingUids.slice(i, i + 30));
-    }
-    const userResults = await Promise.all(
-      chunks.map((chunk) => User.where("uid", "in", chunk).get()),
-    );
-
-    const users = userResults.flatMap((userSnapshot) =>
-      userSnapshot.docs.map((doc) => doc.data()),
-    );
-
-    const formattedConnections = users.map((u) => ({
-      uid: u.uid,
-      username: u.username,
-      firstname: u.firstname,
-      lastname: u.lastname,
-      tier: u.tier,
-      organizationName: u.organizationName,
-      profilePic: u.profilePic || "",
-    }));
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.json({ success: true, data: formattedConnections });
-  } catch (error) {
-    console.error("fetchConnections Error:", error.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-export const fetchUserNotifications = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchUserNotificationsController";
-  const action = "fetchUserNotifications";
-  try {
-    const userId = req.user.id;
-    const { limit = "50", offset = "0", unread, category } = req.query;
-
-    if (!userId) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Missing userId",
-        ),
-      );
-      return res.status(400).json({ message: "Missing userId" });
-    }
-
-    let recipientQuery = Notification.where("recipientId", "==", userId);
-    let publicQuery = Notification.where("isPublic", "==", true);
-
-    if (unread === "true") {
-      recipientQuery = recipientQuery.where("isRead", "==", false);
-      publicQuery = publicQuery.where("isRead", "==", false);
-    }
-    if (category) {
-      recipientQuery = recipientQuery.where("category", "==", category);
-      publicQuery = publicQuery.where("category", "==", category);
-    }
-    const [recipientSnapshot, publicSnapshot] = await Promise.all([
-      recipientQuery.get(),
-      publicQuery.get(),
-    ]);
-
-    const notificationMap = new Map();
-    recipientSnapshot.docs.forEach((doc) => {
-      notificationMap.set(doc.id, { id: doc.id, ...doc.data() });
-    });
-    publicSnapshot.docs.forEach((doc) => {
-      notificationMap.set(doc.id, { id: doc.id, ...doc.data() });
-    });
-
-    let allNotifications = Array.from(notificationMap.values());
-    const getTime = (notif) =>
-      notif.createdAt?.toMillis
-        ? notif.createdAt.toMillis()
-        : new Date(notif.createdAt).getTime();
-
-    allNotifications.sort((a, b) => getTime(b) - getTime(a));
-
-    const groupMap = new Map();
-    allNotifications.forEach((notif) => {
-      const actionType = notif.actionType || "unknown";
-      const payload = notif.payload || {};
-      const entityId =
-        payload.postId ||
-        payload.followerId ||
-        payload.viewerUid ||
-        notif.notificationId ||
-        notif.id;
-      const groupKey = `${actionType}_${entityId}`;
-
-      if (!groupMap.has(groupKey)) {
-        groupMap.set(groupKey, { latest: notif, count: 0 });
-      }
-      groupMap.get(groupKey).count += 1;
-    });
-
-    const processedNotifications = [];
-    groupMap.forEach(({ latest, count }) => {
-      const payload = latest.payload || {};
-      const primaryUser = payload.username || payload.firstname || "Someone";
-      const othersCount = Math.max(0, count - 1);
-
-      processedNotifications.push({
-        ...latest,
-        payload: { ...payload, primaryUser, othersCount },
-      });
-    });
-
-    processedNotifications.sort((a, b) => getTime(b) - getTime(a));
-
-    const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
-    const parsedLimit = Math.max(parseInt(limit, 10) || 50, 1);
-
-    const notifications = processedNotifications.slice(
-      parsedOffset,
-      parsedOffset + parsedLimit,
-    );
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json({ notifications, success: true });
-  } catch (error) {
-    console.error("Error fetching notifications:", error.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: "Server error", success: false });
-  }
-};
 export const fetchSingleNotification = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchSingleNotificationController";
   const action = "fetchSingleNotification";
   try {
+    console.log("Step 1: Fetching single notification...");
     const { id } = req.params;
     const userId = req.user.uid;
     const querySnapshot = await Notification.where("notificationId", "==", id)
@@ -237,6 +43,7 @@ export const fetchSingleNotification = async (req, res) => {
       .get();
 
     if (querySnapshot.empty) {
+      console.log("Notification not found...");
       setImmediate(() =>
         logControllerPerformance(
           controllerName,
@@ -254,6 +61,7 @@ export const fetchSingleNotification = async (req, res) => {
 
     const docRef = querySnapshot.docs[0].ref;
     const notificationData = querySnapshot.docs[0].data();
+    console.log("Step 2: Processing notification data...");
     if (!notificationData.isRead) {
       docRef
         .update({ isRead: true })
@@ -262,11 +70,13 @@ export const fetchSingleNotification = async (req, res) => {
         );
       notificationData.isRead = true;
     }
+    console.log("Step 3: Notification data processed.");
 
     const notification = {
       id: querySnapshot.docs[0].id,
       ...notificationData,
     };
+    console.log("Step 4: Returning notification data...");
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
@@ -490,7 +300,6 @@ export const fetchProfileInformation = async (req, res) => {
       coursesSnap,
       userPostsSnap,
       repostsSnap,
-      iTagSnap,
       bookmarkedPosts,
     ] = await Promise.all([
       Follow.where("followingId", "==", targetUid).get(),
@@ -504,7 +313,6 @@ export const fetchProfileInformation = async (req, res) => {
         : null,
       Posts.where("originalAuthor", "==", targetUid).get(),
       PostReposters.where("uid", "==", targetUid).get(),
-      ITag.where("userId", "==", targetUid).limit(1).get(),
       fetchPostsByIds(targetUser.bookmarks || []),
     ]);
 
@@ -594,7 +402,6 @@ export const fetchProfileInformation = async (req, res) => {
       isFollowing: !isFollowingSnap.empty,
       courses,
       posts: userPosts,
-      iTagData,
       bookmarkedPosts,
       bookmarksCount: targetUser.bookmarks?.length || 0,
       likesCount: targetUser.likes?.length || 0,
@@ -2259,8 +2066,6 @@ export const getUserPreferences = async (req, res) => {
       .json({ success: false, error: "Server error fetching preferences" });
   }
 };
-
-//Tested and trusted using jest
 export const fetchStudentsEnrolledCourses = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchStudentsEnrolledCoursesController";
@@ -2321,6 +2126,8 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
     res.status(500).json({ message: "Error fetching your courses" });
   }
 };
+
+//Tested and trusted using jest
 export const fetchPosts = async (req, res) => {
   const limit = parseInt(req.query.limit) || 15;
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
@@ -2453,5 +2260,199 @@ export const fetchPosts = async (req, res) => {
     console.error("Error Message:", err.message);
     console.error("Error Stack:", err.stack);
     res.status(500).json({ error: err.message });
+  }
+};
+export const fetchConnections = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchConnectionsController";
+  const action = "fetchConnections";
+
+  try {
+    const currentUserId = req.user.uid;
+    const connectionsSnapshot = await Follow.where(
+      "followerId",
+      "==",
+      currentUserId,
+    ).get();
+
+    if (connectionsSnapshot.empty) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success",
+          "No connections found.",
+        ),
+      );
+      return res.json({ success: true, data: [] });
+    }
+
+    const followingUids = connectionsSnapshot.docs.map(
+      (doc) => doc.data().followingId,
+    );
+
+    if (!followingUids.length) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "success",
+          "No connections found.",
+        ),
+      );
+      return res.json({ success: true, data: [] });
+    }
+
+    const chunks = [];
+    for (let i = 0; i < followingUids.length; i += 30) {
+      chunks.push(followingUids.slice(i, i + 30));
+    }
+    const userResults = await Promise.all(
+      chunks.map((chunk) => User.where("uid", "in", chunk).get()),
+    );
+
+    const users = userResults.flatMap((userSnapshot) =>
+      userSnapshot.docs.map((doc) => doc.data()),
+    );
+
+    const formattedConnections = users.map((u) => ({
+      uid: u.uid,
+      username: u.username,
+      firstname: u.firstname,
+      lastname: u.lastname,
+      tier: u.tier,
+      organizationName: u.organizationName,
+      profilePic: u.profilePic || "",
+    }));
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.json({ success: true, data: formattedConnections });
+  } catch (error) {
+    console.error("fetchConnections Error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+export const fetchUserNotifications = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchUserNotificationsController";
+  const action = "fetchUserNotifications";
+  try {
+    const userId = req.user.id;
+    const { limit = "50", offset = "0", unread, category } = req.query;
+
+    if (!userId) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Missing userId",
+        ),
+      );
+      return res.status(400).json({ message: "Missing userId" });
+    }
+
+    let recipientQuery = Notification.where("recipientId", "==", userId);
+    let publicQuery = Notification.where("isPublic", "==", true);
+
+    if (unread === "true") {
+      recipientQuery = recipientQuery.where("isRead", "==", false);
+      publicQuery = publicQuery.where("isRead", "==", false);
+    }
+    if (category) {
+      recipientQuery = recipientQuery.where("category", "==", category);
+      publicQuery = publicQuery.where("category", "==", category);
+    }
+    const [recipientSnapshot, publicSnapshot] = await Promise.all([
+      recipientQuery.get(),
+      publicQuery.get(),
+    ]);
+
+    const notificationMap = new Map();
+    recipientSnapshot.docs.forEach((doc) => {
+      notificationMap.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+    publicSnapshot.docs.forEach((doc) => {
+      notificationMap.set(doc.id, { id: doc.id, ...doc.data() });
+    });
+
+    let allNotifications = Array.from(notificationMap.values());
+    const getTime = (notif) =>
+      notif.createdAt?.toMillis
+        ? notif.createdAt.toMillis()
+        : new Date(notif.createdAt).getTime();
+
+    allNotifications.sort((a, b) => getTime(b) - getTime(a));
+
+    const groupMap = new Map();
+    allNotifications.forEach((notif) => {
+      const actionType = notif.actionType || "unknown";
+      const payload = notif.payload || {};
+      const entityId =
+        payload.postId ||
+        payload.followerId ||
+        payload.viewerUid ||
+        notif.notificationId ||
+        notif.id;
+      const groupKey = `${actionType}_${entityId}`;
+
+      if (!groupMap.has(groupKey)) {
+        groupMap.set(groupKey, { latest: notif, count: 0 });
+      }
+      groupMap.get(groupKey).count += 1;
+    });
+
+    const processedNotifications = [];
+    groupMap.forEach(({ latest, count }) => {
+      const payload = latest.payload || {};
+      const primaryUser = payload.username || payload.firstname || "Someone";
+      const othersCount = Math.max(0, count - 1);
+
+      processedNotifications.push({
+        ...latest,
+        payload: { ...payload, primaryUser, othersCount },
+      });
+    });
+
+    processedNotifications.sort((a, b) => getTime(b) - getTime(a));
+
+    const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
+    const parsedLimit = Math.max(parseInt(limit, 10) || 50, 1);
+
+    const notifications = processedNotifications.slice(
+      parsedOffset,
+      parsedOffset + parsedLimit,
+    );
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json({ notifications, success: true });
+  } catch (error) {
+    console.error("Error fetching notifications:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ message: "Server error", success: false });
   }
 };
