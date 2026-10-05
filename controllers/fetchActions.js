@@ -369,8 +369,6 @@ export const fetchProfileInformation = async (req, res) => {
     const userPosts = [...formattedAuthoredPosts, ...formattedReposts].sort(
       (a, b) => getTime(b) - getTime(a),
     );
-
-    const iTagData = !iTagSnap.empty ? iTagSnap.docs[0].data() : null;
     const isOwner = viewerUid === targetUid;
     const isPremiumViewer = viewerTier === "premium";
 
