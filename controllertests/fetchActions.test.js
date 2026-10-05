@@ -11,7 +11,7 @@ let sharedContext = {
   targetUserId: "USER_003",
   courseId: "CRSE-RESE0320-261003",
   lectureId: "LECT-RESE0320-261003-1",
-  transactionId: "TX-PAYM-260908-1848-2TW",
+  transactionId: "TX-PAYM-260908-2044-7UW",
 };
 
 describe("First User, delete his/her post and like third user's comment", () => {
@@ -50,31 +50,6 @@ describe("First User, delete his/her post and like third user's comment", () => 
   }, 150000);
 
   const endpointsToTest = [
-    {
-      name: "Get Transaction By ID",
-      method: "get",
-      path: () =>
-        `user/transactions/fetch-transaction/${sharedContext.transactionId}`,
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
-    {
-      name: "Fetch Lecturer Enrolled Courses",
-      method: "get",
-      path: "users/lecturers/class/courses/fetch-my-courses",
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
-    {
-      name: "Get User Preferences",
-      method: "get",
-      path: "users/preferences",
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
     {
       name: "Fetch Students Enrolled Courses - Default Params",
       method: "get",
@@ -306,6 +281,23 @@ describe("First User, delete his/her post and like third user's comment", () => 
       method: "get",
       path: () =>
         `users/lecturers/class/courses/${sharedContext.courseId}/assessments`,
+      auth: true,
+      idempotent: false,
+      expected: 200,
+    },
+    {
+      name: "Get Transaction By ID",
+      method: "get",
+      path: () =>
+        `user/transactions/fetch-transaction/${sharedContext.transactionId}`,
+      auth: true,
+      idempotent: false,
+      expected: 200,
+    },
+    {
+      name: "Get User Preferences",
+      method: "get",
+      path: "users/preferences",
       auth: true,
       idempotent: false,
       expected: 200,

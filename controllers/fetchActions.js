@@ -482,105 +482,6 @@ export const fetchLecturersLecturesTimeline = async (req, res) => {
     res.status(500).json({ message: error.message });
   }
 };
-export const getTransactionById = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "getTransactionByIdController";
-  const action = "getTransactionById";
-  try {
-    const { transactionId } = req.params;
-    const currentUserId = req.user.id || req.user.uid;
-
-    if (!transactionId) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Transaction ID parameter is required",
-        ),
-      );
-      return res.status(400).json({
-        success: false,
-        message: "Transaction ID parameter is required",
-      });
-    }
-
-    const transactionSnapshot = await Transactions.where(
-      "transactionId",
-      "==",
-      transactionId,
-    )
-      .limit(1)
-      .get();
-
-    if (transactionSnapshot.empty) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Transaction detail not found",
-        ),
-      );
-      return res.status(404).json({
-        success: false,
-        message: "Transaction detail not found",
-      });
-    }
-
-    const transactionDoc = transactionSnapshot.docs[0];
-    const transaction = {
-      id: transactionDoc.id,
-      ...transactionDoc.data(),
-    };
-
-    const isOwner = transaction.userId === currentUserId;
-    const isSender = transaction.metadata?.senderId === currentUserId;
-    const isRecipient = transaction.metadata?.recipientId === currentUserId;
-
-    if (!isOwner && !isSender && !isRecipient) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized access to this transaction record",
-        ),
-      );
-      return res.status(403).json({
-        success: false,
-        message: "Unauthorized access to this transaction record",
-      });
-    }
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    return res.status(200).json({
-      success: true,
-      data: transaction,
-      message: "Success",
-    });
-  } catch (error) {
-    console.error("Backend getTransactionById Error:", error.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    return res.status(500).json({
-      success: false,
-      message: error.message || "Internal Server Error",
-    });
-  }
-};
 export const fetchLecturerEnrolledCourses = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchLecturerEnrolledCoursesController";
@@ -1111,91 +1012,12 @@ export const fetchUserSessions = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-export const getUserPreferences = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "getUserPreferencesController";
-  const action = "getUserPreferences";
-  const userId = req.user?.uid || req.user?.id;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, error: "Unauthorized user context." });
-  }
-
-  try {
-    const prefsQuery = await userPrefs
-      .where("userId", "==", userId)
-      .limit(1)
-      .get();
-
-    let preferences;
-
-    if (prefsQuery.empty) {
-      preferences = {
-        userId,
-        notifications: {
-          auth: true,
-          social: true,
-          classroom: true,
-          store: true,
-          finance: true,
-          profile: true,
-          security: true,
-        },
-        channels: { push: true, email: true, socket: true },
-        theme: "light",
-        language: "en",
-        quietHours: { enabled: false },
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-    } else {
-      const doc = prefsQuery.docs[0];
-      preferences = {
-        id: doc.id,
-        ...doc.data(),
-      };
-    }
-
-    res.status(200).json({
-      success: true,
-      preferences,
-    });
-
-    setImmediate(() => {
-      logControllerPerformance(controllerName, action, startTime, "success");
-    });
-  } catch (error) {
-    console.error("Error in getUserPreferences:", error);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    });
-    return res
-      .status(500)
-      .json({ success: false, error: "Server error fetching preferences" });
-  }
-};
 export const fetchStudentsEnrolledCourses = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
   try {
+    console.log("Step 1: Fetching student enrolled courses...");
     const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user?.uid;
     const pageNum = parseInt(page);
@@ -1207,6 +1029,7 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
       "array-contains",
       userId,
     ).where("isActive", "==", true);
+    console.log("Step 2: Built Firestore query reference:", queryRef);
 
     if (semester && semester !== "All") {
       queryRef = queryRef.where("semester", "==", semester);
@@ -1223,16 +1046,19 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
     const snapshot = await queryRef.get();
 
     if (snapshot.empty) {
+      console.log("Step 3: No courses found for the student.");
       setImmediate(() =>
         logControllerPerformance(controllerName, action, startTime, "success"),
       );
       return res.status(200).json([]);
     }
+    console.log(`Step 4: Found ${snapshot.size} courses for the student.`);
     const paginatedCourses = snapshot.docs.map((doc) => ({
       id: doc.id,
       courseId: doc.id,
       ...doc.data(),
     }));
+    console.log("Step 5: Returning paginated courses");
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
@@ -2469,5 +2295,184 @@ export const fetchAllCourseAssessments = async (req, res) => {
       ),
     );
     res.status(500).json({ message: error.message });
+  }
+};
+export const getTransactionById = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getTransactionByIdController";
+  const action = "getTransactionById";
+  try {
+    const { transactionId } = req.params;
+    const currentUserId = req.user.id || req.user.uid;
+
+    if (!transactionId) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Transaction ID parameter is required",
+        ),
+      );
+      return res.status(400).json({
+        success: false,
+        message: "Transaction ID parameter is required",
+      });
+    }
+
+    const transactionSnapshot = await Transactions.where(
+      "transactionId",
+      "==",
+      transactionId,
+    )
+      .limit(1)
+      .get();
+
+    if (transactionSnapshot.empty) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Transaction detail not found",
+        ),
+      );
+      return res.status(404).json({
+        success: false,
+        message: "Transaction detail not found",
+      });
+    }
+
+    const transactionDoc = transactionSnapshot.docs[0];
+    const transaction = {
+      id: transactionDoc.id,
+      ...transactionDoc.data(),
+    };
+
+    const isOwner = transaction.userId === currentUserId;
+    const isSender = transaction.metadata?.senderId === currentUserId;
+    const isRecipient = transaction.metadata?.recipientId === currentUserId;
+
+    if (!isOwner && !isSender && !isRecipient) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized access to this transaction record",
+        ),
+      );
+      return res.status(403).json({
+        success: false,
+        message: "Unauthorized access to this transaction record",
+      });
+    }
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    return res.status(200).json({
+      success: true,
+      data: transaction,
+      message: "Success",
+    });
+  } catch (error) {
+    console.error("Backend getTransactionById Error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Internal Server Error",
+    });
+  }
+};
+export const getUserPreferences = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "getUserPreferencesController";
+  const action = "getUserPreferences";
+  const userId = req.user?.uid || req.user?.id;
+
+  if (!userId) {
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+    });
+    return res
+      .status(401)
+      .json({ success: false, error: "Unauthorized user context." });
+  }
+
+  try {
+    const prefsQuery = await userPrefs
+      .where("userId", "==", userId)
+      .limit(1)
+      .get();
+
+    let preferences;
+
+    if (prefsQuery.empty) {
+      preferences = {
+        userId,
+        notifications: {
+          auth: true,
+          social: true,
+          classroom: true,
+          store: true,
+          finance: true,
+          profile: true,
+          security: true,
+        },
+        channels: { push: true, email: true, socket: true },
+        theme: "light",
+        language: "en",
+        quietHours: { enabled: false },
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+    } else {
+      const doc = prefsQuery.docs[0];
+      preferences = {
+        id: doc.id,
+        ...doc.data(),
+      };
+    }
+
+    res.status(200).json({
+      success: true,
+      preferences,
+    });
+
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error in getUserPreferences:", error);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res
+      .status(500)
+      .json({ success: false, error: "Server error fetching preferences" });
   }
 };
