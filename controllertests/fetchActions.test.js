@@ -51,14 +51,6 @@ describe("First User, delete his/her post and like third user's comment", () => 
 
   const endpointsToTest = [
     {
-      name: "Fetch All Exceptions For Ongoing Lecture",
-      method: "get",
-      path: () => `users/exceptions/lectures/${sharedContext.lectureId}`,
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
-    {
       name: "Fetch Course Details",
       method: "get",
       path: () =>
@@ -169,6 +161,14 @@ describe("First User, delete his/her post and like third user's comment", () => 
       name: "Fetch Single Notification",
       method: "get",
       path: () => `users/notifications/${sharedContext.notificationId}`,
+      auth: true,
+      idempotent: false,
+      expected: 200,
+    },
+    {
+      name: "Fetch All Exceptions For Ongoing Lecture",
+      method: "get",
+      path: () => `users/exceptions/lectures/${sharedContext.lectureId}`,
       auth: true,
       idempotent: false,
       expected: 200,

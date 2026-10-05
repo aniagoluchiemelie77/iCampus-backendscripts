@@ -258,6 +258,7 @@ export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
   const controllerName = "fetchAllExceptionsForOngoingLectureController";
   const action = "fetchAllExceptionsForOngoingLecture";
   try {
+    console.log("Fetching all exceptions for ongoing lecture...");
     const { lectureId } = req.params;
     const snapshot = await Exceptions.where("lectureId", "==", lectureId)
       .orderBy("date", "desc")
@@ -269,11 +270,15 @@ export const fetchAllExceptionsForOngoingLecture = async (req, res) => {
         .status(404)
         .json({ message: "No exceptions found for this lecture" });
     }
+    console.log("Step 2: Processing exceptions data...");
 
     const exceptions = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
+    console.log(
+      `Step 3: Found ${exceptions.length} exceptions for lectureId: ${lectureId}`,
+    );
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
