@@ -16,6 +16,7 @@ import {
   UserSessions,
   userPrefs,
 } from "../tableDeclarations.js";
+import { Filter } from "../config/firebaseAdmin.js";
 import { createNotification } from "../services/notification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import { setImmediate } from "timers";

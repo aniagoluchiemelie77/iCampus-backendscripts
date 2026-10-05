@@ -7,7 +7,7 @@ import request from "supertest";
 
 const API_BASE_URL = process.env.BACKEND_URL;
 let sharedContext = {
-  notificationId: "auth-2609092134-5658",
+  notificationId: "security-2609100119-8569",
   targetUserId: "USER_003",
   courseId: "CRSE-RESE0320-261003",
   lectureId: "LECT-RESE0320-261003-1",
@@ -50,14 +50,6 @@ describe("First User, delete his/her post and like third user's comment", () => 
   }, 150000);
 
   const endpointsToTest = [
-    {
-      name: "Fetch Single Notification",
-      method: "get",
-      path: () => `users/notifications/${sharedContext.notificationId}`,
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
     {
       name: "Fetch Profile Information",
       method: "get",
@@ -217,6 +209,14 @@ describe("First User, delete his/her post and like third user's comment", () => 
       name: "Get Ads",
       method: "get",
       path: "users/ads/fetch-active",
+      auth: true,
+      idempotent: false,
+      expected: 200,
+    },
+    {
+      name: "Fetch Single Notification",
+      method: "get",
+      path: () => `users/notifications/${sharedContext.notificationId}`,
       auth: true,
       idempotent: false,
       expected: 200,

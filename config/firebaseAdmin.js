@@ -1,7 +1,7 @@
-import admin from 'firebase-admin';
-import { readFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { fileURLToPath } from 'url';
+import admin from "firebase-admin";
+import { readFileSync } from "fs";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -35,4 +35,5 @@ if (!admin.apps.length) {
 
 const storage = admin.storage();
 const db = admin.firestore();
-export { admin, storage, db };
+const Filter = admin.firestore.Filter;
+export { admin, storage, db, Filter };
