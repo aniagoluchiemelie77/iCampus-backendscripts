@@ -51,14 +51,6 @@ describe("First User, delete his/her post and like third user's comment", () => 
 
   const endpointsToTest = [
     {
-      name: "Fetch Students Enrolled Courses - With Filters",
-      method: "get",
-      path: "users/student/class/courses/fetch-my-courses?semester=First&session=2025/2026",
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
-    {
       name: "Fetch Students Enrolled Courses - 'All' Filters",
       method: "get",
       path: "users/student/class/courses/fetch-my-courses?semester=All&session=All",
@@ -298,6 +290,14 @@ describe("First User, delete his/her post and like third user's comment", () => 
       name: "Get User Preferences",
       method: "get",
       path: "users/preferences",
+      auth: true,
+      idempotent: false,
+      expected: 200,
+    },
+    {
+      name: "Fetch Students Enrolled Courses - With Filters",
+      method: "get",
+      path: "users/student/class/courses/fetch-my-courses?semester=First&session=2025/2026",
       auth: true,
       idempotent: false,
       expected: 200,

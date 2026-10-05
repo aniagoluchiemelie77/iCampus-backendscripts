@@ -1053,6 +1053,7 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
       queryRef = queryRef.offset(skip);
       console.log(`Applying pagination: skip ${skip} courses`);
     }
+    console.log("Step 4: Executing Firestore query...");
 
     const snapshot = await queryRef.get();
 
