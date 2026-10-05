@@ -51,43 +51,9 @@ describe("First User, delete his/her post and like third user's comment", () => 
 
   const endpointsToTest = [
     {
-      name: "Fetch Course Details",
-      method: "get",
-      path: () =>
-        `users/courses/fetch-course-details/${sharedContext.courseId}`,
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
-    {
-      name: "Fetch Student Lectures Timeline",
-      method: "get",
-      path: "users/student/class/lectures/timeline",
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
-    {
-      name: "Fetch All Course Assessments",
-      method: "get",
-      path: () =>
-        `users/lecturers/class/courses/${sharedContext.courseId}/assessments`,
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
-    {
       name: "Fetch All Lectures By Course ID",
       method: "get",
       path: () => `users/courses/${sharedContext.courseId}/fetch-all-lectures`,
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
-    {
-      name: "Fetch Lecturer Lectures Timeline",
-      method: "get",
-      path: "users/lecturers/class/lectures/timeline",
       auth: true,
       idempotent: false,
       expected: 200,
@@ -234,6 +200,32 @@ describe("First User, delete his/her post and like third user's comment", () => 
       name: "Fetch Course Details For Ongoing Lecture",
       method: "get",
       path: () => `users/course/ongoing-lecture/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: false,
+      expected: 200,
+    },
+    {
+      name: "Fetch Course Details",
+      method: "get",
+      path: () =>
+        `users/courses/fetch-course-details/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: false,
+      expected: 200,
+    },
+    {
+      name: "Fetch Student Lectures Timeline",
+      method: "get",
+      path: "users/student/class/lectures/timeline",
+      auth: true,
+      idempotent: false,
+      expected: 200,
+    },
+    {
+      name: "Fetch All Course Assessments",
+      method: "get",
+      path: () =>
+        `users/lecturers/class/courses/${sharedContext.courseId}/assessments`,
       auth: true,
       idempotent: false,
       expected: 200,

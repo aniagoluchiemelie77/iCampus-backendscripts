@@ -329,222 +329,17 @@ export const fetchBanksUsingCountryCode = async (req, res) => {
     res.status(500).json({ status: "error", message: "Failed to fetch banks" });
   }
 };
-export const fetchCourseDetails = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchCourseDetailsController";
-  const action = "fetchCourseDetails";
-  try {
-    const { courseId } = req.params;
-    const userId = req.user.uid;
-    const courseSnapshot = await Course.where("courseId", "==", courseId)
-      .where(
-        Filter.or(
-          Filter.where("studentsEnrolled", "array-contains", userId),
-          Filter.where("lecturerIds", "array-contains", userId),
-        ),
-      )
-      .limit(1)
-      .get();
-
-    if (courseSnapshot.empty) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Course not found or you do not have permission to view it.",
-        ),
-      );
-      return res.status(404).json({
-        success: false,
-        message: "Course not found or you do not have permission to view it.",
-      });
-    }
-
-    const courseDoc = courseSnapshot.docs[0];
-    const course = {
-      id: courseDoc.id,
-      ...courseDoc.data(),
-    };
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    return res.status(200).json({
-      success: true,
-      data: course,
-    });
-  } catch (error) {
-    console.error(
-      `Error fetching course ${req.params.courseId}:`,
-      error.message,
-    );
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    return res.status(500).json({
-      success: false,
-      message: "Server error while fetching course details.",
-      error: error.message,
-    });
-  }
-};
-export const fetchStudentsLecturesTimeline = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchStudentsLecturesTimelineController";
-  const action = "fetchStudentsLecturesTimeline";
-  try {
-    const studentId = req.user.uid;
-    const enrolledCoursesSnapshot = await Course.where(
-      "studentsEnrolled",
-      "array-contains",
-      studentId,
-    ).get();
-
-    const enrolledCourses = enrolledCoursesSnapshot.docs.map((doc) => {
-      const data = doc.data();
-      return {
-        id: doc.id,
-        courseId: data.courseId,
-        courseCode: data.courseCode,
-        courseTitle: data.courseTitle,
-      };
-    });
-
-    const courseIds = enrolledCourses
-      .map((c) => c.courseId)
-      .filter((id) => id !== undefined && id !== null);
-
-    if (courseIds.length === 0) {
-      setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "success"),
-      );
-      return res.status(200).json({ success: true, data: [] });
-    }
-
-    const chunks = [];
-    for (let i = 0; i < courseIds.length; i += 30) {
-      chunks.push(courseIds.slice(i, i + 30));
-    }
-
-    const lecturePromises = chunks.map(async (chunk) => {
-      const snap = await Lectures.where("courseId", "in", chunk).get();
-      return snap.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
-    });
-
-    const lectureResults = await Promise.all(lecturePromises);
-    const allLectures = lectureResults.flat();
-
-    const filteredLectures = allLectures
-      .filter((lecture) => lecture.status !== "cancelled")
-      .sort((a, b) => {
-        const dateA = a.date?.toMillis
-          ? a.date.toMillis()
-          : new Date(a.date).getTime();
-        const dateB = b.date?.toMillis
-          ? b.date.toMillis()
-          : new Date(b.date).getTime();
-
-        if (dateA !== dateB) {
-          return dateA - dateB;
-        }
-
-        const timeA = a.startTime?.toMillis
-          ? a.startTime.toMillis()
-          : new Date(a.startTime).getTime();
-        const timeB = b.startTime?.toMillis
-          ? b.startTime.toMillis()
-          : new Date(b.startTime).getTime();
-        return timeA - timeB;
-      });
-
-    const decoratedLectures = filteredLectures.map((lecture) => {
-      const courseInfo = enrolledCourses.find(
-        (c) => c.courseId === lecture.courseId,
-      );
-      return {
-        ...lecture,
-        courseCode: courseInfo?.courseCode,
-        courseTitle: courseInfo?.courseTitle,
-      };
-    });
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json({ success: true, data: decoratedLectures });
-  } catch (error) {
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: error.message });
-  }
-};
-export const fetchAllCourseAssessments = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchAllCourseAssessmentsController";
-  const action = "fetchAllCourseAssessments";
-  try {
-    const { courseId } = req.params;
-    const snapshot = await Assessment.where("courseId", "==", courseId)
-      .orderBy("updatedAt", "desc")
-      .get();
-
-    const assessments = snapshot.docs.map((doc) => {
-      const data = doc.data();
-      const { __v, ...rest } = data;
-      return {
-        id: doc.id,
-        ...rest,
-      };
-    });
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json({
-      success: true,
-      count: assessments.length,
-      data: assessments,
-    });
-  } catch (error) {
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    res.status(500).json({ message: error.message });
-  }
-};
 export const fetchAllLecturesByCourseId = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllLecturesByCourseIdController";
   const action = "fetchAllLecturesByCourseId";
   try {
+    console.log("Step 1");
     const { courseId } = req.params;
     const snapshot = await Lectures.where("courseId", "==", courseId).get();
 
     if (snapshot.empty) {
+      console.log("Lectues not found...");
       setImmediate(() =>
         logControllerPerformance(
           controllerName,
@@ -558,11 +353,13 @@ export const fetchAllLecturesByCourseId = async (req, res) => {
         .status(404)
         .json({ error: "No lectures found for this course" });
     }
+    console.log("Step 2");
 
     const lectures = snapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     }));
+    console.log("Step 3: Returning results");
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
@@ -2465,5 +2262,212 @@ export const fetchCourseDetailsForOngoingLecture = async (req, res) => {
       ),
     );
     res.status(500).json({ message: "Internal server error" });
+  }
+};
+export const fetchCourseDetails = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchCourseDetailsController";
+  const action = "fetchCourseDetails";
+  try {
+    const { courseId } = req.params;
+    const userId = req.user.uid;
+    const courseSnapshot = await Course.where("courseId", "==", courseId)
+      .where(
+        Filter.or(
+          Filter.where("studentsEnrolled", "array-contains", userId),
+          Filter.where("lecturerIds", "array-contains", userId),
+        ),
+      )
+      .limit(1)
+      .get();
+
+    if (courseSnapshot.empty) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found or you do not have permission to view it.",
+        ),
+      );
+      return res.status(404).json({
+        success: false,
+        message: "Course not found or you do not have permission to view it.",
+      });
+    }
+
+    const courseDoc = courseSnapshot.docs[0];
+    const course = {
+      id: courseDoc.id,
+      ...courseDoc.data(),
+    };
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    return res.status(200).json({
+      success: true,
+      data: course,
+    });
+  } catch (error) {
+    console.error(
+      `Error fetching course ${req.params.courseId}:`,
+      error.message,
+    );
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    return res.status(500).json({
+      success: false,
+      message: "Server error while fetching course details.",
+      error: error.message,
+    });
+  }
+};
+export const fetchStudentsLecturesTimeline = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchStudentsLecturesTimelineController";
+  const action = "fetchStudentsLecturesTimeline";
+  try {
+    const studentId = req.user.uid;
+    const enrolledCoursesSnapshot = await Course.where(
+      "studentsEnrolled",
+      "array-contains",
+      studentId,
+    ).get();
+
+    const enrolledCourses = enrolledCoursesSnapshot.docs.map((doc) => {
+      const data = doc.data();
+      return {
+        id: doc.id,
+        courseId: data.courseId,
+        courseCode: data.courseCode,
+        courseTitle: data.courseTitle,
+      };
+    });
+
+    const courseIds = enrolledCourses
+      .map((c) => c.courseId)
+      .filter((id) => id !== undefined && id !== null);
+
+    if (courseIds.length === 0) {
+      setImmediate(() =>
+        logControllerPerformance(controllerName, action, startTime, "success"),
+      );
+      return res.status(200).json({ success: true, data: [] });
+    }
+
+    const chunks = [];
+    for (let i = 0; i < courseIds.length; i += 30) {
+      chunks.push(courseIds.slice(i, i + 30));
+    }
+
+    const lecturePromises = chunks.map(async (chunk) => {
+      const snap = await Lectures.where("courseId", "in", chunk).get();
+      return snap.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+    });
+
+    const lectureResults = await Promise.all(lecturePromises);
+    const allLectures = lectureResults.flat();
+
+    const filteredLectures = allLectures
+      .filter((lecture) => lecture.status !== "cancelled")
+      .sort((a, b) => {
+        const dateA = a.date?.toMillis
+          ? a.date.toMillis()
+          : new Date(a.date).getTime();
+        const dateB = b.date?.toMillis
+          ? b.date.toMillis()
+          : new Date(b.date).getTime();
+
+        if (dateA !== dateB) {
+          return dateA - dateB;
+        }
+
+        const timeA = a.startTime?.toMillis
+          ? a.startTime.toMillis()
+          : new Date(a.startTime).getTime();
+        const timeB = b.startTime?.toMillis
+          ? b.startTime.toMillis()
+          : new Date(b.startTime).getTime();
+        return timeA - timeB;
+      });
+
+    const decoratedLectures = filteredLectures.map((lecture) => {
+      const courseInfo = enrolledCourses.find(
+        (c) => c.courseId === lecture.courseId,
+      );
+      return {
+        ...lecture,
+        courseCode: courseInfo?.courseCode,
+        courseTitle: courseInfo?.courseTitle,
+      };
+    });
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json({ success: true, data: decoratedLectures });
+  } catch (error) {
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ message: error.message });
+  }
+};
+export const fetchAllCourseAssessments = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllCourseAssessmentsController";
+  const action = "fetchAllCourseAssessments";
+  try {
+    const { courseId } = req.params;
+    const snapshot = await Assessment.where("courseId", "==", courseId)
+      .orderBy("updatedAt", "desc")
+      .get();
+
+    const assessments = snapshot.docs.map((doc) => {
+      const data = doc.data();
+      const { __v, ...rest } = data;
+      return {
+        id: doc.id,
+        ...rest,
+      };
+    });
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    res.status(200).json({
+      success: true,
+      count: assessments.length,
+      data: assessments,
+    });
+  } catch (error) {
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    res.status(500).json({ message: error.message });
   }
 };
