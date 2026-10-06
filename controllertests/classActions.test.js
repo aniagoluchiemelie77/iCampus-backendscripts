@@ -49,145 +49,6 @@ describe("Lecturer", () => {
 
   const endpointsToTest = [
     {
-      name: "Create Lecture Schedule - Artificial Lift",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
-      auth: true,
-      idempotent: true,
-      body: {
-        courseId: sharedContext.courseId,
-        date: "2026-10-23",
-        startTime: "10:00",
-        endTime: "12:00",
-        location: "Petroleum Engineering Lab",
-        topicName: "Artificial Lift Systems: Sucker Rod Pumping & Gas Lift",
-        lectureType: "Physical",
-        repeatWeeks: 2,
-      },
-      expected: 200,
-    },
-    {
-      name: "Create Lecture Schedule - Multiphase Flow Online",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
-      auth: true,
-      idempotent: true,
-      body: {
-        courseId: sharedContext.courseId,
-        date: "2026-10-15",
-        startTime: "14:00",
-        endTime: "16:00",
-        location: "Virtual Classroom",
-        topicName: "Multiphase Flow in Pipes and Pressure Drop Correlations",
-        lectureType: "Online",
-        streamUrl: "https://meet.petroleumschool.edu/multiphase-flow",
-        repeatWeeks: 1,
-      },
-      expected: 200,
-    },
-    {
-      name: "Create Lecture Schedule - Hydraulic Fracturing",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
-      auth: true,
-      idempotent: true,
-      body: {
-        courseId: sharedContext.courseId,
-        date: "2026-10-12",
-        startTime: "09:00",
-        endTime: "11:30",
-        location: "Petroleum Engineering Lab",
-        topicName: "Hydraulic Fracturing Design and Proppant Selection",
-        lectureType: "Physical",
-        repeatWeeks: 2,
-      },
-      expected: 200,
-    },
-    {
-      name: "Create Lecture Schedule - Sand Control",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
-      auth: true,
-      idempotent: true,
-      body: {
-        courseId: sharedContext.courseId,
-        date: "2026-10-17",
-        startTime: "13:00",
-        endTime: "15:00",
-        location: "Petroleum Engineering Lab",
-        topicName: "Sand Control Management: Gravel Packing and Screen Design",
-        lectureType: "Physical",
-        repeatWeeks: 1,
-      },
-      expected: 200,
-    },
-    {
-      name: "Create Lecture Schedule - Well Deliverability",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
-      auth: true,
-      idempotent: true,
-      body: {
-        courseId: sharedContext.courseId,
-        date: "2026-10-22",
-        startTime: "08:30",
-        endTime: "10:30",
-        location: "Petroleum Engineering Lab",
-        topicName:
-          "Well Deliverability and Inflow Performance Relationship (IPR)",
-        lectureType: "Physical",
-        repeatWeeks: 3,
-      },
-      expected: 200,
-    },
-    {
-      name: "Edit Course Content (Update Topic)",
-      method: "put",
-      path: () =>
-        `users/lecturers/class/courses/editCourseContent/${sharedContext.courseId}`,
-      auth: true,
-      idempotent: true,
-      body: {
-        index: 0,
-        updatedTopic: "Artificial Lift Systems: Sucker Rod Pumping & Gas Lift",
-        lectureId: "lecture_sample_01",
-      },
-      expected: 200,
-    },
-    {
-      name: "Upload Course Material - Well Completion Manual",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/uploadMaterial/${sharedContext.courseId}`,
-      auth: true,
-      idempotent: true,
-      body: {
-        title: "Advanced Well Completion and Cementing Manual",
-        materialUrl:
-          "https://docs.google.com/document/d/1Qf156Fr2eZPI2Qt7unr7TmoRPjBchdZoIZAFf_0vgFg",
-      },
-      expected: 200,
-    },
-    {
-      name: "Upload Course Material - Missing URL Validation Error",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/uploadMaterial/${sharedContext.courseId}`,
-      auth: true,
-      idempotent: true,
-      body: {
-        title: "Artificial Lift Systems Lecture Slides",
-        materialUrl:
-          "https://firebasestorage.googleapis.com/v0/b/petroleum-app.appspot.com/o/materials%2Fwell-completion-2026.pdf?alt=media&token=xyz",
-      },
-      expected: 400,
-    },
-    {
       name: "Delete Course Material - Well Completion Manual",
       method: "delete",
       path: () =>
@@ -329,6 +190,145 @@ describe("Lecturer", () => {
         topic: "Well Deliverability and Inflow Performance Relationship (IPR)",
       },
       expected: 200,
+    },
+    {
+      name: "Create Lecture Schedule - Artificial Lift",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
+      auth: true,
+      idempotent: true,
+      body: {
+        courseId: sharedContext.courseId,
+        date: "2026-10-23",
+        startTime: "10:00",
+        endTime: "12:00",
+        location: "Petroleum Engineering Lab",
+        topicName: "Artificial Lift Systems: Sucker Rod Pumping & Gas Lift",
+        lectureType: "Physical",
+        repeatWeeks: 2,
+      },
+      expected: 200,
+    },
+    {
+      name: "Create Lecture Schedule - Multiphase Flow Online",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
+      auth: true,
+      idempotent: true,
+      body: {
+        courseId: sharedContext.courseId,
+        date: "2026-10-15",
+        startTime: "14:00",
+        endTime: "16:00",
+        location: "Virtual Classroom",
+        topicName: "Multiphase Flow in Pipes and Pressure Drop Correlations",
+        lectureType: "Online",
+        streamUrl: "https://meet.petroleumschool.edu/multiphase-flow",
+        repeatWeeks: 1,
+      },
+      expected: 200,
+    },
+    {
+      name: "Create Lecture Schedule - Hydraulic Fracturing",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
+      auth: true,
+      idempotent: true,
+      body: {
+        courseId: sharedContext.courseId,
+        date: "2026-10-12",
+        startTime: "09:00",
+        endTime: "11:30",
+        location: "Petroleum Engineering Lab",
+        topicName: "Hydraulic Fracturing Design and Proppant Selection",
+        lectureType: "Physical",
+        repeatWeeks: 2,
+      },
+      expected: 200,
+    },
+    {
+      name: "Create Lecture Schedule - Sand Control",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
+      auth: true,
+      idempotent: true,
+      body: {
+        courseId: sharedContext.courseId,
+        date: "2026-10-17",
+        startTime: "13:00",
+        endTime: "15:00",
+        location: "Petroleum Engineering Lab",
+        topicName: "Sand Control Management: Gravel Packing and Screen Design",
+        lectureType: "Physical",
+        repeatWeeks: 1,
+      },
+      expected: 200,
+    },
+    {
+      name: "Create Lecture Schedule - Well Deliverability",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/${sharedContext.courseId}/lectures/createSchedule`,
+      auth: true,
+      idempotent: true,
+      body: {
+        courseId: sharedContext.courseId,
+        date: "2026-10-22",
+        startTime: "08:30",
+        endTime: "10:30",
+        location: "Petroleum Engineering Lab",
+        topicName:
+          "Well Deliverability and Inflow Performance Relationship (IPR)",
+        lectureType: "Physical",
+        repeatWeeks: 3,
+      },
+      expected: 200,
+    },
+    {
+      name: "Edit Course Content (Update Topic)",
+      method: "put",
+      path: () =>
+        `users/lecturers/class/courses/editCourseContent/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: true,
+      body: {
+        index: 0,
+        updatedTopic: "Artificial Lift Systems: Sucker Rod Pumping & Gas Lift",
+        lectureId: "lecture_sample_01",
+      },
+      expected: 200,
+    },
+    {
+      name: "Upload Course Material - Well Completion Manual",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/uploadMaterial/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: true,
+      body: {
+        title: "Advanced Well Completion and Cementing Manual",
+        materialUrl:
+          "https://docs.google.com/document/d/1Qf156Fr2eZPI2Qt7unr7TmoRPjBchdZoIZAFf_0vgFg",
+      },
+      expected: 200,
+    },
+    {
+      name: "Upload Course Material - Missing URL Validation Error",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/uploadMaterial/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: true,
+      body: {
+        title: "Artificial Lift Systems Lecture Slides",
+        materialUrl:
+          "https://firebasestorage.googleapis.com/v0/b/petroleum-app.appspot.com/o/materials%2Fwell-completion-2026.pdf?alt=media&token=xyz",
+      },
+      expected: 400,
     },
     */
   ];
