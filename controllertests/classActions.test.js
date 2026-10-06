@@ -55,6 +55,9 @@ describe("Lecturer", () => {
         `users/lecturers/class/courses/deleteMaterial/${sharedContext.courseId}`,
       auth: true,
       idempotent: true,
+      headers: {
+        "Content-Type": "application/json",
+      },
       body: {
         materialUrl:
           "https://firebasestorage.googleapis.com/v0/b/petroleum-app.appspot.com/o/materials%2Fwell-completion-2026.pdf?alt=media&token=xyz",
@@ -333,7 +336,6 @@ describe("Lecturer", () => {
     */
   ];
 
-
   test("Run sequential dependency chain", async () => {
     for (const step of endpointsToTest) {
       const resolvedPath =
@@ -344,12 +346,24 @@ describe("Lecturer", () => {
       if (step.auth) {
         req.set("Authorization", `Bearer ${accessToken}`);
       }
+      if (step.headers) {
+        for (const [key, value] of Object.entries(step.headers)) {
+          req.set(key, value);
+        }
+      }
 
       if (step.body) {
         req.send(step.body);
       }
 
-      if (step.filePath) {
+      if (step.files && Array.isArray(step.files)) {
+        step.files.forEach((file) => {
+          req.attach(file.fieldname, file.buffer, {
+            filename: file.originalname,
+            contentType: file.mimetype,
+          });
+        });
+      } else if (step.filePath) {
         req.attach("mediaFile", step.filePath);
       }
 

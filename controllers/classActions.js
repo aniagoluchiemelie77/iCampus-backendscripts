@@ -1025,7 +1025,7 @@ export const deleteCourseMaterial = async (req, res) => {
   const action = "deleteCourseMaterial";
   try {
     const { courseId } = req.params;
-    const { materialUrl } = req.body;
+    const { materialUrl } = req.body || {};
     const currentUserId = req.user?.uid || req.user?.id;
 
     if (!materialUrl) {
@@ -2142,6 +2142,7 @@ export const uploadCourseDetails = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "uploadCourseDetailsController";
   const action = "uploadCourseDetails";
+  console.log("Displaying api detail: ", req);
   try {
     console.log("Step 1");
     if (!req.files || req.files.length === 0) {
