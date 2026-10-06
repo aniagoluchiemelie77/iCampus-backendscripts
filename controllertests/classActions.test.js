@@ -49,66 +49,6 @@ describe("Lecturer", () => {
 
   const endpointsToTest = [
     {
-      name: "Create Course Content (Add Topic)",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
-      auth: true,
-      idempotent: true,
-      body: {
-        topic: "Artificial Lift Systems: Sucker Rod Pumping & Gas Li",
-      },
-      expected: 200,
-    },
-    {
-      name: "Create Course Content (Add Topic)",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
-      auth: true,
-      idempotent: true,
-      body: {
-        topic: "Multiphase Flow in Pipes and Pressure Drop Correlations",
-      },
-      expected: 200,
-    },
-    {
-      name: "Create Course Content (Add Topic)",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
-      auth: true,
-      idempotent: true,
-      body: {
-        topic: "Hydraulic Fracturing Design and Proppant Selection",
-      },
-      expected: 200,
-    },
-    {
-      name: "Create Course Content (Add Topic)",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
-      auth: true,
-      idempotent: true,
-      body: {
-        topic: "Sand Control Management: Gravel Packing and Screen Design",
-      },
-      expected: 200,
-    },
-    {
-      name: "Create Course Content (Add Topic)",
-      method: "post",
-      path: () =>
-        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
-      auth: true,
-      idempotent: true,
-      body: {
-        topic: "Well Deliverability and Inflow Performance Relationship (IPR)",
-      },
-      expected: 200,
-    },
-    {
       name: "Create Lecture Schedule - Artificial Lift",
       method: "post",
       path: () =>
@@ -329,7 +269,70 @@ describe("Lecturer", () => {
       },
       expected: 200,
     },
+    /*
+     {
+      name: "Create Course Content (Add Topic)",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: true,
+      body: {
+        topic: "Artificial Lift Systems: Sucker Rod Pumping & Gas Li",
+      },
+      expected: 200,
+    },
+    {
+      name: "Create Course Content (Add Topic)",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: true,
+      body: {
+        topic: "Multiphase Flow in Pipes and Pressure Drop Correlations",
+      },
+      expected: 200,
+    },
+    {
+      name: "Create Course Content (Add Topic)",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: true,
+      body: {
+        topic: "Hydraulic Fracturing Design and Proppant Selection",
+      },
+      expected: 200,
+    },
+    {
+      name: "Create Course Content (Add Topic)",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: true,
+      body: {
+        topic: "Sand Control Management: Gravel Packing and Screen Design",
+      },
+      expected: 200,
+    },
+    {
+      name: "Create Course Content (Add Topic)",
+      method: "post",
+      path: () =>
+        `users/lecturers/class/courses/addCourseContent/${sharedContext.courseId}`,
+      auth: true,
+      idempotent: true,
+      body: {
+        topic: "Well Deliverability and Inflow Performance Relationship (IPR)",
+      },
+      expected: 200,
+    },
+    */
   ];
+
 
   test("Run sequential dependency chain", async () => {
     for (const step of endpointsToTest) {

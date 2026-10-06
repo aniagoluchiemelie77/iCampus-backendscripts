@@ -1484,131 +1484,6 @@ export const deleteCourseMaterial = async (req, res) => {
     });
   }
 };
-export const createCourseContent = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "createCourseContentController";
-  const action = "createCourseContent";
-  try {
-    const { courseId } = req.params;
-    const { topic, lectureId } = req.body;
-    const requesterUid = req.user?.uid || req.user?.id;
-
-    if (!topic || typeof topic !== "string") {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Invalid or missing topic content",
-        ),
-      );
-      return res
-        .status(400)
-        .json({ message: "Invalid or missing topic content" });
-    }
-    const courseQuery = await Course.where("courseId", "==", courseId)
-      .limit(1)
-      .get();
-    if (courseQuery.empty) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Course not found",
-        ),
-      );
-      return res.status(404).json({ message: "Course not found" });
-    }
-
-    const courseDocRef = courseQuery.docs[0].ref;
-    const course = courseQuery.docs[0].data();
-
-    const isAuthorized = await checkContentAuthorization(requesterUid, course);
-    if (!isAuthorized) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized Access",
-        ),
-      );
-      return res.status(403).json({ message: "Unauthorized Access" });
-    }
-
-    const existingContents = course.courseContents || [];
-    const updatedContents = [...existingContents, topic];
-    const now = new Date();
-    await courseDocRef.update({
-      courseContents: updatedContents,
-      updatedAt: now,
-    });
-    res.status(200).json({
-      message: "Topic added successfully",
-      updatedContents: updatedContents,
-    });
-    setImmediate(async () => {
-      try {
-        const studentsQuery = await User.where("usertype", "==", "student")
-          .where("department", "==", course.department)
-          .where("level", "==", course.level)
-          .get();
-
-        const notificationPromises = studentsQuery.docs.map((doc) => {
-          const student = doc.data();
-          return createNotification({
-            notificationId: generateNotificationId("classroom"),
-            recipientId: student.uid,
-            isRead: false,
-            category: "classroom",
-            actionType: "CONTENT_ADDED",
-            title: "New Topic Added",
-            message: `A new topic "${topic}" was added to ${course.courseCode}.`,
-            recipientEmail: student.email,
-            sendEmail: !!student.email,
-            payload: {
-              userName: student.firstname,
-              courseId: course.courseId,
-              topic,
-              courseTitle: course.courseTitle || course.title,
-            },
-            sendPush: false,
-            sendSocket: true,
-            saveToDb: true,
-          });
-        });
-
-        await Promise.allSettled(notificationPromises);
-        logControllerPerformance(controllerName, action, startTime, "success");
-      } catch (bgError) {
-        console.error(
-          "Background Notification Error (Create Content):",
-          bgError.message,
-        );
-      }
-    });
-  } catch (error) {
-    console.error("Add Content Error:", error.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    if (!res.headersSent) {
-      return res
-        .status(500)
-        .json({ message: "Server error processing your request" });
-    }
-  }
-};
 export const editCourseContent = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "editCourseContentController";
@@ -2736,6 +2611,7 @@ export const uploadCourseDetails = async (req, res) => {
   const controllerName = "uploadCourseDetailsController";
   const action = "uploadCourseDetails";
   try {
+    console.log("Step 1");
     if (!req.files || req.files.length === 0) {
       setImmediate(() =>
         logControllerPerformance(
@@ -2754,11 +2630,13 @@ export const uploadCourseDetails = async (req, res) => {
     const response = await fetch(req.body.fileUrl);
     const arrayBuffer = await response.arrayBuffer();
     const base64Data = Buffer.from(arrayBuffer).toString("base64");
+    console.log("Step 2: Converted file to buffer");
 
     const model = ai.models.generateContent({
       model: "gemini-3.8-flash",
       generationConfig: { responseMimeType: "application/json" },
     });
+    console.log("Step 3: Pre prompt");
 
     const prompt =
       userType === "lecturer"
@@ -2816,17 +2694,19 @@ export const uploadCourseDetails = async (req, res) => {
         Note: If a course appears across page breaks, do not duplicate it.
       `;
 
-   const filePart = {
-  inlineData: {
-    data: base64Data,
-    mimeType: "application/pdf" 
-  }
-};
-
+    const filePart = {
+      inlineData: {
+        data: base64Data,
+        mimeType: "application/pdf",
+      },
+    };
+    console.log("Step 4");
     const result = await model.generateContent([prompt, ...filePart]);
+    console.log("Step 5: post prompt");
 
     let extraction;
     try {
+      console.log("Step 6: Extraction");
       extraction = JSON.parse(result.response.text());
     } catch (e) {
       setImmediate(() =>
@@ -3685,3 +3565,128 @@ export const getCourseGradebook = async (req, res) => {
 };
 
 //Tested and trusted using jest
+export const createCourseContent = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "createCourseContentController";
+  const action = "createCourseContent";
+  try {
+    const { courseId } = req.params;
+    const { topic, lectureId } = req.body;
+    const requesterUid = req.user?.uid || req.user?.id;
+
+    if (!topic || typeof topic !== "string") {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Invalid or missing topic content",
+        ),
+      );
+      return res
+        .status(400)
+        .json({ message: "Invalid or missing topic content" });
+    }
+    const courseQuery = await Course.where("courseId", "==", courseId)
+      .limit(1)
+      .get();
+    if (courseQuery.empty) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Course not found",
+        ),
+      );
+      return res.status(404).json({ message: "Course not found" });
+    }
+
+    const courseDocRef = courseQuery.docs[0].ref;
+    const course = courseQuery.docs[0].data();
+
+    const isAuthorized = await checkContentAuthorization(requesterUid, course);
+    if (!isAuthorized) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized Access",
+        ),
+      );
+      return res.status(403).json({ message: "Unauthorized Access" });
+    }
+
+    const existingContents = course.courseContents || [];
+    const updatedContents = [...existingContents, topic];
+    const now = new Date();
+    await courseDocRef.update({
+      courseContents: updatedContents,
+      updatedAt: now,
+    });
+    res.status(200).json({
+      message: "Topic added successfully",
+      updatedContents: updatedContents,
+    });
+    setImmediate(async () => {
+      try {
+        const studentsQuery = await User.where("usertype", "==", "student")
+          .where("department", "==", course.department)
+          .where("level", "==", course.level)
+          .get();
+
+        const notificationPromises = studentsQuery.docs.map((doc) => {
+          const student = doc.data();
+          return createNotification({
+            notificationId: generateNotificationId("classroom"),
+            recipientId: student.uid,
+            isRead: false,
+            category: "classroom",
+            actionType: "CONTENT_ADDED",
+            title: "New Topic Added",
+            message: `A new topic "${topic}" was added to ${course.courseCode}.`,
+            recipientEmail: student.email,
+            sendEmail: !!student.email,
+            payload: {
+              userName: student.firstname,
+              courseId: course.courseId,
+              topic,
+              courseTitle: course.courseTitle || course.title,
+            },
+            sendPush: false,
+            sendSocket: true,
+            saveToDb: true,
+          });
+        });
+
+        await Promise.allSettled(notificationPromises);
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (bgError) {
+        console.error(
+          "Background Notification Error (Create Content):",
+          bgError.message,
+        );
+      }
+    });
+  } catch (error) {
+    console.error("Add Content Error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    if (!res.headersSent) {
+      return res
+        .status(500)
+        .json({ message: "Server error processing your request" });
+    }
+  }
+};
