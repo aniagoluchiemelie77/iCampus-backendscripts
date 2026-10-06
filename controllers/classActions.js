@@ -36,22 +36,9 @@ import { setImmediate } from "timers";
 
 const ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
 
-const checkContentAuthorization = async (userId, course, lectureId = null) => {
+const checkContentAuthorization = async (userId, course) => {
   if (course.lecturerIds && course.lecturerIds.includes(userId)) {
     return true;
-  }
-  if (lectureId) {
-    const lectureQuery = await Lectures.where("id", "==", lectureId)
-      .where("courseId", "==", course.courseId)
-      .limit(1)
-      .get();
-
-    if (!lectureQuery.empty) {
-      const lecture = lectureQuery.docs[0].data();
-      if (lecture.hostId === userId) {
-        return true;
-      }
-    }
   }
   return false;
 };
@@ -1539,11 +1526,7 @@ export const createCourseContent = async (req, res) => {
     const courseDocRef = courseQuery.docs[0].ref;
     const course = courseQuery.docs[0].data();
 
-    const isAuthorized = await checkContentAuthorization(
-      requesterUid,
-      course,
-      lectureId,
-    );
+    const isAuthorized = await checkContentAuthorization(requesterUid, course);
     if (!isAuthorized) {
       setImmediate(() =>
         logControllerPerformance(
@@ -1669,11 +1652,7 @@ export const editCourseContent = async (req, res) => {
     const courseDocRef = courseQuery.docs[0].ref;
     const course = courseQuery.docs[0].data();
 
-    const isAuthorized = await checkContentAuthorization(
-      requesterUid,
-      course,
-      lectureId,
-    );
+    const isAuthorized = await checkContentAuthorization(requesterUid, course);
     if (!isAuthorized) {
       setImmediate(() =>
         logControllerPerformance(
@@ -1819,11 +1798,7 @@ export const deleteCourseContent = async (req, res) => {
     const courseDocRef = courseQuery.docs[0].ref;
     const course = courseQuery.docs[0].data();
 
-    const isAuthorized = await checkContentAuthorization(
-      requesterUid,
-      course,
-      lectureId,
-    );
+    const isAuthorized = await checkContentAuthorization(requesterUid, course);
     if (!isAuthorized) {
       setImmediate(() =>
         logControllerPerformance(
@@ -1977,11 +1952,7 @@ export const deleteCourseAssignment = async (req, res) => {
       });
     }
 
-    const isAuthorized = await checkContentAuthorization(
-      requesterUid,
-      course,
-      targetAssignment.lectureId,
-    );
+    const isAuthorized = await checkContentAuthorization(requesterUid, course);
 
     if (!isAuthorized) {
       setImmediate(() =>
@@ -2780,6 +2751,9 @@ export const uploadCourseDetails = async (req, res) => {
 
     const requesterUid = req.user?.uid || req.user?.id;
     const userType = req.user?.usertype;
+    const response = await fetch(req.body.fileUrl);
+    const arrayBuffer = await response.arrayBuffer();
+    const base64Data = Buffer.from(arrayBuffer).toString("base64");
 
     const model = ai.models.generateContent({
       model: "gemini-3.8-flash",
@@ -2842,14 +2816,14 @@ export const uploadCourseDetails = async (req, res) => {
         Note: If a course appears across page breaks, do not duplicate it.
       `;
 
-    const fileParts = req.files.map((file) => ({
-      inlineData: {
-        data: file.buffer.toString("base64"),
-        mimeType: file.mimetype,
-      },
-    }));
+   const filePart = {
+  inlineData: {
+    data: base64Data,
+    mimeType: "application/pdf" 
+  }
+};
 
-    const result = await model.generateContent([prompt, ...fileParts]);
+    const result = await model.generateContent([prompt, ...filePart]);
 
     let extraction;
     try {
@@ -3162,11 +3136,7 @@ export const createCourseAssignment = async (req, res) => {
     const courseDocRef = courseQuery.docs[0].ref;
     const course = courseQuery.docs[0].data();
 
-    const isAuthorized = await checkContentAuthorization(
-      requesterUid,
-      course,
-      lectureId,
-    );
+    const isAuthorized = await checkContentAuthorization(requesterUid, course);
 
     if (!isAuthorized) {
       setImmediate(() =>

@@ -133,7 +133,7 @@ const assignmentSchema = new mongoose.Schema({
   description: { type: String },
   fileUrl: { type: String },
   dueDate: { type: Date, required: true },
-  courseId: { type: String, ref: "Course", required: true },
+  courseId: { type: String, required: true },
   lectureId: { type: String },
   submissionInfo: { type: String, default: "Submit to your course rep" },
   submissionMethod: {
