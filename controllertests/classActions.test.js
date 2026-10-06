@@ -433,8 +433,10 @@ describe("Student", () => {
       },
       files: [
         {
-          fileUrl:
-            "https://1drv.ms/b/c/41126d703d4436c4/IQDeNKdFijhEQ4XAqoWyL6YiAdfi_mVJaioJKZtiztyjfgc?e=BJSVTC",
+          fieldname: "files",
+          originalname: "course_allocation.pdf",
+          mimetype: "application/pdf",
+          buffer: Buffer.from("%PDF-1.4 mock file binary content"),
         },
       ],
       body: {},

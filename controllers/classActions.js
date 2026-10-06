@@ -560,7 +560,6 @@ export const createLectureSchedule = async (req, res) => {
         id: lectureId,
         date: d,
         department: courseDetails.department,
-        level: courseDetails.level,
         hostId: lecturerUid,
         status: "scheduled",
         isTaught: false,
