@@ -2238,11 +2238,23 @@ export const getSellerSalesHistory = async (req, res) => {
     snapshot.forEach((doc) => {
       sales.push({ id: doc.id, ...doc.data() });
     });
+
+    // --- DEBUG LOG 2 ---
+    console.log(`DEBUG - Fetched ${sales.length} sales records for seller.`);
+    if (sales.length > 0) {
+      console.log("DEBUG - First sale record sample:", {
+        id: sales[0].id,
+        createdAt: sales[0].createdAt,
+        type: typeof sales[0].createdAt,
+      });
+    }
+
     res.status(200).json({
       success: true,
       count: sales.length,
       data: sales,
     });
+
     setImmediate(() => {
       if (typeof logControllerPerformance === "function") {
         logControllerPerformance(controllerName, action, startTime, "success");

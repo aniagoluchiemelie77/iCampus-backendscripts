@@ -11,7 +11,6 @@ export const fetchSellerReviews = async (req, res) => {
 
   try {
     const sellerId = req.user?.id || req.user?.uid;
-
     if (!sellerId) {
       setImmediate(() => {
         logControllerPerformance(
@@ -38,6 +37,11 @@ export const fetchSellerReviews = async (req, res) => {
       const data = doc.data();
       return data.productId || doc.id;
     });
+
+    console.log(`DEBUG - Found ${productIds.length} products for seller.`);
+    console.log(
+      `DEBUG - Found ${sellerReviewsSnapshot.docs.length} direct seller reviews.`,
+    );
 
     let productReviewsSnapshots = [];
     if (productIds.length > 0) {
@@ -70,6 +74,8 @@ export const fetchSellerReviews = async (req, res) => {
     productReviewsSnapshots.forEach(processSnapshot);
 
     let reviews = Array.from(reviewMap.values());
+    console.log(`DEBUG - Total unique reviews combined: ${reviews.length}`);
+
     reviews.sort((a, b) => {
       const timeA = a.createdAt?.toDate
         ? a.createdAt.toDate()
@@ -83,6 +89,9 @@ export const fetchSellerReviews = async (req, res) => {
     const reviewerUids = [
       ...new Set(reviews.map((r) => r.reviewerId).filter(Boolean)),
     ];
+    console.log(
+      `DEBUG - Unique reviewer UIDs to fetch: ${reviewerUids.length}`,
+    );
 
     const userMap = {};
     if (reviewerUids.length > 0) {
@@ -119,6 +128,10 @@ export const fetchSellerReviews = async (req, res) => {
         },
       };
     });
+
+    console.log(
+      `DEBUG - Successfully formatted ${formattedReviews.length} reviews for response.`,
+    );
 
     res.status(200).json({
       success: true,

@@ -2884,12 +2884,13 @@ export const handleUnifiedCourseSearch = async (req, res) => {
         .join(", ");
 
       return {
-        id: course.courseId || course.id,
-        title: course.courseTitle,
-        code: course.courseCode,
+        id: course.id,
+        courseId: course.courseId,
+        courseTitle: course.courseTitle,
+        courseCode: course.courseCode,
         semester: course.semester,
         session: course.session,
-        creditLoad: course.credits,
+        credits: course.credits,
         isPremiumPaid: false,
         price: 0,
         thumbnail: course.thumbnailUrl || null,

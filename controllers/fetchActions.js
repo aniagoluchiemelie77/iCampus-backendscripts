@@ -29,6 +29,7 @@ import {
 } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { embedCourseInstructor } from "../utils/embedFunctions.js";
+import { client as redis } from "../workers/reditFile.js";
 axiosRetry(axios, { retries: 3 });
 
 // Start
@@ -855,6 +856,115 @@ export const fetchUserSessions = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
+export const fetchAllUsers = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchAllUsersController";
+  const action = "fetchAllUsers";
+  const CACHE_KEY = "users:all_users";
+
+  try {
+    console.log("Inside users fetch try block");
+    const cachedData = await redis.get(CACHE_KEY);
+
+    if (cachedData) {
+      let parsedUsers;
+      console.log("Retrieving users from cache");
+      try {
+        parsedUsers =
+          typeof cachedData === "string" ? JSON.parse(cachedData) : cachedData;
+      } catch (parseError) {
+        console.error(
+          "Users cache parse error, falling back to database:",
+          parseError,
+        );
+        parsedUsers = null;
+      }
+
+      if (parsedUsers) {
+        res.status(200).json({
+          success: true,
+          users: parsedUsers,
+          source: "cache",
+        });
+
+        setImmediate(() => {
+          if (typeof logControllerPerformance === "function") {
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success",
+            );
+          }
+        });
+        return;
+      }
+    }
+    console.log("step 1: fetching users from database");
+
+    const users = [];
+    const snapshot = await User.get();
+
+    snapshot.forEach((doc) => {
+      const data = doc.data();
+      users.push({
+        uid: doc.uid || doc.id,
+        firstname: data.firstname,
+        lastname: data.lastname,
+        username: data.username,
+        organizationName: data.organizationName,
+        profilePic: data.profilePic,
+        tier: data.tier,
+        usertype: data.usertype,
+        isVerified: data.isVerified,
+      });
+    });
+    console.log("step 2: users fetch successful");
+
+    res.status(200).json({
+      success: true,
+      users,
+      source: "database",
+    });
+
+    setImmediate(() => {
+      const backgroundTasks = [
+        redis
+          .set(CACHE_KEY, JSON.stringify(users), { EX: 18000 })
+          .catch((err) => console.error("Redis users cache write error:", err)),
+      ];
+
+      if (typeof logControllerPerformance === "function") {
+        backgroundTasks.push(
+          Promise.resolve().then(() =>
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success",
+            ),
+          ),
+        );
+      }
+
+      Promise.all(backgroundTasks);
+    });
+  } catch (error) {
+    console.error("Critical Users Fetch Error:", error);
+    if (typeof logControllerPerformance === "function") {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    }
+    return res
+      .status(500)
+      .json({ success: false, message: "Server unable to sync users" });
+  }
+};
 
 //Tested and trusted using jest
 export const fetchPosts = async (req, res) => {
@@ -1126,16 +1236,6 @@ export const fetchUserNotifications = async (req, res) => {
         : new Date(notif.createdAt).getTime();
 
     allNotifications.sort((a, b) => getTime(b) - getTime(a));
-    if (allNotifications.length > 0) {
-      console.log("DEBUG - First Notification createdAt:", {
-        raw: allNotifications[0].createdAt,
-        type: typeof allNotifications[0].createdAt,
-        keys: allNotifications[0].createdAt
-          ? Object.keys(allNotifications[0].createdAt)
-          : "N/A",
-      });
-    }
-
     const groupMap = new Map();
     allNotifications.forEach((notif) => {
       const actionType = notif.actionType || "unknown";
@@ -2291,8 +2391,6 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
     if (skip > 0) {
       queryRef = queryRef.offset(skip);
     }
-    console.log("Step 4: Executing Firestore query...");
-
     const snapshot = await queryRef.get();
 
     if (snapshot.empty) {
@@ -2301,25 +2399,14 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
       );
       return res.status(200).json([]);
     }
-    console.log(`Step 4: Found ${snapshot.size} courses for the student.`);
     const rawCourses = snapshot.docs.map((doc) => ({
       id: doc.id,
       courseId: doc.id,
       ...doc.data(),
     }));
-    console.log("Step 5: Embedding instructor names into courses...");
     const paginatedCourses = await Promise.all(
       rawCourses.map((course) => embedCourseInstructor(course)),
     );
-    if (paginatedCourses.length > 0) {
-      console.log(
-        "🔎 DEBUG - Enriched Course Object:",
-        JSON.stringify(paginatedCourses[0], null, 2),
-      );
-    }
-
-    console.log("Step 6: Returning paginated courses");
-
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );

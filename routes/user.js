@@ -23,6 +23,7 @@ import {
   fetchUserSessions,
   getUserPreferences,
   fetchBanksUsingCountryCode,
+  fetchAllUsers,
 } from "../controllers/fetchActions.js";
 import { uploadCourseDetailsManually } from "../controllers/classActions.js";
 import {
@@ -151,6 +152,7 @@ router.post(
   sendPhoneNumberOTP,
 );
 router.get("/courses/search", protect, handleUnifiedCourseSearch);
+router.get("/fetch-all-users", protect, fetchAllUsers);
 router.get("/courses/resources/search", protect, handleUnifiedResourceSearch);
 router.post("/reviews/create", idempotencyMiddleware, createReviewController);
 router.put("/preferences/toggleTheme", protect, toggleTheme);
