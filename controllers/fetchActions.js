@@ -28,6 +28,7 @@ import {
   embedPostWithAuthorDetails,
 } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+import { embedCourseInstructor } from "../utils/embedFunctions.js";
 axiosRetry(axios, { retries: 3 });
 
 // Start
@@ -1125,6 +1126,15 @@ export const fetchUserNotifications = async (req, res) => {
         : new Date(notif.createdAt).getTime();
 
     allNotifications.sort((a, b) => getTime(b) - getTime(a));
+    if (allNotifications.length > 0) {
+      console.log("DEBUG - First Notification createdAt:", {
+        raw: allNotifications[0].createdAt,
+        type: typeof allNotifications[0].createdAt,
+        keys: allNotifications[0].createdAt
+          ? Object.keys(allNotifications[0].createdAt)
+          : "N/A",
+      });
+    }
 
     const groupMap = new Map();
     allNotifications.forEach((notif) => {
@@ -2258,7 +2268,6 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
   const controllerName = "fetchStudentsEnrolledCoursesController";
   const action = "fetchStudentsEnrolledCourses";
   try {
-    console.log("Step 1: Fetching student enrolled courses...");
     const { semester, session, page = 1, limit = 10 } = req.query;
     const userId = req.user?.uid;
     const pageNum = parseInt(page);
@@ -2270,50 +2279,53 @@ export const fetchStudentsEnrolledCourses = async (req, res) => {
       "array-contains",
       userId,
     ).where("isActive", "==", true);
-    console.log("Step 2: Built Firestore query reference");
 
     if (semester && semester !== "All") {
       queryRef = queryRef.where("semester", "==", semester);
-      console.log(`Filtering by semester: ${semester}`);
     }
     if (session && session !== "All") {
       queryRef = queryRef.where("session", "==", session);
-      console.log(`Filtering by session: ${session}`);
     }
-    console.log(
-      `Step 3: Applying ordering and pagination. Page: ${pageNum}, Limit: ${limitNum}, Skip: ${skip}`,
-    );
     queryRef = queryRef.orderBy("createdAt", "desc").limit(limitNum);
-    console.log(`Applying limit: ${limitNum} courses per page`);
 
     if (skip > 0) {
       queryRef = queryRef.offset(skip);
-      console.log(`Applying pagination: skip ${skip} courses`);
     }
     console.log("Step 4: Executing Firestore query...");
 
     const snapshot = await queryRef.get();
 
     if (snapshot.empty) {
-      console.log("Step 3: No courses found for the student.");
       setImmediate(() =>
         logControllerPerformance(controllerName, action, startTime, "success"),
       );
       return res.status(200).json([]);
     }
     console.log(`Step 4: Found ${snapshot.size} courses for the student.`);
-    const paginatedCourses = snapshot.docs.map((doc) => ({
+    const rawCourses = snapshot.docs.map((doc) => ({
       id: doc.id,
       courseId: doc.id,
       ...doc.data(),
     }));
-    console.log("Step 5: Returning paginated courses");
+    console.log("Step 5: Embedding instructor names into courses...");
+    const paginatedCourses = await Promise.all(
+      rawCourses.map((course) => embedCourseInstructor(course)),
+    );
+    if (paginatedCourses.length > 0) {
+      console.log(
+        "🔎 DEBUG - Enriched Course Object:",
+        JSON.stringify(paginatedCourses[0], null, 2),
+      );
+    }
+
+    console.log("Step 6: Returning paginated courses");
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
     res.status(200).json(paginatedCourses);
   } catch (error) {
+    console.error("Error in fetchStudentsEnrolledCourses:", error);
     setImmediate(() =>
       logControllerPerformance(
         controllerName,

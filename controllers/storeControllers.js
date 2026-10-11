@@ -745,6 +745,7 @@ export const fetchAllProducts = async (req, res) => {
         category: data.category,
         type: data.type,
         sellerId: data.sellerId,
+        physicalDetails: data.physicalDetails,
       });
     });
     console.log("step 2, successful");
