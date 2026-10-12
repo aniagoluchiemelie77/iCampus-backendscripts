@@ -860,7 +860,7 @@ export const transactionSchema = new mongoose.Schema({
     type: String,
     enum: ["payment", "refund"],
   },
-  amountLocal: Number,
+  amount: Number,
   status: { type: String, enum: ["pending", "success", "failed"] },
   payType: { type: String, enum: ["in", "out"] },
   currency: { type: String },
