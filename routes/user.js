@@ -51,6 +51,7 @@ import {
   createQuickMeeting,
   registerDropOffStation,
   handleUnifiedResourceSearch,
+  saveFcmToken,
 } from "../controllers/userActionsController.js";
 import {
   signUp,
@@ -65,7 +66,7 @@ import {
   AdminLogin,
   switchToInstitutionAdmin,
 } from "../controllers/signinActions.js";
-import { upload } from "../workers/multerWorker.js";
+import { upload } from "../middleware/auth.js";
 import { uploadCourseDetails } from "../controllers/classActions.js";
 import { initiateFlwCharge } from "../controllers/paymentController.js";
 
@@ -79,6 +80,7 @@ router.patch(
 router.get("/lectures/ongoing", protect, fetchOngoingLectures);
 router.get("/exceptions", protect, fetchLectureExceptions);
 router.post("/ai/chat", protect, aiChat);
+router.post("/fcm-token", protect, idempotencyMiddleware, saveFcmToken);
 router.get("/check-account-state", protect, checkAccountState);
 router.get("/search", protect, searchUserUsingUidOrNameQuery);
 router.get("/fetch-connections", protect, fetchConnections);

@@ -12,19 +12,13 @@ export const fetchSellerReviews = async (req, res) => {
   try {
     const sellerId = req.user?.id || req.user?.uid;
     if (!sellerId) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized seller context",
-        );
-      });
       return res
         .status(401)
         .json({ success: false, message: "Unauthorized seller context." });
     }
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+    const skip = (page - 1) * limit;
 
     const [productsSnapshot, sellerReviewsSnapshot] = await Promise.all([
       Product.where("sellerId", "==", sellerId).get(),
@@ -37,11 +31,6 @@ export const fetchSellerReviews = async (req, res) => {
       const data = doc.data();
       return data.productId || doc.id;
     });
-
-    console.log(`DEBUG - Found ${productIds.length} products for seller.`);
-    console.log(
-      `DEBUG - Found ${sellerReviewsSnapshot.docs.length} direct seller reviews.`,
-    );
 
     let productReviewsSnapshots = [];
     if (productIds.length > 0) {
@@ -63,7 +52,6 @@ export const fetchSellerReviews = async (req, res) => {
     }
 
     const reviewMap = new Map();
-
     const processSnapshot = (snapshot) => {
       snapshot.docs.forEach((doc) => {
         reviewMap.set(doc.id, { id: doc.id, ...doc.data() });
@@ -74,8 +62,6 @@ export const fetchSellerReviews = async (req, res) => {
     productReviewsSnapshots.forEach(processSnapshot);
 
     let reviews = Array.from(reviewMap.values());
-    console.log(`DEBUG - Total unique reviews combined: ${reviews.length}`);
-
     reviews.sort((a, b) => {
       const timeA = a.createdAt?.toDate
         ? a.createdAt.toDate()
@@ -86,12 +72,12 @@ export const fetchSellerReviews = async (req, res) => {
       return timeB - timeA;
     });
 
+    const totalReviewsCount = reviews.length;
+    const paginatedReviews = reviews.slice(skip, skip + limit);
+
     const reviewerUids = [
-      ...new Set(reviews.map((r) => r.reviewerId).filter(Boolean)),
+      ...new Set(paginatedReviews.map((r) => r.reviewerId).filter(Boolean)),
     ];
-    console.log(
-      `DEBUG - Unique reviewer UIDs to fetch: ${reviewerUids.length}`,
-    );
 
     const userMap = {};
     if (reviewerUids.length > 0) {
@@ -113,7 +99,7 @@ export const fetchSellerReviews = async (req, res) => {
       });
     }
 
-    const formattedReviews = reviews.map((review) => {
+    const formattedReviews = paginatedReviews.map((review) => {
       const reviewer = userMap[review.reviewerId] || {};
       return {
         ...review,
@@ -129,13 +115,16 @@ export const fetchSellerReviews = async (req, res) => {
       };
     });
 
-    console.log(
-      `DEBUG - Successfully formatted ${formattedReviews.length} reviews for response.`,
-    );
-
     res.status(200).json({
       success: true,
       data: formattedReviews,
+      pagination: {
+        total: totalReviewsCount,
+        page,
+        limit,
+        totalPages: Math.ceil(totalReviewsCount / limit),
+        hasMore: skip + limit < totalReviewsCount,
+      },
     });
 
     setImmediate(() => {

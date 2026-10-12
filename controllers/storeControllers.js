@@ -692,19 +692,13 @@ export const fetchAllProducts = async (req, res) => {
   const CACHE_KEY = "catalog:all_products";
 
   try {
-    console.log("Inside try block");
     const cachedData = await redis.get(CACHE_KEY);
     if (cachedData) {
       let parsedProducts;
-      console.log("Retrieving cache");
       try {
         parsedProducts =
           typeof cachedData === "string" ? JSON.parse(cachedData) : cachedData;
       } catch (parseError) {
-        console.error(
-          "Cache parse error, falling back to database:",
-          parseError,
-        );
         parsedProducts = null;
       }
 
@@ -728,8 +722,6 @@ export const fetchAllProducts = async (req, res) => {
         return;
       }
     }
-    console.log("step 1");
-
     const products = [];
     const snapshot = await Product.get();
 
@@ -742,16 +734,14 @@ export const fetchAllProducts = async (req, res) => {
         price: data.price,
         mediaUrls: data.mediaUrls,
         productId: data.productId,
-        category: data.category,
-        type: data.type,
         sellerId: data.sellerId,
         physicalDetails: data.physicalDetails,
         nationalityOfSeller: data.nationalityOfSeller,
         amountInStock: data.amountInStock,
+        currency: data.currency,
+        niche: data.niche,
       });
     });
-    console.log("step 2, successful");
-
     res.status(200).json({
       success: true,
       products,

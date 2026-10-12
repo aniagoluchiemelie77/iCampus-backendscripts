@@ -82,12 +82,14 @@ export const embedCourseInstructor = async (course) => {
       return {
         ...course,
         instructors: fullName || null,
+        instructorId: lastLecturerId || null,
       };
     }
 
     return {
       ...course,
       instructors: null,
+      instructorId: null,
     };
   } catch (err) {
     console.error(
