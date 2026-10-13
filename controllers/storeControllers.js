@@ -5,7 +5,6 @@ import {
   Transactions,
   ProductImpression,
   ProductSales,
-  Payout,
   DropOffStation,
   Follow,
   TaxEntries,
@@ -1189,7 +1188,7 @@ export const initializeCheckout = async (req, res) => {
     if (!flwTransactionId) {
       return res.status(400).json({
         success: false,
-        message: "Transaction ID or reference is missing.",
+        message: "Transactions ID or reference is missing.",
       });
     }
 
@@ -1292,7 +1291,7 @@ export const initializeCheckout = async (req, res) => {
       const buyerTransaction = {
         transactionId: buyerTxId,
         userId: buyerId,
-        type: "payment",
+        type: "checkout",
         amount: calculatedGrandTotal,
         currency: totals.currency || "NGN",
         status: "success",
@@ -2248,10 +2247,22 @@ export const getPayoutHistory = async (req, res) => {
         message: "User identification missing.",
       });
     }
+    const limit = parseInt(req.query.limit) || 15;
+    const lastCreatedAt = req.query.lastCreatedAt;
 
-    const snapshot = await Payout.where("sellerUid", "==", userUid)
+    let query = Transactions.where("userId", "==", userUid)
+      .where("type", "==", "payout")
       .orderBy("createdAt", "desc")
-      .get();
+      .limit(limit);
+
+    if (lastCreatedAt) {
+      const cursorDate = new Date(lastCreatedAt);
+      if (!isNaN(cursorDate.getTime())) {
+        query = query.startAfter(cursorDate);
+      }
+    }
+
+    const snapshot = await query.get();
 
     const history = [];
     snapshot.forEach((doc) => {
@@ -2259,9 +2270,14 @@ export const getPayoutHistory = async (req, res) => {
       const { __v, ...cleanData } = data;
       history.push({ id: doc.id, ...cleanData });
     });
+    const hasMore = history.length === limit;
+    const nextCursor = hasMore ? history[history.length - 1].createdAt : null;
+
     res.status(200).json({
       success: true,
       data: history,
+      hasMore,
+      nextCursor,
       message: "Payout history retrieved successfully.",
     });
 
@@ -2271,7 +2287,7 @@ export const getPayoutHistory = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error("Fetch Payout Error:", error.message);
+    console.error("Fetch Payout History Error:", error.message);
     if (typeof logControllerPerformance === "function") {
       logControllerPerformance(
         controllerName,
@@ -2412,20 +2428,6 @@ export const requestPayout = async (req, res) => {
         pendingSalesBalance: freshBalance - amount,
         payoutHistory: payoutHistory,
         updatedAt: new Date(),
-      });
-
-      const payoutRef = Payout.doc(payoutId);
-      transaction.set(payoutRef, {
-        payoutId,
-        sellerUid: userId,
-        bankCode: user.bankCode,
-        accountNumber: user.accountNumber,
-        amount: amount,
-        status: "success",
-        method: "Bank Transfer",
-        currency: user.currencyCode || "NGN",
-        reference: reference,
-        createdAt: new Date(),
       });
 
       const transactionRef = Transactions.doc(transactionId);

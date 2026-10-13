@@ -3,7 +3,6 @@ import {
   SupportTicket,
   User,
   Transactions,
-  Payout,
   OperationalInstitutions,
   DropOffStation,
   ControllerLog,
@@ -402,7 +401,7 @@ export const getAdminMetrics = async (req, res) => {
       ).get();
     }
     if (needsPayouts) {
-      promiseMap.payouts = Payout.get();
+      promiseMap.payouts = Transactions.where("type", "==", "payout").get();
     }
     if (needsTickets) {
       promiseMap.tickets = SupportTicket.where("status", "in", [

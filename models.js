@@ -151,728 +151,701 @@ const assignmentSchema = new mongoose.Schema({
     },
   ],
 });
-export const courseSchema = new mongoose.Schema(
-  {
-    courseId: { type: String, required: true, unique: true },
-    courseCode: { type: String },
-    courseTitle: { type: String, required: true },
-    department: { type: String },
-    level: { type: String },
-    schoolName: { type: String, required: true },
-    semester: { type: String },
-    session: { type: String },
-    credits: { type: Number },
-    lecturerIds: [{ type: String, ref: "User" }],
-    studentsEnrolled: [{ type: String, ref: "User" }],
-    courseContents: [String],
-    resources: [String],
-    schoolCode: { type: String },
-    assignments: [assignmentSchema],
-    tests: [assessmentSchema],
-    price: { type: Number, default: 0 },
-    thumbnailUrl: String,
-    rating: { type: Number, default: 0 },
-    totalReviews: { type: Number, default: 0 },
-    isPublished: { type: Boolean, default: false },
-    instructorName: String,
-    courseDuration: String,
-    description: { type: String },
-    isActive: { type: Boolean, default: true },
-  },
-  { timestamps: true },
-);
-export const userBankOrCardDetails = new mongoose.Schema({
-  _id: String, // MongoDB default
-  cardOrBankDetailsId: String, // Unique reference from payment gateway
-  userId: {
-    type: String,
-    ref: "User",
-    required: true,
-  },
-  paymentToken: String, // Tokenized reference (encrypted at rest)
-  method: String, // 'card' or 'bank'
-  provider: String, // e.g., 'Paystack', 'Flutterwave'
-  lastFourDigits: String, // Safe for display
-  cardBrand: String, // Optional: 'Visa', 'MasterCard'
-  expiryMonth: String, // Optional
-  expiryYear: String, // Optional
-  bankName: String, // Optional
-  bankAccNumber: String,
-  country: String,
-  isDefault: Boolean,
-  createdAt: Date,
-  updatedAt: Date,
-  accountHolderName: String,
-  bankCode: String,
-  billingAddressDetails: {
-    id: String,
-    state: String,
-    city: String,
-    street: String,
-    zip: String,
-  },
-});
-const sessionSchema = new mongoose.Schema({
-  deviceId: { type: String, required: true },
-  deviceName: String,
-  deviceType: String,
-  ipAddress: String,
-  location: String,
-  lastUsed: { type: Date, default: Date.now },
-  refreshToken: { type: String, required: true },
-});
-export const userPreferencesSchema = new mongoose.Schema(
-  {
-    userId: {
-      type: String,
-      required: true,
-      unique: true,
-      index: true,
-    },
-    notifications: {
-      auth: { type: Boolean, default: true },
-      social: { type: Boolean, default: true },
-      classroom: { type: Boolean, default: true },
-      store: { type: Boolean, default: true },
-      finance: { type: Boolean, default: true },
-      profile: { type: Boolean, default: true },
-      security: { type: Boolean, default: true },
-    },
-    channels: {
-      push: { type: Boolean, default: true },
-      email: { type: Boolean, default: true },
-      socket: { type: Boolean, default: true },
-    },
-    theme: {
-      type: String,
-      enum: ["light", "dark", "system"],
-      default: "light",
-    },
-    language: { type: String, default: "en" },
-    quietHours: {
-      enabled: { type: Boolean, default: false },
-      start: { type: String },
-      end: { type: String },
-    },
-  },
-  { timestamps: true },
-);
-export const payoutSchema = new mongoose.Schema(
-  {
-    payoutId: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    sellerUid: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    amount: {
-      type: Number,
-      required: true,
-      min: [1, "Minimum payout is 1.00"],
-    },
-    status: {
-      type: String,
-      enum: ["processing", "completed", "failed", "cancelled"],
-      default: "processing",
-    },
-    method: {
-      type: String,
-      required: true,
-    },
-    reference: {
-      type: String,
-      unique: true,
-    },
-    processedAt: { type: Date },
-  },
-  { timestamps: true },
-);
-const phoneNumberSchema = new mongoose.Schema({
-  number: { type: String, index: true, required: true },
-  isVerified: { type: Boolean, default: false },
-  usertype: {
-    type: String,
-    enum: ["sms", "whatsapp"],
-    default: "whatsapp",
-  },
-  addedAt: { type: Date, default: Date.now },
-});
-export const userSchema = new mongoose.Schema({
-  headline: { type: String },
-  uid: { type: String, index: true, required: true },
-  bio: { type: String },
-  subaccountId: { type: String, default: null },
-  tier: {
-    type: String,
-    enum: ["free", "pro", "premium"],
-    default: "free",
-  },
-  usertype: {
-    type: String,
-    enum: ["student", "lecturer", "otherUser", "enterprise"],
-    default: null,
-  },
-  profilePic: [String],
-  likes: [{ type: String }],
-  bookmarks: [{ type: String }],
-  institutionTier: {
-    type: String,
-    enum: ["free", "pro", "premium"],
-    default: "free",
-  }, //Embeded on fetch
-  organizationName: String,
-  website: String,
-  jobTitle: String,
-  schoolCode: String,
-  isFirstLogin: Boolean,
-  username: String,
-  firstname: String,
-  lastname: String,
-  schoolName: String,
-  email: { type: String, unique: true },
-  coursesEnrolled: [String],
-  accessToken: String,
-  password: { type: String, default: null },
-  providerId: {
-    type: String,
-    enum: ["google", "github", "password"],
-    required: true,
-  },
-  department: String,
-  pendingSalesBalance: {
-    type: Number,
-    default: 0,
-    get: (v) => parseFloat(v.toFixed(2)),
-    set: (v) => parseFloat(v.toFixed(2)),
-  },
-  hasSubscribed: { type: Boolean, default: false },
-  blockedUsers: [{ type: String }],
-  createdAt: Date,
-  country: String,
-  currencyCode: String,
-  current_level: String,
-  schoolAvatarUrl: String,
-  matricNumber: String,
-  staffId: String,
-  cart: [
-    {
-      productId: { type: String, default: null },
-      quantity: { type: Number, default: 0 },
-      selectedColor: { type: String, default: null },
-      selectedSize: { type: String, default: null },
-    },
-  ],
-  favorites: [{ type: String }],
-  isVerified: {
-    type: Boolean,
-    default: false,
-  },
-  verificationToken: {
-    type: String,
-    default: null,
-  },
-  purchaseHistory: [{ type: String }],
-  salesHistory: [{ type: String }],
-  coursesEnrolled: [{ type: String }],
-  coursesTeaching: [{ type: String }],
-  isStillInSchool: { type: Boolean, default: true },
-  completedTests: [{ type: String }],
-  twoFactorEnabled: { type: Boolean, default: false },
-  isSuspended: { type: Boolean, default: false },
-  suspiciousActivity: [
-    {
-      type: {
-        type: String,
-        enum: ["UNRECOGNIZED_LOCATION", "SESSION_REVOKED"],
-      },
-      timestamp: { type: Date, default: Date.now },
-    },
-  ],
-  skills: [{ type: String }],
-  recoveryEmails: [
-    {
-      email: { type: String, required: true },
-      isVerified: { type: Boolean, default: false },
-      addedAt: { type: Date, default: Date.now },
-    },
-  ],
-  phoneNumbers: [phoneNumberSchema],
-  personaInquiryId: { type: String, default: null },
-  sessions: [sessionSchema],
-  isInstitutionAdmin: { type: Boolean, default: false },
-  subscriptionExpiresAt: { type: Date, default: null },
-  subscriptionPlan: {
-    type: String,
-    enum: ["free", "pro", "premium"],
-    default: "free",
-  },
-  reminderSent7Days: { type: Boolean, default: false },
-  reminderSent1Day: { type: Boolean, default: false },
-});
-export const adminSchema = new mongoose.Schema({
-  uid: { type: String, index: true, required: true, unique: true },
-  firstname: { type: String },
-  lastname: { type: String },
-  organizationName: { type: String },
-  email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
-  adminType: {
-    type: String,
-    enum: [
-      "super_admin",
-      "moderator",
-      "support",
-      "finance",
-      "analyst",
-      "school_administrator",
-    ],
-    required: true,
-  },
-  profilePic: [String],
-  providerId: { type: String, enum: ["password"], default: "password" },
-  country: String,
-  isVerified: { type: Boolean, required: true, default: true },
-  lastAccessed: { type: Date, default: Date.now },
-  sessions: [sessionSchema],
-  createdAt: { type: Date, default: Date.now },
-  schoolCode: { type: String, default: null },
-});
-export const dropOffStation = new mongoose.Schema({
-  id: { type: String, required: true, index: true },
-  name: { type: String, required: true },
-  address: { type: String, required: true },
-  code: { type: String },
-  contactPerson: { type: String },
-  images: [{ type: String }],
-  agentId: { type: String, required: true },
-  latitude: { type: Number },
-  longitude: { type: Number },
-  createdAt: { type: Date, required: true },
-  status: {
-    type: String,
-    enum: ["pending", "confirmed"],
-    required: true,
-  },
-});
-export const impressionLogSchema = new mongoose.Schema({
-  userId: String,
-  productId: String,
-  monthYear: String,
-});
-export const productSchema = new mongoose.Schema({
-  productId: { type: String, required: true, index: true },
-  sellerId: { type: String, required: true },
-  schoolName: { type: String },
-  amountInStock: { type: Number, default: 1 },
-  impressions: { type: Number, default: 1 },
-  sales: { type: Number, default: 0 },
-  niche: {
-    type: String,
-    enum: [
-      "Electronics",
-      "Fashion",
-      "Stationery",
-      "Snacks and Deserts",
-      "Food",
-      "Footwears",
-      "Health & Beauty",
-    ],
-    required: true,
-  },
-  type: {
-    type: String,
-    enum: ["physical"],
-    required: true,
-  },
-  category: { type: String },
-  title: { type: String, required: true },
-  description: { type: String },
-  price: { type: Number, default: 0 },
-  mediaUrls: [{ type: String }],
-  physicalDetails: {
-    colors: [{ type: String, default: null }],
-    sizes: [{ type: String, default: null }],
-    inStock: { type: Number, default: 0 },
-    weightKg: { type: Number, default: 0 },
-    sellerGateways: [
-      {
-        type: String,
-        enum: ["drop_off", "home_delivery"],
-      },
-    ],
-    isNationalShippingAvailable: { type: Boolean, default: false },
-    dropOffAddress: [dropOffStation],
-  },
-  ratings: [
-    {
-      userId: { type: String, default: null },
-      score: { type: Number, default: 0 },
-      comment: { type: String, default: null },
-    },
-  ],
-  favCount: { type: Number, default: 0 },
-  isAvailable: { type: Boolean, default: true },
-  createdAt: { type: Date, default: null },
-  currency: { type: String, required: true },
-  nationalityOfSeller: { type: String, required: true },
-});
-export const orderSchema = new mongoose.Schema({
-  orderId: { type: String, required: true, index: true },
-  buyerId: { type: String, required: true },
-  sellerId: { type: String, required: true },
-  productId: { type: String, required: true },
-  amountPaid: { type: Number, required: true },
-  flwRef: { type: String, required: true },
-  amountPaidCurrencyCode: { type: String, required: true },
-  quantity: { type: Number, required: true },
-  agentId: { type: String, default: null },
-  status: {
-    type: String,
-    enum: ["pending_delivery", "completed", "cancelled", "dropped_off"],
-    default: "pending_delivery",
-  },
-  cancellationReason: { type: String, default: null },
-  deliveryMethod: {
-    type: String,
-    enum: ["drop_off", "home_delivery"],
-    default: "drop_off",
-  },
-  selectedStation: {
-    id: String,
-    name: String,
-    address: String,
-    agentId: String,
-  },
-  verificationQrCode: { type: String, required: true },
-  isVerifiedByScan: { type: Boolean, default: true },
-  fileUrl: { type: String, default: null },
-  createdAt: { type: Date, required: true },
-  completedAt: { type: Date },
-});
-export const productSalesSchema = new mongoose.Schema({
-  sellerId: { type: String, required: true, index: true },
-  productId: { type: String, required: true },
-  orderId: { type: String, default: null },
-  productType: { type: String, enum: ["physical"] },
-  quantity: { type: Number, default: 1 },
-  amountPaid: { type: Number, required: true },
-  netEarnings: { type: Number, required: true },
-  buyerId: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now },
-});
-export const messageSchema = new mongoose.Schema({
-  id: { type: String, required: true },
-  senderId: { type: String, required: true },
-  recipientId: { type: String, required: true },
-  text: String,
-  attachments: [
-    {
-      url: String,
-      fileType: String,
-      fileName: String,
-    },
-  ],
-  status: {
-    type: String,
-    enum: ["sent", "delivered", "seen"],
-    default: "sent",
-  },
-  timestamp: { type: Date, default: Date.now },
-});
-export const reviewSchema = new mongoose.Schema({
-  reviewerId: { type: String, required: true },
-  targetId: { type: String, required: true },
-  targetType: {
-    type: String,
-    required: true,
-    enum: ["product", "seller", "agent", "course", "lecturer"],
-  },
-  orderId: { type: String },
-  rating: { type: Number, required: true, min: 1, max: 5 },
-  comment: { type: String },
-  mediaUrls: [String],
-  attributes: {
-    deliverySpeed: Number,
-    accuracy: Number,
-    clarity: Number,
-  },
-  createdAt: { type: Date, default: Date.now },
-});
-export const notificationSchema = new mongoose.Schema(
-  {
-    notificationId: { type: String, required: true },
-    recipientId: { type: String, required: true, index: true },
-    recipientEmail: { type: String },
-    senderId: { type: String },
-    category: {
-      type: String,
-      enum: [
-        "auth",
-        "social",
-        "system",
-        "classroom",
-        "store",
-        "finance",
-        "profile",
-        "security",
-        "reminder",
-        "signup",
-        "subscription",
-        "account_upgrade",
-        "admin_notification",
-      ],
-      required: true,
-    },
-    currency: {
-      type: String,
-    },
-    actionType: { type: String },
-    title: { type: String, required: true },
-    message: { type: String, required: true },
-    isRead: { type: Boolean, default: false },
-    relatedEntity: {
-      entityId: String,
-      entityType: String,
-    },
-    payload: { type: Object },
-  },
-  { timestamps: true },
-);
-export const EmailVerificationSchema = new mongoose.Schema({
-  email: { type: String, required: true, unique: true },
-  code: {
-    type: String,
-    required: true,
-  },
-  expiresAt: {
-    type: Date,
-    required: true,
-  },
-});
-export const phoneVerificationSchema = new mongoose.Schema({
-  phoneNumber: { type: String, required: true, index: true },
-  code: { type: String, required: true },
-  expiresAt: { type: Date, required: true, expires: 900 },
-});
-export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
-  id: { type: String, required: true, unique: true },
-  schoolName: {
-    type: String,
-    required: true,
-    unique: true,
-  },
-  contactEmail: {
-    type: String,
-  },
-  schoolCode: {
-    type: String,
-    required: true,
-    unique: true,
-  },
-  dateJoined: {
-    type: String,
-    default: () => new Date().toISOString().split("T")[0],
-    // YYYY-MM-DD
-  },
-  timeJoined: {
-    type: String,
-    default: () => new Date().toLocaleTimeString("en-US", { hour12: false }),
-  },
-  logo: { type: String },
-  currentiScoreAvg: { type: Number },
-  previousiScoreAvg: { type: Number },
-  createdAt: { type: Date, default: () => new Date() },
-  tier: {
-    type: String,
-    enum: ["free", "pro", "premium"],
-    default: "free",
-  },
-});
-export const postSchema = new mongoose.Schema(
-  {
-    postId: { type: String, required: true, unique: true },
-    priorityScore: { type: Number, default: 0 },
-    isSubscriptionContent: { type: Boolean, default: false },
-    content: { type: String, required: true },
-    media: {
-      url: [String],
-      mediaType: { type: String, enum: ["image", "video"] },
-    },
-    poll: {
-      options: [
-        {
-          optionId: String,
-          text: String,
-          votes: [String],
-        },
-      ],
-      totalVotes: { type: Number, default: 0 },
-      expiresAt: Date,
-    },
-    likes: [{ type: String }],
-    bookmarks: [{ type: String }],
-    comments: [commentSchema],
-    impressions: { type: Number, default: 0 },
-    shares: [{ type: String, ref: "User" }],
-    isRepost: { type: Boolean, default: false },
-    originalPostId: { type: String, default: null },
-    originalAuthor: { type: String, default: null },
-    repostersDetails: [reposterSchema],
-    postAuthorsDetails: postAuthorSchema, //Added every fetch
-    sharesCount: { type: Number, default: 0 },
-    postType: {
-      type: String,
-      enum: ["media", "job", "event", "poll"],
-      default: "media",
-    },
-    jobMetadata: {
-      title: String,
-      company: String,
-      location: String,
-      type: {
-        type: String,
-        enum: ["Full-time", "Part-time", "Internship", "Contract"],
-      },
-      salaryRange: String,
-      applicationLink: String,
-    },
-    eventMetadata: {
-      title: String,
-      location: String,
-      isVirtual: { type: Boolean, default: false },
-      startTime: Date,
-      endTime: Date,
-      date: Date,
-    },
-    rankingScore: { type: Number, default: 0, index: true },
-    status: {
-      type: String,
-      enum: ["visible", "hidden"],
-      default: "visible",
-    },
-  },
-  { timestamps: true },
-);
-export const followSchema = new mongoose.Schema(
-  {
-    id: { type: String, unique: true },
-    followerId: { type: String, ref: "User", index: true },
-    followingId: { type: String, ref: "User", index: true },
-  },
-  { timestamps: true },
-);
-export const exceptionSchema = new mongoose.Schema(
-  {
-    id: { type: String, required: true },
-    studentId: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    courseId: {
-      type: String,
-      required: true,
-      index: true,
-    },
-    studentInfo: {
-      fullname: { type: String },
-      matricNumber: { type: String },
-    },
-    courseInfo: {
-      courseTitle: { type: String },
-      courseCode: { type: String },
-    },
-    lectureId: {
-      type: String,
-      required: true,
-    },
-    reasonCategory: {
-      type: String,
-      enum: [
-        "Medical",
-        "Family Emergency",
-        "Technical Issue",
-        "Personal",
-        "Other",
-      ],
-      default: "Personal",
-    },
-    reason: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    status: {
-      type: String,
-      enum: ["pending", "approved", "rejected"],
-      default: "pending",
-    },
-    lecturerComment: {
-      type: String,
-      default: "",
-    },
-    date: {
-      type: Date,
-      required: true,
-      default: Date.now,
-    },
-    attachmentUrl: {
-      type: String,
-      default: null,
-    },
-  },
-  { timestamps: true },
-);
-export const testSubmissionSchema = new mongoose.Schema({
-  id: { type: String, unique: true },
-  testId: { type: String, required: true },
-  studentId: { type: String, required: true },
-  studentName: String,
-  matricNumber: String,
-  answers: [
-    {
-      questionId: String,
-      studentAnswer: String,
-      isCorrect: Boolean,
-      pointsEarned: Number,
-      aiScore: Number,
-    },
-  ],
-  score: Number,
-  totalPossibleScore: Number,
-  status: { type: String, default: "submitted" },
-  submittedAt: { type: Date, default: Date.now },
-  proctoringData: {
-    deviceId: String,
-    entrySelfieUrl: String,
-    tabSwitchCount: Number,
-  },
-  startTime: Date,
-});
-export const transactionSchema = new mongoose.Schema({
-  transactionId: { type: String, required: true, unique: true },
-  userId: { type: String, required: true },
-  type: {
-    type: String,
-    enum: ["payment", "refund"],
-  },
-  amount: Number,
-  status: { type: String, enum: ["pending", "success", "failed"] },
-  payType: { type: String, enum: ["in", "out"] },
-  currency: { type: String },
-  title: { type: String },
-  reference: { type: String, unique: true },
-  metadata: {
-    recipientId: { type: String, default: null },
-    note: { type: String, default: null },
-    senderId: { type: String, default: null },
-  },
-  createdAt: { type: Date, default: Date.now },
-});
+ const courseResource = new mongoose.Schema({
+   resourceId: { type: String, required: true },
+   resourceTitle: String,
+   resourceUrl: String,
+   resourceSize: String,
+   resourceMimetype: String,
+ });
+ export const courseSchema = new mongoose.Schema(
+   {
+     courseId: { type: String, required: true, unique: true },
+     courseCode: { type: String },
+     courseTitle: { type: String, required: true },
+     department: { type: String },
+     level: { type: String },
+     schoolName: { type: String, required: true },
+     semester: { type: String },
+     session: { type: String },
+     credits: { type: Number },
+     lecturerIds: [{ type: String, ref: "User" }],
+     studentsEnrolled: [{ type: String, ref: "User" }],
+     courseContents: [String],
+     resources: [courseResource],
+     schoolCode: { type: String },
+     assignments: [assignmentSchema],
+     tests: [assessmentSchema],
+     price: { type: Number, default: 0 },
+     thumbnailUrl: String,
+     rating: { type: Number, default: 0 },
+     totalReviews: { type: Number, default: 0 },
+     isPublished: { type: Boolean, default: false },
+     instructorName: String,
+     courseDuration: String,
+     description: { type: String },
+     isActive: { type: Boolean, default: true },
+   },
+   { timestamps: true },
+ );
+ export const userBankOrCardDetails = new mongoose.Schema({
+   _id: String, // MongoDB default
+   cardOrBankDetailsId: String, // Unique reference from payment gateway
+   userId: {
+     type: String,
+     ref: "User",
+     required: true,
+   },
+   paymentToken: String, // Tokenized reference (encrypted at rest)
+   method: String, // 'card' or 'bank'
+   provider: String, // e.g., 'Paystack', 'Flutterwave'
+   lastFourDigits: String, // Safe for display
+   cardBrand: String, // Optional: 'Visa', 'MasterCard'
+   expiryMonth: String, // Optional
+   expiryYear: String, // Optional
+   bankName: String, // Optional
+   bankAccNumber: String,
+   country: String,
+   isDefault: Boolean,
+   createdAt: Date,
+   updatedAt: Date,
+   accountHolderName: String,
+   bankCode: String,
+   billingAddressDetails: {
+     id: String,
+     state: String,
+     city: String,
+     street: String,
+     zip: String,
+   },
+ });
+ const sessionSchema = new mongoose.Schema({
+   deviceId: { type: String, required: true },
+   deviceName: String,
+   deviceType: String,
+   ipAddress: String,
+   location: String,
+   lastUsed: { type: Date, default: Date.now },
+   refreshToken: { type: String, required: true },
+ });
+ export const userPreferencesSchema = new mongoose.Schema(
+   {
+     userId: {
+       type: String,
+       required: true,
+       unique: true,
+       index: true,
+     },
+     notifications: {
+       auth: { type: Boolean, default: true },
+       social: { type: Boolean, default: true },
+       classroom: { type: Boolean, default: true },
+       store: { type: Boolean, default: true },
+       finance: { type: Boolean, default: true },
+       profile: { type: Boolean, default: true },
+       security: { type: Boolean, default: true },
+     },
+     channels: {
+       push: { type: Boolean, default: true },
+       email: { type: Boolean, default: true },
+       socket: { type: Boolean, default: true },
+     },
+     theme: {
+       type: String,
+       enum: ["light", "dark", "system"],
+       default: "light",
+     },
+     language: { type: String, default: "en" },
+     quietHours: {
+       enabled: { type: Boolean, default: false },
+       start: { type: String },
+       end: { type: String },
+     },
+   },
+   { timestamps: true },
+ );
+ const phoneNumberSchema = new mongoose.Schema({
+   number: { type: String, index: true, required: true },
+   isVerified: { type: Boolean, default: false },
+   usertype: {
+     type: String,
+     enum: ["sms", "whatsapp"],
+     default: "whatsapp",
+   },
+   addedAt: { type: Date, default: Date.now },
+ });
+ export const userSchema = new mongoose.Schema({
+   headline: { type: String },
+   uid: { type: String, index: true, required: true },
+   bio: { type: String },
+   subaccountId: { type: String, default: null },
+   tier: {
+     type: String,
+     enum: ["free", "pro", "premium"],
+     default: "free",
+   },
+   usertype: {
+     type: String,
+     enum: ["student", "lecturer", "otherUser", "enterprise"],
+     default: null,
+   },
+   profilePic: [String],
+   likes: [{ type: String }],
+   bookmarks: [{ type: String }],
+   institutionTier: {
+     type: String,
+     enum: ["free", "pro", "premium"],
+     default: "free",
+   }, //Embeded on fetch
+   organizationName: String,
+   website: String,
+   jobTitle: String,
+   schoolCode: String,
+   isFirstLogin: Boolean,
+   username: String,
+   firstname: String,
+   lastname: String,
+   schoolName: String,
+   email: { type: String, unique: true },
+   coursesEnrolled: [String],
+   accessToken: String,
+   password: { type: String, default: null },
+   providerId: {
+     type: String,
+     enum: ["google", "github", "password"],
+     required: true,
+   },
+   department: String,
+   pendingSalesBalance: {
+     type: Number,
+     default: 0,
+     get: (v) => parseFloat(v.toFixed(2)),
+     set: (v) => parseFloat(v.toFixed(2)),
+   },
+   hasSubscribed: { type: Boolean, default: false },
+   blockedUsers: [{ type: String }],
+   createdAt: Date,
+   country: String,
+   currencyCode: String,
+   current_level: String,
+   schoolAvatarUrl: String,
+   matricNumber: String,
+   staffId: String,
+   cart: [
+     {
+       productId: { type: String, default: null },
+       quantity: { type: Number, default: 0 },
+       selectedColor: { type: String, default: null },
+       selectedSize: { type: String, default: null },
+     },
+   ],
+   favorites: [{ type: String }],
+   isVerified: {
+     type: Boolean,
+     default: false,
+   },
+   verificationToken: {
+     type: String,
+     default: null,
+   },
+   purchaseHistory: [{ type: String }],
+   salesHistory: [{ type: String }],
+   coursesEnrolled: [{ type: String }],
+   coursesTeaching: [{ type: String }],
+   isStillInSchool: { type: Boolean, default: true },
+   completedTests: [{ type: String }],
+   twoFactorEnabled: { type: Boolean, default: false },
+   isSuspended: { type: Boolean, default: false },
+   suspiciousActivity: [
+     {
+       type: {
+         type: String,
+         enum: ["UNRECOGNIZED_LOCATION", "SESSION_REVOKED"],
+       },
+       timestamp: { type: Date, default: Date.now },
+     },
+   ],
+   skills: [{ type: String }],
+   recoveryEmails: [
+     {
+       email: { type: String, required: true },
+       isVerified: { type: Boolean, default: false },
+       addedAt: { type: Date, default: Date.now },
+     },
+   ],
+   phoneNumbers: [phoneNumberSchema],
+   personaInquiryId: { type: String, default: null },
+   sessions: [sessionSchema],
+   isInstitutionAdmin: { type: Boolean, default: false },
+   subscriptionExpiresAt: { type: Date, default: null },
+   subscriptionPlan: {
+     type: String,
+     enum: ["free", "pro", "premium"],
+     default: "free",
+   },
+   reminderSent7Days: { type: Boolean, default: false },
+   reminderSent1Day: { type: Boolean, default: false },
+ });
+ export const adminSchema = new mongoose.Schema({
+   uid: { type: String, index: true, required: true, unique: true },
+   firstname: { type: String },
+   lastname: { type: String },
+   organizationName: { type: String },
+   email: { type: String, required: true, unique: true },
+   password: { type: String, required: true },
+   adminType: {
+     type: String,
+     enum: [
+       "super_admin",
+       "moderator",
+       "support",
+       "finance",
+       "analyst",
+       "school_administrator",
+     ],
+     required: true,
+   },
+   profilePic: [String],
+   providerId: { type: String, enum: ["password"], default: "password" },
+   country: String,
+   isVerified: { type: Boolean, required: true, default: true },
+   lastAccessed: { type: Date, default: Date.now },
+   sessions: [sessionSchema],
+   createdAt: { type: Date, default: Date.now },
+   schoolCode: { type: String, default: null },
+ });
+ export const dropOffStation = new mongoose.Schema({
+   id: { type: String, required: true, index: true },
+   name: { type: String, required: true },
+   address: { type: String, required: true },
+   code: { type: String },
+   contactPerson: { type: String },
+   images: [{ type: String }],
+   agentId: { type: String, required: true },
+   latitude: { type: Number },
+   longitude: { type: Number },
+   createdAt: { type: Date, required: true },
+   status: {
+     type: String,
+     enum: ["pending", "confirmed"],
+     required: true,
+   },
+ });
+ export const impressionLogSchema = new mongoose.Schema({
+   userId: String,
+   productId: String,
+   monthYear: String,
+ });
+ export const productSchema = new mongoose.Schema({
+   productId: { type: String, required: true, index: true },
+   sellerId: { type: String, required: true },
+   schoolName: { type: String },
+   amountInStock: { type: Number, default: 1 },
+   impressions: { type: Number, default: 1 },
+   sales: { type: Number, default: 0 },
+   niche: {
+     type: String,
+     enum: [
+       "Electronics",
+       "Fashion",
+       "Stationery",
+       "Snacks and Deserts",
+       "Food",
+       "Footwears",
+       "Health & Beauty",
+     ],
+     required: true,
+   },
+   type: {
+     type: String,
+     enum: ["physical"],
+     required: true,
+   },
+   category: { type: String },
+   title: { type: String, required: true },
+   description: { type: String },
+   price: { type: Number, default: 0 },
+   mediaUrls: [{ type: String }],
+   physicalDetails: {
+     colors: [{ type: String, default: null }],
+     sizes: [{ type: String, default: null }],
+     inStock: { type: Number, default: 0 },
+     weightKg: { type: Number, default: 0 },
+     sellerGateways: [
+       {
+         type: String,
+         enum: ["drop_off", "home_delivery"],
+       },
+     ],
+     isNationalShippingAvailable: { type: Boolean, default: false },
+     dropOffAddress: [dropOffStation],
+   },
+   ratings: [
+     {
+       userId: { type: String, default: null },
+       score: { type: Number, default: 0 },
+       comment: { type: String, default: null },
+     },
+   ],
+   favCount: { type: Number, default: 0 },
+   isAvailable: { type: Boolean, default: true },
+   createdAt: { type: Date, default: null },
+   currency: { type: String, required: true },
+   nationalityOfSeller: { type: String, required: true },
+ });
+ export const orderSchema = new mongoose.Schema({
+   orderId: { type: String, required: true, index: true },
+   buyerId: { type: String, required: true },
+   sellerId: { type: String, required: true },
+   productId: { type: String, required: true },
+   amountPaid: { type: Number, required: true },
+   flwRef: { type: String, required: true },
+   amountPaidCurrencyCode: { type: String, required: true },
+   quantity: { type: Number, required: true },
+   agentId: { type: String, default: null },
+   status: {
+     type: String,
+     enum: ["pending_delivery", "completed", "cancelled", "dropped_off"],
+     default: "pending_delivery",
+   },
+   cancellationReason: { type: String, default: null },
+   deliveryMethod: {
+     type: String,
+     enum: ["drop_off", "home_delivery"],
+     default: "drop_off",
+   },
+   selectedStation: {
+     id: String,
+     name: String,
+     address: String,
+     agentId: String,
+   },
+   verificationQrCode: { type: String, required: true },
+   isVerifiedByScan: { type: Boolean, default: true },
+   fileUrl: { type: String, default: null },
+   createdAt: { type: Date, required: true },
+   completedAt: { type: Date },
+ });
+ export const productSalesSchema = new mongoose.Schema({
+   sellerId: { type: String, required: true, index: true },
+   productId: { type: String, required: true },
+   orderId: { type: String, default: null },
+   productType: { type: String, enum: ["physical"] },
+   quantity: { type: Number, default: 1 },
+   amountPaid: { type: Number, required: true },
+   netEarnings: { type: Number, required: true },
+   buyerId: { type: String, required: true },
+   createdAt: { type: Date, default: Date.now },
+ });
+ export const messageSchema = new mongoose.Schema({
+   id: { type: String, required: true },
+   senderId: { type: String, required: true },
+   recipientId: { type: String, required: true },
+   text: String,
+   attachments: [
+     {
+       url: String,
+       fileType: String,
+       fileName: String,
+     },
+   ],
+   status: {
+     type: String,
+     enum: ["sent", "delivered", "seen"],
+     default: "sent",
+   },
+   timestamp: { type: Date, default: Date.now },
+ });
+ export const reviewSchema = new mongoose.Schema({
+   reviewerId: { type: String, required: true },
+   targetId: { type: String, required: true },
+   targetType: {
+     type: String,
+     required: true,
+     enum: ["product", "seller", "agent", "course", "lecturer"],
+   },
+   orderId: { type: String },
+   rating: { type: Number, required: true, min: 1, max: 5 },
+   comment: { type: String },
+   mediaUrls: [String],
+   attributes: {
+     deliverySpeed: Number,
+     accuracy: Number,
+     clarity: Number,
+   },
+   createdAt: { type: Date, default: Date.now },
+ });
+ export const notificationSchema = new mongoose.Schema(
+   {
+     notificationId: { type: String, required: true },
+     recipientId: { type: String, required: true, index: true },
+     recipientEmail: { type: String },
+     senderId: { type: String },
+     category: {
+       type: String,
+       enum: [
+         "auth",
+         "social",
+         "system",
+         "classroom",
+         "store",
+         "finance",
+         "profile",
+         "security",
+         "reminder",
+         "signup",
+         "subscription",
+         "account_upgrade",
+         "admin_notification",
+       ],
+       required: true,
+     },
+     currency: {
+       type: String,
+     },
+     actionType: { type: String },
+     title: { type: String, required: true },
+     message: { type: String, required: true },
+     isRead: { type: Boolean, default: false },
+     relatedEntity: {
+       entityId: String,
+       entityType: String,
+     },
+     payload: { type: Object },
+   },
+   { timestamps: true },
+ );
+ export const EmailVerificationSchema = new mongoose.Schema({
+   email: { type: String, required: true, unique: true },
+   code: {
+     type: String,
+     required: true,
+   },
+   expiresAt: {
+     type: Date,
+     required: true,
+   },
+ });
+ export const phoneVerificationSchema = new mongoose.Schema({
+   phoneNumber: { type: String, required: true, index: true },
+   code: { type: String, required: true },
+   expiresAt: { type: Date, required: true, expires: 900 },
+ });
+ export const iCampusOperationalInstitutionSchema = new mongoose.Schema({
+   id: { type: String, required: true, unique: true },
+   schoolName: {
+     type: String,
+     required: true,
+     unique: true,
+   },
+   contactEmail: {
+     type: String,
+   },
+   schoolCode: {
+     type: String,
+     required: true,
+     unique: true,
+   },
+   dateJoined: {
+     type: String,
+     default: () => new Date().toISOString().split("T")[0],
+     // YYYY-MM-DD
+   },
+   timeJoined: {
+     type: String,
+     default: () => new Date().toLocaleTimeString("en-US", { hour12: false }),
+   },
+   logo: { type: String },
+   currentiScoreAvg: { type: Number },
+   previousiScoreAvg: { type: Number },
+   createdAt: { type: Date, default: () => new Date() },
+   tier: {
+     type: String,
+     enum: ["free", "pro", "premium"],
+     default: "free",
+   },
+ });
+ export const postSchema = new mongoose.Schema(
+   {
+     postId: { type: String, required: true, unique: true },
+     priorityScore: { type: Number, default: 0 },
+     isSubscriptionContent: { type: Boolean, default: false },
+     content: { type: String, required: true },
+     media: {
+       url: [String],
+       mediaType: { type: String, enum: ["image", "video"] },
+     },
+     poll: {
+       options: [
+         {
+           optionId: String,
+           text: String,
+           votes: [String],
+         },
+       ],
+       totalVotes: { type: Number, default: 0 },
+       expiresAt: Date,
+     },
+     likes: [{ type: String }],
+     bookmarks: [{ type: String }],
+     comments: [commentSchema],
+     impressions: { type: Number, default: 0 },
+     shares: [{ type: String, ref: "User" }],
+     isRepost: { type: Boolean, default: false },
+     originalPostId: { type: String, default: null },
+     originalAuthor: { type: String, default: null },
+     repostersDetails: [reposterSchema],
+     postAuthorsDetails: postAuthorSchema, //Added every fetch
+     sharesCount: { type: Number, default: 0 },
+     postType: {
+       type: String,
+       enum: ["media", "job", "event", "poll"],
+       default: "media",
+     },
+     jobMetadata: {
+       title: String,
+       company: String,
+       location: String,
+       type: {
+         type: String,
+         enum: ["Full-time", "Part-time", "Internship", "Contract"],
+       },
+       salaryRange: String,
+       applicationLink: String,
+     },
+     eventMetadata: {
+       title: String,
+       location: String,
+       isVirtual: { type: Boolean, default: false },
+       startTime: Date,
+       endTime: Date,
+       date: Date,
+     },
+     rankingScore: { type: Number, default: 0, index: true },
+     status: {
+       type: String,
+       enum: ["visible", "hidden"],
+       default: "visible",
+     },
+   },
+   { timestamps: true },
+ );
+ export const followSchema = new mongoose.Schema(
+   {
+     id: { type: String, unique: true },
+     followerId: { type: String, ref: "User", index: true },
+     followingId: { type: String, ref: "User", index: true },
+   },
+   { timestamps: true },
+ );
+ export const exceptionSchema = new mongoose.Schema(
+   {
+     id: { type: String, required: true },
+     studentId: {
+       type: String,
+       required: true,
+       index: true,
+     },
+     courseId: {
+       type: String,
+       required: true,
+       index: true,
+     },
+     studentInfo: {
+       fullname: { type: String },
+       matricNumber: { type: String },
+     },
+     courseInfo: {
+       courseTitle: { type: String },
+       courseCode: { type: String },
+     },
+     lectureId: {
+       type: String,
+       required: true,
+     },
+     reasonCategory: {
+       type: String,
+       enum: [
+         "Medical",
+         "Family Emergency",
+         "Technical Issue",
+         "Personal",
+         "Other",
+       ],
+       default: "Personal",
+     },
+     reason: {
+       type: String,
+       required: true,
+       trim: true,
+     },
+     status: {
+       type: String,
+       enum: ["pending", "approved", "rejected"],
+       default: "pending",
+     },
+     lecturerComment: {
+       type: String,
+       default: "",
+     },
+     date: {
+       type: Date,
+       required: true,
+       default: Date.now,
+     },
+     attachmentUrl: {
+       type: String,
+       default: null,
+     },
+   },
+   { timestamps: true },
+ );
+ export const testSubmissionSchema = new mongoose.Schema({
+   id: { type: String, unique: true },
+   testId: { type: String, required: true },
+   studentId: { type: String, required: true },
+   studentName: String,
+   matricNumber: String,
+   answers: [
+     {
+       questionId: String,
+       studentAnswer: String,
+       isCorrect: Boolean,
+       pointsEarned: Number,
+       aiScore: Number,
+     },
+   ],
+   score: Number,
+   totalPossibleScore: Number,
+   status: { type: String, default: "submitted" },
+   submittedAt: { type: Date, default: Date.now },
+   proctoringData: {
+     deviceId: String,
+     entrySelfieUrl: String,
+     tabSwitchCount: Number,
+   },
+   startTime: Date,
+ });
+ export const transactionSchema = new mongoose.Schema({
+   transactionId: { type: String, required: true, unique: true },
+   userId: { type: String, required: true },
+   type: {
+     type: String,
+     enum: ["payment", "refund", "checkout", "payout"],
+   },
+   amount: Number,
+   status: { type: String, enum: ["pending", "success", "failed"] },
+   payType: { type: String, enum: ["in", "out"] },
+   currency: { type: String },
+   title: { type: String },
+   reference: { type: String, unique: true },
+   metadata: {
+     recipientId: { type: String, default: null },
+     note: { type: String, default: null },
+     senderId: { type: String, default: null },
+   },
+   createdAt: { type: Date, default: Date.now },
+ });
 export const deletedUserSchema = new mongoose.Schema({
   uid: { type: String, required: true },
   reason: { type: String },

@@ -187,9 +187,19 @@ export function userAccountDetailsId(length = 10) {
   }
   return result;
 }
-export const generateUserUID = () => {
+export const generateUserUID = (usertype) => {
+  const prefixMap = {
+    student: "stud",
+    lecturer: "lect",
+    otherUser: "othr",
+    enterprise: "entr",
+  };
+
+  const typeKey = (usertype || "").toLowerCase().trim();
+  const fourLetterCode = prefixMap[typeKey] || "user";
+
   const randomBytes = crypto.randomBytes(12).toString("hex");
-  return `iC-u-${randomBytes}`;
+  return `iC-${fourLetterCode}-${randomBytes}`;
 };
 export const generateUniqueDealId = (length = 10) => {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -238,18 +248,6 @@ export const generateTokens = async (user, userType = "user") => {
 
   return { accessToken, refreshToken };
 };
-const generateReferralCode = (name, length = 7) => {
-  const cleanName = name.replace(/[^a-zA-Z0-9]/g, "").toLowerCase();
-  const prefix = cleanName.substring(0, 3);
-  const randomLength = Math.max(0, length - prefix.length);
-  const chars = "0123456789abcdefghijklmnopqrstuvwxyz";
-  let randomPart = "";
-  for (let i = 0; i < randomLength; i++) {
-    randomPart += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return `${prefix}${randomPart}`;
-};
-
 export function generateSubmissionId(assessmentId, studentId = "STUD") {
   const cleanAsm = (assessmentId || "ASM-XXXX").trim().toUpperCase();
   const cleanStudent = (studentId || "STUD").trim().toUpperCase();

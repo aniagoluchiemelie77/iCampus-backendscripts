@@ -2843,14 +2843,20 @@ export const handleUnifiedResourceSearch = async (req, res) => {
       const courseCode = (data.courseCode || "").toLowerCase();
       const resources = Array.isArray(data.resources) ? data.resources : [];
 
-      const hasMatchingResource = resources.some((url) => {
-        if (typeof url !== "string") return false;
+      const hasMatchingResource = resources.some((res) => {
         try {
-          const rawFileName = url.split("/").pop() || "";
-          const cleanedFileName = decodeURIComponent(rawFileName)
-            .split("?")[0]
-            .toLowerCase();
-          return cleanedFileName.includes(searchTerm);
+          if (typeof res === "string") {
+            const rawFileName = res.split("/").pop() || "";
+            const cleanedFileName = decodeURIComponent(rawFileName)
+              .split("?")[0]
+              .toLowerCase();
+            return cleanedFileName.includes(searchTerm);
+          } else if (res && typeof res === "object") {
+            const title = (res.resourceTitle || "").toLowerCase();
+            const url = (res.resourceUrl || "").toLowerCase();
+            return title.includes(searchTerm) || url.includes(searchTerm);
+          }
+          return false;
         } catch {
           return false;
         }
@@ -2875,39 +2881,63 @@ export const handleUnifiedResourceSearch = async (req, res) => {
       const courseTitle = course.courseTitle || "";
       const courseCode = course.courseCode || "";
 
-      resources.forEach((url) => {
-        if (typeof url !== "string") return;
-
-        let cleanedFileName = "Untitled Material";
-        try {
-          const rawFileName = url.split("/").pop() || "Untitled Material";
-          cleanedFileName = decodeURIComponent(rawFileName).split("?")[0];
-        } catch {
-          cleanedFileName = "Untitled Material";
+      resources.forEach((res) => {
+        let resourceId = "";
+        let resourceTitle = "";
+        let resourceUrl = "";
+        let resourceSize = 0;
+        let resourceMimetype = "";
+        if (typeof res === "string") {
+          resourceUrl = res;
+          let cleanedFileName = "Untitled Material";
+          try {
+            const rawFileName = res.split("/").pop() || "Untitled Material";
+            cleanedFileName = decodeURIComponent(rawFileName).split("?")[0];
+          } catch {
+            cleanedFileName = "Untitled Material";
+          }
+          resourceTitle = cleanedFileName.split("-").pop() || cleanedFileName;
+          const base64Hash = Buffer.from(res)
+            .toString("base64")
+            .substring(0, 8);
+          resourceId = `${course.courseId || course.id}-${base64Hash}`;
+          resourceMimetype = "application/pdf";
+        } else if (res && typeof res === "object") {
+          resourceUrl = res.resourceUrl || "";
+          resourceTitle = res.resourceTitle || "Untitled Material";
+          resourceId = res.resourceId || `${course.courseId || course.id}-res`;
+          resourceSize = res.resourceSize || 0;
+          resourceMimetype = res.resourceMimetype || "application/octet-stream";
         }
+
+        if (!resourceUrl) return;
 
         const matchesQuery =
           courseTitle.toLowerCase().includes(searchTerm) ||
           courseCode.toLowerCase().includes(searchTerm) ||
-          cleanedFileName.toLowerCase().includes(searchTerm);
+          resourceTitle.toLowerCase().includes(searchTerm);
 
         if (matchesQuery) {
-          const base64Hash = Buffer.from(url)
-            .toString("base64")
-            .substring(0, 8);
-
           const fileFormat =
-            url.split(".").pop()?.split("?")[0]?.toLowerCase() || "pdf";
+            resourceMimetype.split("/").pop()?.toUpperCase() ||
+            resourceUrl.split(".").pop()?.split("?")[0]?.toUpperCase() ||
+            "PDF";
 
           normalizedInstitutional.push({
-            id: `${course.courseId || course.id}-${base64Hash}`,
-            title: cleanedFileName.split("-").pop() || cleanedFileName,
-            url: url,
+            id: resourceId,
+            resourceId: resourceId,
+            title: resourceTitle,
+            resourceTitle: resourceTitle,
+            url: resourceUrl,
+            resourceUrl: resourceUrl,
+            resourceSize: resourceSize,
+            resourceMimetype: resourceMimetype,
             format: fileFormat,
             isPremiumPaid: false,
             price: 0,
-            metaSource: `${courseCode} • Institutional`,
+            metaSource: `${courseCode || course.department || "Course"} Institutional`,
             courseId: course.courseId || course.id,
+            courseTitle: courseTitle,
           });
         }
       });

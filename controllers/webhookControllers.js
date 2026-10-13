@@ -1,14 +1,8 @@
 import crypto from "crypto";
-import {
-  User,
-  Transactions,
-  PaymentMethods,
-  SupportTicket,
-} from "../tableDeclarations.js";
+import { User, PaymentMethods, SupportTicket } from "../tableDeclarations.js";
 import { admin } from "../config/firebaseAdmin.js";
 import { setImmediate } from "timers";
 import {
-  generateTransactionId,
   generateNotificationId,
   generateTicketRefId,
 } from "../utils/idGenerator.js";
@@ -138,81 +132,7 @@ export const handleFlutterwaveWebhook = async (req, res) => {
       const { event, data } = req.body;
 
       if (event === "charge.completed" && data?.status === "successful") {
-        const { userId, type, methodType, iCashAmount } = data.meta || {};
-
         const tasks = [];
-        if (type === "icash_purchase" && userId) {
-          const iCashToCredit = Math.floor(iCashAmount || 0);
-
-          tasks.push(
-            (async () => {
-              const querySnapshot = await User.where("uid", "==", userId)
-                .limit(1)
-                .get();
-              if (querySnapshot.empty) return;
-
-              const userDocSnap = querySnapshot.docs[0];
-              const userDocRef = userDocSnap.ref;
-              const userData = userDocSnap.data();
-              const transactionId = generateTransactionId("buy");
-              await Promise.all([
-                userDocRef.update({
-                  pointsBalance:
-                    admin.firestore.FieldValue.increment(iCashToCredit),
-                  updatedAt: new Date(),
-                }),
-                Transactions.doc(transactionId).set({
-                  transactionId,
-                  userId,
-                  type: "buy",
-                  currency: data.currency,
-                  amountLocal: data.amount,
-                  amountICash: iCashToCredit,
-                  status: "success",
-                  payType: "in",
-                  title: `${iCashToCredit} iCash purchased`,
-                  reference: data.tx_ref,
-                  createdAt: new Date(),
-                }),
-                createNotification({
-                  notificationId: generateNotificationId("finance"),
-                  recipientId: userId,
-                  recipientEmail: userData.email,
-                  isRead: false,
-                  category: "finance",
-                  actionType: "ICASH_PURCHASE",
-                  title: "iCash Purchase Successful",
-                  message: `${methodType || "Card"} payment made for ${iCashToCredit} iCash is successful.`,
-                  payload: {
-                    userName: userData.firstname,
-                    amountLocal: data.amount,
-                    amountICash: iCashToCredit,
-                    currency: data.currency,
-                    transactionId,
-                  },
-                  sendEmail: true,
-                  sendPush: true,
-                }),
-                notifyAdmins(
-                  { role: ["finance", "super_admin"] },
-                  {
-                    notificationId: generateNotificationId("finance"),
-                    category: "finance",
-                    actionType: "ICASH_PURCHASE_ADMIN",
-                    title: "Finance Audit: New Purchase",
-                    message: `User ${userId} purchased ${iCashToCredit} iCash.`,
-                    payload: {
-                      userId,
-                      amountICash: iCashToCredit,
-                      txRef: data.tx_ref,
-                    },
-                  },
-                  false,
-                ),
-              ]);
-            })(),
-          );
-        }
         const paymentToken = data.card?.token || data.account?.token;
         if (paymentToken && data?.meta?.userId) {
           tasks.push(

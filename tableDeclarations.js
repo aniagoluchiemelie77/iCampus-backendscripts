@@ -25,7 +25,6 @@ export const ProductOrder = db.collection("orders");
 export const ProductImpression = db.collection("productimpressions");
 export const ProductSales = db.collection("sales");
 export const Reviews = db.collection("reviews");
-export const Payout = db.collection("payout");
 export const DropOffStation = db.collection("dropstations");
 export const AccountStatement = db.collection("accountstatements");
 export const SchoolConfiguration = db.collection("schoolconfiguration");

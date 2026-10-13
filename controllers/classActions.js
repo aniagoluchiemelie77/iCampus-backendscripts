@@ -912,18 +912,20 @@ export const deleteCourseMaterial = async (req, res) => {
   const action = "deleteCourseMaterial";
   try {
     const { courseId } = req.params;
-    const { materialUrl } = req.body || {};
+    const { resourceId } = req.body || {};
     const currentUserId = req.user?.uid || req.user?.id;
 
-    if (!materialUrl) {
+    if (!resourceId) {
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        "Missing reference target URL.",
+        "Missing reference resource ID.",
       );
-      return res.status(400).json({ message: "Missing reference target URL." });
+      return res
+        .status(400)
+        .json({ message: "Missing reference resource ID." });
     }
 
     const courseQuery = await Course.where("courseId", "==", courseId)
@@ -959,24 +961,42 @@ export const deleteCourseMaterial = async (req, res) => {
         .status(403)
         .json({ message: "Action Denied. Access authorization mismatch." });
     }
-    try {
-      const encodedFilePath = materialUrl.split("/o/")[1]?.split("?")[0];
-      if (encodedFilePath) {
-        const filePath = decodeURIComponent(encodedFilePath);
-        const bucket = storage.bucket();
-        await bucket.file(filePath).delete();
-      }
-    } catch (storageError) {
-      console.error(
-        "Firebase Storage Cleanup Failed (Link may be orphaned):",
-        storageError,
-      );
-    }
 
     const existingResources = course.resources || [];
-    const updatedResources = existingResources.filter(
-      (resUrl) => resUrl !== materialUrl,
+    const targetResource = existingResources.find(
+      (res) => typeof res === "object" && res.resourceId === resourceId,
     );
+    const legacyTargetUrl =
+      typeof targetResource === "undefined"
+        ? existingResources.find(
+            (res) => typeof res === "string" && res.includes(resourceId),
+          )
+        : null;
+
+    const materialUrl = targetResource?.resourceUrl || legacyTargetUrl;
+
+    if (materialUrl && typeof materialUrl === "string") {
+      try {
+        const encodedFilePath = materialUrl.split("/o/")[1]?.split("?")[0];
+        if (encodedFilePath) {
+          const filePath = decodeURIComponent(encodedFilePath);
+          const bucket = storage.bucket();
+          await bucket.file(filePath).delete();
+        }
+      } catch (storageError) {
+        console.error(
+          "Firebase Storage Cleanup Failed (Link may be orphaned):",
+          storageError,
+        );
+      }
+    }
+    const updatedResources = existingResources.filter((res) => {
+      if (typeof res === "object" && res !== null) {
+        return res.resourceId !== resourceId;
+      }
+      return res !== resourceId;
+    });
+
     const now = new Date();
 
     await courseDocRef.update({
@@ -988,13 +1008,14 @@ export const deleteCourseMaterial = async (req, res) => {
       ...course,
       resources: updatedResources,
     };
+
     setImmediate(async () => {
       try {
         const studentsQuery = await User.where("usertype", "==", "student")
           .where("department", "==", updatedCourse.department)
           .get();
 
-        const fileName = materialUrl.split("/").pop() || "Resource Document";
+        const fileName = targetResource?.resourceTitle || "Resource Document";
         const notificationPromises = [];
         studentsQuery.forEach((doc) => {
           const student = doc.data();
@@ -2924,10 +2945,11 @@ export const uploadCourseMaterial = async (req, res) => {
   const action = "uploadCourseMaterial";
   try {
     const { courseId } = req.params;
-    const { materialUrl, title } = req.body;
+    const { resourceTitle, resourceUrl, resourceSize, resourceMimetype } =
+      req.body;
     const currentUserId = req.user?.uid || req.user?.id;
 
-    if (!materialUrl) {
+    if (!resourceUrl) {
       logControllerPerformance(
         controllerName,
         action,
@@ -2972,23 +2994,44 @@ export const uploadCourseMaterial = async (req, res) => {
         message: "Unauthorized. You are not a lecturer for this course.",
       });
     }
+    const newResource = {
+      resourceId: `res_${uuidv4()}`,
+      resourceTitle:
+        resourceTitle || resourceUrl.split("/").pop() || "Untitled Document",
+      resourceUrl,
+      resourceSize: resourceSize || 0,
+      resourceMimetype: resourceMimetype || "application/octet-stream",
+    };
 
     const existingResources = course.resources || [];
-    const updatedResources = [...existingResources, materialUrl];
+    const normalizedExisting = existingResources.map((res, index) => {
+      if (typeof res === "string") {
+        return {
+          resourceId: `legacy_${index}`,
+          resourceTitle: res.split("/").pop() || "General Reference",
+          resourceUrl: res,
+          resourceSize: 0,
+          resourceMimetype: "application/pdf",
+        };
+      }
+      return res;
+    });
+
+    const updatedResources = [...normalizedExisting, newResource];
     const now = new Date();
 
     await courseDocRef.update({
       resources: updatedResources,
       updatedAt: now,
     });
+
     setImmediate(async () => {
       try {
         const studentsQuery = await User.where("usertype", "==", "student")
           .where("department", "==", course.department)
           .get();
 
-        const fileName =
-          title || materialUrl.split("/").pop() || "New Resource";
+        const fileName = newResource.resourceTitle;
         const notificationPromises = [];
         studentsQuery.forEach((doc) => {
           const student = doc.data();
@@ -3008,7 +3051,7 @@ export const uploadCourseMaterial = async (req, res) => {
                 courseTitle: course.courseTitle || course.title,
                 course,
                 fileName,
-                materialUrl,
+                materialUrl: resourceUrl,
               },
               entityId: courseId,
               entityType: "course",
@@ -3028,6 +3071,7 @@ export const uploadCourseMaterial = async (req, res) => {
 
     return res.status(200).json({
       message: "Material added successfully",
+      resource: newResource,
     });
   } catch (error) {
     console.error("Backend Upload Sync Error:", error.message);

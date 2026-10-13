@@ -1430,7 +1430,9 @@ export const signUp = async (req, res) => {
     const displayNameForGen =
       firstname || lastname || organizationName || "User";
 
-    const [uid] = await Promise.all([Promise.resolve(generateUserUID())]);
+    const [uid] = await Promise.all([
+      Promise.resolve(generateUserUID(usertype)),
+    ]);
     const isVerified = usertype === "student" || usertype === "lecturer";
     const queriesToRun = [
       existingUserQuery.limit(1).get(),
