@@ -2623,6 +2623,497 @@ export const getCourseGradebook = async (req, res) => {
     return res.status(500).json({ message: error.message });
   }
 };
+export const compareStudentFacesWithGemini = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "compareStudentFacesWithGeminiController";
+  const action = "compareStudentFacesWithGemini";
+  try {
+    const { selfieBase64, targetImageUrl } = req.body;
+    if (!selfieBase64 || !targetImageUrl) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Verification parameters are missing.",
+      );
+      return res.status(400).json({
+        verified: false,
+        message: "Verification parameters are missing.",
+      });
+    }
+
+    const responseImage = await axios.get(targetImageUrl, {
+      responseType: "arraybuffer",
+    });
+    const targetImageBase64 = Buffer.from(
+      responseImage.data,
+      "binary",
+    ).toString("base64");
+
+    const textInstructions =
+      "You are an automated biometric security system monitoring classroom attendance. " +
+      "Compare Image 1 (live front-camera phone snapshot) and Image 2 (official institutional database headshot). " +
+      "Determine if they show the exact same student. Ignore differences in backgrounds, lighting conditions, " +
+      "or casual vs structured expressions. Be strict against proxy attempts or pictures held up to the camera.\n\n" +
+      "Return your verdict STRICTLY as a JSON object matching this schema:\n" +
+      '{"verified": boolean, "reason": "brief plain text explanation for audit logs"}';
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      config: {
+        responseMimeType: "application/json",
+        temperature: 0.2,
+      },
+      contents: [
+        textInstructions,
+        {
+          inlineData: {
+            data: selfieBase64,
+            mimeType: "image/jpeg",
+          },
+        },
+        {
+          inlineData: {
+            data: targetImageBase64,
+            mimeType: "image/jpeg",
+          },
+        },
+      ],
+    });
+
+    const aiOutputText = response.text;
+    if (!aiOutputText) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "AI Engine returned empty validation text.",
+      );
+      return res.status(500).json({
+        verified: false,
+        message: "AI Engine returned empty validation text.",
+      });
+    }
+
+    const validationResult = JSON.parse(aiOutputText);
+
+    if (validationResult.verified === true) {
+      setImmediate(() => {
+        logControllerPerformance(controllerName, action, startTime, "success");
+      });
+      return res.status(200).json({
+        verified: true,
+        message: "Identity confirmed successfully.",
+      });
+    } else {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        validationResult.reason || "Facial signature mismatch.",
+      );
+      return res.status(401).json({
+        verified: false,
+        message: validationResult.reason || "Facial signature mismatch.",
+      });
+    }
+  } catch (error) {
+    console.error("Gemini Multi-Modal verification exception:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    return res.status(500).json({
+      verified: false,
+      message: "Internal server processing failure.",
+    });
+  }
+};
+export const uploadCourseDetails = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "uploadCourseDetailsController";
+  const action = "uploadCourseDetails";
+  try {
+    if (!req.files || req.files.length === 0) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "No files uploaded",
+        ),
+      );
+      return res.status(400).json({ message: "No files uploaded" });
+    }
+    const fileBuffer = req.files[0].buffer;
+    const base64Data = fileBuffer.toString("base64");
+    const requesterUid = req.user?.uid || req.user?.id;
+    const userType = req.user?.usertype;
+
+    const prompt =
+      userType === "lecturer"
+        ? `
+        Extract all details from this course allocation document. 
+        It may consist of multiple pages or tables. Combine the data into one response.
+        
+        Return ONLY a valid JSON object matching this schema:
+        {
+          "departmentInfo": {
+              "schoolName": "University name from header/logo",
+              "college": "Faculty name",
+              "department": "Department",
+              "session": "e.g., 2025/2026",
+              "semester": "First" or "Second"
+          },
+          "courses": [
+            {
+              "courseCode": "e.g., GNG 113",
+              "courseTitle": "Full title",
+              "semester": "First" or "Second",
+              "session": "e.g., 2025/2026",
+              "credits": 2,
+              "level": "Level digits only if available",
+              "lecturers": ["Dr. Okogume", "Engr. Esidje"]
+            }
+          ]
+        }
+      `
+        : `
+        Extract all details from this course registration document. 
+        It may consist of multiple pages or images. Combine the data into one response.
+        
+        Return ONLY a valid JSON object matching this schema:
+        {
+          "studentInfo": {
+              "schoolName": "University name from header/logo",
+              "studentName": "Full name",
+              "college": "Faculty name",
+              "department": "Department",
+              "level": "Level digits only",
+              "matricNo": "Registration number",
+              "date": "Document date"
+          },
+          "courses": [
+            {
+              "courseCode": "e.g., GET 311",
+              "courseTitle": "Full title",
+              "semester": "First" or "Second",
+              "session": "e.g., 2024/2025",
+              "credits": 3
+            }
+          ]
+        }
+        Note: If a course appears across page breaks, do not duplicate it.
+      `;
+
+    const filePart = {
+      inlineData: {
+        data: base64Data,
+        mimeType: "application/pdf",
+      },
+    };
+    const result = await ai.models.generateContent({
+      model: "gemini-3.8-flash",
+      config: { responseMimeType: "application/json" },
+      contents: [
+        prompt,
+        {
+          inlineData: {
+            data: base64Data,
+            mimeType: "application/pdf",
+          },
+        },
+      ],
+    });
+
+    let extraction;
+    try {
+      console.log("Step 6: Extraction");
+      extraction = JSON.parse(result.response.text());
+    } catch (e) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "AI returned invalid JSON structure.",
+        ),
+      );
+      return res
+        .status(422)
+        .json({ message: "AI returned invalid JSON structure." });
+    }
+
+    const { studentInfo, departmentInfo, courses } = extraction;
+
+    if (!courses || courses.length === 0) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Failed to extract structured course records.",
+        ),
+      );
+      return res
+        .status(422)
+        .json({ message: "Failed to extract structured course records." });
+    }
+
+    if (userType === "student") {
+      if (!studentInfo) {
+        return res
+          .status(422)
+          .json({ message: "Missing student info block in document." });
+      }
+      const submittedMatric = studentInfo.matricNo
+        ?.replace(/[^a-zA-Z0-9]/g, "")
+        .toLowerCase();
+      const userMatric = req.user?.matricNumber
+        ?.replace(/[^a-zA-Z0-9]/g, "")
+        .toLowerCase();
+
+      if (!submittedMatric || submittedMatric !== userMatric) {
+        setImmediate(() =>
+          logControllerPerformance(
+            controllerName,
+            action,
+            startTime,
+            "error",
+            "Document verification failed. Matric Number mismatch.",
+          ),
+        );
+        return res.status(403).json({
+          message: "Document verification failed. Matric Number mismatch.",
+        });
+      }
+    }
+
+    const now = new Date();
+    const processedCourseIds = [];
+
+    for (const courseData of courses) {
+      const cleanTitle = courseData.courseTitle.trim();
+
+      const courseQuery = await Courses.where("courseTitle", ">=", cleanTitle)
+        .where("courseTitle", "<=", cleanTitle + "\uf8ff")
+        .limit(1)
+        .get();
+
+      let courseDocRef;
+      let courseId;
+
+      if (!courseQuery.empty) {
+        const doc = courseQuery.docs[0];
+        courseDocRef = doc.ref;
+        const existingData = doc.data();
+        courseId = existingData.courseId;
+
+        if (userType === "student") {
+          const studentsEnrolled = existingData.studentsEnrolled || [];
+          if (!studentsEnrolled.includes(requesterUid)) {
+            await courseDocRef.update({
+              studentsEnrolled: [...studentsEnrolled, requesterUid],
+              updatedAt: now,
+            });
+          }
+        } else if (userType === "lecturer") {
+          const extractedLecturerNames = courseData.lecturers || [];
+          const resolvedLecturerIds = new Set(existingData.lecturerIds || []);
+          resolvedLecturerIds.add(requesterUid);
+
+          for (const rawName of extractedLecturerNames) {
+            const sanitizedName = rawName
+              .replace(/(dr\.|engr\.|mr\.|mrs\.|prof\.)/gi, "")
+              .trim();
+            const nameParts = sanitizedName.split(" ");
+            const lastName = nameParts[nameParts.length - 1];
+
+            if (lastName) {
+              const matchedUserQuery = await User.where(
+                "lastname",
+                ">=",
+                lastName,
+              )
+                .where("lastname", "<=", lastName + "\uf8ff")
+                .limit(1)
+                .get();
+
+              if (!matchedUserQuery.empty) {
+                resolvedLecturerIds.add(matchedUserQuery.docs[0].data().uid);
+              }
+            }
+          }
+
+          await courseDocRef.update({
+            lecturerIds: Array.from(resolvedLecturerIds),
+            updatedAt: now,
+          });
+        }
+      } else {
+        courseId = generateCourseId(
+          courseData.courseTitle,
+          courseData.courseCode,
+        );
+        courseDocRef = Course.doc();
+
+        let initialLecturerIds = [];
+        if (userType === "lecturer") {
+          const resolvedSet = new Set([requesterUid]);
+          const extractedLecturerNames = courseData.lecturers || [];
+
+          for (const rawName of extractedLecturerNames) {
+            const sanitizedName = rawName
+              .replace(/(dr\.|engr\.|mr\.|mrs\.|prof\.)/gi, "")
+              .trim();
+            const nameParts = sanitizedName.split(" ");
+            const lastName = nameParts[nameParts.length - 1];
+
+            if (lastName) {
+              const matchedUserQuery = await User.where(
+                "lastname",
+                ">=",
+                lastName,
+              )
+                .where("lastname", "<=", lastName + "\uf8ff")
+                .limit(1)
+                .get();
+
+              if (!matchedUserQuery.empty) {
+                resolvedSet.add(matchedUserQuery.docs[0].data().uid);
+              }
+            }
+          }
+          initialLecturerIds = Array.from(resolvedSet);
+        }
+
+        const newCourseData = {
+          ...courseData,
+          courseId,
+          schoolName:
+            req.user?.schoolName ||
+            studentInfo?.schoolName ||
+            departmentInfo?.schoolName,
+          schoolCode: req.user?.schoolCode || studentInfo?.schoolCode,
+          department:
+            studentInfo?.department ||
+            departmentInfo?.department ||
+            req.user?.department,
+          level: courseData.level || studentInfo?.level || "",
+          studentsEnrolled: userType === "student" ? [requesterUid] : [],
+          lecturerIds: initialLecturerIds,
+          isActive: true,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+        await courseDocRef.set(newCourseData);
+      }
+      processedCourseIds.push(courseId);
+    }
+
+    const userQuery = await User.where("uid", "==", requesterUid)
+      .limit(1)
+      .get();
+
+    if (!userQuery.empty) {
+      const userDocRef = userQuery.docs[0].ref;
+      const userData = userQuery.docs[0].data();
+
+      if (userType === "student") {
+        const existingEnrolled =
+          userData.enrolledCourses || userData.coursesEnrolled || [];
+        const updatedEnrolled = Array.from(
+          new Set([...existingEnrolled, ...processedCourseIds]),
+        );
+        await userDocRef.update({
+          enrolledCourses: updatedEnrolled,
+          updatedAt: now,
+        });
+      } else if (userType === "lecturer") {
+        const existingTeaching = userData.coursesTeaching || [];
+        const updatedTeaching = Array.from(
+          new Set([...existingTeaching, ...processedCourseIds]),
+        );
+        await userDocRef.update({
+          coursesTeaching: updatedTeaching,
+          updatedAt: now,
+        });
+      }
+    }
+
+    const firstCourse = courses[0] || {};
+    const targetLevel =
+      userType === "student" ? studentInfo?.level : "Departmental";
+    const documentType =
+      userType === "student" ? "course registration" : "course allocation";
+    res.status(200).json({
+      message: `Processed ${courses.length} courses successfully.`,
+      coursesCount: courses.length,
+    });
+    setImmediate(async () => {
+      try {
+        await createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: requesterUid,
+          isRead: false,
+          recipientEmail: req.user?.email,
+          sendEmail: !!req.user?.email,
+          category: "academic",
+          actionType: "COURSES_EXTRACTED",
+          title:
+            userType === "student"
+              ? "Course Registration Synced"
+              : "Course Allocation Synced",
+          message: `Successfully processed ${courses.length} courses from ${documentType} document.`,
+          payload: {
+            userName:
+              req.user?.firstname ||
+              (userType === "student" ? studentInfo?.studentName : "Lecturer"),
+            courseCount: courses.length,
+            level: targetLevel,
+            semester: firstCourse.semester
+              ? firstCourse.semester.toLowerCase()
+              : "unknown",
+            session: firstCourse.session || departmentInfo?.session || "",
+          },
+          entityId: requesterUid,
+          entityType: "user",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        });
+
+        logControllerPerformance(controllerName, action, startTime, "success");
+      } catch (err) {
+        console.error("Background Notification Dispatch Error:", err);
+      }
+    });
+  } catch (error) {
+    console.error("Extraction Route Error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    if (!res.headersSent) {
+      return res.status(500).json({ message: "Internal Server Error" });
+    }
+  }
+};
 
 //Tested and trusted using jest
 export const createCourseContent = async (req, res) => {
@@ -3229,497 +3720,6 @@ export const editCourseContent = async (req, res) => {
       return res
         .status(500)
         .json({ message: "Server error updating curriculum topic" });
-    }
-  }
-};
-export const compareStudentFacesWithGemini = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "compareStudentFacesWithGeminiController";
-  const action = "compareStudentFacesWithGemini";
-  try {
-    const { selfieBase64, targetImageUrl } = req.body;
-    if (!selfieBase64 || !targetImageUrl) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Verification parameters are missing.",
-      );
-      return res.status(400).json({
-        verified: false,
-        message: "Verification parameters are missing.",
-      });
-    }
-
-    const responseImage = await axios.get(targetImageUrl, {
-      responseType: "arraybuffer",
-    });
-    const targetImageBase64 = Buffer.from(
-      responseImage.data,
-      "binary",
-    ).toString("base64");
-
-    const textInstructions =
-      "You are an automated biometric security system monitoring classroom attendance. " +
-      "Compare Image 1 (live front-camera phone snapshot) and Image 2 (official institutional database headshot). " +
-      "Determine if they show the exact same student. Ignore differences in backgrounds, lighting conditions, " +
-      "or casual vs structured expressions. Be strict against proxy attempts or pictures held up to the camera.\n\n" +
-      "Return your verdict STRICTLY as a JSON object matching this schema:\n" +
-      '{"verified": boolean, "reason": "brief plain text explanation for audit logs"}';
-
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      config: {
-        responseMimeType: "application/json",
-        temperature: 0.2,
-      },
-      contents: [
-        textInstructions,
-        {
-          inlineData: {
-            data: selfieBase64,
-            mimeType: "image/jpeg",
-          },
-        },
-        {
-          inlineData: {
-            data: targetImageBase64,
-            mimeType: "image/jpeg",
-          },
-        },
-      ],
-    });
-
-    const aiOutputText = response.text;
-    if (!aiOutputText) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "AI Engine returned empty validation text.",
-      );
-      return res.status(500).json({
-        verified: false,
-        message: "AI Engine returned empty validation text.",
-      });
-    }
-
-    const validationResult = JSON.parse(aiOutputText);
-
-    if (validationResult.verified === true) {
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-      return res.status(200).json({
-        verified: true,
-        message: "Identity confirmed successfully.",
-      });
-    } else {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        validationResult.reason || "Facial signature mismatch.",
-      );
-      return res.status(401).json({
-        verified: false,
-        message: validationResult.reason || "Facial signature mismatch.",
-      });
-    }
-  } catch (error) {
-    console.error("Gemini Multi-Modal verification exception:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    return res.status(500).json({
-      verified: false,
-      message: "Internal server processing failure.",
-    });
-  }
-};
-export const uploadCourseDetails = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "uploadCourseDetailsController";
-  const action = "uploadCourseDetails";
-  try {
-    if (!req.files || req.files.length === 0) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "No files uploaded",
-        ),
-      );
-      return res.status(400).json({ message: "No files uploaded" });
-    }
-    const fileBuffer = req.files[0].buffer;
-    const base64Data = fileBuffer.toString("base64");
-    const requesterUid = req.user?.uid || req.user?.id;
-    const userType = req.user?.usertype;
-
-    const prompt =
-      userType === "lecturer"
-        ? `
-        Extract all details from this course allocation document. 
-        It may consist of multiple pages or tables. Combine the data into one response.
-        
-        Return ONLY a valid JSON object matching this schema:
-        {
-          "departmentInfo": {
-              "schoolName": "University name from header/logo",
-              "college": "Faculty name",
-              "department": "Department",
-              "session": "e.g., 2025/2026",
-              "semester": "First" or "Second"
-          },
-          "courses": [
-            {
-              "courseCode": "e.g., GNG 113",
-              "courseTitle": "Full title",
-              "semester": "First" or "Second",
-              "session": "e.g., 2025/2026",
-              "credits": 2,
-              "level": "Level digits only if available",
-              "lecturers": ["Dr. Okogume", "Engr. Esidje"]
-            }
-          ]
-        }
-      `
-        : `
-        Extract all details from this course registration document. 
-        It may consist of multiple pages or images. Combine the data into one response.
-        
-        Return ONLY a valid JSON object matching this schema:
-        {
-          "studentInfo": {
-              "schoolName": "University name from header/logo",
-              "studentName": "Full name",
-              "college": "Faculty name",
-              "department": "Department",
-              "level": "Level digits only",
-              "matricNo": "Registration number",
-              "date": "Document date"
-          },
-          "courses": [
-            {
-              "courseCode": "e.g., GET 311",
-              "courseTitle": "Full title",
-              "semester": "First" or "Second",
-              "session": "e.g., 2024/2025",
-              "credits": 3
-            }
-          ]
-        }
-        Note: If a course appears across page breaks, do not duplicate it.
-      `;
-
-    const filePart = {
-      inlineData: {
-        data: base64Data,
-        mimeType: "application/pdf",
-      },
-    };
-    const result = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      config: { responseMimeType: "application/json" },
-      contents: [
-        prompt,
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: "application/pdf",
-          },
-        },
-      ],
-    });
-
-    let extraction;
-    try {
-      console.log("Step 6: Extraction");
-      extraction = JSON.parse(result.response.text());
-    } catch (e) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "AI returned invalid JSON structure.",
-        ),
-      );
-      return res
-        .status(422)
-        .json({ message: "AI returned invalid JSON structure." });
-    }
-
-    const { studentInfo, departmentInfo, courses } = extraction;
-
-    if (!courses || courses.length === 0) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Failed to extract structured course records.",
-        ),
-      );
-      return res
-        .status(422)
-        .json({ message: "Failed to extract structured course records." });
-    }
-
-    if (userType === "student") {
-      if (!studentInfo) {
-        return res
-          .status(422)
-          .json({ message: "Missing student info block in document." });
-      }
-      const submittedMatric = studentInfo.matricNo
-        ?.replace(/[^a-zA-Z0-9]/g, "")
-        .toLowerCase();
-      const userMatric = req.user?.matricNumber
-        ?.replace(/[^a-zA-Z0-9]/g, "")
-        .toLowerCase();
-
-      if (!submittedMatric || submittedMatric !== userMatric) {
-        setImmediate(() =>
-          logControllerPerformance(
-            controllerName,
-            action,
-            startTime,
-            "error",
-            "Document verification failed. Matric Number mismatch.",
-          ),
-        );
-        return res.status(403).json({
-          message: "Document verification failed. Matric Number mismatch.",
-        });
-      }
-    }
-
-    const now = new Date();
-    const processedCourseIds = [];
-
-    for (const courseData of courses) {
-      const cleanTitle = courseData.courseTitle.trim();
-
-      const courseQuery = await Courses.where("courseTitle", ">=", cleanTitle)
-        .where("courseTitle", "<=", cleanTitle + "\uf8ff")
-        .limit(1)
-        .get();
-
-      let courseDocRef;
-      let courseId;
-
-      if (!courseQuery.empty) {
-        const doc = courseQuery.docs[0];
-        courseDocRef = doc.ref;
-        const existingData = doc.data();
-        courseId = existingData.courseId;
-
-        if (userType === "student") {
-          const studentsEnrolled = existingData.studentsEnrolled || [];
-          if (!studentsEnrolled.includes(requesterUid)) {
-            await courseDocRef.update({
-              studentsEnrolled: [...studentsEnrolled, requesterUid],
-              updatedAt: now,
-            });
-          }
-        } else if (userType === "lecturer") {
-          const extractedLecturerNames = courseData.lecturers || [];
-          const resolvedLecturerIds = new Set(existingData.lecturerIds || []);
-          resolvedLecturerIds.add(requesterUid);
-
-          for (const rawName of extractedLecturerNames) {
-            const sanitizedName = rawName
-              .replace(/(dr\.|engr\.|mr\.|mrs\.|prof\.)/gi, "")
-              .trim();
-            const nameParts = sanitizedName.split(" ");
-            const lastName = nameParts[nameParts.length - 1];
-
-            if (lastName) {
-              const matchedUserQuery = await User.where(
-                "lastname",
-                ">=",
-                lastName,
-              )
-                .where("lastname", "<=", lastName + "\uf8ff")
-                .limit(1)
-                .get();
-
-              if (!matchedUserQuery.empty) {
-                resolvedLecturerIds.add(matchedUserQuery.docs[0].data().uid);
-              }
-            }
-          }
-
-          await courseDocRef.update({
-            lecturerIds: Array.from(resolvedLecturerIds),
-            updatedAt: now,
-          });
-        }
-      } else {
-        courseId = generateCourseId(
-          courseData.courseTitle,
-          courseData.courseCode,
-        );
-        courseDocRef = Course.doc();
-
-        let initialLecturerIds = [];
-        if (userType === "lecturer") {
-          const resolvedSet = new Set([requesterUid]);
-          const extractedLecturerNames = courseData.lecturers || [];
-
-          for (const rawName of extractedLecturerNames) {
-            const sanitizedName = rawName
-              .replace(/(dr\.|engr\.|mr\.|mrs\.|prof\.)/gi, "")
-              .trim();
-            const nameParts = sanitizedName.split(" ");
-            const lastName = nameParts[nameParts.length - 1];
-
-            if (lastName) {
-              const matchedUserQuery = await User.where(
-                "lastname",
-                ">=",
-                lastName,
-              )
-                .where("lastname", "<=", lastName + "\uf8ff")
-                .limit(1)
-                .get();
-
-              if (!matchedUserQuery.empty) {
-                resolvedSet.add(matchedUserQuery.docs[0].data().uid);
-              }
-            }
-          }
-          initialLecturerIds = Array.from(resolvedSet);
-        }
-
-        const newCourseData = {
-          ...courseData,
-          courseId,
-          schoolName:
-            req.user?.schoolName ||
-            studentInfo?.schoolName ||
-            departmentInfo?.schoolName,
-          schoolCode: req.user?.schoolCode || studentInfo?.schoolCode,
-          department:
-            studentInfo?.department ||
-            departmentInfo?.department ||
-            req.user?.department,
-          level: courseData.level || studentInfo?.level || "",
-          studentsEnrolled: userType === "student" ? [requesterUid] : [],
-          lecturerIds: initialLecturerIds,
-          isActive: true,
-          createdAt: now,
-          updatedAt: now,
-        };
-
-        await courseDocRef.set(newCourseData);
-      }
-      processedCourseIds.push(courseId);
-    }
-
-    const userQuery = await User.where("uid", "==", requesterUid)
-      .limit(1)
-      .get();
-
-    if (!userQuery.empty) {
-      const userDocRef = userQuery.docs[0].ref;
-      const userData = userQuery.docs[0].data();
-
-      if (userType === "student") {
-        const existingEnrolled =
-          userData.enrolledCourses || userData.coursesEnrolled || [];
-        const updatedEnrolled = Array.from(
-          new Set([...existingEnrolled, ...processedCourseIds]),
-        );
-        await userDocRef.update({
-          enrolledCourses: updatedEnrolled,
-          updatedAt: now,
-        });
-      } else if (userType === "lecturer") {
-        const existingTeaching = userData.coursesTeaching || [];
-        const updatedTeaching = Array.from(
-          new Set([...existingTeaching, ...processedCourseIds]),
-        );
-        await userDocRef.update({
-          coursesTeaching: updatedTeaching,
-          updatedAt: now,
-        });
-      }
-    }
-
-    const firstCourse = courses[0] || {};
-    const targetLevel =
-      userType === "student" ? studentInfo?.level : "Departmental";
-    const documentType =
-      userType === "student" ? "course registration" : "course allocation";
-    res.status(200).json({
-      message: `Processed ${courses.length} courses successfully.`,
-      coursesCount: courses.length,
-    });
-    setImmediate(async () => {
-      try {
-        await createNotification({
-          notificationId: generateNotificationId("classroom"),
-          recipientId: requesterUid,
-          isRead: false,
-          recipientEmail: req.user?.email,
-          sendEmail: !!req.user?.email,
-          category: "academic",
-          actionType: "COURSES_EXTRACTED",
-          title:
-            userType === "student"
-              ? "Course Registration Synced"
-              : "Course Allocation Synced",
-          message: `Successfully processed ${courses.length} courses from ${documentType} document.`,
-          payload: {
-            userName:
-              req.user?.firstname ||
-              (userType === "student" ? studentInfo?.studentName : "Lecturer"),
-            courseCount: courses.length,
-            level: targetLevel,
-            semester: firstCourse.semester
-              ? firstCourse.semester.toLowerCase()
-              : "unknown",
-            session: firstCourse.session || departmentInfo?.session || "",
-          },
-          entityId: requesterUid,
-          entityType: "user",
-          sendPush: true,
-          sendSocket: true,
-          saveToDb: true,
-        });
-
-        logControllerPerformance(controllerName, action, startTime, "success");
-      } catch (err) {
-        console.error("Background Notification Dispatch Error:", err);
-      }
-    });
-  } catch (error) {
-    console.error("Extraction Route Error:", error.message);
-    setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
-    );
-    if (!res.headersSent) {
-      return res.status(500).json({ message: "Internal Server Error" });
     }
   }
 };

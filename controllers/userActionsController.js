@@ -1110,6 +1110,186 @@ export const saveFcmToken = async (req, res) => {
     });
   }
 };
+export const aiChat = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "aiChatController";
+  const action = "aiChat";
+
+  try {
+    const { message, context = {}, history = [] } = req.body || {};
+    const uid = req.user?.uid || req.user?.id;
+
+    if (!uid) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "Unauthorized user context",
+      );
+      return res
+        .status(401)
+        .json({ success: false, error: "Unauthorized user context." });
+    }
+
+    if (
+      !message ||
+      typeof message !== "string" ||
+      message.trim().length === 0
+    ) {
+      return res
+        .status(400)
+        .json({ success: false, error: "Message content is required." });
+    }
+
+    const { type = "general", data = {} } = context;
+    let systemInstruction = "";
+    if (type === "support") {
+      systemInstruction = `You are iAssistant, the official Support AI for iCampus. 
+        Use the provided FAQ knowledge: ${JSON.stringify(typeof FAQ_DATA !== "undefined" ? FAQ_DATA : {})}. 
+        If the user's issue cannot be resolved via the FAQs, acknowledge the limitation 
+        and state that you are escalating the issue to a human support ticket.
+        If the issue requires escalation, respond strictly in a valid JSON format:
+          {
+            "reply": "Your natural language response to the user...",
+            "requiresEscalation": true,
+            "suggestedCategory": "technical|billing|content|other",
+            "suggestedSummary": "A very short 5- 10 words summary of the issue",
+            "suggestedSeverity": "low|medium|high|critical"
+          }
+          If no escalation is needed, just provide your response as plain text or wrapped in the same JSON structure with "requiresEscalation": false.
+        `;
+    } else {
+      systemInstruction = `You are iAssistant, the official Academic AI Tutor for iCampus. 
+      Your purpose is to help students and lecturers understand educational material. 
+      Academic Context: ${type === "course" ? `Course: ${data.courseTitle || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.`;
+    }
+    const formattedHistory = prepareChatHistory(history);
+    const chat = ai.chats.create({
+      model: "gemini-3.8-flash",
+      history: formattedHistory,
+      config: {
+        systemInstruction: systemInstruction,
+      },
+    });
+    const result = await chat.sendMessage(message);
+    const replyText = result.text;
+
+    if (!replyText) {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        "AI Engine returned empty chat response.",
+      );
+      return res.status(500).json({
+        success: false,
+        error: "AI Engine returned empty chat response.",
+      });
+    }
+    let finalReply;
+    let aiResponse;
+    const ticketRefId =
+      typeof generateTicketId === "function"
+        ? generateTicketId(uid)
+        : `TKT-${Date.now()}`;
+    let createdTicketId = null;
+
+    try {
+      const cleanedJsonText = replyText
+        .replace(/^```json\s*([\s\S]*?)\s*```$/, "$1")
+        .trim();
+      aiResponse = JSON.parse(cleanedJsonText);
+    } catch (e) {
+      aiResponse = { reply: replyText, requiresEscalation: false };
+    }
+
+    let newTicket = null;
+    if (aiResponse.requiresEscalation) {
+      newTicket = {
+        userId: uid,
+        originalMessage: message,
+        status: "open",
+        ticketRefId,
+        summary: aiResponse.suggestedSummary || "AI could not resolve query",
+        category: aiResponse.suggestedCategory || "other",
+        severity: aiResponse.suggestedSeverity || "medium",
+        thread: [{ sender: "user", message: message }],
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      };
+
+      if (typeof SupportTicket !== "undefined" && SupportTicket.add) {
+        await SupportTicket.add(newTicket);
+      }
+      createdTicketId = ticketRefId;
+      finalReply =
+        (aiResponse.reply || replyText) + `\n\nTicket ID: ${ticketRefId}`;
+    } else {
+      finalReply = aiResponse.reply || replyText;
+    }
+
+    res
+      .status(200)
+      .json({ success: true, reply: finalReply, ticketId: createdTicketId });
+
+    setImmediate(() => {
+      const backgroundTasks = [];
+
+      if (aiResponse.requiresEscalation && typeof notifyAdmins === "function") {
+        backgroundTasks.push(
+          notifyAdmins(
+            { role: ["support", "super_admin"] },
+            {
+              notificationId:
+                typeof generateNotificationId === "function"
+                  ? generateNotificationId("system")
+                  : `NOTIF-${Date.now()}`,
+              actionType: "AI_SUPPORT_ESCALATION",
+              payload: {
+                ticketId: ticketRefId,
+                userUid: uid,
+                summary: newTicket.summary,
+              },
+              senderId: "system",
+            },
+            false,
+          ).catch((err) =>
+            console.error("Admin escalation notification failed:", err),
+          ),
+        );
+      }
+
+      if (typeof logControllerPerformance === "function") {
+        backgroundTasks.push(
+          Promise.resolve().then(() =>
+            logControllerPerformance(
+              controllerName,
+              action,
+              startTime,
+              "success",
+            ),
+          ),
+        );
+      }
+
+      Promise.all(backgroundTasks);
+    });
+  } catch (error) {
+    console.error("AI Chat Error:", error.message);
+    logControllerPerformance(
+      controllerName,
+      action,
+      startTime,
+      "error",
+      error.message,
+    );
+    return res
+      .status(500)
+      .json({ success: false, error: "Failed to fetch response" });
+  }
+};
 
 //Tested and trusted using jest
 export const searchPosts = async (req, res) => {
@@ -3240,185 +3420,5 @@ export const registerDropOffStation = async (req, res) => {
       );
     });
     return res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const aiChat = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "aiChatController";
-  const action = "aiChat";
-
-  try {
-    const { message, context = {}, history = [] } = req.body || {};
-    const uid = req.user?.uid || req.user?.id;
-
-    if (!uid) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-      return res
-        .status(401)
-        .json({ success: false, error: "Unauthorized user context." });
-    }
-
-    if (
-      !message ||
-      typeof message !== "string" ||
-      message.trim().length === 0
-    ) {
-      return res
-        .status(400)
-        .json({ success: false, error: "Message content is required." });
-    }
-
-    const { type = "general", data = {} } = context;
-    let systemInstruction = "";
-    if (type === "support") {
-      systemInstruction = `You are iAssistant, the official Support AI for iCampus. 
-        Use the provided FAQ knowledge: ${JSON.stringify(typeof FAQ_DATA !== "undefined" ? FAQ_DATA : {})}. 
-        If the user's issue cannot be resolved via the FAQs, acknowledge the limitation 
-        and state that you are escalating the issue to a human support ticket.
-        If the issue requires escalation, respond strictly in a valid JSON format:
-          {
-            "reply": "Your natural language response to the user...",
-            "requiresEscalation": true,
-            "suggestedCategory": "technical|billing|content|other",
-            "suggestedSummary": "A very short 5- 10 words summary of the issue",
-            "suggestedSeverity": "low|medium|high|critical"
-          }
-          If no escalation is needed, just provide your response as plain text or wrapped in the same JSON structure with "requiresEscalation": false.
-        `;
-    } else {
-      systemInstruction = `You are iAssistant, the official Academic AI Tutor for iCampus. 
-      Your purpose is to help students and lecturers understand educational material. 
-      Academic Context: ${type === "course" ? `Course: ${data.courseTitle || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.`;
-    }
-    const formattedHistory = prepareChatHistory(history);
-    const chat = ai.chats.create({
-      model: "gemini-3.8-flash",
-      history: formattedHistory,
-      config: {
-        systemInstruction: systemInstruction,
-      },
-    });
-    const result = await chat.sendMessage(message);
-    const replyText = result.text;
-
-    if (!replyText) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "AI Engine returned empty chat response.",
-      );
-      return res.status(500).json({
-        success: false,
-        error: "AI Engine returned empty chat response.",
-      });
-    }
-    let finalReply;
-    let aiResponse;
-    const ticketRefId =
-      typeof generateTicketId === "function"
-        ? generateTicketId(uid)
-        : `TKT-${Date.now()}`;
-    let createdTicketId = null;
-
-    try {
-      const cleanedJsonText = replyText
-        .replace(/^```json\s*([\s\S]*?)\s*```$/, "$1")
-        .trim();
-      aiResponse = JSON.parse(cleanedJsonText);
-    } catch (e) {
-      aiResponse = { reply: replyText, requiresEscalation: false };
-    }
-
-    let newTicket = null;
-    if (aiResponse.requiresEscalation) {
-      newTicket = {
-        userId: uid,
-        originalMessage: message,
-        status: "open",
-        ticketRefId,
-        summary: aiResponse.suggestedSummary || "AI could not resolve query",
-        category: aiResponse.suggestedCategory || "other",
-        severity: aiResponse.suggestedSeverity || "medium",
-        thread: [{ sender: "user", message: message }],
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      if (typeof SupportTicket !== "undefined" && SupportTicket.add) {
-        await SupportTicket.add(newTicket);
-      }
-      createdTicketId = ticketRefId;
-      finalReply =
-        (aiResponse.reply || replyText) + `\n\nTicket ID: ${ticketRefId}`;
-    } else {
-      finalReply = aiResponse.reply || replyText;
-    }
-
-    res
-      .status(200)
-      .json({ success: true, reply: finalReply, ticketId: createdTicketId });
-
-    setImmediate(() => {
-      const backgroundTasks = [];
-
-      if (aiResponse.requiresEscalation && typeof notifyAdmins === "function") {
-        backgroundTasks.push(
-          notifyAdmins(
-            { role: ["support", "super_admin"] },
-            {
-              notificationId:
-                typeof generateNotificationId === "function"
-                  ? generateNotificationId("system")
-                  : `NOTIF-${Date.now()}`,
-              actionType: "AI_SUPPORT_ESCALATION",
-              payload: {
-                ticketId: ticketRefId,
-                userUid: uid,
-                summary: newTicket.summary,
-              },
-              senderId: "system",
-            },
-            false,
-          ).catch((err) =>
-            console.error("Admin escalation notification failed:", err),
-          ),
-        );
-      }
-
-      if (typeof logControllerPerformance === "function") {
-        backgroundTasks.push(
-          Promise.resolve().then(() =>
-            logControllerPerformance(
-              controllerName,
-              action,
-              startTime,
-              "success",
-            ),
-          ),
-        );
-      }
-
-      Promise.all(backgroundTasks);
-    });
-  } catch (error) {
-    console.error("AI Chat Error:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    return res
-      .status(500)
-      .json({ success: false, error: "Failed to fetch response" });
   }
 };

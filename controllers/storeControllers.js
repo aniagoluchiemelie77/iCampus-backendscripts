@@ -739,6 +739,11 @@ export const fetchAllProducts = async (req, res) => {
         amountInStock: data.amountInStock,
         currency: data.currency,
         niche: data.niche,
+        impressions: data.impressions,
+        favCount: data.favCount,
+        ratings: data.ratings,
+        createdAt: data.createdAt,
+        sales: data.sales,
       });
     });
     res.status(200).json({

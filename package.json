@@ -5,7 +5,18 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --detectOpenHandles --forceExit"
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --detectOpenHandles --forceExit",
+    "test:index-probe": "node controllertests/firestoreIndexProbe.mjs"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/controllertests/**/*.test.js"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/controllertests/backup/"
+    ]
   },
   "keywords": [],
   "author": "",
