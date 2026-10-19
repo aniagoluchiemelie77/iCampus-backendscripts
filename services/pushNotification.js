@@ -38,9 +38,20 @@ export const sendPushNotification = async (
       console.log("No FCM token found for user:", recipientId);
       return;
     }
-    const sanitizedData = Object.fromEntries(
-      Object.entries(data).map(([key, val]) => [key, String(val ?? "")]),
-    );
+    // FCM data must be flat string values and stay under 4KB. Nested objects
+    // (e.g. a whole `course`) used to arrive as "[object Object]" and could
+    // push the message over the limit, so keep scalars and lift out courseId.
+    const sanitizedData = {};
+    Object.entries(data).forEach(([key, val]) => {
+      if (val === null || val === undefined) return;
+      if (typeof val === "object") {
+        if (val.courseId && data.courseId === undefined) {
+          sanitizedData.courseId = String(val.courseId);
+        }
+        return;
+      }
+      sanitizedData[key] = String(val);
+    });
 
     const message = {
       notification: {

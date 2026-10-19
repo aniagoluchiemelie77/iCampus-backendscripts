@@ -1058,6 +1058,7 @@ export const verifyLecturer = async (req, res) => {
       .json({ message: "Server error during verification", verified: false });
   }
 };
+const REFRESH_ROTATE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
 export const refreshToken = async (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken) {
@@ -1070,7 +1071,7 @@ export const refreshToken = async (req, res) => {
       process.env.REFRESH_TOKEN_SECRET,
     );
     const userId = decoded.id;
-    const userType = decoded.role || "user";
+    const userType = decoded.role || "users";
 
     const collectionName = userType === "admin" ? "admins" : "users";
     const userDoc = await db.collection(collectionName).doc(userId).get();
@@ -1091,6 +1092,27 @@ export const refreshToken = async (req, res) => {
       { expiresIn: "70m" },
     );
 
+    // Sliding session (stay signed in while active, like LinkedIn): once the
+    // refresh token is a week old, swap it in place for a fresh 30-day one.
+    // Rotating at most weekly keeps the "response lost mid-rotation" window
+    // tiny, and swapping in place keeps the 5-session cap intact.
+    let activeRefreshToken = refreshToken;
+    const issuedAtMs = (decoded.iat || 0) * 1000;
+    if (Date.now() - issuedAtMs > REFRESH_ROTATE_AFTER_MS) {
+      activeRefreshToken = jwt.sign(
+        { id: userId, role: userType },
+        process.env.REFRESH_TOKEN_SECRET,
+        { expiresIn: "30d" },
+      );
+      await userDoc.ref.update({
+        refreshTokens: storedTokens.map((t) =>
+          t === refreshToken ? activeRefreshToken : t,
+        ),
+      });
+    }
+
+    // Tokens carry role "user" (not "users"); the old check never matched,
+    // so the app never received the refreshed profile.
     let safeUser = null;
     if (userType === "users") {
       const enrichedUser = await embedUserWithInstitutionTier(userData);
@@ -1099,13 +1121,14 @@ export const refreshToken = async (req, res) => {
       safeUser = { ...enrichedUser };
       delete safeUser.password;
       delete safeUser.userAccountDetails;
+      delete safeUser.refreshTokens;
       safeUser.theme = preferences ? preferences.theme : "light";
     }
 
     return res.json({
       accessToken: newAccessToken,
-      refreshToken,
-      user: userType === "users" ? safeUser : null,
+      refreshToken: activeRefreshToken,
+      user: safeUser,
     });
   } catch (e) {
     console.error("Refresh Token Error:", e.message);

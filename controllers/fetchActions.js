@@ -29,6 +29,7 @@ import {
 } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { embedCourseInstructor } from "../utils/embedFunctions.js";
+import { loadNotificationGroups } from "../utils/notificationGrouping.js";
 import { client as redis } from "../workers/reditFile.js";
 axiosRetry(axios, { retries: 3 });
 
@@ -930,7 +931,7 @@ export const fetchAllUsers = async (req, res) => {
     setImmediate(() => {
       const backgroundTasks = [
         redis
-          .set(CACHE_KEY, JSON.stringify(users), { EX: 18000 })
+          .set(CACHE_KEY, JSON.stringify(users), { ex: 18000 }) // Upstash expects lowercase "ex"
           .catch((err) => console.error("Redis users cache write error:", err)),
       ];
 
@@ -1203,76 +1204,13 @@ export const fetchUserNotifications = async (req, res) => {
       return res.status(400).json({ message: "Missing userId" });
     }
 
-    let recipientQuery = Notification.where("recipientId", "==", userId);
-    let publicQuery = Notification.where("isPublic", "==", true);
-
-    if (unread === "true") {
-      recipientQuery = recipientQuery.where("isRead", "==", false);
-      publicQuery = publicQuery.where("isRead", "==", false);
-    }
-    if (category) {
-      recipientQuery = recipientQuery.where("category", "==", category);
-      publicQuery = publicQuery.where("category", "==", category);
-    }
-    const [recipientSnapshot, publicSnapshot] = await Promise.all([
-      recipientQuery.get(),
-      publicQuery.get(),
-    ]);
-
-    const notificationMap = new Map();
-    recipientSnapshot.docs.forEach((doc) => {
-      notificationMap.set(doc.id, { id: doc.id, ...doc.data() });
-    });
-    publicSnapshot.docs.forEach((doc) => {
-      notificationMap.set(doc.id, { id: doc.id, ...doc.data() });
-    });
-
-    let allNotifications = Array.from(notificationMap.values());
-    const getTime = (notif) =>
-      notif.createdAt?.toMillis
-        ? notif.createdAt.toMillis()
-        : new Date(notif.createdAt).getTime();
-
-    allNotifications.sort((a, b) => getTime(b) - getTime(a));
-    const groupMap = new Map();
-    allNotifications.forEach((notif) => {
-      const actionType = notif.actionType || "unknown";
-      const payload = notif.payload || {};
-      const entityId =
-        payload.postId ||
-        payload.followerId ||
-        payload.viewerUid ||
-        notif.notificationId ||
-        notif.id;
-      const groupKey = `${actionType}_${entityId}`;
-
-      if (!groupMap.has(groupKey)) {
-        groupMap.set(groupKey, { latest: notif, count: 0 });
-      }
-      groupMap.get(groupKey).count += 1;
-    });
-
-    const processedNotifications = [];
-    groupMap.forEach(({ latest, count }) => {
-      const payload = latest.payload || {};
-      const primaryUser = payload.username || payload.firstname || "Someone";
-      const othersCount = Math.max(0, count - 1);
-
-      processedNotifications.push({
-        ...latest,
-        payload: { ...payload, primaryUser, othersCount },
-      });
-    });
-
-    processedNotifications.sort((a, b) => getTime(b) - getTime(a));
+    const groups = await loadNotificationGroups(userId, { category });
+    const visible =
+      unread === "true" ? groups.filter((g) => g.isRead === false) : groups;
 
     const parsedOffset = Math.max(parseInt(offset, 10) || 0, 0);
     const parsedLimit = Math.max(parseInt(limit, 10) || 50, 1);
-
-    const notifications = processedNotifications.slice(
-      parsedOffset,
-      parsedOffset + parsedLimit,
-    );
+    const notifications = visible.slice(parsedOffset, parsedOffset + parsedLimit);
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
@@ -1290,6 +1228,36 @@ export const fetchUserNotifications = async (req, res) => {
       ),
     );
     res.status(500).json({ message: "Server error", success: false });
+  }
+};
+// Same grouping as the list, so the bell badge always matches the Unread tab.
+export const fetchUnreadNotificationCount = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchUnreadNotificationCountController";
+  const action = "fetchUnreadNotificationCount";
+  try {
+    const userId = req.user?.uid || req.user?.id;
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "Missing userId" });
+    }
+    const groups = await loadNotificationGroups(userId);
+    const count = groups.filter((g) => g.isRead === false).length;
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    return res.status(200).json({ success: true, count });
+  } catch (error) {
+    console.error("Error counting unread notifications:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const fetchProfileInformation = async (req, res) => {
@@ -2206,13 +2174,22 @@ export const getTransactionById = async (req, res) => {
       });
     }
 
-    const transactionSnapshot = await Transactions.where(
+    let transactionSnapshot = await Transactions.where(
       "transactionId",
       "==",
       transactionId,
     )
       .limit(1)
       .get();
+
+    // Older records (e.g. early payouts) have no transactionId field; the
+    // app then sends the document id, so fall back to it.
+    if (transactionSnapshot.empty) {
+      const byDocId = await Transactions.doc(transactionId).get();
+      if (byDocId.exists) {
+        transactionSnapshot = { empty: false, docs: [byDocId] };
+      }
+    }
 
     if (transactionSnapshot.empty) {
       setImmediate(() =>

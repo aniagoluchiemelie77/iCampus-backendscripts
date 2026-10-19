@@ -1,4 +1,5 @@
-import { Lectures } from "../tableDeclarations.js";
+import { Lectures, Course } from "../tableDeclarations.js";
+import { admin } from "../config/firebaseAdmin.js";
 import { v4 as uuidv4 } from "uuid";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import { createNotification } from "../services/notification.js";
@@ -7,31 +8,36 @@ import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
 
 const activeClassroomConnections = new Map();
-export const generateDeepgramToken = async (req, res) => {
-  try {
-    const deepgram = new DeepgramClient(process.env.DEEPGRAM_API_KEY);
-    const { result, error } = await deepgram.auth.createKey(
-      process.env.DEEPGRAM_PROJECT_ID,
-      {
-        comment: `iCampus Live Classroom Token - User: ${req.user.firstname} (${req.user.uid})`,
-        scopes: ["usage:write"],
-        time_to_live_in_seconds: 60,
-      },
-    );
 
-    if (error) {
-      console.error("[DEEPGRAM_SDK_ERROR]:", error);
-      return res.status(500).json({ error: "Failed to create key" });
-    }
+// Lectures is a Firestore collection keyed by a custom `id` field, not the doc id.
+const findLectureDoc = async (lectureId) => {
+  const snap = await Lectures.where("id", "==", lectureId).limit(1).get();
+  return snap.empty ? null : snap.docs[0];
+};
+const getLecture = async (lectureId) => {
+  const doc = await findLectureDoc(lectureId);
+  return doc ? doc.data() : null;
+};
+// Returns the merged lecture data, or null when the lecture does not exist.
+const updateLecture = async (lectureId, updates) => {
+  const doc = await findLectureDoc(lectureId);
+  if (!doc) return null;
+  await doc.ref.update(updates);
+  return { ...doc.data(), ...updates };
+};
+const isSocketHost = (socket, lecture) =>
+  !!socket.userProfile && socket.userProfile.uid === lecture?.hostId;
 
-    return res.status(200).json({
-      success: true,
-      token: result.key,
-    });
-  } catch (error) {
-    console.error("[DEEPGRAM_CRITICAL_FAILURE]:", error);
-    return res.status(500).json({ error: "Internal server error" });
-  }
+const getHostSockets = async (io, lectureId) => {
+  const sockets = await io.in(`lecture_${lectureId}`).fetchSockets();
+  return sockets.filter((s) => s.isLectureHost && s.lectureId === lectureId);
+};
+
+export const generateDeepgramToken = async () => {
+  // Short-lived (60s) token: it only needs to outlive the WebSocket handshake.
+  const deepgram = new DeepgramClient({ apiKey: process.env.DEEPGRAM_API_KEY });
+  const grant = await deepgram.auth.v1.tokens.grant({ ttl_seconds: 60 });
+  return grant.access_token;
 };
 
 export async function broadcastAttendeeList(io, lectureId) {
@@ -64,8 +70,9 @@ export const registerLectureStreamHandlers = (io, socket) => {
     const action = "onlineClassStreamReady";
 
     try {
-      const { lectureId, streamUrl } = payload || {};
-      if (!lectureId || !streamUrl) {
+      // Media flows peer-to-peer over WebRTC; this only flips the lecture live.
+      const { lectureId } = payload || {};
+      if (!lectureId) {
         setImmediate(() => {
           logControllerPerformance(
             controllerName,
@@ -82,18 +89,22 @@ export const registerLectureStreamHandlers = (io, socket) => {
         return;
       }
 
-      const updatedLecture = await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        {
-          $set: {
+      const existingLecture = await getLecture(lectureId);
+      if (existingLecture && !isSocketHost(socket, existingLecture)) {
+        socket.emit("error_response", {
+          action: "stream_ready",
+          message: "Access Denied",
+        });
+        return;
+      }
+      const wasLive = existingLecture?.isLive === true;
+      const updatedLecture = existingLecture
+        ? await updateLecture(lectureId, {
             isLive: true,
-            liveStreamUrl: streamUrl,
             status: "ongoing",
-            startedAt: new Date(),
-          },
-        },
-        { new: true },
-      );
+            ...(wasLive ? {} : { startedAt: new Date() }),
+          })
+        : null;
 
       if (!updatedLecture) {
         console.warn(
@@ -117,13 +128,31 @@ export const registerLectureStreamHandlers = (io, socket) => {
 
       const lectureRoomId = `lecture_${lectureId}`;
       await socket.join(lectureRoomId);
+      // Viewers already in the room re-request the stream on this event.
       io.to(lectureRoomId).emit("live_stream_started", {
         lectureId: updatedLecture.id,
-        streamUrl: updatedLecture.liveStreamUrl,
         topicName: updatedLecture.topicName,
         status: updatedLecture.status,
         startedAt: updatedLecture.startedAt,
       });
+
+      // First go-live only: ping enrolled students' personal rooms so their
+      // home screen shows the "class is live" prompt (HomeScreen listens).
+      if (!wasLive && updatedLecture.courseId) {
+        const courseSnap = await Course.where(
+          "courseId",
+          "==",
+          updatedLecture.courseId,
+        )
+          .limit(1)
+          .get();
+        const studentUids = courseSnap.empty
+          ? []
+          : courseSnap.docs[0].data().studentsEnrolled || [];
+        studentUids.forEach((uid) =>
+          io.to(String(uid)).emit("lecture_started", updatedLecture),
+        );
+      }
 
       setImmediate(() => {
         logControllerPerformance(controllerName, action, startTime, "success");
@@ -201,11 +230,17 @@ export const registerWebRTCSignalingHandlers = (io, socket) => {
         await socket.join(lectureRoomId);
       }
 
-      socket.to(lectureRoomId).emit("webrtc_signal_received", {
-        lectureId,
-        signal,
-        senderId: socket.id,
-      });
+      // Each viewer has its own peer connection with the host, so offers,
+      // answers and ICE candidates are addressed to a single socket.
+      const { targetSocketId } = payload;
+      const outbound = { lectureId, signal, senderId: socket.id };
+      if (targetSocketId) {
+        const target = io.sockets.sockets.get(targetSocketId);
+        if (!target?.rooms.has(lectureRoomId)) return;
+        target.emit("webrtc_signal_received", outbound);
+      } else {
+        socket.to(lectureRoomId).emit("webrtc_signal_received", outbound);
+      }
 
       setImmediate(() => {
         logControllerPerformance(controllerName, action, startTime, "success");
@@ -230,6 +265,24 @@ export const registerWebRTCSignalingHandlers = (io, socket) => {
         message:
           "Internal delivery pipeline failure during media configuration.",
       });
+    }
+  });
+
+  // A viewer asks the host for a stream; the host then sends that viewer an offer.
+  socket.on("webrtc_request_stream", async (payload) => {
+    try {
+      const { lectureId } = payload || {};
+      if (!lectureId || socket.lectureId !== lectureId) return;
+      const hostSockets = await getHostSockets(io, lectureId);
+      hostSockets.forEach((hostSocket) =>
+        hostSocket.emit("webrtc_viewer_joined", {
+          lectureId,
+          viewerSocketId: socket.id,
+          viewerUid: socket.userProfile?.uid,
+        }),
+      );
+    } catch (error) {
+      console.error("[WEBRTC_REQUEST_STREAM_ERROR]", error.message);
     }
   });
 };
@@ -301,8 +354,8 @@ export const registerScreenShareHandlers = (io, socket) => {
     const action = "lecturerShareScreenStart";
 
     try {
-      const { lectureId, streamId } = payload || {};
-      if (!lectureId || !streamId) {
+      const { lectureId } = payload || {};
+      if (!lectureId) {
         setImmediate(() => {
           logControllerPerformance(
             controllerName,
@@ -319,16 +372,17 @@ export const registerScreenShareHandlers = (io, socket) => {
         return;
       }
 
-      const updatedLecture = await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        {
-          $set: {
-            liveStreamUrl: streamId,
-            status: "ongoing",
-          },
-        },
-        { new: true },
-      );
+      const lecture = await getLecture(lectureId);
+      if (lecture && !isSocketHost(socket, lecture)) {
+        socket.emit("error_response", {
+          action: "lecturer_started_sharing",
+          message: "Access Denied",
+        });
+        return;
+      }
+      const updatedLecture = lecture
+        ? await updateLecture(lectureId, { isScreenSharing: true })
+        : null;
 
       if (!updatedLecture) {
         console.warn(
@@ -353,7 +407,6 @@ export const registerScreenShareHandlers = (io, socket) => {
       const lectureRoomId = `lecture_${lectureId}`;
       socket.to(lectureRoomId).emit("lecturer_screen_share_started", {
         lectureId,
-        streamId,
         updatedAt: new Date(),
       });
 
@@ -411,15 +464,17 @@ export const registerScreenShareStopHandlers = (io, socket) => {
         return;
       }
 
-      const updatedLecture = await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        {
-          $set: {
-            liveStreamUrl: null,
-          },
-        },
-        { new: true },
-      );
+      const lecture = await getLecture(lectureId);
+      if (lecture && !isSocketHost(socket, lecture)) {
+        socket.emit("error_response", {
+          action: "lecturer_stopped_sharing",
+          message: "Access Denied",
+        });
+        return;
+      }
+      const updatedLecture = lecture
+        ? await updateLecture(lectureId, { isScreenSharing: false })
+        : null;
 
       if (!updatedLecture) {
         console.warn(
@@ -513,27 +568,24 @@ export const registerChatHandlers = (io, socket) => {
 
       const newComment = {
         id: uuidv4(),
-        userId: senderId,
+        // Trust the identity bound at join time over the payload.
+        userId: socket.userProfile?.uid || senderId,
         username: username || "Anonymous User",
         profilePic: sanitizedProfilePic,
-        text: text.trim(),
+        text: text.trim().slice(0, 1000),
         timestamp: new Date(),
         likes: 0,
         replies: [],
       };
 
-      const updatedLecture = await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        {
-          $push: { comments: newComment },
-        },
-        {
-          new: true,
-          projection: { comments: { $slice: -1 } },
-        },
-      );
+      const lectureDoc = await findLectureDoc(lectureId);
+      if (lectureDoc) {
+        await lectureDoc.ref.update({
+          comments: admin.firestore.FieldValue.arrayUnion(newComment),
+        });
+      }
 
-      if (!updatedLecture) {
+      if (!lectureDoc) {
         console.warn(
           `[CHAT_ENGINE] Message persistence failed. Lecture id "${lectureId}" not found.`,
         );
@@ -553,7 +605,7 @@ export const registerChatHandlers = (io, socket) => {
         return;
       }
 
-      const savedComment = updatedLecture.comments[0];
+      const savedComment = newComment;
       const lectureRoomId = `lecture_${lectureId}`;
 
       setImmediate(() => {
@@ -627,7 +679,7 @@ export const registerNetworkFallbackHandlers = (io, socket) => {
       }
 
       const isAudioOnly = mode === "audio-only";
-      const currentLecture = await Lectures.findOne({ id: lectureId });
+      const currentLecture = await getLecture(lectureId);
       if (!currentLecture) {
         console.warn(
           `[NETWORK_ENGINE] Fallback processing failed. Lecture id "${lectureId}" not found.`,
@@ -648,15 +700,14 @@ export const registerNetworkFallbackHandlers = (io, socket) => {
         return;
       }
 
-      const updatedLecture = await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        {
-          $set: {
-            liveStreamUrl: isAudioOnly ? null : currentLecture.liveStreamUrl,
-          },
-        },
-        { new: true },
-      );
+      if (!isSocketHost(socket, currentLecture)) {
+        socket.emit("error_response", {
+          action: "lecturer_network_fallback",
+          message: "Access Denied",
+        });
+        return;
+      }
+      await updateLecture(lectureId, { isAudioOnly });
 
       const lectureRoomId = `lecture_${lectureId}`;
       setImmediate(() => {
@@ -838,14 +889,18 @@ export const registerSpeakerTrackingHandlers = (io, socket) => {
   });
 };
 export const registerAttendanceTrackingHandlers = (io, socket) => {
-  socket.on("join_lecture_session", async (payload) => {
+  // `ack` lets clients wait until they are in the room (and know their role)
+  // before emitting host-only or room-scoped events.
+  socket.on("join_lecture_session", async (payload, ack) => {
     const startTime = Date.now();
     const controllerName = "joinOnlineLectureSessionController";
     const action = "joinOnlineLectureSession";
+    const reply = typeof ack === "function" ? ack : () => {};
 
     try {
-      const { lectureId, user, hostId } = payload || {};
+      const { lectureId, user } = payload || {};
       if (!lectureId || !user || !user.uid) {
+        reply({ ok: false, message: "Incomplete handshake profile dependencies." });
         setImmediate(() => {
           logControllerPerformance(
             controllerName,
@@ -862,10 +917,23 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
         return;
       }
 
+      const lecture = await getLecture(lectureId);
+      if (!lecture) {
+        reply({ ok: false, message: "Lecture not found." });
+        return;
+      }
+      if (lecture.status === "completed" || lecture.status === "cancelled") {
+        reply({ ok: false, message: `This lecture is ${lecture.status}.` });
+        return;
+      }
+
       const lectureRoomId = `lecture_${lectureId}`;
+      // Host role comes from the lecture record, never from the client.
+      const isHost = user.uid === lecture.hostId;
       socket.lectureId = lectureId;
       socket.userProfile = user;
-      activeClassroomConnections.set(socket.id, { lectureId, ...user });
+      socket.isLectureHost = isHost;
+      activeClassroomConnections.set(socket.id, { lectureId, isHost, ...user });
 
       setImmediate(() => {
         logControllerPerformance(controllerName, action, startTime, "success");
@@ -873,8 +941,8 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
 
       await socket.join(lectureRoomId);
       await broadcastAttendeeList(io, lectureId);
+      reply({ ok: true, isHost, isLive: lecture.isLive === true });
 
-      const isHost = user.uid === hostId;
       const announcementMessage = isHost
         ? "Host has joined"
         : `${user.firstname} ${user.lastname} has joined`;
@@ -893,6 +961,7 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
         "[ATTENDANCE_ERROR] Failed to mount student to session context:",
         error.message,
       );
+      reply({ ok: false, message: "Could not join the live session." });
       setImmediate(() => {
         logControllerPerformance(
           controllerName,
@@ -910,14 +979,18 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
       const cachedSession = activeClassroomConnections.get(socket.id);
 
       if (cachedSession) {
-        const { lectureId, firstname, lastname, uid } = cachedSession;
+        const { lectureId, firstname, lastname, uid, isHost } = cachedSession;
         activeClassroomConnections.delete(socket.id);
         await broadcastAttendeeList(io, lectureId);
 
+        // Lets the host close this viewer's peer connection.
+        io.to(`lecture_${lectureId}`).emit("webrtc_viewer_left", {
+          viewerSocketId: socket.id,
+        });
         io.to(`lecture_${lectureId}`).emit("user_left_announcement", {
           uid: uid,
           message: `${firstname} ${lastname} disconnected`,
-          isHost: false,
+          isHost: !!isHost,
         });
 
         console.log(
@@ -957,7 +1030,7 @@ export const registerPermissionHandlers = (io, socket) => {
         return;
       }
 
-      const lectureDoc = await Lectures.findOne({ id: lectureId });
+      const lectureDoc = await getLecture(lectureId);
       if (!lectureDoc) {
         setImmediate(() => {
           logControllerPerformance(
@@ -1036,7 +1109,8 @@ export const registerPermissionHandlers = (io, socket) => {
   });
 };
 export const registerLectureLifecycleHandlers = (io, socket) => {
-  socket.on("end_lecture", async (payload) => {
+  socket.on("end_lecture", async (payload, ack) => {
+    const reply = typeof ack === "function" ? ack : () => {};
     const startTime = Date.now();
     const controllerName = "endOnlineLectureSessionController";
     const action = "endOnlineLectureSession";
@@ -1054,6 +1128,7 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
             "Malformed teardown payload.",
           );
         });
+        reply({ ok: false, message: "Could not end the lecture." });
         socket.emit("error_response", {
           action: "end_lecture",
           message: "Malformed teardown payload.",
@@ -1061,7 +1136,7 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
         return;
       }
 
-      const lectureDoc = await Lectures.findOne({ id: lectureId });
+      const lectureDoc = await getLecture(lectureId);
 
       if (!lectureDoc) {
         setImmediate(() => {
@@ -1073,6 +1148,7 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
             "Target lecture reference could not be resolved.",
           );
         });
+        reply({ ok: false, message: "Could not end the lecture." });
         socket.emit("error_response", {
           action: "end_lecture",
           message: "Target lecture reference could not be resolved.",
@@ -1096,6 +1172,7 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
             "Access Denied",
           );
         });
+        reply({ ok: false, message: "Could not end the lecture." });
         socket.emit("error_response", {
           action: "end_lecture",
           message: "Access Denied",
@@ -1103,22 +1180,17 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
         return;
       }
 
-      const terminatedLecture = await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        {
-          $set: {
-            isLive: false,
-            liveStreamUrl: null,
-            status: "completed",
-            isTaught: true,
-            endTime: new Date().toLocaleTimeString([], {
-              hour: "2-digit",
-              minute: "2-digit",
-            }),
-          },
-        },
-        { new: true },
-      );
+      const terminatedLecture = await updateLecture(lectureId, {
+        isLive: false,
+        isScreenSharing: false,
+        status: "completed",
+        isTaught: true,
+        endedAt: new Date(),
+        endTime: new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        }),
+      });
 
       const lectureRoomId = `lecture_${lectureId}`;
       const socketsInRoom = await io.in(lectureRoomId).fetchSockets();
@@ -1181,6 +1253,7 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
       console.log(
         `[LIFECYCLE_ENGINE] Lecture ${lectureId} concluded. Dispatched ${uniqueStudents.size} review requests.`,
       );
+      reply({ ok: true });
     } catch (error) {
       console.error(
         "[LECTURE_TEARDOWN_ERROR] Failed to securely terminate live session:",
@@ -1196,6 +1269,7 @@ export const registerLectureLifecycleHandlers = (io, socket) => {
         );
       });
 
+      reply({ ok: false, message: "Could not end the lecture." });
       socket.emit("error_response", {
         action: "end_lecture",
         message:
@@ -1238,12 +1312,12 @@ export const registerStudentLifecycleHandlers = (io, socket) => {
 
       socket.leave(lectureRoomId);
 
-      await ActiveLectureState.updateOne(
-        { lectureId },
-        { $pull: { wavers: { uid: user.uid } } },
-      );
-
+      activeClassroomConnections.delete(socket.id);
+      socket.lectureId = null;
       await broadcastAttendeeList(io, lectureId);
+      io.to(lectureRoomId).emit("webrtc_viewer_left", {
+        viewerSocketId: socket.id,
+      });
 
       const leaveMessage =
         `${user.firstname || "A user"} ${user.lastname || ""} has left`.trim();
@@ -1304,7 +1378,7 @@ export const registerPermissionRequestsHandlers = (io, socket) => {
         return;
       }
 
-      const lectureDoc = await Lectures.findOne({ id: lectureId });
+      const lectureDoc = await getLecture(lectureId);
 
       if (!lectureDoc) {
         setImmediate(() => {
@@ -1410,7 +1484,7 @@ export const registerMuteAllHandler = (io, socket) => {
         return;
       }
 
-      const lectureDoc = await Lectures.findOne({ id: lectureId });
+      const lectureDoc = await getLecture(lectureId);
 
       if (!lectureDoc) {
         setImmediate(() => {
@@ -1505,20 +1579,39 @@ export const handleDeepgramTokenGeneration = async (req, res) => {
       });
     }
 
-    const lectureCheck = await Lectures.findOne({ id: lectureId });
+    const lectureCheck = await getLecture(lectureId);
     if (!lectureCheck) {
       return res.status(404).json({
         success: false,
         message: "Target live classroom session cannot be identified.",
       });
     }
-    const result = await generateDeepgramToken(req, res);
-    if (!res.headersSent) {
-      return res.status(200).json({
-        success: true,
-        token: result?.key || result,
+    // Only the host and enrolled students may spend transcription credits.
+    const uid = req.user.uid || req.user.id;
+    let isParticipant = lectureCheck.hostId === uid;
+    if (!isParticipant && lectureCheck.courseId) {
+      const courseSnap = await Course.where(
+        "courseId",
+        "==",
+        lectureCheck.courseId,
+      )
+        .limit(1)
+        .get();
+      const course = courseSnap.empty ? null : courseSnap.docs[0].data();
+      isParticipant =
+        !!course &&
+        ((course.studentsEnrolled || []).includes(uid) ||
+          (course.lecturerIds || []).includes(uid));
+    }
+    if (!isParticipant) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not a participant in this live session.",
       });
     }
+
+    const token = await generateDeepgramToken();
+    return res.status(200).json({ success: true, token });
   } catch (error) {
     console.error("[DEEPGRAM_KEY_BROKER_CRITICAL_ERROR]", error.message);
     if (!res.headersSent) {
@@ -1556,7 +1649,7 @@ export const registerLecturerMediaControlHandlers = (io, socket) => {
         return;
       }
 
-      const lectureDoc = await Lectures.findOne({ id: lectureId });
+      const lectureDoc = await getLecture(lectureId);
 
       if (!lectureDoc) {
         setImmediate(() => {
@@ -1598,10 +1691,7 @@ export const registerLecturerMediaControlHandlers = (io, socket) => {
         return;
       }
 
-      await Lectures.findOneAndUpdate(
-        { id: lectureId },
-        { $set: { isVideoActive: isCameraOn } },
-      );
+      await updateLecture(lectureId, { isVideoActive: isCameraOn });
 
       const lectureRoomId = `lecture_${lectureId}`;
 

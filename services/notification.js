@@ -876,6 +876,9 @@ export const createNotification = async ({
         message,
         relatedEntity: { entityId, entityType },
         payload,
+        // Must be written explicitly: the Unread tab, the bell count and
+        // "mark all as read" all depend on it.
+        isRead: false,
         createdAt: new Date(),
       };
 
@@ -883,9 +886,22 @@ export const createNotification = async ({
     }
     if (canSendSocket) {
       const io = getIO();
-      io.to(recipientId).emit(
+      // Same shape the list endpoint returns (it adds `id` = doc id), so the
+      // client can merge a live notification into the list directly.
+      io.to(String(recipientId)).emit(
         "new_notification",
-        notificationRecord || { title, message, payload },
+        notificationRecord
+          ? { id: notificationId, ...notificationRecord }
+          : {
+              notificationId,
+              title,
+              message,
+              payload,
+              category,
+              actionType,
+              isRead: false,
+              createdAt: new Date(),
+            },
       );
     }
     if (canSendEmail && htmlContent && recipients.length > 0) {
@@ -907,10 +923,15 @@ export const createNotification = async ({
     }
 
     if (canSendPush) {
+      // Ids last so payload fields can't shadow them; the app uses them to
+      // route a tapped push to the same screen as the in-app list.
       await sendPushNotification(recipientId, title, message, {
+        ...payload,
         category,
         actionType,
-        ...payload,
+        notificationId,
+        entityId,
+        entityType,
       });
     }
 

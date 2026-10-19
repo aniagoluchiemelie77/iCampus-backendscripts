@@ -7,6 +7,7 @@ import {
 import {
   fetchConnections,
   fetchUserNotifications,
+  fetchUnreadNotificationCount,
   fetchSingleNotification,
   fetchProfileInformation,
   fetchBlockedUsers,
@@ -178,7 +179,18 @@ router.post(
   "/course/extract-course-details-from-uploads",
   protect,
   idempotencyMiddleware,
-  upload.array("files"),
+  // The app sends the field as "file"; .array("files") rejected every
+  // upload with "Unexpected field". Accept either name.
+  (req, res, next) =>
+    upload.any()(req, res, (err) => {
+      if (!err) return next();
+      const status = err.status || (err.code === "LIMIT_FILE_SIZE" ? 413 : 400);
+      const message =
+        err.code === "LIMIT_FILE_SIZE"
+          ? "File is too large. Upload a file under 15MB."
+          : err.message;
+      return res.status(status).json({ message });
+    }),
   uploadCourseDetails,
 );
 router.post(
@@ -213,6 +225,12 @@ router.post(
 router.post("/forgotPassword", idempotencyMiddleware, forgotPassword);
 router.post("/changePassword", idempotencyMiddleware, changePassword);
 router.get("/get-notifications", protect, fetchUserNotifications);
+// Must stay above "/notifications/:id" or Express would treat it as an id.
+router.get(
+  "/notifications/unread-count",
+  protect,
+  fetchUnreadNotificationCount,
+);
 router.get("/notifications/:id", protect, fetchSingleNotification);
 router.patch(
   "/notifications/:id/read",

@@ -2,6 +2,8 @@ import { Lectures, User, Attendance } from "../tableDeclarations.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
 
+const activeSessions = new Map();
+
 export const registerAttendanceHandlers = (io, socket) => {
   socket.on("start_attendance_session", async (payload) => {
     const startTime = Date.now();
@@ -56,6 +58,7 @@ export const registerAttendanceHandlers = (io, socket) => {
       console.log(
         `[ATTENDANCE_ENGINE] Lecturer ${lecturerId} started session room: ${attendanceRoomId}`,
       );
+      activeSessions.set(lectureId, lecturerId);
       io.to(attendanceRoomId).emit("attendance_session_started", {
         lectureId,
         status: "fetching",
@@ -146,6 +149,10 @@ export const registerAttendanceHandlers = (io, socket) => {
           console.error("Background socket leave error:", err);
         }
       });
+      setImmediate(() => {
+        io.to(attendanceRoomId).socketsLeave(attendanceRoomId);
+      });
+      activeSessions.delete(lectureId);
       setImmediate(() => {
         logControllerPerformance(controllerName, action, startTime, "success");
       });

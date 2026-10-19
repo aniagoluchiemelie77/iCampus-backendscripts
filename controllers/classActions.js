@@ -32,8 +32,13 @@ import axios from "axios";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 import { setImmediate } from "timers";
+import {
+  geminiModel,
+  isGeminiQuotaError,
+  GEMINI_BUSY_MESSAGE,
+} from "../utils/gemini.js";
 
-const ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 const checkContentAuthorization = async (userId, course) => {
   if (course.lecturerIds && course.lecturerIds.includes(userId)) {
@@ -2643,13 +2648,38 @@ export const compareStudentFacesWithGemini = async (req, res) => {
       });
     }
 
-    const responseImage = await axios.get(targetImageUrl, {
-      responseType: "arraybuffer",
-    });
-    const targetImageBase64 = Buffer.from(
-      responseImage.data,
-      "binary",
-    ).toString("base64");
+    // Clients may send a data URI; Gemini expects raw base64.
+    const selfieData = selfieBase64.replace(/^data:image\/\w+;base64,/, "");
+
+    let responseImage;
+    try {
+      responseImage = await axios.get(targetImageUrl, {
+        responseType: "arraybuffer",
+        timeout: 15000,
+      });
+    } catch (fetchError) {
+      setImmediate(() =>
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          `Reference image fetch failed: ${fetchError.message}`,
+        ),
+      );
+      // 502, not 403: an unreachable profile picture is not evidence of impersonation.
+      return res.status(502).json({
+        verified: false,
+        message: "Could not load your profile picture for comparison.",
+      });
+    }
+    const targetImageBase64 = Buffer.from(responseImage.data).toString(
+      "base64",
+    );
+    const contentType = String(responseImage.headers["content-type"] || "");
+    const targetMimeType = contentType.startsWith("image/")
+      ? contentType.split(";")[0]
+      : "image/jpeg";
 
     const textInstructions =
       "You are an automated biometric security system monitoring classroom attendance. " +
@@ -2660,7 +2690,7 @@ export const compareStudentFacesWithGemini = async (req, res) => {
       '{"verified": boolean, "reason": "brief plain text explanation for audit logs"}';
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
+      model: geminiModel(),
       config: {
         responseMimeType: "application/json",
         temperature: 0.2,
@@ -2669,20 +2699,20 @@ export const compareStudentFacesWithGemini = async (req, res) => {
         textInstructions,
         {
           inlineData: {
-            data: selfieBase64,
+            data: selfieData,
             mimeType: "image/jpeg",
           },
         },
         {
           inlineData: {
             data: targetImageBase64,
-            mimeType: "image/jpeg",
+            mimeType: targetMimeType,
           },
         },
       ],
     });
 
-    const aiOutputText = response.text;
+    const aiOutputText = response.text?.replace(/```json|```/g, "").trim();
     if (!aiOutputText) {
       logControllerPerformance(
         controllerName,
@@ -2706,6 +2736,7 @@ export const compareStudentFacesWithGemini = async (req, res) => {
       return res.status(200).json({
         verified: true,
         message: "Identity confirmed successfully.",
+        similarity: 1.0,
       });
     } else {
       logControllerPerformance(
@@ -2715,8 +2746,9 @@ export const compareStudentFacesWithGemini = async (req, res) => {
         "error",
         validationResult.reason || "Facial signature mismatch.",
       );
-      return res.status(401).json({
+      return res.status(403).json({
         verified: false,
+        similarity: 0,
         message: validationResult.reason || "Facial signature mismatch.",
       });
     }
@@ -2735,6 +2767,64 @@ export const compareStudentFacesWithGemini = async (req, res) => {
     });
   }
 };
+// ---- course-form extraction helpers ------------------------------------------
+// "GET311", "get 311" and "GET-311" are the same course: store "GET 311".
+const normalizeCourseCode = (code) => {
+  const compact = String(code || "")
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "");
+  const match = compact.match(/^([A-Z]+)(\d+[A-Z]?)$/);
+  return match ? `${match[1]} ${match[2]}` : compact;
+};
+// The app filters by "First" / "Second".
+const normalizeSemester = (value) => {
+  const s = String(value || "").toLowerCase();
+  if (/(^|\b)(1|1st|first|harmattan)/.test(s)) return "First";
+  if (/(^|\b)(2|2nd|second|rain)/.test(s)) return "Second";
+  return value ? String(value) : null;
+};
+// "2024-2025", "2024 / 2025" -> "2024/2025".
+const normalizeSession = (value) => {
+  const match = String(value || "").match(/(\d{4})\D+(\d{4})/);
+  return match ? `${match[1]}/${match[2]}` : value ? String(value).trim() : null;
+};
+const normalizeExtractedCourses = (rawCourses, fallback = {}) => {
+  if (!Array.isArray(rawCourses)) return [];
+  const seen = new Set();
+  return rawCourses
+    .map((c) => ({
+      ...c,
+      courseCode: normalizeCourseCode(c?.courseCode),
+      courseTitle: String(c?.courseTitle || "").trim(),
+      semester: normalizeSemester(c?.semester || fallback.semester),
+      session: normalizeSession(c?.session || fallback.session),
+      credits: Number.parseInt(c?.credits, 10) || 0,
+    }))
+    .filter((c) => {
+      // Skip unreadable rows and courses repeated across page breaks.
+      if (!c.courseCode || !c.courseTitle) return false;
+      const key = `${c.courseCode}|${c.semester}|${c.session}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+};
+// Exact last name, lecturers only, preferring the same school. Ambiguous
+// matches are skipped rather than attaching the wrong person.
+const findLecturerUidByLastName = async (lastName, schoolName) => {
+  const snap = await User.where("lastname", "==", lastName)
+    .where("usertype", "==", "lecturer")
+    .limit(5)
+    .get();
+  const candidates = snap.docs.map((d) => d.data());
+  const sameSchool = schoolName
+    ? candidates.filter((c) => c.schoolName === schoolName)
+    : [];
+  if (sameSchool.length === 1) return sameSchool[0].uid;
+  if (candidates.length === 1) return candidates[0].uid;
+  return null;
+};
+
 export const uploadCourseDetails = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "uploadCourseDetailsController";
@@ -2752,10 +2842,28 @@ export const uploadCourseDetails = async (req, res) => {
       );
       return res.status(400).json({ message: "No files uploaded" });
     }
-    const fileBuffer = req.files[0].buffer;
-    const base64Data = fileBuffer.toString("base64");
+    const uploadedFile = req.files[0];
+    const base64Data = uploadedFile.buffer.toString("base64");
+    // Photos of the form (gallery/camera) must not be labelled as PDFs.
+    const fileMimeType =
+      uploadedFile.mimetype === "application/octet-stream" ||
+      !uploadedFile.mimetype
+        ? "application/pdf"
+        : uploadedFile.mimetype;
     const requesterUid = req.user?.uid || req.user?.id;
     const userType = req.user?.usertype;
+
+    if (userType !== "student" && userType !== "lecturer") {
+      return res.status(403).json({
+        message: "Only students and lecturers can upload course forms.",
+      });
+    }
+    if (userType === "student" && !req.user?.matricNumber) {
+      return res.status(400).json({
+        message:
+          "Add your matric number to your profile before uploading your course form.",
+      });
+    }
 
     const prompt =
       userType === "lecturer"
@@ -2813,21 +2921,15 @@ export const uploadCourseDetails = async (req, res) => {
         Note: If a course appears across page breaks, do not duplicate it.
       `;
 
-    const filePart = {
-      inlineData: {
-        data: base64Data,
-        mimeType: "application/pdf",
-      },
-    };
     const result = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      config: { responseMimeType: "application/json" },
+      model: geminiModel(),
+      config: { responseMimeType: "application/json", temperature: 0.1 },
       contents: [
         prompt,
         {
           inlineData: {
             data: base64Data,
-            mimeType: "application/pdf",
+            mimeType: fileMimeType,
           },
         },
       ],
@@ -2835,8 +2937,10 @@ export const uploadCourseDetails = async (req, res) => {
 
     let extraction;
     try {
-      console.log("Step 6: Extraction");
-      extraction = JSON.parse(result.response.text());
+      // @google/genai exposes `result.text`; `result.response.text()` does not
+      // exist and made every extraction fail as "invalid JSON".
+      const rawText = (result.text || "").replace(/```json|```/g, "").trim();
+      extraction = JSON.parse(rawText);
     } catch (e) {
       setImmediate(() =>
         logControllerPerformance(
@@ -2852,7 +2956,11 @@ export const uploadCourseDetails = async (req, res) => {
         .json({ message: "AI returned invalid JSON structure." });
     }
 
-    const { studentInfo, departmentInfo, courses } = extraction;
+    const { studentInfo, departmentInfo } = extraction;
+    const courses = normalizeExtractedCourses(extraction.courses, {
+      session: departmentInfo?.session,
+      semester: departmentInfo?.semester,
+    });
 
     if (!courses || courses.length === 0) {
       setImmediate(() =>
@@ -2901,19 +3009,35 @@ export const uploadCourseDetails = async (req, res) => {
     const now = new Date();
     const processedCourseIds = [];
 
-    for (const courseData of courses) {
-      const cleanTitle = courseData.courseTitle.trim();
+    const schoolName =
+      req.user?.schoolName ||
+      studentInfo?.schoolName ||
+      departmentInfo?.schoolName ||
+      null;
 
-      const courseQuery = await Courses.where("courseTitle", ">=", cleanTitle)
-        .where("courseTitle", "<=", cleanTitle + "\uf8ff")
-        .limit(1)
-        .get();
+    for (const courseData of courses) {
+      // Match the same course code in the same term (and school, when known).
+      // The old title-prefix match ("Physics" also matched "Physics II") and
+      // ignored school and session, and `Courses` was never defined.
+      const sameCodeQuery = await Course.where(
+        "courseCode",
+        "==",
+        courseData.courseCode,
+      ).get();
+      const existingDoc = sameCodeQuery.docs.find((doc) => {
+        const d = doc.data();
+        return (
+          d.session === courseData.session &&
+          d.semester === courseData.semester &&
+          (!schoolName || !d.schoolName || d.schoolName === schoolName)
+        );
+      });
 
       let courseDocRef;
       let courseId;
 
-      if (!courseQuery.empty) {
-        const doc = courseQuery.docs[0];
+      if (existingDoc) {
+        const doc = existingDoc;
         courseDocRef = doc.ref;
         const existingData = doc.data();
         courseId = existingData.courseId;
@@ -2939,18 +3063,11 @@ export const uploadCourseDetails = async (req, res) => {
             const lastName = nameParts[nameParts.length - 1];
 
             if (lastName) {
-              const matchedUserQuery = await User.where(
-                "lastname",
-                ">=",
+              const matchedUid = await findLecturerUidByLastName(
                 lastName,
-              )
-                .where("lastname", "<=", lastName + "\uf8ff")
-                .limit(1)
-                .get();
-
-              if (!matchedUserQuery.empty) {
-                resolvedLecturerIds.add(matchedUserQuery.docs[0].data().uid);
-              }
+                schoolName,
+              );
+              if (matchedUid) resolvedLecturerIds.add(matchedUid);
             }
           }
 
@@ -2979,35 +3096,28 @@ export const uploadCourseDetails = async (req, res) => {
             const lastName = nameParts[nameParts.length - 1];
 
             if (lastName) {
-              const matchedUserQuery = await User.where(
-                "lastname",
-                ">=",
+              const matchedUid = await findLecturerUidByLastName(
                 lastName,
-              )
-                .where("lastname", "<=", lastName + "\uf8ff")
-                .limit(1)
-                .get();
-
-              if (!matchedUserQuery.empty) {
-                resolvedSet.add(matchedUserQuery.docs[0].data().uid);
-              }
+                schoolName,
+              );
+              if (matchedUid) resolvedSet.add(matchedUid);
             }
           }
           initialLecturerIds = Array.from(resolvedSet);
         }
 
+        // Firestore rejects `undefined` values, so every optional field
+        // falls back to null.
         const newCourseData = {
           ...courseData,
           courseId,
-          schoolName:
-            req.user?.schoolName ||
-            studentInfo?.schoolName ||
-            departmentInfo?.schoolName,
-          schoolCode: req.user?.schoolCode || studentInfo?.schoolCode,
+          schoolName,
+          schoolCode: req.user?.schoolCode || studentInfo?.schoolCode || null,
           department:
             studentInfo?.department ||
             departmentInfo?.department ||
-            req.user?.department,
+            req.user?.department ||
+            null,
           level: courseData.level || studentInfo?.level || "",
           studentsEnrolled: userType === "student" ? [requesterUid] : [],
           lecturerIds: initialLecturerIds,
@@ -3056,9 +3166,19 @@ export const uploadCourseDetails = async (req, res) => {
       userType === "student" ? studentInfo?.level : "Departmental";
     const documentType =
       userType === "student" ? "course registration" : "course allocation";
+    // The app reads `courses` (semester/session) to switch its filters to the
+    // uploaded term; without it every success looked like "no courses found".
     res.status(200).json({
       message: `Processed ${courses.length} courses successfully.`,
       coursesCount: courses.length,
+      courses: courses.map((c, i) => ({
+        courseId: processedCourseIds[i],
+        courseCode: c.courseCode,
+        courseTitle: c.courseTitle,
+        semester: c.semester,
+        session: c.session,
+        credits: c.credits,
+      })),
     });
     setImmediate(async () => {
       try {
@@ -3109,8 +3229,13 @@ export const uploadCourseDetails = async (req, res) => {
         error.message,
       ),
     );
+    if (!res.headersSent && isGeminiQuotaError(error)) {
+      return res.status(429).json({ message: GEMINI_BUSY_MESSAGE });
+    }
     if (!res.headersSent) {
-      return res.status(500).json({ message: "Internal Server Error" });
+      return res.status(500).json({
+        message: "We couldn't process that document. Please try again.",
+      });
     }
   }
 };

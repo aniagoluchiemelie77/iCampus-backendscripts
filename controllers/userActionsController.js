@@ -16,6 +16,10 @@ import {
   PostReposters,
   Comments,
 } from "../tableDeclarations.js";
+import {
+  notificationGroupKey,
+  isNotificationUnread,
+} from "../utils/notificationGrouping.js";
 import twilio from "twilio";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
@@ -39,11 +43,51 @@ import { db } from "../config/firebaseAdmin.js";
 import { EXCEPTION_ACCOUNT_LIMITS } from "../constants/inAppConstants.js";
 import { embedPostWithAuthorDetails } from "../utils/reposterPriorityChecker.js";
 import { prepareChatHistory } from "../utils/chatFormatter.js";
+import {
+  geminiModel,
+  isGeminiQuotaError,
+  GEMINI_BUSY_MESSAGE,
+} from "../utils/gemini.js";
 import dotenv from "dotenv";
 dotenv.config();
 
-const ai = new GoogleGenAI(process.env.GEMINI_API_KEY);
+const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 axiosRetry(axios, { retries: 3 });
+
+const MAX_ATTACHMENT_BYTES = 15 * 1024 * 1024;
+// Downloads an image/PDF the user shared and returns it as a Gemini inline
+// part, or null if it is unreachable, too large or not a supported type.
+const fetchAttachmentPart = async (url) => {
+  try {
+    if (!/^https:\/\//i.test(url)) return null;
+    const response = await axios.get(url, {
+      responseType: "arraybuffer",
+      timeout: 20000,
+      maxContentLength: MAX_ATTACHMENT_BYTES,
+      "axios-retry": { retries: 1 },
+    });
+    const headerType = String(response.headers["content-type"] || "")
+      .split(";")[0]
+      .trim()
+      .toLowerCase();
+    const mimeType =
+      headerType.startsWith("image/") || headerType === "application/pdf"
+        ? headerType
+        : /\.pdf(\?|$)/i.test(url)
+          ? "application/pdf"
+          : null;
+    if (!mimeType) return null;
+    return {
+      inlineData: {
+        data: Buffer.from(response.data).toString("base64"),
+        mimeType,
+      },
+    };
+  } catch (error) {
+    console.error("Attachment fetch failed:", error.message);
+    return null;
+  }
+};
 
 const FAQ_DATA = [
   {
@@ -1160,19 +1204,41 @@ export const aiChat = async (req, res) => {
           If no escalation is needed, just provide your response as plain text or wrapped in the same JSON structure with "requiresEscalation": false.
         `;
     } else {
-      systemInstruction = `You are iAssistant, the official Academic AI Tutor for iCampus. 
-      Your purpose is to help students and lecturers understand educational material. 
-      Academic Context: ${type === "course" ? `Course: ${data.courseTitle || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.`;
+      const courseLabel = [data.courseCode, data.courseTitle || data.title]
+        .filter(Boolean)
+        .join(" - ");
+      systemInstruction = `You are iAssistant, the official Academic AI Tutor for iCampus.
+      Your purpose is to help students and lecturers understand educational material.
+      Academic Context: ${type === "course" ? `Course: ${courseLabel || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.
+      When the user shares an image or document, read it and explain or answer based on its content.`;
     }
     const formattedHistory = prepareChatHistory(history);
+
+    // Attachments (images/PDFs uploaded from the app) arrive as a URL in the
+    // context; they used to be ignored, so the model answered blind.
+    const messageParts = [{ text: message }];
+    if (data.attachmentUrl) {
+      const attachment = await fetchAttachmentPart(data.attachmentUrl);
+      if (!attachment) {
+        return res.status(422).json({
+          success: false,
+          error:
+            "Could not read that attachment. Send an image or PDF under 15MB.",
+        });
+      }
+      messageParts.push(attachment);
+    }
+
     const chat = ai.chats.create({
-      model: "gemini-3.8-flash",
+      model: geminiModel(),
       history: formattedHistory,
       config: {
         systemInstruction: systemInstruction,
       },
     });
-    const result = await chat.sendMessage(message);
+    // @google/genai takes { message }; a bare string throws
+    // "ContentUnion is required", which broke every chat request.
+    const result = await chat.sendMessage({ message: messageParts });
     const replyText = result.text;
 
     if (!replyText) {
@@ -1285,6 +1351,9 @@ export const aiChat = async (req, res) => {
       "error",
       error.message,
     );
+    if (isGeminiQuotaError(error)) {
+      return res.status(429).json({ success: false, error: GEMINI_BUSY_MESSAGE });
+    }
     return res
       .status(500)
       .json({ success: false, error: "Failed to fetch response" });
@@ -2663,6 +2732,27 @@ export const markNotificationAsRead = async (req, res) => {
       updatedAt: updateTimestamp,
     });
 
+    // The list shows this notification as the face of its group, so clear the
+    // rest of the group too; otherwise it stays in the Unread tab.
+    const groupKey = notificationGroupKey(existingData);
+    const siblingsSnap = await Notification.where("recipientId", "==", userId)
+      .where("actionType", "==", existingData.actionType || "unknown")
+      .get();
+    const siblingBatch = db.batch();
+    let siblingCount = 0;
+    siblingsSnap.docs.forEach((doc) => {
+      const data = doc.data();
+      if (
+        doc.id !== notificationDoc.id &&
+        isNotificationUnread(data) &&
+        notificationGroupKey(data) === groupKey
+      ) {
+        siblingBatch.update(doc.ref, { isRead: true, updatedAt: updateTimestamp });
+        siblingCount += 1;
+      }
+    });
+    if (siblingCount > 0) await siblingBatch.commit();
+
     const notification = {
       id: notificationDoc.id,
       ...existingData,
@@ -2673,6 +2763,7 @@ export const markNotificationAsRead = async (req, res) => {
       success: true,
       message: "Notification marked as read",
       notification,
+      groupMarkedCount: siblingCount + 1,
     });
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
@@ -2714,9 +2805,13 @@ export const markAllNotificationsAsRead = async (req, res) => {
         .json({ success: false, message: "Unauthorized user context." });
     }
 
-    const unreadQuery = await Notification.where("recipientId", "==", userId)
-      .where("isRead", "==", false)
-      .get();
+    // Filter in code: older records have no `isRead` field at all, and an
+    // `isRead == false` query never matches a missing field.
+    const allQuery = await Notification.where("recipientId", "==", userId).get();
+    const unreadDocs = allQuery.docs.filter((doc) =>
+      isNotificationUnread(doc.data()),
+    );
+    const unreadQuery = { empty: unreadDocs.length === 0, docs: unreadDocs, size: unreadDocs.length };
 
     if (unreadQuery.empty) {
       res.status(200).json({

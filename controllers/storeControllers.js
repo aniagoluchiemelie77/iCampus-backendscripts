@@ -385,6 +385,8 @@ export const cancelOrder = async (req, res) => {
         createdAt: new Date(),
       });
     });
+    // Stock was restored: drop the cached catalog so apps see it.
+    redis.del("catalog:all_products:v2").catch(() => {});
 
     res.status(200).json({
       success: true,
@@ -565,7 +567,7 @@ export const saveProductController = async (req, res) => {
       };
 
       await productDocRef.update(productData);
-      await redis.del("catalog:all_products");
+      await redis.del("catalog:all_products:v2");
       productData = { productId, sellerId: userUid, ...productData };
     } else {
       const newCustomId = generateProductId(userUid);
@@ -688,7 +690,7 @@ export const fetchAllProducts = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchAllProductsController";
   const action = "fetchAllProducts";
-  const CACHE_KEY = "catalog:all_products";
+  const CACHE_KEY = "catalog:all_products:v2";
 
   try {
     const cachedData = await redis.get(CACHE_KEY);
@@ -736,7 +738,13 @@ export const fetchAllProducts = async (req, res) => {
         sellerId: data.sellerId,
         physicalDetails: data.physicalDetails,
         nationalityOfSeller: data.nationalityOfSeller,
-        amountInStock: data.amountInStock,
+        amountInStock: Number(data.amountInStock) || 0,
+        // Without these the app's local cache overwrote them with NULL on
+        // every sync (and "physical vs digital" stock logic broke).
+        type: data.type ?? null,
+        category: data.category ?? null,
+        description: data.description ?? null,
+        schoolName: data.schoolName ?? null,
         currency: data.currency,
         niche: data.niche,
         impressions: data.impressions,
@@ -755,7 +763,7 @@ export const fetchAllProducts = async (req, res) => {
     setImmediate(() => {
       const backgroundTasks = [
         redis
-          .set(CACHE_KEY, JSON.stringify(products), { EX: 18000 })
+          .set(CACHE_KEY, JSON.stringify(products), { ex: 1800 }) // Upstash expects lowercase "ex"
           .catch((err) => console.error("Redis cache write error:", err)),
       ];
 
@@ -1404,6 +1412,9 @@ export const initializeCheckout = async (req, res) => {
 
       return { processedResults: results, buyerTxId };
     });
+
+    // Stock was decremented: drop the cached catalog so apps see it.
+    redis.del("catalog:all_products:v2").catch(() => {});
 
     res.status(200).json({
       success: true,
@@ -2276,13 +2287,39 @@ export const getPayoutHistory = async (req, res) => {
       history.push({ id: doc.id, ...cleanData });
     });
     const hasMore = history.length === limit;
-    const nextCursor = hasMore ? history[history.length - 1].createdAt : null;
+    // ISO string, not a Firestore Timestamp: the Timestamp reached the app as
+    // {_seconds,_nanoseconds}, came back as "[object Object]", was ignored,
+    // and every "load more" returned page one again.
+    const lastCreatedAtValue = hasMore
+      ? history[history.length - 1].createdAt
+      : null;
+    const nextCursor = lastCreatedAtValue
+      ? (typeof lastCreatedAtValue.toDate === "function"
+          ? lastCreatedAtValue.toDate()
+          : new Date(lastCreatedAtValue)
+        ).toISOString()
+      : null;
+
+    // Lifetime total of successful payouts (first page only) for the seller
+    // overview's "Total generated" figure.
+    let totalPaidOut;
+    if (!lastCreatedAt) {
+      const allPayouts = await Transactions.where("userId", "==", userUid)
+        .where("type", "==", "payout")
+        .select("amount", "status")
+        .get();
+      totalPaidOut = allPayouts.docs.reduce((sum, doc) => {
+        const { amount, status } = doc.data();
+        return status === "success" ? sum + (Number(amount) || 0) : sum;
+      }, 0);
+    }
 
     res.status(200).json({
       success: true,
       data: history,
       hasMore,
       nextCursor,
+      ...(totalPaidOut !== undefined ? { totalPaidOut } : {}),
       message: "Payout history retrieved successfully.",
     });
 
@@ -2673,7 +2710,7 @@ export const deleteProductController = async (req, res) => {
 
     setImmediate(async () => {
       try {
-        await redis.del("catalog:all_products");
+        await redis.del("catalog:all_products:v2");
 
         const sellerQuery = await User.where("uid", "==", userUid)
           .limit(1)

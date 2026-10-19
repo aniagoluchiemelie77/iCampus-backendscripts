@@ -7,22 +7,22 @@ import path from "path";
 import { db } from "../config/firebaseAdmin.js";
 const IDEMPOTENCY_COLLECTION = "idempotency_keys";
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, "uploads/");
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + "-" + Math.round(Math.random() * 1e9);
-    cb(
-      null,
-      file.fieldname + "-" + uniqueSuffix + path.extname(file.originalname),
-    );
-  },
-});
-
+// Uploads go straight to Gemini, so keep them in memory: the old disk storage
+// left `file.buffer` undefined and wrote into an "uploads/" folder that does
+// not exist (ENOENT). Only PDFs and images are accepted (what Gemini reads).
+const ALLOWED_UPLOAD_TYPES = /^(application\/pdf|image\/(jpeg|png|webp|heic|heif))$/i;
 export const upload = multer({
-  storage: storage,
-  limits: { fileSize: 1024 * 1024 * 25 },
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 1024 * 1024 * 15, files: 5 },
+  fileFilter: (req, file, cb) => {
+    const isPdfByName = path.extname(file.originalname || "").toLowerCase() === ".pdf";
+    if (ALLOWED_UPLOAD_TYPES.test(file.mimetype) || isPdfByName) {
+      return cb(null, true);
+    }
+    const error = new Error("Only PDF or image files (JPG, PNG, WEBP, HEIC) are supported.");
+    error.status = 415;
+    return cb(error);
+  },
 });
 
 export const verifyAdmin = async (req, res, next) => {
@@ -126,7 +126,7 @@ export const protect = async (req, res, next) => {
   try {
     let decoded;
     let uid;
-    let tableType = "user";
+    let tableType = "users";
 
     if (token.length > 500) {
       decoded = await admin.auth().verifyIdToken(token);
@@ -134,7 +134,7 @@ export const protect = async (req, res, next) => {
     } else {
       decoded = jwt.verify(token, process.env.JWT_SECRET);
       uid = decoded.id || decoded.uid;
-      tableType = decoded.role || "user";
+      tableType = decoded.role || "users";
     }
 
     const collectionName = tableType === "admin" ? "admins" : "users";

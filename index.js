@@ -36,7 +36,9 @@ app.use(cors());
 
 app.use((req, res, next) => {
   if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
-    express.json()(req, res, next);
+    // Face-verification selfies are sent as base64 and exceed the 100kb default.
+    const limit = req.path.endsWith("/verify-student") ? "10mb" : "100kb";
+    express.json({ limit })(req, res, next);
   } else {
     next();
   }
