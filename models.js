@@ -81,9 +81,20 @@ export const commentSchema = new mongoose.Schema({
   userId: { type: String, required: true },
   username: { type: String, required: true },
   profilePic: { type: String },
-  text: { type: String, required: true },
+  // "text" comments need text; "gif"/"sticker" comments carry media instead.
+  type: { type: String, enum: ["text", "gif", "sticker"], default: "text" },
+  text: { type: String, default: "" },
+  media: {
+    url: String,
+    previewUrl: String,
+    width: Number,
+    height: Number,
+  },
+  // Replies point at their top-level comment (threads are one level deep).
+  parentId: { type: String, default: null },
+  createdAt: { type: Date, default: Date.now },
   timestamp: { type: Date, default: Date.now },
-  likes: { type: Number, default: 0 },
+  likes: [{ type: String }],
 });
 export const lectureSchema = new mongoose.Schema({
   id: { type: String, unique: true, required: true },
@@ -727,6 +738,10 @@ const assignmentSchema = new mongoose.Schema({
        enum: ["visible", "hidden"],
        default: "visible",
      },
+     // "school": an institution memo seen only by that school's students and
+     // lecturers (schoolCode is copied from the posting admin's record).
+     audience: { type: String, enum: ["public", "school"], default: "public" },
+     schoolCode: { type: String, default: null },
    },
    { timestamps: true },
  );

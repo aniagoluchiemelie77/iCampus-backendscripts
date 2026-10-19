@@ -3,8 +3,9 @@ export const USD_SUBSCRIPTION_PRICES = Object.freeze({
   pro: 1.11,
   premium: 3.69,
 });
-export const EXCEPTION_COST_IN_ICASH = 0.5;
-export const EXCEPTION_LECTURER_DIVIDEND_IN_ICASH = 0.4;
+// Price of one exception beyond the monthly free allowance. Charged in the
+// student's currency at the live rate; all of it is platform revenue.
+export const EXCEPTION_COST_USD = 1.5;
 export const USD_EQUIVALENCE_OF_1_ICASH = 0.75;
 export const EXCEPTION_ACCOUNT_LIMITS = Object.freeze({
   free: 2,

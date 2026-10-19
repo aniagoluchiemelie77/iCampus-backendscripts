@@ -29,6 +29,11 @@ import {
 } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { embedCourseInstructor } from "../utils/embedFunctions.js";
+import {
+  canViewPost,
+  enrichPosts,
+  loadUsersByUid,
+} from "../utils/postPipeline.js";
 import { loadNotificationGroups } from "../utils/notificationGrouping.js";
 import { client as redis } from "../workers/reditFile.js";
 axiosRetry(axios, { retries: 3 });
@@ -231,7 +236,12 @@ export const fetchBanksUsingCountryCode = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "fetchBanksUsingCountryCodeController";
   const action = "fetchBanksUsingCountryCode";
-  const { countryCode } = req.params;
+  const countryCode = String(req.params.countryCode || "").toUpperCase();
+  // Interpolated into the Flutterwave URL: anything but a 2-letter code
+  // (e.g. "../transactions") would reach other endpoints with our secret key.
+  if (!/^[A-Z]{2}$/.test(countryCode)) {
+    return res.status(400).json({ status: "error", message: "Invalid country code" });
+  }
   try {
     const flwResponse = await fetch(
       `https://api.flutterwave.com/v3/banks/${countryCode}`,
@@ -969,130 +979,40 @@ export const fetchAllUsers = async (req, res) => {
 
 //Tested and trusted using jest
 export const fetchPosts = async (req, res) => {
-  const limit = parseInt(req.query.limit) || 15;
+  const limit = Math.min(parseInt(req.query.limit) || 15, 30);
   const cursorScore = req.query.cursor ? parseFloat(req.query.cursor) : null;
-  const userId = req.user?.uid || req.user?.id;
+  const viewer = req.user || {};
+  const userId = viewer.uid || viewer.id;
   try {
-    let query = Posts.where("status", "!=", "hidden")
-      .orderBy("rankingScore", "desc")
-      .limit(limit);
-    if (cursorScore !== null && !isNaN(cursorScore)) {
-      query = query.startAfter(cursorScore);
-    }
-
-    const postsSnapshot = await query.get();
-    if (postsSnapshot.empty) {
-      return res.json({ posts: [], nextCursor: null });
-    }
-
-    const rawPosts = postsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    const authorIds = [
-      ...new Set(rawPosts.map((p) => p.originalAuthor).filter(Boolean)),
-    ];
-    const postIds = rawPosts.map((p) => p.id);
-    const authorMap = new Map();
-    const repostersMap = new Map();
-    const fetchTasks = [];
-
-    if (authorIds.length > 0) {
-      const authorChunks = [];
-      for (let i = 0; i < authorIds.length; i += 30) {
-        authorChunks.push(authorIds.slice(i, i + 30));
+    // School-only memos are filtered after the query, so keep reading pages
+    // until this one is full (or the feed runs out) instead of returning a
+    // short or empty page that looks like the end of the feed.
+    const visible = [];
+    let lastScore = cursorScore;
+    let exhausted = false;
+    for (let round = 0; round < 4 && visible.length < limit && !exhausted; round++) {
+      let query = Posts.where("status", "!=", "hidden")
+        .orderBy("rankingScore", "desc")
+        .limit(limit);
+      if (lastScore !== null && !isNaN(lastScore)) {
+        query = query.startAfter(lastScore);
       }
-
-      fetchTasks.push(
-        Promise.all(
-          authorChunks.map(async (chunk) => {
-            const userSnap = await User.where("uid", "in", chunk).get();
-            userSnap.docs.forEach((doc) => {
-              const userData = doc.data();
-              const { password, iCashPin, ...safeData } = userData;
-              const formattedAuthor = {
-                uid: userData.uid || doc.id,
-                firstname: safeData.firstname || safeData.firstName || "",
-                lastname: safeData.lastname || safeData.lastName,
-                username: safeData.username,
-                tier: safeData.tier || "free",
-                organizationName: safeData.organizationName,
-                profilePic: Array.isArray(safeData.profilePic)
-                  ? safeData.profilePic.map(String)
-                  : safeData?.profilePic
-                    ? [String(safeData.profilePic)]
-                    : [],
-                isVerified: safeData.isVerified || false,
-              };
-
-              authorMap.set(userData.uid || doc.id, formattedAuthor);
-            });
-          }),
-        ),
-      );
-    }
-
-    if (postIds.length > 0) {
-      const reposterChunks = [];
-      for (let i = 0; i < postIds.length; i += 30) {
-        reposterChunks.push(postIds.slice(i, i + 30));
-      }
-
-      fetchTasks.push(
-        Promise.all(
-          reposterChunks.map(async (chunk) => {
-            const repSnap = await PostReposters.where(
-              "postId",
-              "in",
-              chunk,
-            ).get();
-            repSnap.docs.forEach((doc) => {
-              const repData = doc.data();
-              const pId = repData.postId;
-              if (!repostersMap.has(pId)) repostersMap.set(pId, []);
-              repostersMap.get(pId).push({ id: doc.id, ...repData });
-            });
-          }),
-        ),
-      );
-    }
-
-    await Promise.all(fetchTasks);
-
-    const processedPosts = await Promise.all(
-      rawPosts.map(async (post) => {
-        let authorDetails = post.originalAuthor
-          ? authorMap.get(post.originalAuthor)
-          : null;
-        const postWithDetails = { ...post };
-        if (authorDetails) {
-          postWithDetails.postAuthorsDetails = authorDetails;
-        } else if (typeof embedPostWithAuthorDetails === "function") {
-          await embedPostWithAuthorDetails(postWithDetails);
+      const snap = await query.get();
+      if (snap.size < limit) exhausted = true;
+      snap.docs.forEach((doc) => {
+        const post = { id: doc.id, ...doc.data() };
+        lastScore = post.rankingScore;
+        if (visible.length < limit && canViewPost(post, viewer)) {
+          visible.push(post);
         }
+      });
+    }
 
-        const repostersDetails = repostersMap.get(post.id) || [];
-        const targetPostId = post.postId || post.id;
-
-        const commentsSnapshot = await Comments.where(
-          "postId",
-          "==",
-          targetPostId,
-        ).get();
-        const commentsCount = commentsSnapshot.size;
-
-        return {
-          ...postWithDetails,
-          repostersDetails,
-          commentsCount,
-          featuredReposter: await getPriorityReposter(repostersDetails, userId),
-        };
-      }),
-    );
-
-    const lastPost = rawPosts[rawPosts.length - 1];
-    const nextCursor = rawPosts.length === limit ? lastPost.rankingScore : null;
-    res.json({ posts: processedPosts, nextCursor });
+    const posts = await enrichPosts(visible, userId);
+    res.json({
+      posts,
+      nextCursor: exhausted || lastScore === null ? null : lastScore,
+    });
   } catch (err) {
     console.error("--- ❌ FEED ERROR CAUGHT ---");
     console.error("Error Message:", err.message);
@@ -1267,221 +1187,65 @@ export const fetchProfileInformation = async (req, res) => {
 
   try {
     const { identifier } = req.params;
-    const viewerUid = req.user.uid;
+    const viewer = req.user || {};
+    const viewerUid = viewer.uid || viewer.id;
     const { viewerTier, viewerRole, viewerFirstname } = req.query;
 
-    const targetUserSnapshot = await User.where(
-      Filter.or(
-        Filter.where("uid", "==", identifier),
-        Filter.where("username", "==", identifier),
-        Filter.where("firstname", "==", identifier),
-        Filter.where("lastname", "==", identifier),
-      ),
-    )
-      .limit(1)
-      .get();
-
-    if (targetUserSnapshot.empty) {
+    const target = await findProfileTarget(identifier);
+    if (!target) {
       setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        ),
+        logControllerPerformance(controllerName, action, startTime, "error", "User not found"),
       );
-      return res
-        .status(404)
-        .json({ success: false, message: "User not found" });
+      return res.status(404).json({ success: false, message: "User not found" });
     }
+    const targetUid = target.uid;
+    const isOwner = viewerUid === targetUid;
 
-    const rawTargetUserData = targetUserSnapshot.docs[0].data();
-    const { password, refreshTokens, ...targetUser } = rawTargetUserData;
-    const targetUid = targetUser.uid;
-
-    const viewerDoc = await User.doc(viewerUid).get();
-    const viewerData = viewerDoc.exists ? viewerDoc.data() : null;
-
-    const isBlockedByViewer = (viewerData?.blockedUsers || []).includes(
-      targetUid,
-    );
-    const isViewerBlockedByTarget = (targetUser.blockedUsers || []).includes(
-      viewerUid,
-    );
-
-    if (isBlockedByViewer || isViewerBlockedByTarget) {
+    // Either direction of a block hides the profile. `blockedByViewer` lets the
+    // app offer "Unblock" only when the viewer is the one who blocked.
+    const blockedByViewer = (viewer.blockedUsers || []).includes(targetUid);
+    const viewerBlockedByTarget = (target.blockedUsers || []).includes(viewerUid);
+    if (!isOwner && (blockedByViewer || viewerBlockedByTarget)) {
       setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found or you have restricted access to this profile.",
-        ),
+        logControllerPerformance(controllerName, action, startTime, "error", "Blocked profile"),
       );
       return res.status(403).json({
         success: false,
-        message:
-          "User not found or you have restricted access to this profile.",
         isBlocked: true,
-        targetUid: targetUid,
+        blockedByViewer,
+        targetUid: blockedByViewer ? targetUid : undefined,
+        message: blockedByViewer
+          ? "You have blocked this user."
+          : "This profile isn't available.",
       });
     }
 
-    const fetchUsersByUids = async (uids) => {
-      if (!uids || !uids.length) return [];
-      const chunks = [];
-      for (let i = 0; i < uids.length; i += 30) {
-        chunks.push(uids.slice(i, i + 30));
-      }
-      const results = await Promise.all(
-        chunks.map((chunk) => User.where("uid", "in", chunk).get()),
-      );
-      return results.flatMap((snap) =>
-        snap.docs.map((doc) => {
-          const u = doc.data();
-          return {
-            uid: u.uid || doc.id,
-            firstname: u.firstname,
-            lastname: u.lastname,
-            username: u.username,
-            profilePic: u.profilePic,
-            tier: u.tier,
-            isVerified: u.isVerified,
-            usertype: u.usertype,
-            organizationName: u.organizationName,
-          };
-        }),
-      );
-    };
-
-    const attachCommentsAndCountsToPosts = async (postsList) => {
-      if (!postsList || !postsList.length) return [];
-      const postDataPromises = postsList.map(async (post) => {
-        const targetPostId = post.postId || post.id;
-        const [commentsSnapshot, repostersSnapshot] = await Promise.all([
-          Comments.where("postId", "==", targetPostId).get(),
-          PostReposters.where("postId", "==", targetPostId).get(),
-        ]);
-        return { post, commentsSnapshot, repostersSnapshot };
-      });
-
-      const resolvedPosts = await Promise.all(postDataPromises);
-      const allCommentUserIds = new Set();
-      resolvedPosts.forEach(({ commentsSnapshot }) => {
-        commentsSnapshot.docs.forEach((doc) => {
-          const commentData = doc.data();
-          if (commentData.userId) allCommentUserIds.add(commentData.userId);
-        });
-      });
-      const commentAuthorMap = new Map();
-      const uniqueCommentUserIds = [...allCommentUserIds];
-      if (uniqueCommentUserIds.length > 0) {
-        const userChunks = [];
-        for (let i = 0; i < uniqueCommentUserIds.length; i += 30) {
-          userChunks.push(uniqueCommentUserIds.slice(i, i + 30));
-        }
-        const userResults = await Promise.all(
-          userChunks.map((chunk) => User.where("uid", "in", chunk).get()),
-        );
-        userResults.forEach((snap) => {
-          snap.docs.forEach((doc) => {
-            const cuData = doc.data();
-            commentAuthorMap.set(cuData.uid || doc.id, {
-              uid: cuData.uid || doc.id,
-              firstname: cuData.firstname,
-              lastname: cuData.lastname,
-              username: cuData.username,
-              profilePic: cuData.profilePic,
-            });
-          });
-        });
-      }
-      return resolvedPosts.map(
-        ({ post, commentsSnapshot, repostersSnapshot }) => {
-          const comments = commentsSnapshot.docs.map((doc) => {
-            const commentData = doc.data();
-            const commentUser = commentData.userId
-              ? commentAuthorMap.get(commentData.userId) || commentData.userId
-              : null;
-
-            return {
-              id: doc.id,
-              ...commentData,
-              userId: commentUser,
-            };
-          });
-
-          const repostersCount = repostersSnapshot.size;
-          const commentsCount = commentsSnapshot.size;
-
-          return {
-            ...post,
-            comments,
-            commentsCount,
-            repostsCount:
-              post.repostsCount !== undefined
-                ? post.repostsCount
-                : repostersCount,
-          };
-        },
-      );
-    };
-
-    const fetchPostsByIds = async (postIds) => {
-      if (!postIds || !postIds.length) return [];
-      const chunks = [];
-      for (let i = 0; i < postIds.length; i += 30) {
-        chunks.push(postIds.slice(i, i + 30));
-      }
-      const results = await Promise.all(
-        chunks.map((chunk) => Posts.where("postId", "in", chunk).get()),
-      );
-      const posts = results.flatMap((snap) =>
-        snap.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
-      );
-
-      const getTime = (p) =>
-        p.createdAt?.toMillis
-          ? p.createdAt.toMillis()
-          : new Date(p.createdAt).getTime();
-
-      const sortedPosts = posts.sort((a, b) => getTime(b) - getTime(a));
-      return await attachCommentsAndCountsToPosts(sortedPosts);
-    };
-
+    // Counts only; lists load per tab via /profile/:uid/content and
+    // /profile/:uid/connections, a page at a time.
+    const countOf = async (query) => (await query.count().get()).data().count;
     const [
-      followersSnap,
-      followingSnap,
+      followersCount,
+      followingCount,
+      postsCount,
+      repostsCount,
       isFollowingSnap,
       coursesSnap,
-      userPostsSnap,
-      repostsSnap,
-      bookmarkedPosts,
+      firstPostsPage,
     ] = await Promise.all([
-      Follow.where("followingId", "==", targetUid).get(),
-      Follow.where("followerId", "==", targetUid).get(),
-      Follow.where("followerId", "==", viewerUid)
-        .where("followingId", "==", targetUid)
-        .limit(1)
-        .get(),
-      targetUser.usertype === "lecturer" || targetUser.usertype === "otherUser"
-        ? Course.where("lecturerIds", "array-contains", targetUid).get()
+      countOf(Follow.where("followingId", "==", targetUid)),
+      countOf(Follow.where("followerId", "==", targetUid)),
+      countOf(Posts.where("originalAuthor", "==", targetUid)),
+      countOf(PostReposters.where("uid", "==", targetUid)),
+      isOwner
+        ? null
+        : Follow.where("followerId", "==", viewerUid)
+            .where("followingId", "==", targetUid)
+            .limit(1)
+            .get(),
+      target.usertype === "lecturer" || target.usertype === "otherUser"
+        ? Course.where("lecturerIds", "array-contains", targetUid).limit(20).get()
         : null,
-      Posts.where("originalAuthor", "==", targetUid).get(),
-      PostReposters.where("uid", "==", targetUid).get(),
-      fetchPostsByIds(targetUser.bookmarks || []),
-    ]);
-
-    const followerIds = followersSnap.docs.map((doc) => doc.data().followerId);
-    const followingIds = followingSnap.docs.map(
-      (doc) => doc.data().followingId,
-    );
-
-    const [followerDetails, followingDetails] = await Promise.all([
-      fetchUsersByUids(followerIds),
-      fetchUsersByUids(followingIds),
+      loadProfileContentPage({ tab: "Posts", target, viewer, limit: 6 }),
     ]);
 
     const courses = coursesSnap
@@ -1489,6 +1253,7 @@ export const fetchProfileInformation = async (req, res) => {
           const c = doc.data();
           return {
             id: doc.id,
+            courseId: c.courseId || doc.id,
             courseTitle: c.courseTitle,
             courseCode: c.courseCode,
             thumbnailUrl: c.thumbnailUrl,
@@ -1503,33 +1268,7 @@ export const fetchProfileInformation = async (req, res) => {
         })
       : [];
 
-    const authoredPosts = userPostsSnap.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-
-    const [formattedAuthoredPosts, originalRepostedPosts] = await Promise.all([
-      attachCommentsAndCountsToPosts(authoredPosts),
-      fetchPostsByIds(repostsSnap.docs.map((doc) => doc.data().postId)),
-    ]);
-
-    const formattedReposts = originalRepostedPosts.map((post) => ({
-      ...post,
-      isRepost: true,
-    }));
-
-    const getTime = (item) =>
-      item.createdAt?.toMillis
-        ? item.createdAt.toMillis()
-        : new Date(item.createdAt).getTime();
-
-    const userPosts = [...formattedAuthoredPosts, ...formattedReposts].sort(
-      (a, b) => getTime(b) - getTime(a),
-    );
-    const isOwner = viewerUid === targetUid;
-    const isPremiumViewer = viewerTier === "premium";
-
-    if (!isOwner && !isPremiumViewer) {
+    if (!isOwner && viewerTier !== "premium") {
       createNotification({
         notificationId: generateNotificationId("profile"),
         recipientId: targetUid,
@@ -1537,8 +1276,8 @@ export const fetchProfileInformation = async (req, res) => {
         category: "social",
         actionType: "PROFILE_VIEW",
         title: "Profile View",
-        message: `${viewerFirstname || "Someone"} viewed your profile`,
-        payload: { viewerUid, userName: viewerFirstname },
+        message: `${viewerFirstname || viewer.firstname || "Someone"} viewed your profile`,
+        payload: { viewerUid, userName: viewerFirstname || viewer.firstname },
         sendPush: true,
         sendSocket: true,
         saveToDb: true,
@@ -1546,40 +1285,32 @@ export const fetchProfileInformation = async (req, res) => {
     }
 
     const canSeeScore =
-      isOwner || viewerRole === "enterprise" || viewerTier !== "free";
-
-    const profileData = {
-      ...targetUser,
-      currentIScore: canSeeScore ? targetUser.currentIScore : "Locked",
-      followersList: followerDetails,
-      followersCount: followerDetails.length,
-      followingList: followingDetails,
-      followingCount: followingDetails.length,
-      isFollowing: !isFollowingSnap.empty,
-      courses,
-      posts: userPosts,
-      bookmarkedPosts,
-      bookmarksCount: targetUser.bookmarks?.length || 0,
-      likesCount: targetUser.likes?.length || 0,
-    };
+      isOwner || (viewerRole || viewer.usertype) === "enterprise" || (viewerTier || viewer.tier || "free") !== "free";
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
     res.status(200).json({
       success: true,
-      data: profileData,
+      data: {
+        ...toProfileView(target),
+        currentIScore: canSeeScore ? target.currentIScore ?? null : "Locked",
+        isOwner,
+        isFollowing: isOwner ? false : !isFollowingSnap.empty,
+        followersCount,
+        followingCount,
+        postsCount,
+        repostsCount,
+        // Bookmarks are private.
+        bookmarksCount: isOwner ? (target.bookmarks || []).length : undefined,
+        courses,
+        initialContent: { tab: "Posts", ...firstPostsPage },
+      },
     });
   } catch (error) {
     console.error("Comprehensive Profile Fetch Error:", error.message);
     setImmediate(() =>
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      ),
+      logControllerPerformance(controllerName, action, startTime, "error", error.message),
     );
     res.status(500).json({ success: false, message: "Server error" });
   }
@@ -2564,4 +2295,212 @@ export const fetchLecturerEnrolledCourses = async (req, res) => {
     );
     return res.status(500).json({ message: "Error fetching lecturer courses" });
   }
+};
+export const fetchProfileContent = async (req, res) => {
+  try {
+    const viewer = req.user || {};
+    const tab = PROFILE_TABS.includes(req.query.tab) ? req.query.tab : "Posts";
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 10, 1), 30);
+    const target = await findProfileTarget(req.params.uid);
+    if (!target) return res.status(404).json({ success: false, message: "User not found" });
+
+    const isOwner = (viewer.uid || viewer.id) === target.uid;
+    if (
+      !isOwner &&
+      ((viewer.blockedUsers || []).includes(target.uid) ||
+        (target.blockedUsers || []).includes(viewer.uid || viewer.id))
+    ) {
+      return res.status(403).json({ success: false, message: "This profile isn't available." });
+    }
+    if (tab === "Bookmarks" && !isOwner) {
+      return res.status(403).json({ success: false, message: "Bookmarks are private." });
+    }
+
+    const page = await loadProfileContentPage({
+      tab,
+      target,
+      viewer,
+      limit,
+      cursor: req.query.cursor ? String(req.query.cursor) : null,
+    });
+    return res.status(200).json({ success: true, tab, ...page });
+  } catch (error) {
+    console.error("Profile content error:", error.message);
+    return res.status(500).json({ success: false, message: "Could not load this tab." });
+  }
+};
+export const fetchProfileConnections = async (req, res) => {
+  try {
+    const viewer = req.user || {};
+    const viewerUid = viewer.uid || viewer.id;
+    const type = req.query.type === "following" ? "following" : "followers";
+    const limit = Math.min(Math.max(parseInt(req.query.limit) || 30, 1), 50);
+    const offset = Math.max(parseInt(req.query.cursor) || 0, 0);
+    const target = await findProfileTarget(req.params.uid);
+    if (!target) return res.status(404).json({ success: false, message: "User not found" });
+
+    const [matchField, otherField] =
+      type === "followers" ? ["followingId", "followerId"] : ["followerId", "followingId"];
+    const snap = await Follow.where(matchField, "==", target.uid)
+      .select(otherField, "createdAt")
+      .get();
+    const ordered = snap.docs
+      .map((doc) => ({ uid: doc.get(otherField), ms: millisOf(doc.get("createdAt")) }))
+      .filter((r) => r.uid)
+      .sort((a, b) => b.ms - a.ms);
+    const pageIds = ordered.slice(offset, offset + limit).map((r) => r.uid);
+    const users = await loadUsersByUid(pageIds);
+
+    // Whether the viewer follows each listed person (drives the row button).
+    const viewerFollows = new Set();
+    if (viewerUid && pageIds.length) {
+      const followSnap = await Follow.where("followerId", "==", viewerUid)
+        .where("followingId", "in", pageIds.slice(0, 30))
+        .get();
+      followSnap.docs.forEach((d) => viewerFollows.add(d.get("followingId")));
+    }
+
+    return res.status(200).json({
+      success: true,
+      type,
+      users: pageIds
+        .map((uid) => users.get(uid))
+        .filter(Boolean)
+        .map((u) => ({ ...u, isFollowingByViewer: viewerFollows.has(u.uid) })),
+      nextCursor: offset + limit < ordered.length ? String(offset + limit) : null,
+      total: ordered.length,
+    });
+  } catch (error) {
+    console.error("Profile connections error:", error.message);
+    return res.status(500).json({ success: false, message: "Could not load this list." });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Profile helpers (used by fetchProfileInformation and the paged endpoints)
+// ---------------------------------------------------------------------------
+const PROFILE_TABS = ["Posts", "Reposts", "Media", "Jobs", "Events", "Bookmarks"];
+// Fields anyone may see on a profile. The whole user document used to be
+// sent, including sessions, phone numbers, recovery emails and likes.
+const PUBLIC_PROFILE_FIELDS = [
+  "uid", "firstname", "lastname", "username", "profilePic", "tier", "isVerified",
+  "usertype", "organizationName", "headline", "bio", "skills", "website",
+  "jobTitle", "department", "schoolName", "current_level", "country", "email",
+  "createdAt",
+];
+const toProfileView = (user) =>
+  Object.fromEntries(
+    PUBLIC_PROFILE_FIELDS.filter((k) => user[k] !== undefined).map((k) => [k, user[k]]),
+  );
+
+const millisOf = (v) =>
+  v?.toMillis
+    ? v.toMillis()
+    : v?._seconds
+      ? v._seconds * 1000
+      : new Date(v || 0).getTime() || 0;
+
+/** Resolves a profile by uid, username, first or last name. */
+const findProfileTarget = async (identifier) => {
+  if (!identifier) return null;
+  const snap = await User.where(
+    Filter.or(
+      Filter.where("uid", "==", identifier),
+      Filter.where("username", "==", identifier),
+      Filter.where("firstname", "==", identifier),
+      Filter.where("lastname", "==", identifier),
+    ),
+  )
+    .limit(1)
+    .get();
+  if (snap.empty) return null;
+  const data = snap.docs[0].data();
+  return { ...data, uid: data.uid || snap.docs[0].id };
+};
+
+const loadPostsByPostIds = async (postIds) => {
+  const byId = new Map();
+  const unique = [...new Set(postIds.filter(Boolean))];
+  for (let i = 0; i < unique.length; i += 30) {
+    const snap = await Posts.where("postId", "in", unique.slice(i, i + 30)).get();
+    snap.docs.forEach((doc) => byId.set(doc.get("postId"), { id: doc.id, ...doc.data() }));
+  }
+  return byId;
+};
+
+// Light fields for ordering and visibility checks; the full post (and its
+// comments/reposters) is only loaded for the page being returned.
+const POST_INDEX_FIELDS = [
+  "postId", "createdAt", "postType", "media", "status", "audience",
+  "schoolCode", "originalAuthor",
+];
+const TAB_FILTERS = {
+  Posts: () => true,
+  Media: (p) => Array.isArray(p.media?.url) ? p.media.url.length > 0 : !!p.media?.url,
+  Jobs: (p) => p.postType === "job",
+  Events: (p) => p.postType === "event",
+};
+
+/**
+ * One page of a profile tab, newest first. Cursors are opaque strings:
+ * `${millis}_${id}` for authored posts and reposts, an offset for bookmarks.
+ */
+const loadProfileContentPage = async ({ tab, target, viewer, limit, cursor = null }) => {
+  const viewerUid = viewer?.uid || viewer?.id;
+  const afterCursor = (rows) => {
+    if (!cursor) return rows;
+    const [ms, id] = cursor.split("_");
+    const cursorMs = Number(ms);
+    return rows.filter((r) => r.ms < cursorMs || (r.ms === cursorMs && r.id < id));
+  };
+  const byNewest = (a, b) => b.ms - a.ms || (b.id < a.id ? -1 : 1);
+
+  if (tab === "Reposts") {
+    const snap = await PostReposters.where("uid", "==", target.uid)
+      .select("postId", "repostedAt")
+      .get();
+    const rows = afterCursor(
+      snap.docs.map((d) => ({ id: d.id, postId: d.get("postId"), ms: millisOf(d.get("repostedAt")) })),
+    ).sort(byNewest);
+    const page = rows.slice(0, limit);
+    const posts = await loadPostsByPostIds(page.map((r) => r.postId));
+    const visible = page.map((r) => posts.get(r.postId)).filter((p) => p && canViewPost(p, viewer));
+    const items = await enrichPosts(visible, viewerUid, { featuredReposterUid: target.uid });
+    const last = page[page.length - 1];
+    return {
+      items: items.map((p) => ({ ...p, isRepost: true })),
+      nextCursor: rows.length > limit && last ? `${last.ms}_${last.id}` : null,
+    };
+  }
+
+  if (tab === "Bookmarks") {
+    // Most recently bookmarked first (ids are appended as they're saved).
+    const ids = [...(target.bookmarks || [])].reverse();
+    const offset = Math.max(parseInt(cursor) || 0, 0);
+    const pageIds = ids.slice(offset, offset + limit);
+    const posts = await loadPostsByPostIds(pageIds);
+    const visible = pageIds.map((id) => posts.get(id)).filter((p) => p && canViewPost(p, viewer));
+    return {
+      items: await enrichPosts(visible, viewerUid),
+      nextCursor: offset + limit < ids.length ? String(offset + limit) : null,
+    };
+  }
+
+  const matches = TAB_FILTERS[tab] || TAB_FILTERS.Posts;
+  const snap = await Posts.where("originalAuthor", "==", target.uid)
+    .select(...POST_INDEX_FIELDS)
+    .get();
+  const rows = afterCursor(
+    snap.docs
+      .map((d) => ({ id: d.id, data: d.data(), ms: millisOf(d.get("createdAt")) }))
+      .filter((r) => canViewPost(r.data, viewer) && matches(r.data)),
+  ).sort(byNewest);
+  const page = rows.slice(0, limit);
+  const full = await Promise.all(page.map((r) => Posts.doc(r.id).get()));
+  const posts = full.filter((d) => d.exists).map((d) => ({ id: d.id, ...d.data() }));
+  const last = page[page.length - 1];
+  return {
+    items: await enrichPosts(posts, viewerUid),
+    nextCursor: rows.length > limit && last ? `${last.ms}_${last.id}` : null,
+  };
 };

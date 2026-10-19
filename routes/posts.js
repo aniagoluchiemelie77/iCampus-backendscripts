@@ -12,6 +12,8 @@ import {
   incrementImpressions,
   repost,
   toggleCommentLike,
+  fetchPostComments,
+  searchGifs,
 } from "../controllers/postActions.js";
 import { fetchPosts } from "../controllers/fetchActions.js";
 import { searchPosts } from "../controllers/userActionsController.js";
@@ -22,6 +24,9 @@ router.get("/fetchPosts", protect, fetchPosts);
 router.post("/repost", protect, idempotencyMiddleware, repost);
 router.post("/create", protect, idempotencyMiddleware, createPost);
 router.get("/search", protect, searchPosts);
+// GIFs and stickers for comments (proxied so the GIPHY key stays server-side).
+router.get("/media/gifs", protect, searchGifs);
+router.get("/:postId/comments", protect, fetchPostComments);
 router.patch(
   "/:postId/bookmark",
   protect,

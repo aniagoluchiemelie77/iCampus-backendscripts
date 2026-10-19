@@ -38,3 +38,59 @@ export async function convertAmount(amount, fromCurrency, toCurrency) {
   const convertedAmount = amountInUSD * rateTo;
   return Number(convertedAmount.toFixed(2));
 }
+
+// Mirrors currencyMap in the app (src/utils/UserTransactionsHelpers.ts).
+export const CURRENCY_BY_COUNTRY = Object.freeze({
+  Nigeria: "NGN",
+  Ghana: "GHS",
+  Kenya: "KES",
+  Uganda: "UGX",
+  Rwanda: "RWF",
+  Tanzania: "TZS",
+  Cameroon: "XAF",
+  Egypt: "EGP",
+  Ethiopia: "ETB",
+  "South Africa": "ZAR",
+  USA: "USD",
+  "United States of America": "USD",
+  "United Kingdom": "GBP",
+  Canada: "CAD",
+  Brazil: "BRL",
+  Mexico: "MXN",
+  Argentina: "ARS",
+  Russia: "RUB",
+  "South Korea": "KRW",
+  Indonesia: "IDR",
+  Turkey: "TRY",
+  "Saudi Arabia": "SAR",
+  Switzerland: "CHF",
+  Sweden: "SEK",
+  Norway: "NOK",
+  Poland: "PLN",
+  Singapore: "SGD",
+  Malaysia: "MYR",
+  Thailand: "THB",
+  Philippines: "PHP",
+  "New Zealand": "NZD",
+  Pakistan: "PKR",
+  Bangladesh: "BDT",
+  Vietnam: "VND",
+  Netherlands: "EUR",
+  Spain: "EUR",
+  Italy: "EUR",
+});
+
+// Currencies Flutterwave's hosted checkout can charge in.
+const FLUTTERWAVE_CHARGE_CURRENCIES = new Set([
+  "NGN", "GHS", "KES", "UGX", "RWF", "TZS", "XAF", "XOF", "ZAR", "ZMW",
+  "MWK", "EGP", "ETB", "USD", "GBP", "EUR", "CAD",
+]);
+
+export const currencyForCountry = (country) =>
+  CURRENCY_BY_COUNTRY[String(country || "").trim()] || "NGN";
+
+/** The user's currency when Flutterwave can charge it, otherwise USD. */
+export const chargeCurrencyForCountry = (country) => {
+  const local = currencyForCountry(country);
+  return FLUTTERWAVE_CHARGE_CURRENCIES.has(local) ? local : "USD";
+};

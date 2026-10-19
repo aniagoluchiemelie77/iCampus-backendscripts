@@ -1,5 +1,8 @@
 import crypto from "crypto";
-import { User, PaymentMethods, SupportTicket } from "../tableDeclarations.js";
+import { User, SupportTicket, Transactions } from "../tableDeclarations.js";
+import { isValidWebhookSignature } from "../utils/flutterwave.js";
+import { settleIntent } from "./paymentsController.js";
+import { releaseFailedPayout } from "./storeControllers.js";
 import { admin } from "../config/firebaseAdmin.js";
 import { setImmediate } from "timers";
 import {
@@ -109,14 +112,22 @@ export const personaVerifyConfirmation = async (req, res) => {
     }
   });
 };
+/**
+ * Flutterwave webhook (set the URL to /webhooks/flw-webhook and the secret
+ * hash to FLW_WEBHOOK_HASH in the Flutterwave dashboard).
+ *
+ *  - charge.completed: completes the purchase if the app never confirmed it
+ *    (closed mid-payment, lost connection). settleIntent is idempotent, so
+ *    it's fine when the app already did.
+ *  - transfer.completed: marks a payout successful, or failed and refunds
+ *    the seller's balance.
+ */
 export const handleFlutterwaveWebhook = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "handleFlutterwaveWebhookController";
   const action = "handleFlutterwaveWebhook";
-  const secretHash = process.env.FLW_WEBHOOK_HASH;
-  const signature = req.headers["verif-hash"];
 
-  if (!signature || signature !== secretHash) {
+  if (!isValidWebhookSignature(req.headers["verif-hash"])) {
     logControllerPerformance(
       controllerName,
       action,
@@ -127,55 +138,37 @@ export const handleFlutterwaveWebhook = async (req, res) => {
     return res.status(401).end();
   }
   res.status(200).end();
+
   setImmediate(async () => {
     try {
-      const { event, data } = req.body;
+      const { event, data } = req.body || {};
 
-      if (event === "charge.completed" && data?.status === "successful") {
-        const tasks = [];
-        const paymentToken = data.card?.token || data.account?.token;
-        if (paymentToken && data?.meta?.userId) {
-          tasks.push(
-            (async () => {
-              const methodQuerySnapshot = await PaymentMethods.where(
-                "paymentToken",
-                "==",
-                paymentToken,
-              )
-                .limit(1)
-                .get();
-
-              if (methodQuerySnapshot.empty) {
-                await PaymentMethods.add({
-                  userId: data.meta.userId,
-                  method: data.payment_type === "card" ? "card" : "bank",
-                  paymentToken,
-                  lastFourDigits:
-                    data.card?.last4digits ||
-                    data.account?.account_number?.slice(-4),
-                  cardBrand: data.card?.issuer,
-                  bankName: data.account?.bank_name,
-                  bankAccNumber: data.account?.account_number,
-                  expiryMonth: data.card?.expiry_month,
-                  expiryYear: data.card?.expiry_year,
-                  billingAddressDetails: data.meta.address
-                    ? {
-                        street: data.meta.address,
-                        city: data.meta.city,
-                        zip: data.meta.zip,
-                      }
-                    : undefined,
-                  createdAt: new Date(),
-                });
-              }
-            })(),
-          );
-        }
-
-        await Promise.all(tasks);
-
-        logControllerPerformance(controllerName, action, startTime, "success");
+      if (event === "charge.completed" && data?.tx_ref?.startsWith("ICP-")) {
+        // Re-verified with the Flutterwave API inside settleIntent; the
+        // webhook body itself is never trusted for amounts or status.
+        await settleIntent(data.tx_ref, data.id).catch((err) => {
+          if (err.status !== 404) {
+            console.error(`Webhook settle failed for ${data.tx_ref}:`, err.message);
+          }
+        });
       }
+
+      if (event === "transfer.completed" && data?.reference) {
+        const snap = await Transactions.where("reference", "==", data.reference)
+          .where("type", "==", "payout")
+          .limit(1)
+          .get();
+        if (!snap.empty) {
+          const ref = snap.docs[0].ref;
+          if (data.status === "SUCCESSFUL") {
+            await ref.update({ status: "success", updatedAt: new Date() });
+          } else if (data.status === "FAILED") {
+            await releaseFailedPayout(ref, data.complete_message);
+          }
+        }
+      }
+
+      logControllerPerformance(controllerName, action, startTime, "success");
     } catch (error) {
       console.error("Flutterwave Webhook Error:", error);
       logControllerPerformance(

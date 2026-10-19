@@ -16,6 +16,7 @@ export const UserBankOrCardDetails = db.collection("usercardorbankdetails");
 export const EmailVerification = db.collection("emailverify");
 export const Follow = db.collection("follow");
 export const Transactions = db.collection("transactions");
+export const PaymentIntents = db.collection("paymentintents");
 export const PaymentMethods = db.collection("paymentmethods");
 export const ITag = db.collection("itags");
 export const userPrefs = db.collection("userpreferences");

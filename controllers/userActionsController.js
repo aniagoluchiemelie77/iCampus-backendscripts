@@ -40,9 +40,13 @@ import { getPriorityReposter } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 import { db } from "../config/firebaseAdmin.js";
-import { EXCEPTION_ACCOUNT_LIMITS } from "../constants/inAppConstants.js";
+import {
+  EXCEPTION_ACCOUNT_LIMITS,
+  EXCEPTION_COST_USD,
+} from "../constants/inAppConstants.js";
 import { embedPostWithAuthorDetails } from "../utils/reposterPriorityChecker.js";
 import { prepareChatHistory } from "../utils/chatFormatter.js";
+import { canViewPost, enrichPosts } from "../utils/postPipeline.js";
 import {
   geminiModel,
   isGeminiQuotaError,
@@ -128,8 +132,7 @@ const FAQ_DATA = [
   {
     id: "acad-3",
     question: "What happens if I exhaust my free monthly exceptions?",
-    answer:
-      "If you have exhausted your free monthly allowance, you can purchase additional exceptions at a cost of 0.5 iCash each. Please note that if a lecturer disapproves or cancels a purchased exception, no refunds are issued.",
+    answer: `Once you have used your free monthly allowance, each extra exception costs ${EXCEPTION_COST_USD} (US dollars), charged in your local currency at the current exchange rate. You pay by card, bank transfer or USSD through Flutterwave, and the purchased exception is used the next time you submit a request. The fee goes to iCampus, not to the lecturer, and it is not refunded if the lecturer rejects the exception.`,
   },
   {
     id: "acad-4",
@@ -1380,114 +1383,50 @@ export const searchPosts = async (req, res) => {
     }
 
     const searchTerm = searchQuery.toLowerCase().trim();
-    const [postsSnapshot, commentsSnapshot, repostersSnapshot] =
-      await Promise.all([
-        Posts.orderBy("createdAt", "desc").limit(100).get(),
-        Comments.get(),
-        PostReposters.get(),
-      ]);
+    const postsSnapshot = await Posts.orderBy("createdAt", "desc")
+      .limit(100)
+      .get();
+    const candidates = postsSnapshot.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() }))
+      .filter((post) => canViewPost(post, req.user));
 
-    const allComments = commentsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
-    const allReposters = repostersSnapshot.docs.map((doc) => doc.data());
-    const matchedPosts = [];
-
-    postsSnapshot.forEach((doc) => {
-      const data = doc.data();
-      const postId = data.postId || doc.id;
-
-      const content = (data.content || "").toLowerCase();
-      const postComments = allComments.filter((c) => c.postId === postId);
-      const jobTitle = (data.jobMetadata?.title || "").toLowerCase();
-      const jobCompany = (data.jobMetadata?.company || "").toLowerCase();
-      const eventTitle = (data.eventMetadata?.title || "").toLowerCase();
-
-      const hasMatchingComment = postComments.some((c) =>
-        (c.comment || "").toLowerCase().includes(searchTerm),
-      );
-
-      if (
-        content.includes(searchTerm) ||
-        hasMatchingComment ||
-        jobTitle.includes(searchTerm) ||
-        jobCompany.includes(searchTerm) ||
-        eventTitle.includes(searchTerm)
-      ) {
-        const repostersDetails = allReposters.filter(
-          (r) => r.postId === postId,
-        );
-        matchedPosts.push({
-          id: doc.id,
-          ...data,
-          comments: postComments,
-          repostersDetails,
-        });
-      }
-    });
-
-    const limitedPosts = matchedPosts.slice(0, 40);
-    const uniqueCommentUserIds = [
-      ...new Set(
-        limitedPosts
-          .flatMap((p) => p.comments || [])
-          .map((c) => c.userId)
-          .filter(Boolean),
-      ),
-    ];
-    const userMap = {};
-    if (uniqueCommentUserIds.length > 0) {
-      const userQueries = await Promise.all(
-        uniqueCommentUserIds.map((uid) =>
-          User.where("uid", "==", uid)
-            .limit(1)
-            .get()
-            .catch(() => null),
-        ),
-      );
-
-      userQueries.forEach((userQuery) => {
-        if (userQuery && !userQuery.empty) {
-          const cuData = userQuery.docs[0].data();
-          userMap[cuData.uid] = {
-            uid: cuData.uid,
-            firstname: cuData.firstname,
-            lastname: cuData.lastname,
-            username: cuData.username,
-            profilePic: cuData.profilePic,
-          };
+    // Comment text only for the candidate posts (comments store `text`).
+    const commentMatches = new Set();
+    await Promise.all(
+      candidates.map(async (post) => {
+        const postId = post.postId || post.id;
+        const snap = await Comments.where("postId", "==", postId).get();
+        if (
+          snap.docs.some((doc) =>
+            String(doc.data().text ?? doc.data().comment ?? "")
+              .toLowerCase()
+              .includes(searchTerm),
+          )
+        ) {
+          commentMatches.add(postId);
         }
-      });
-    }
-
-    const formattedPosts = await Promise.all(
-      limitedPosts.map(async (post) => {
-        const postComments = post.comments || [];
-
-        const commentsWithUsers = postComments.map((commentData) => ({
-          ...commentData,
-          userId: userMap[commentData.userId] || commentData.userId,
-        }));
-
-        const featuredReposter =
-          typeof getPriorityReposter === "function"
-            ? await getPriorityReposter(post.repostersDetails || [], userId)
-            : null;
-        const postWithAuthor = await embedPostWithAuthorDetails(post);
-
-        return {
-          ...postWithAuthor,
-          comments: commentsWithUsers,
-          commentsCount: commentsWithUsers.length,
-          repostsCount:
-            post.repostsCount !== undefined
-              ? post.repostsCount
-              : (post.repostersDetails || []).length,
-          featuredReposter,
-        };
       }),
     );
+
+    const matched = candidates
+      .filter((data) => {
+        const haystack = [
+          data.content,
+          data.jobMetadata?.title,
+          data.jobMetadata?.company,
+          data.eventMetadata?.title,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return (
+          haystack.includes(searchTerm) ||
+          commentMatches.has(data.postId || data.id)
+        );
+      })
+      .slice(0, 40);
+
+    const formattedPosts = await enrichPosts(matched, userId);
 
     res.status(200).json({
       success: true,
@@ -1496,9 +1435,7 @@ export const searchPosts = async (req, res) => {
     });
 
     setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
+      logControllerPerformance(controllerName, action, startTime, "success");
     });
   } catch (error) {
     console.error("Database match compilation exception:", error.message);

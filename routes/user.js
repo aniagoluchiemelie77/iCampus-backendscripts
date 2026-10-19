@@ -10,6 +10,8 @@ import {
   fetchUnreadNotificationCount,
   fetchSingleNotification,
   fetchProfileInformation,
+  fetchProfileContent,
+  fetchProfileConnections,
   fetchBlockedUsers,
   fetchLectureExceptions,
   fetchCourseAssignments,
@@ -70,6 +72,12 @@ import {
 import { upload } from "../middleware/auth.js";
 import { uploadCourseDetails } from "../controllers/classActions.js";
 import { initiateFlwCharge } from "../controllers/paymentController.js";
+import {
+  createPaymentIntent,
+  confirmPayment,
+  resolveBankAccount,
+  savePayoutAccount,
+} from "../controllers/paymentsController.js";
 
 const router = express.Router();
 router.patch(
@@ -261,12 +269,20 @@ router.get(
 router.get("/courses/:courseId/assignments", protect, fetchCourseAssignments);
 router.get("/courses/lectures/:lectureId", fetchCourseLectures);
 router.get("/profile/search/:identifier", protect, fetchProfileInformation);
+// Paged profile tabs and follower/following lists (loaded on demand).
+router.get("/profile/:uid/content", protect, fetchProfileContent);
+router.get("/profile/:uid/connections", protect, fetchProfileConnections);
 router.get(
   "/courses/:courseId/fetch-all-lectures",
   protect,
   fetchAllLecturesByCourseId,
 );
 router.get("/payments/banks/:countryCode", protect, fetchBanksUsingCountryCode);
+// Every purchase: the server prices it, then verifies the Flutterwave payment.
+router.post("/payments/intent", protect, createPaymentIntent);
+router.post("/payments/confirm", protect, confirmPayment);
+router.get("/payments/resolve-account", protect, resolveBankAccount);
+router.post("/payments/payout-account", protect, idempotencyMiddleware, savePayoutAccount);
 
 export default router;
 

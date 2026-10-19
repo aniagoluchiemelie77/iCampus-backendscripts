@@ -22,10 +22,8 @@ import {
   generateSubmissionId,
   generateCourseId,
 } from "../utils/idGenerator.js";
-import {
-  EXCEPTION_COST_IN_ICASH,
-  EXCEPTION_ACCOUNT_LIMITS,
-} from "../constants/inAppConstants.js";
+import { EXCEPTION_ACCOUNT_LIMITS } from "../constants/inAppConstants.js";
+import crypto from "crypto";
 import { generateAttendancePDF } from "../templates/courseAttendanceTemplate.js";
 import { GoogleGenAI } from "@google/genai";
 import axios from "axios";
@@ -46,142 +44,158 @@ const checkContentAuthorization = async (userId, course) => {
   }
   return false;
 };
+const EXCEPTION_CATEGORIES = [
+  "Medical",
+  "Family Emergency",
+  "Technical Issue",
+  "Personal",
+  "Other",
+];
+
+/**
+ * Students get EXCEPTION_ACCOUNT_LIMITS[tier] free exceptions a month. Past
+ * that, each request uses one paid exception credit, bought for
+ * EXCEPTION_COST_USD through POST /users/payments/intent { purpose: "exception" }.
+ */
 export const submitLectureException = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "submitLectureExceptionController";
   const action = "submitLectureException";
+  const fail = (status, message, extra = {}) => {
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "error", message),
+    );
+    return res.status(status).json({ success: false, message, ...extra });
+  };
 
   try {
-    const { courseId, lectureId, reason, reasonCategory, courseInfo } =
-      req.body;
+    const { courseId, lectureId, reasonCategory } = req.body || {};
+    const reason = String(req.body?.reason || "").trim();
     const studentId = req.user?.uid || req.user?.id;
-    const now = new Date();
+    if (!courseId || !lectureId) {
+      return fail(400, "Select the lecture you will miss.");
+    }
+    if (!reason || reason.length > 1000) {
+      return fail(400, "Give a reason of up to 1000 characters.");
+    }
+    const category = EXCEPTION_CATEGORIES.includes(reasonCategory)
+      ? reasonCategory
+      : "Other";
+
+    const [lectureQuery, courseQuery] = await Promise.all([
+      Lectures.where("id", "==", lectureId).limit(1).get(),
+      Course.where("courseId", "==", courseId).limit(1).get(),
+    ]);
+    if (lectureQuery.empty) return fail(404, "Lecture not found.");
+    const lectureData = lectureQuery.docs[0].data();
+    if (lectureData.courseId && lectureData.courseId !== courseId) {
+      return fail(400, "That lecture is not part of this course.");
+    }
+    const lectureTopic = lectureData.topicName || lectureData.title || "Lecture";
+    const courseData = courseQuery.empty ? {} : courseQuery.docs[0].data();
+    const courseInfo = {
+      courseTitle:
+        courseData.courseTitle || req.body?.courseInfo?.courseTitle || "Course",
+      courseCode:
+        courseData.courseCode || req.body?.courseInfo?.courseCode || "",
+    };
 
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
-    const [userQuery, lectureQuery, monthlyExceptionsQuery] = await Promise.all(
-      [
-        User.where("uid", "==", studentId).limit(1).get(),
-        Lectures.where("id", "==", lectureId).limit(1).get(),
-        Exceptions.where("studentId", "==", studentId)
-          .where("createdAt", ">=", startOfMonth)
-          .get(),
-      ],
-    );
+    const now = new Date();
+    const exceptionId = `${generateExceptionId(courseId, lectureId)}-${crypto
+      .randomBytes(2)
+      .toString("hex")
+      .toUpperCase()}`;
 
-    if (userQuery.empty) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "User not found",
-      );
-      return res.status(404).json({ message: "User not found" });
-    }
+    const outcome = await db.runTransaction(async (t) => {
+      const [userSnap, monthSnap, duplicateSnap] = await Promise.all([
+        t.get(User.where("uid", "==", studentId).limit(1)),
+        t.get(
+          Exceptions.where("studentId", "==", studentId).where(
+            "createdAt",
+            ">=",
+            startOfMonth,
+          ),
+        ),
+        t.get(
+          Exceptions.where("studentId", "==", studentId)
+            .where("lectureId", "==", lectureId)
+            .limit(1),
+        ),
+      ]);
+      if (userSnap.empty) return { error: [404, "User not found"] };
+      if (!duplicateSnap.empty) {
+        return { error: [409, "You already requested an exception for this lecture."] };
+      }
+      const userDoc = userSnap.docs[0];
+      const user = userDoc.data();
+      const freeLimit =
+        EXCEPTION_ACCOUNT_LIMITS[user.tier] ?? EXCEPTION_ACCOUNT_LIMITS.free;
+      const usedThisMonth = monthSnap.size;
+      const isPaid = usedThisMonth >= freeLimit;
+      let exceptionCredits = Number(user.exceptionCredits) || 0;
 
-    const userDocRef = userQuery.docs[0].ref;
-    const user = userQuery.docs[0].data();
-
-    let lectureTopic = "Lecture";
-    if (!lectureQuery.empty) {
-      const lectureData = lectureQuery.docs[0].data();
-      lectureTopic = lectureData.topicName || lectureData.title || "Lecture";
-    }
-
-    const monthlyCount = monthlyExceptionsQuery.size;
-    const userLimit = EXCEPTION_ACCOUNT_LIMITS[user.tier] || 1;
-    const isPaidRequest = monthlyCount >= userLimit;
-    let chargedAmount = 0;
-
-    const currentBalance = user.iCashBalance ?? user.pointsBalance ?? 0;
-
-    await db.runTransaction(async (t) => {
-      if (isPaidRequest) {
-        if (currentBalance < EXCEPTION_COST_IN_ICASH) {
-          throw new Error(
-            `Monthly free limit (${userLimit}) reached. This exception costs ${EXCEPTION_COST_IN_ICASH} iCash, and your balance is insufficient.`,
-          );
+      if (isPaid) {
+        if (exceptionCredits < 1) {
+          return {
+            error: [
+              402,
+              `You've used your ${freeLimit} free exceptions this month. Buy an extra exception to continue.`,
+              { code: "EXCEPTION_PAYMENT_REQUIRED", usedThisMonth, freeLimit, exceptionCredits },
+            ],
+          };
         }
-
-        const newBalance = currentBalance - EXCEPTION_COST_IN_ICASH;
-        chargedAmount = EXCEPTION_COST_IN_ICASH;
-
-        t.update(userDocRef, {
-          pointsBalance: newBalance,
-          updatedAt: now,
-        });
-
-        const senderTransactionId = generateTransactionId("payment");
-        const txRef = Transactions.doc(senderTransactionId);
-        t.set(txRef, {
-          transactionId: senderTransactionId,
-          userId: user.uid,
-          type: "payment",
-          amountICash: chargedAmount,
-          status: "success",
-          payType: "out",
-          title: "Lectures Exception Purchase (Over Tier Limit)",
-          reference: `EXC-REF-${senderTransactionId}`,
-          createdAt: now,
-          updatedAt: now,
-        });
+        exceptionCredits -= 1;
+        t.update(userDoc.ref, { exceptionCredits, updatedAt: now });
       }
 
-      const studentName =
-        `${user.firstname || ""} ${user.lastname || ""}`.trim();
-      const studentMatric = user.matricNumber || "N/A";
-      const exceptionId = generateExceptionId(courseId, lectureId);
-
-      const exceptionRef = Exceptions.doc(exceptionId);
-      t.set(exceptionRef, {
+      const exception = {
         id: exceptionId,
         studentId,
         studentInfo: {
-          fullname: studentName,
-          matricNumber: studentMatric,
+          fullname: `${user.firstname || ""} ${user.lastname || ""}`.trim(),
+          matricNumber: user.matricNumber || "N/A",
         },
         courseInfo,
         courseId,
         lectureId,
         reason,
-        reasonCategory,
+        reasonCategory: category,
         status: "pending",
+        isPaid,
         date: now.toISOString(),
         createdAt: now,
         updatedAt: now,
-      });
+      };
+      t.set(Exceptions.doc(exceptionId), exception);
+      return {
+        exception,
+        isPaid,
+        exceptionCredits,
+        usedThisMonth: usedThisMonth + 1,
+        freeLimit,
+      };
     });
 
-    const updatedBalance = isPaidRequest
-      ? currentBalance - EXCEPTION_COST_IN_ICASH
-      : currentBalance;
+    if (outcome.error) return fail(...outcome.error);
 
-    const notificationMessage = isPaidRequest
-      ? `Your exception for ${courseInfo.courseTitle} was received. ${EXCEPTION_COST_IN_ICASH} iCash has been deducted.`
-      : `Your free exception for ${courseInfo.courseTitle} was successfully submitted.`;
-
-    return res.status(200).json({
-      success: true,
-      message: "Exception submitted successfully",
-      newBalance: updatedBalance,
-      charged: chargedAmount > 0,
-    });
     setImmediate(async () => {
       try {
         await createNotification({
           notificationId: generateNotificationId("classroom"),
           isRead: false,
-          recipientId: user.uid,
-          category: "finance",
+          recipientId: studentId,
+          category: "classroom",
           actionType: "EXCEPTION_SUBMITTED",
           title: "Exception Submitted",
-          message: notificationMessage,
+          message: outcome.isPaid
+            ? `Your exception for ${courseInfo.courseTitle} was submitted using 1 paid exception.`
+            : `Your free exception for ${courseInfo.courseTitle} was submitted.`,
           saveToDb: true,
           payload: {
-            exceptionId: generateExceptionId(courseId, lectureId),
-            newBalance: updatedBalance,
+            exceptionId,
             courseTitle: courseInfo.courseTitle,
             lectureTitle: lectureTopic,
           },
@@ -191,25 +205,26 @@ export const submitLectureException = async (req, res) => {
         });
         logControllerPerformance(controllerName, action, startTime, "success");
       } catch (bgError) {
-        console.error(
-          "Background task error in submitLectureException:",
-          bgError,
-        );
+        console.error("Background task error in submitLectureException:", bgError);
       }
     });
+
+    return res.status(200).json({
+      success: true,
+      message: "Exception submitted successfully",
+      exception: {
+        ...outcome.exception,
+        createdAt: outcome.exception.createdAt.toISOString(),
+        updatedAt: outcome.exception.updatedAt.toISOString(),
+      },
+      charged: outcome.isPaid,
+      exceptionCredits: outcome.exceptionCredits,
+      usedThisMonth: outcome.usedThisMonth,
+      freeLimit: outcome.freeLimit,
+    });
   } catch (error) {
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
-    );
-    const statusCode =
-      error.message.includes("insufficient") || error.message.includes("limit")
-        ? 402
-        : 500;
-    return res.status(statusCode).json({ message: error.message });
+    console.error("submitLectureException error:", error);
+    return fail(500, "Could not submit the exception. Please try again.");
   }
 };
 export const checkTestStatus = async (req, res) => {
@@ -303,86 +318,32 @@ export const manageExceptions = async (req, res) => {
         .json({ message: "This exception has already been processed" });
     }
 
-    let lecturerNewBalance = undefined;
+    if (status !== "approved" && status !== "rejected") {
+      return res.status(400).json({ message: "Status must be approved or rejected." });
+    }
+    const courseQuery = await Course.where("courseId", "==", exception.courseId)
+      .limit(1)
+      .get();
+    if (
+      courseQuery.empty ||
+      !(await checkContentAuthorization(currentLecturerUid, courseQuery.docs[0].data()))
+    ) {
+      return res
+        .status(403)
+        .json({ message: "Only this course's lecturers can review its exceptions." });
+    }
+
+    // Paid exceptions are platform revenue: approving one no longer credits
+    // the lecturer anything.
     const now = new Date();
-
     await db.runTransaction(async (t) => {
-      if (status === "approved") {
-        const txQuery = await Transactions.where(
-          "reference",
-          "==",
-          `EXC-REF-${id}`,
-        )
-          .where("status", "==", "success")
-          .where("type", "==", "payment")
-          .limit(1)
-          .get();
-
-        if (!txQuery.empty) {
-          const studentPaymentTx = txQuery.docs[0].data();
-          const totalCharged = studentPaymentTx.amountICash;
-          const lecturerShare = 0.4;
-          const appTaxShare = totalCharged - lecturerShare;
-
-          const lecturerQuery = await User.where(
-            "uid",
-            "==",
-            currentLecturerUid,
-          )
-            .limit(1)
-            .get();
-          if (!lecturerQuery.empty) {
-            const lecturerDocRef = lecturerQuery.docs[0].ref;
-            const lecturerData = lecturerQuery.docs[0].data();
-
-            const currentPoints =
-              lecturerData.iCashBalance ?? lecturerData.pointsBalance ?? 0;
-            lecturerNewBalance = currentPoints + lecturerShare;
-
-            t.update(lecturerDocRef, {
-              pointsBalance: lecturerNewBalance,
-              updatedAt: now,
-            });
-
-            const transactionId = generateTransactionId("exceptionsDividend");
-            const divTxRef = Transactions.doc(transactionId);
-            t.set(divTxRef, {
-              transactionId,
-              userId: currentLecturerUid,
-              type: "exceptionsDividend",
-              amountICash: lecturerShare,
-              status: "success",
-              payType: "in",
-              title: `Lectures Exception Dividend for ${exception.courseInfo?.courseTitle || "Course"}`,
-              reference: `EXC-REF-${id}`,
-              metadata: {
-                recipientId: currentLecturerUid,
-                source: "exception_split",
-              },
-              createdAt: now,
-              updatedAt: now,
-            });
-
-            const taxEntryId = generateTransactionId("appTax");
-            const taxDocRef = TaxEntries.doc(taxEntryId);
-            t.set(taxDocRef, {
-              transactionReference: `EXC-REF-${id}`,
-              taxType: "exception_tax",
-              amount: appTaxShare,
-              currency: "iCash",
-              date: now,
-              sourceDetails: {
-                studentId: exception.studentId,
-                lecturerId: currentLecturerUid,
-                relatedTransactionId: transactionId,
-              },
-              createdAt: now,
-            });
-          }
-        }
+      const fresh = await t.get(exceptionDocRef);
+      if (fresh.data()?.status !== "pending") {
+        throw new Error("This exception has already been processed");
       }
       t.update(exceptionDocRef, {
         status: status,
+        reviewedBy: currentLecturerUid,
         updatedAt: now,
       });
     });
@@ -439,7 +400,6 @@ export const manageExceptions = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: `Exception ${status} successfully.`,
-      newIcashBalance: lecturerNewBalance,
     });
   } catch (error) {
     logControllerPerformance(
