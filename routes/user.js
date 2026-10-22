@@ -12,7 +12,6 @@ import {
   fetchProfileInformation,
   fetchProfileContent,
   fetchProfileConnections,
-  fetchBlockedUsers,
   fetchLectureExceptions,
   fetchCourseAssignments,
   fetchCourseLectures,
@@ -38,7 +37,6 @@ import {
   verifyPhoneNumberOTP,
   deleteRecoveryEmail,
   updateEmails,
-  toggleBlockedUsers,
   deletePhoneNumber,
   verifyPasswordInapp,
   revokeLoggedInDeviceSession,
@@ -46,6 +44,7 @@ import {
   sendPhoneNumberOTP,
   toggleFollowingUsers,
   updateUserProfile,
+  checkUsernameAvailability,
   searchUserUsingUidOrNameQuery,
   checkAccountState,
   handleUnifiedCourseSearch,
@@ -99,19 +98,13 @@ router.post(
   idempotencyMiddleware,
   toggleFollowingUsers,
 );
+router.get("/username-availability", protect, checkUsernameAvailability);
 router.patch(
   "/update-profile",
   protect,
   idempotencyMiddleware,
   updateUserProfile,
 );
-router.post(
-  "/block/toggle",
-  protect,
-  idempotencyMiddleware,
-  toggleBlockedUsers,
-);
-router.get("/blocked-list", protect, fetchBlockedUsers);
 router.patch(
   "/preferences",
   protect,

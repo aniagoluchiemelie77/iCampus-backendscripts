@@ -371,11 +371,22 @@ export const getAdminMetrics = async (req, res) => {
         .json({ error: "Unauthorized: Missing admin type context." });
     }
 
+    // School administrators only ever see their own school's analytics,
+    // gated by the institution's subscription tier.
+    if (adminType === "school_administrator") {
+      if (!schoolCode) {
+        return res
+          .status(400)
+          .json({ error: "Your admin account is not linked to a school." });
+      }
+      const schoolMetrics = await buildSchoolAnalytics(schoolCode);
+      return res.json({ schoolMetrics });
+    }
+
     const needsUsers = [
       "super_admin",
       "finance",
       "analyst",
-      "school_administrator",
       "support",
     ].includes(adminType);
     const needsTransactions = ["super_admin", "finance"].includes(adminType);
@@ -431,16 +442,9 @@ export const getAdminMetrics = async (req, res) => {
       promiseMap.taxes = TaxEntries.orderBy("date", "desc").limit(10).get();
     }
 
+    // A super admin can inspect any school's analytics with ?schoolCode=.
     if (needsSchoolMetrics && schoolCode) {
-      promiseMap.schoolUsers = User.where("schoolCode", "==", schoolCode).get();
-      promiseMap.schoolCourses = Course.where(
-        "schoolCode",
-        "==",
-        schoolCode,
-      ).get();
-      promiseMap.schoolAssessments = Assessment.get();
-      promiseMap.schoolTestSubs = TestSubmission.get();
-      promiseMap.schoolAttendance = Attendance.get();
+      promiseMap.schoolMetrics = buildSchoolAnalytics(schoolCode);
     }
 
     const keys = Object.keys(promiseMap);
@@ -452,117 +456,8 @@ export const getAdminMetrics = async (req, res) => {
 
     let responsePayload = {};
 
-    if (needsSchoolMetrics && snapshots.schoolCourses) {
-      let verifiedStudents = 0;
-      let verifiedLecturers = 0;
-      const userMonthGrowth = {};
-      const departmentCoursesCount = {};
-      const courseIdsSet = new Set();
-
-      if (snapshots.schoolUsers) {
-        snapshots.schoolUsers.forEach((doc) => {
-          const u = doc.data();
-          const dateObj = u.createdAt?.toDate
-            ? u.createdAt.toDate()
-            : new Date(u.createdAt || Date.now());
-          const monthKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, "0")}`;
-
-          if (!userMonthGrowth[monthKey]) {
-            userMonthGrowth[monthKey] = { students: 0, lecturers: 0 };
-          }
-
-          if (u.usertype === "student" && u.isVerified) {
-            verifiedStudents++;
-            userMonthGrowth[monthKey].students++;
-          } else if (u.usertype === "lecturer" && u.isVerified) {
-            verifiedLecturers++;
-            userMonthGrowth[monthKey].lecturers++;
-          }
-        });
-      }
-
-      let assignedCoursesCount = 0;
-      let unassignedCoursesCount = 0;
-      let totalStudentEnrollments = 0;
-
-      snapshots.schoolCourses.forEach((doc) => {
-        const course = doc.data();
-        courseIdsSet.add(course.courseId);
-
-        const dept = course.department || "General";
-        departmentCoursesCount[dept] = (departmentCoursesCount[dept] || 0) + 1;
-
-        if (
-          Array.isArray(course.lecturerIds) &&
-          course.lecturerIds.length > 0
-        ) {
-          assignedCoursesCount++;
-        } else {
-          unassignedCoursesCount++;
-        }
-
-        if (Array.isArray(course.studentsEnrolled)) {
-          totalStudentEnrollments += course.studentsEnrolled.length;
-        }
-      });
-
-      let totalAssessmentsCreated = 0;
-      if (snapshots.schoolAssessments) {
-        snapshots.schoolAssessments.forEach((doc) => {
-          const assessment = doc.data();
-          if (courseIdsSet.has(assessment.courseId)) {
-            totalAssessmentsCreated++;
-          }
-        });
-      }
-
-      let totalTestSubmissions = 0;
-      if (snapshots.schoolTestSubs) {
-        snapshots.schoolTestSubs.forEach(() => {
-          totalTestSubmissions++;
-        });
-      }
-
-      let totalAttendanceLogs = 0;
-      if (snapshots.schoolAttendance) {
-        snapshots.schoolAttendance.forEach((doc) => {
-          const att = doc.data();
-          if (courseIdsSet.has(att.courseId)) {
-            totalAttendanceLogs++;
-          }
-        });
-      }
-
-      responsePayload.schoolMetrics = {
-        users: {
-          verifiedStudents,
-          verifiedLecturers,
-          onboardingGrowth: Object.keys(userMonthGrowth)
-            .sort()
-            .map((month) => ({
-              month,
-              ...userMonthGrowth[month],
-            })),
-        },
-        courses: {
-          totalActiveCourses: snapshots.schoolCourses.size,
-          departmentBreakdown: departmentCoursesCount,
-          allocationStatus: {
-            assigned: assignedCoursesCount,
-            unassigned: unassignedCoursesCount,
-          },
-          studentEnrollmentDensity: totalStudentEnrollments,
-        },
-        academics: {
-          totalAssessmentsCreated,
-          testSubmissionsCount: totalTestSubmissions,
-          attendanceSyncVolume: totalAttendanceLogs,
-        },
-      };
-
-      if (adminType === "school_administrator") {
-        return res.json(responsePayload);
-      }
+    if (snapshots.schoolMetrics) {
+      responsePayload.schoolMetrics = snapshots.schoolMetrics;
     }
 
     let totalLiquidity = 0;
@@ -964,21 +859,41 @@ export const updateInstitution = async (req, res) => {
     const configRef = configSnapshot.docs[0].ref;
     const now = new Date();
 
+    // Only fields actually sent are written: the edit form used to post
+    // `undefined` for anything it didn't load, which Firestore rejects (or,
+    // with merge, blanked the school name). `tier` was ignored entirely, so a
+    // school could never be moved to Pro/Premium analytics.
+    const pick = (source, keys) =>
+      Object.fromEntries(
+        keys
+          .filter((k) => source[k] !== undefined && source[k] !== null)
+          .map((k) => [k, source[k]]),
+      );
+    const schoolName = updateData.name || updateData.schoolName;
+    const tier = ["free", "pro", "premium"].includes(updateData.tier)
+      ? updateData.tier
+      : undefined;
     const updatedSchoolData = {
-      schoolName: updateData.name,
-      contactEmail: updateData.contactEmail,
-      logo: updateData.logo,
+      ...pick({ schoolName, tier, contactEmail: updateData.contactEmail, logo: updateData.logo }, [
+        "schoolName",
+        "tier",
+        "contactEmail",
+        "logo",
+      ]),
+      ...(tier ? { tierUpdatedAt: now, tierUpdatedBy: req.admin?.uid || null } : {}),
       updatedAt: now,
     };
 
     const updatedConfigData = {
-      name: updateData.name,
-      countryCode: updateData.countryCode,
-      domainWhitelist: updateData.domainWhitelist,
-      isOperational: updateData.isOperational,
-      verificationMethod: updateData.verificationMethod,
-      ssoConfig: updateData.ssoConfig,
-      externalApiConfig: updateData.externalApiConfig,
+      ...pick({ ...updateData, name: schoolName }, [
+        "name",
+        "countryCode",
+        "domainWhitelist",
+        "isOperational",
+        "verificationMethod",
+        "ssoConfig",
+        "externalApiConfig",
+      ]),
       updatedAt: now,
     };
     await Promise.all([
@@ -994,8 +909,8 @@ export const updateInstitution = async (req, res) => {
           category: "social",
           actionType: "ADMIN_INSTITUTION_UPDATED",
           title: "Institution Updated",
-          message: `Settings for "${updateData.name}" have been modified.`,
-          payload: { schoolId: id, schoolName: updateData.name },
+          message: `Settings for "${schoolName}" have been modified${tier ? ` (plan: ${tier})` : ""}.`,
+          payload: { schoolId: id, schoolName, tier: tier || null },
         },
         false,
       ).catch((err) =>

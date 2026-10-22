@@ -1396,22 +1396,22 @@ export const getPendingOrders = async (req, res) => {
         .status(401)
         .json({ success: false, message: "Unauthorized user identifier" });
     }
+    // "completed" is included so a delivered order comes back with its new
+    // status instead of the client keeping its stale "pending_delivery" copy
+    // (which kept offering "Cancel Order" on orders already paid out).
+    const ORDER_STATUSES = [
+      "pending_delivery",
+      "dropped_off",
+      "cancelling",
+      "cancelled",
+      "completed",
+    ];
     const [buyerSnapshot, sellerSnapshot] = await Promise.all([
       ProductOrder.where("buyerId", "==", userId)
-        .where("status", "in", [
-          "pending_delivery",
-          "dropped_off",
-          "dropped_off",
-          "cancelled",
-        ])
+        .where("status", "in", ORDER_STATUSES)
         .get(),
       ProductOrder.where("sellerId", "==", userId)
-        .where("status", "in", [
-          "pending_delivery",
-          "dropped_off",
-          "dropped_off",
-          "cancelled",
-        ])
+        .where("status", "in", ORDER_STATUSES)
         .get(),
     ]);
 

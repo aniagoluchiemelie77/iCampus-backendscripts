@@ -1,4 +1,4 @@
-import { Product, Reviews, User } from "../tableDeclarations.js";
+import { Product, ProductOrder, Reviews, User } from "../tableDeclarations.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
 
@@ -27,9 +27,13 @@ export const fetchSellerReviews = async (req, res) => {
         .get(),
     ]);
 
+    // Seller's listings by id, so each review can say what it was about.
+    const productMap = new Map();
     const productIds = productsSnapshot.docs.map((doc) => {
       const data = doc.data();
-      return data.productId || doc.id;
+      const id = data.productId || doc.id;
+      productMap.set(id, data);
+      return id;
     });
 
     let productReviewsSnapshots = [];
@@ -73,7 +77,91 @@ export const fetchSellerReviews = async (req, res) => {
     });
 
     const totalReviewsCount = reviews.length;
+    // Computed over every review, not just this page, so the header stats
+    // don't change as the seller scrolls.
+    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let ratingSum = 0;
+    reviews.forEach((r) => {
+      const rating = Number(r.rating) || 0;
+      ratingSum += rating;
+      const bucket = Math.min(5, Math.max(1, Math.round(rating)));
+      if (rating > 0) distribution[bucket] += 1;
+    });
+    const summary = {
+      total: totalReviewsCount,
+      averageRating: totalReviewsCount
+        ? Math.round((ratingSum / totalReviewsCount) * 10) / 10
+        : 0,
+      distribution,
+    };
     const paginatedReviews = reviews.slice(skip, skip + limit);
+
+    // Store-level reviews only point at the seller; their order says which
+    // product was bought.
+    const orderIds = [
+      ...new Set(
+        paginatedReviews
+          .filter((r) => r.orderId && !productMap.has(r.targetId))
+          .map((r) => r.orderId),
+      ),
+    ];
+    const orderMap = new Map();
+    if (orderIds.length > 0) {
+      const orderDocs = await Promise.all(
+        orderIds.map((id) => ProductOrder.doc(String(id)).get().catch(() => null)),
+      );
+      orderDocs.forEach((doc, i) => {
+        if (doc?.exists) orderMap.set(orderIds[i], doc.data());
+      });
+    }
+    const firstImage = (media) =>
+      Array.isArray(media) ? media.find((u) => typeof u === "string") || null : media || null;
+    const resolveSubject = (review) => {
+      const order = review.orderId ? orderMap.get(review.orderId) : null;
+      const variant =
+        [order?.color, order?.size].filter(Boolean).join(" · ") || null;
+      const product =
+        productMap.get(review.targetId) ||
+        (order?.productId ? productMap.get(order.productId) : null);
+      if (product) {
+        return {
+          type: review.targetType === "seller" ? "product" : review.targetType,
+          id: product.productId || order?.productId || review.targetId,
+          title: product.title || order?.productName || "Listing",
+          image: firstImage(product.mediaUrls),
+          price: product.price ?? null,
+          orderId: review.orderId || null,
+          quantity: order?.quantity ?? null,
+          variant,
+          isStoreReview: review.targetType === "seller",
+        };
+      }
+      if (order) {
+        // Product deleted since, but the order remembers its name.
+        return {
+          type: "product",
+          id: order.productId || null,
+          title: order.productName || "A past order",
+          image: null,
+          price: null,
+          orderId: review.orderId,
+          quantity: order.quantity ?? null,
+          variant,
+          isStoreReview: review.targetType === "seller",
+        };
+      }
+      return {
+        type: review.targetType || "seller",
+        id: review.targetId || null,
+        title: review.targetType === "seller" ? "Your store" : "Deleted listing",
+        image: null,
+        price: null,
+        orderId: review.orderId || null,
+        quantity: null,
+        variant: null,
+        isStoreReview: review.targetType === "seller",
+      };
+    };
 
     const reviewerUids = [
       ...new Set(paginatedReviews.map((r) => r.reviewerId).filter(Boolean)),
@@ -103,6 +191,10 @@ export const fetchSellerReviews = async (req, res) => {
       const reviewer = userMap[review.reviewerId] || {};
       return {
         ...review,
+        createdAt: review.createdAt?.toDate
+          ? review.createdAt.toDate().toISOString()
+          : review.createdAt || null,
+        subject: resolveSubject(review),
         reviewerDetails: {
           firstname: reviewer.firstname || reviewer.firstName || "Anonymous",
           lastname: reviewer.lastname || reviewer.lastName || "iCampus",
@@ -118,6 +210,7 @@ export const fetchSellerReviews = async (req, res) => {
     res.status(200).json({
       success: true,
       data: formattedReviews,
+      summary,
       pagination: {
         total: totalReviewsCount,
         page,

@@ -1,4 +1,9 @@
 import {
+  buildPreferencesPatch,
+  legacyCleanupArgs,
+  normalizePreferences,
+} from "../utils/preferences.js";
+import {
   Reviews,
   User,
   DeletedUser,
@@ -52,6 +57,14 @@ import {
   isGeminiQuotaError,
   GEMINI_BUSY_MESSAGE,
 } from "../utils/gemini.js";
+import {
+  normalizeUsername,
+  validateUsername,
+  isUsernameAvailable,
+  suggestUsernames,
+  changeUsername,
+  releaseUsername,
+} from "../utils/username.js";
 import dotenv from "dotenv";
 dotenv.config();
 
@@ -256,6 +269,10 @@ export const deleteAccount = async (req, res) => {
       },
     });
     operations.push({ type: "delete", ref: userDoc.ref });
+    // Free the username so it can be claimed again.
+    releaseUsername(user.username, userUid).catch((err) =>
+      console.error("Username release failed:", err.message),
+    );
 
     const collectDeletes = (snapshot) => {
       snapshot.forEach((doc) =>
@@ -1215,6 +1232,21 @@ export const aiChat = async (req, res) => {
       Academic Context: ${type === "course" ? `Course: ${courseLabel || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.
       When the user shares an image or document, read it and explain or answer based on its content.`;
     }
+    // House style for every reply: a knowledgeable friend in a chat app.
+    systemInstruction += `
+
+      How to reply:
+      - Write like a friendly, smart classmate texting back: warm, direct, no fluff.
+      - Lead with the answer in the first sentence. Keep most replies under 120 words;
+        go longer only when the user asks for detail or a step-by-step solution.
+      - Use short paragraphs (1–3 sentences). Use "- " bullets or "1. " steps only
+        when listing things. Use **bold** sparingly for key terms. Put formulas or
+        code inside \`backticks\`.
+      - No headings, no tables, no greetings like "Great question!", and don't
+        repeat the question back.
+      - If something is ambiguous, answer the most likely meaning and offer the
+        alternative in one short line.
+      - End with a short follow-up question only when it genuinely helps.`;
     const formattedHistory = prepareChatHistory(history);
 
     // Attachments (images/PDFs uploaded from the app) arrive as a URL in the
@@ -2007,24 +2039,39 @@ export const patchUserPreferences = async (req, res) => {
     let existingData = {};
 
     if (prefsQuery.empty) {
-      prefDocRef = userPrefs.doc();
+      // Same id signup uses, so every reader finds it.
+      prefDocRef = userPrefs.doc(userId);
       existingData = { userId, createdAt: new Date() };
     } else {
       prefDocRef = prefsQuery.docs[0].ref;
       existingData = prefsQuery.docs[0].data();
     }
 
-    const payload = {
-      ...updateData,
+    const patch = buildPreferencesPatch(updateData);
+    if (!patch) {
+      return res
+        .status(400)
+        .json({ success: false, error: "No valid preference fields to update." });
+    }
+
+    // Write the full normalized sections (not dotted keys: set() would store
+    // "notifications.x" as a literal top-level field, which is why toggles
+    // reverted after reopening the screen).
+    const current = normalizePreferences(existingData);
+    const next = {
+      ...current,
+      ...patch,
+      notifications: { ...current.notifications, ...(patch.notifications || {}) },
+      channels: { ...current.channels, ...(patch.channels || {}) },
+      userId,
       updatedAt: new Date(),
     };
+    delete next.id;
+    await prefDocRef.set(next, { merge: true });
+    const cleanup = legacyCleanupArgs(existingData);
+    if (cleanup.length) await prefDocRef.update(...cleanup);
 
-    await prefDocRef.set({ ...existingData, ...payload }, { merge: true });
-    const updatedPrefs = {
-      id: prefDocRef.id,
-      ...existingData,
-      ...payload,
-    };
+    const updatedPrefs = { id: prefDocRef.id, ...next };
     res.status(200).json({
       success: true,
       message: "Preferences updated successfully",
@@ -2047,136 +2094,6 @@ export const patchUserPreferences = async (req, res) => {
     return res
       .status(500)
       .json({ success: false, error: "Server error updating preferences" });
-  }
-};
-export const toggleBlockedUsers = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "toggleBlockUsersController";
-  const action = "toggleBlockUsers";
-  const { targetUserId, targetUid } = req.body;
-  const resolvedTargetId = targetUserId || targetUid;
-  const userId = req.user?.uid || req.user?.id;
-
-  if (!userId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Unauthorized user context",
-      );
-    });
-    return res
-      .status(401)
-      .json({ success: false, error: "Unauthorized user context." });
-  }
-
-  if (!resolvedTargetId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Target user ID is required",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, error: "Target user ID is required" });
-  }
-
-  if (userId === resolvedTargetId) {
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "Self-blocking attempted",
-      );
-    });
-    return res
-      .status(400)
-      .json({ success: false, error: "You cannot block yourself." });
-  }
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res.status(404).json({ success: false, error: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const userData = userDoc.data();
-    const blockedUsers = userData.blockedUsers || [];
-    const isBlocked = blockedUsers.includes(resolvedTargetId);
-
-    if (isBlocked) {
-      const updatedBlockedUsers = blockedUsers.filter(
-        (id) => id !== resolvedTargetId,
-      );
-      await userDoc.ref.update({
-        blockedUsers: updatedBlockedUsers,
-        updatedAt: new Date(),
-      });
-
-      res.status(200).json({ success: true, action: "unblocked" });
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-    } else {
-      const updatedBlockedUsers = [...blockedUsers];
-      if (!updatedBlockedUsers.includes(resolvedTargetId)) {
-        updatedBlockedUsers.push(resolvedTargetId);
-      }
-
-      const updatePromise = userDoc.ref.update({
-        blockedUsers: updatedBlockedUsers,
-        updatedAt: new Date(),
-      });
-      const [forwardFollowQuery, backwardFollowQuery] = await Promise.all([
-        Follow.where("followerId", "==", userId)
-          .where("followingId", "==", resolvedTargetId)
-          .get(),
-        Follow.where("followerId", "==", resolvedTargetId)
-          .where("followingId", "==", userId)
-          .get(),
-        updatePromise,
-      ]);
-
-      const batch = db.batch();
-      forwardFollowQuery.forEach((doc) => batch.delete(doc.ref));
-      backwardFollowQuery.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
-
-      res.status(200).json({ success: true, action: "blocked" });
-      setImmediate(() => {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      });
-    }
-  } catch (err) {
-    console.error("Error in toggleBlockedUsers:", err);
-    setImmediate(() => {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        err.message,
-      );
-    });
-    return res.status(500).json({ success: false, error: err.message });
   }
 };
 export const sendPhoneNumberOTP = async (req, res) => {
@@ -2417,6 +2334,41 @@ export const toggleFollowingUsers = async (req, res) => {
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
+/** GET /users/username-availability?username=ada_o — live check while typing. */
+export const checkUsernameAvailability = async (req, res) => {
+  try {
+    const userId = req.user?.uid || req.user?.id;
+    const requested = normalizeUsername(req.query?.username);
+    const problem = validateUsername(requested);
+    if (problem) {
+      return res
+        .status(200)
+        .json({ success: true, username: requested, available: false, message: problem });
+    }
+    if (requested === normalizeUsername(req.user?.username)) {
+      return res.status(200).json({
+        success: true,
+        username: requested,
+        available: true,
+        isCurrent: true,
+        message: "This is your current username.",
+      });
+    }
+    const available = await isUsernameAvailable(requested, userId);
+    return res.status(200).json({
+      success: true,
+      username: requested,
+      available,
+      message: available ? `@${requested} is available.` : `@${requested} is already taken.`,
+      suggestions: available ? [] : await suggestUsernames(requested, userId),
+    });
+  } catch (error) {
+    console.error("checkUsernameAvailability error:", error);
+    return res
+      .status(500)
+      .json({ success: false, message: "Could not check that username right now." });
+  }
+};
 export const updateUserProfile = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "updateUserProfileController";
@@ -2485,12 +2437,95 @@ export const updateUserProfile = async (req, res) => {
     const existingUserData = userDoc.data();
     const updateTimestamp = new Date();
 
+    // Verified identities come from the school/organisation; the app shows
+    // these fields locked, so the server must refuse them too.
+    if (existingUserData.isVerified) {
+      for (const locked of [
+        "firstname",
+        "lastname",
+        "department",
+        "email",
+        "organizationName",
+        "website",
+      ]) {
+        if (
+          filteredUpdates[locked] !== undefined &&
+          filteredUpdates[locked] !== existingUserData[locked]
+        ) {
+          return res.status(403).json({
+            success: false,
+            field: locked,
+            message: "Verified details can't be edited.",
+          });
+        }
+        delete filteredUpdates[locked];
+      }
+    }
+
+    if (typeof filteredUpdates.email === "string") {
+      const email = filteredUpdates.email.trim().toLowerCase();
+      if (email !== String(existingUserData.email || "").toLowerCase()) {
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          return res.status(400).json({
+            success: false,
+            field: "email",
+            message: "Enter a valid email address.",
+          });
+        }
+        const emailOwner = await User.where("email", "==", email).limit(1).get();
+        if (!emailOwner.empty && emailOwner.docs[0].id !== userDoc.id) {
+          return res.status(409).json({
+            success: false,
+            field: "email",
+            message: "Another account already uses this email.",
+          });
+        }
+      }
+      filteredUpdates.email = email;
+    }
+
+    // Usernames are unique: changed in a transaction against the
+    // `usernames` reservations, never with a plain field write.
+    let newUsername = null;
+    if (filteredUpdates.username !== undefined) {
+      const requested = normalizeUsername(filteredUpdates.username);
+      delete filteredUpdates.username;
+      if (requested !== normalizeUsername(existingUserData.username)) {
+        const problem = validateUsername(requested);
+        if (problem) {
+          return res
+            .status(400)
+            .json({ success: false, field: "username", message: problem });
+        }
+        try {
+          newUsername = await changeUsername({
+            uid: existingUserData.uid || userId,
+            userDocRef: userDoc.ref,
+            newName: requested,
+          });
+        } catch (err) {
+          if (err?.code !== "USERNAME_TAKEN") throw err;
+          return res.status(409).json({
+            success: false,
+            field: "username",
+            message: err.message,
+            suggestions: await suggestUsernames(requested, userId),
+          });
+        }
+      }
+    }
+
     const payload = {
       ...filteredUpdates,
+      ...(newUsername ? { username: newUsername } : {}),
       updatedAt: updateTimestamp,
     };
 
-    await userDoc.ref.set(payload, { merge: true });
+    // username was already written by the transaction above.
+    await userDoc.ref.set(
+      { ...filteredUpdates, updatedAt: updateTimestamp },
+      { merge: true },
+    );
 
     const mergedUserData = {
       ...existingUserData,

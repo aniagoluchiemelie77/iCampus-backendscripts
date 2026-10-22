@@ -1,6 +1,9 @@
 import { Router } from "express";
 import { protect, idempotencyMiddleware } from "../middleware/auth.js";
-import { handleDeepgramTokenGeneration } from "../controllers/liveClassControllers.js";
+import {
+  handleAgoraTokenGeneration,
+  handleDeepgramTokenGeneration,
+} from "../controllers/liveClassControllers.js";
 import { simulateExternalSchoolApi } from "../controllers/webhookControllers.js";
 
 const router = Router();
@@ -11,6 +14,8 @@ router.get(
   idempotencyMiddleware,
   handleDeepgramTokenGeneration,
 );
+// Not idempotency-wrapped: a cached response would hand back an old token.
+router.get("/agora-token", protect, handleAgoraTokenGeneration);
 router.get(
   "/mock-school/verify",
   idempotencyMiddleware,

@@ -2,6 +2,10 @@ import admin from "firebase-admin";
 import { User, Admin } from "../tableDeclarations.js";
 import { theme } from "./emailTheme.js";
 
+// Keep in sync with MainApplication.kt and firebase.json in the app.
+const ANDROID_CHANNEL_ID = "icampus_alerts";
+const PUSH_TTL_MS = 3 * 24 * 60 * 60 * 1000;
+
 export const sendPushNotification = async (
   recipientId,
   title,
@@ -61,15 +65,36 @@ export const sendPushNotification = async (
       data: sanitizedData,
       token: userData.fcmToken,
       android: {
+        // Delivery priority: wakes the phone from Doze and delivers at once
+        // (WhatsApp-style). `notification.priority` below is only display.
+        priority: "high",
+        // Phone offline? FCM holds the push this long and delivers it as soon
+        // as data comes back on, even if the app is never opened.
+        ttl: PUSH_TTL_MS,
         notification: {
-          icon: "icampus",
+          // Must match the channel created in MainApplication.kt (heads-up
+          // popup + iCampus ping). Resource names, not file names.
+          channelId: ANDROID_CHANNEL_ID,
+          icon: "ic_notification",
           color: colors.primary,
+          sound: "ping",
           priority: "high",
-          defaultSound: true,
           defaultVibrateTimings: true,
+          visibility: "public",
+          // Same notification re-sent (retry) replaces instead of stacking.
+          ...(sanitizedData.notificationId
+            ? { tag: sanitizedData.notificationId }
+            : {}),
         },
       },
       apns: {
+        headers: {
+          "apns-priority": "10",
+          "apns-push-type": "alert",
+          "apns-expiration": String(
+            Math.floor((Date.now() + PUSH_TTL_MS) / 1000),
+          ),
+        },
         payload: {
           aps: {
             alert: {

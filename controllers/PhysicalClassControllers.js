@@ -1,8 +1,59 @@
-import { Lectures, User, Attendance } from "../tableDeclarations.js";
+import { Lectures, User, Attendance, Course } from "../tableDeclarations.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
+import { createNotification } from "../services/notification.js";
+import { generateNotificationId } from "../utils/idGenerator.js";
 
 const activeSessions = new Map();
+
+/** Lecture docs are keyed by id, but older ones only have an `id` field. */
+const findLectureDoc = async (lectureId) => {
+  const direct = await Lectures.doc(String(lectureId)).get();
+  if (direct.exists) return direct;
+  const query = await Lectures.where("id", "==", lectureId).limit(1).get();
+  return query.empty ? null : query.docs[0];
+};
+
+/** Push + in-app ping to every enrolled student that attendance is open. */
+const notifyStudentsAttendanceOpen = async (io, lecture) => {
+  const courseQuery = await Course.where("courseId", "==", lecture.courseId)
+    .limit(1)
+    .get();
+  if (courseQuery.empty) return;
+  const course = courseQuery.docs[0].data();
+  const studentUids = course.studentsEnrolled || [];
+  await Promise.all(
+    studentUids.map(async (uid) => {
+      // Opens the "lecture ongoing" sheet on Home, which leads to the scanner.
+      io.to(String(uid)).emit("lecture_started", lecture);
+      try {
+        await createNotification({
+          notificationId: generateNotificationId("classroom"),
+          recipientId: uid,
+          isRead: false,
+          category: "classroom",
+          actionType: "ATTENDANCE_OPEN",
+          title: `Attendance is open: ${course.courseCode || "your class"}`,
+          message: `Tap to mark your attendance for "${lecture.topicName}"${lecture.location ? ` at ${lecture.location}` : ""}.`,
+          payload: {
+            lectureId: lecture.id,
+            courseId: lecture.courseId,
+            topicName: lecture.topicName,
+            location: lecture.location,
+            lectureType: lecture.lectureType || "Physical",
+          },
+          entityId: lecture.id,
+          entityType: "lecture",
+          sendPush: true,
+          sendSocket: true,
+          saveToDb: true,
+        });
+      } catch (err) {
+        console.error(`[ATTENDANCE_ENGINE] notify ${uid} failed:`, err.message);
+      }
+    }),
+  );
+};
 
 export const registerAttendanceHandlers = (io, socket) => {
   socket.on("start_attendance_session", async (payload) => {
@@ -31,29 +82,37 @@ export const registerAttendanceHandlers = (io, socket) => {
 
       const attendanceRoomId = `lecture_attendance_${lectureId}`;
       const startedAt = new Date();
-      await Promise.all([
+      const [, lectureDoc] = await Promise.all([
         socket.join(attendanceRoomId),
-        (async () => {
-          const lectureQuery = await Lectures.where("id", "==", lectureId)
-            .limit(1)
-            .get();
-          if (!lectureQuery.empty) {
-            await lectureQuery.docs[0].ref.update({
-              attendanceOpen: true,
-              updatedAt: new Date(),
-            });
-          } else {
-            const lectureDocRef = Lectures.doc(lectureId);
-            const lectureDoc = await lectureDocRef.get();
-            if (lectureDoc.exists) {
-              await lectureDocRef.update({
-                attendanceOpen: true,
-                updatedAt: new Date(),
-              });
-            }
-          }
-        })(),
+        findLectureDoc(lectureId),
       ]);
+      const lecture = lectureDoc?.data() || null;
+      const wasAlreadyOpen = !!lecture?.attendanceOpen;
+      if (lectureDoc) {
+        await lectureDoc.ref.update({
+          attendanceOpen: true,
+          // Physical lectures used to stay "scheduled", so students never saw
+          // them as ongoing and had no way into the scanner.
+          ...(["scheduled", "postponed"].includes(lecture.status) && {
+            status: "ongoing",
+          }),
+          updatedAt: new Date(),
+        });
+      }
+      // Tell enrolled students (push + in-app) so they can check in. Skipped
+      // on a reopen/reconnect so they aren't notified twice.
+      if (lecture && !wasAlreadyOpen) {
+        setImmediate(() =>
+          notifyStudentsAttendanceOpen(io, {
+            ...lecture,
+            id: lecture.id || lectureId,
+            status: "ongoing",
+            attendanceOpen: true,
+          }).catch((err) =>
+            console.error("[ATTENDANCE_ENGINE] notify failed:", err.message),
+          ),
+        );
+      }
 
       console.log(
         `[ATTENDANCE_ENGINE] Lecturer ${lecturerId} started session room: ${attendanceRoomId}`,
@@ -195,11 +254,12 @@ export const registerAttendanceHandlers = (io, socket) => {
         });
         return socket.emit("error", "Invalid check-in parameters provided.");
       }
-      if (
-        typeof activeSessions !== "undefined" &&
-        activeSessions instanceof Map &&
-        !activeSessions.has(lectureId)
-      ) {
+      // The in-memory map only knows sessions started on this instance; with
+      // several instances, fall back to the lecture's persisted flag.
+      const sessionOpen =
+        activeSessions.has(lectureId) ||
+        !!(await findLectureDoc(lectureId))?.data()?.attendanceOpen;
+      if (!sessionOpen) {
         setImmediate(() => {
           logControllerPerformance(
             controllerName,

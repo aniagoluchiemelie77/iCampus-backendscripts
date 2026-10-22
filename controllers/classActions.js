@@ -1,5 +1,13 @@
 import { storage, db } from "../config/firebaseAdmin.js";
 import {
+  formatLectureClock,
+  formatLectureDateTime,
+  localDateKey,
+  resolveLectureTime,
+  toDate,
+  wallClockToDate,
+} from "../utils/lectureTime.js";
+import {
   User,
   Exceptions,
   Transactions,
@@ -1511,7 +1519,19 @@ export const submitAssessment = async (req, res) => {
       const rawSelfieStatus = proctoringData?.entrySelfieUrl || "";
       const isImpersonator = rawSelfieStatus.startsWith("FRAUD_BLOCKED");
       const isTabFlagged = (proctoringData?.tabSwitchCount || 0) >= 3;
-      const isFlagged = isImpersonator || isTabFlagged;
+      // Random mid-test snapshots: a repeated mismatch or anyone else in
+      // frame needs a lecturer's review (the score stands until they decide).
+      const randomMismatches = Number(proctoringData?.identityMismatches) || 0;
+      const multipleFaceCount = Number(proctoringData?.multipleFaceCount) || 0;
+      const needsIdentityReview = randomMismatches >= 2 || multipleFaceCount >= 1;
+      const isFlagged = isImpersonator || isTabFlagged || needsIdentityReview;
+      const flagReasons = [
+        isImpersonator && "Final identity check failed",
+        isTabFlagged && "Left the test 3 or more times",
+        randomMismatches >= 2 && `${randomMismatches} random identity checks did not match`,
+        multipleFaceCount >= 1 && "Another person appeared on camera",
+      ].filter(Boolean);
+      const clip = (list, max) => (Array.isArray(list) ? list.slice(0, max) : []);
       let verificationStatus = "Verified";
 
       if (isImpersonator) {
@@ -1531,11 +1551,19 @@ export const submitAssessment = async (req, res) => {
         ...req.body,
         studentId: currentUserId,
         isFlagged: isFlagged,
+        flagReasons,
         score: isImpersonator ? 0 : score || 0,
         proctoringData: {
           deviceId: proctoringData?.deviceId || "Unknown",
           entrySelfieUrl: rawSelfieStatus,
           tabSwitchCount: proctoringData?.tabSwitchCount || 0,
+          totalStrikes: Number(proctoringData?.totalStrikes) || 0,
+          // Metadata only (no images); capped to keep documents small.
+          interruptions: clip(proctoringData?.interruptions, 50),
+          snapshots: clip(proctoringData?.snapshots, 30),
+          identityMismatches: randomMismatches,
+          multipleFaceCount,
+          lookAwayCount: Number(proctoringData?.lookAwayCount) || 0,
         },
         createdAt: new Date(),
       };
@@ -1654,8 +1682,11 @@ export const editLectures = async (req, res) => {
   const action = "editLectures";
   try {
     const { lectureId, courseId } = req.params;
-    const { newDate, newStartTime, topicName, lectureType, location } =
-      req.body;
+    // The app sends `{ payload: {...} }`; older callers send the fields flat.
+    // Reading only req.body made every edit a silent "No updates detected".
+    const body = req.body?.payload ?? req.body ?? {};
+    const { newDate, newStartTime, newStartAt, topicName, lectureType, location } =
+      body;
     const requesterUid = req.user?.uid || req.user?.id;
     const [lectureQuery, courseQuery] = await Promise.all([
       Lectures.where("id", "==", lectureId).limit(1).get(),
@@ -1716,9 +1747,23 @@ export const editLectures = async (req, res) => {
     let updatedStatus = originalLecture.status;
     let primaryActionType = "LECTURE_UPDATED";
 
-    const isDateChanged = newDate && newDate !== originalLecture.date;
-    const isTimeChanged =
-      newStartTime && newStartTime !== originalLecture.startTime;
+    // Work out the requested start as a real instant: prefer the ISO the app
+    // now sends, else "YYYY-MM-DD" + "HH:mm" in the lecture time zone.
+    const originalStart = resolveLectureTime(originalLecture, "start");
+    const originalEnd = resolveLectureTime(originalLecture, "end");
+    const requestedStart =
+      toDate(newStartAt) ||
+      (newStartTime
+        ? wallClockToDate(newDate || originalLecture.date, newStartTime)
+        : null);
+    const isScheduleChanged =
+      !!requestedStart &&
+      (!originalStart ||
+        Math.abs(requestedStart.getTime() - originalStart.getTime()) > 30 * 1000);
+    const isDateChanged =
+      isScheduleChanged &&
+      (!originalStart || localDateKey(requestedStart) !== localDateKey(originalStart));
+    const isTimeChanged = isScheduleChanged && !isDateChanged;
 
     if (isDateChanged || isTimeChanged) {
       changes.push("schedule");
@@ -1760,12 +1805,33 @@ export const editLectures = async (req, res) => {
     const updatePayload = {
       topicName: topicName || originalLecture.topicName,
       lectureType: resolvedLectureType,
-      location: resolvedLectureType === "Physical" ? location : null,
-      date: newDate || originalLecture.date,
-      startTime: newStartTime || originalLecture.startTime,
+      location:
+        resolvedLectureType === "Physical"
+          ? location ?? originalLecture.location ?? null
+          : null,
       status: updatedStatus,
       updatedAt: new Date(),
     };
+    if (isScheduleChanged) {
+      // Keep the original duration (default 1 hour).
+      const durationMs =
+        originalStart && originalEnd && originalEnd > originalStart
+          ? originalEnd.getTime() - originalStart.getTime()
+          : 60 * 60 * 1000;
+      const endAt = new Date(requestedStart.getTime() + durationMs);
+      Object.assign(updatePayload, {
+        date: localDateKey(requestedStart),
+        startTime: requestedStart.toISOString(),
+        endTime: endAt.toISOString(),
+        startAt: requestedStart,
+        endAt,
+        // The new time deserves its own reminder.
+        reminderSentAt: null,
+      });
+    }
+    const scheduleLabel = isScheduleChanged
+      ? formatLectureDateTime(requestedStart)
+      : null;
 
     await lectureDocRef.update(updatePayload);
 
@@ -1791,7 +1857,7 @@ export const editLectures = async (req, res) => {
           const student = doc.data();
           let updateDetailsMessage = `The details for your lecture "${updatePayload.topicName}" have been updated (${changeListString}).`;
           if (isDateChanged || isTimeChanged) {
-            updateDetailsMessage = `The lecture "${updatePayload.topicName}" has been rescheduled to ${updatePayload.date} at ${updatePayload.startTime}.`;
+            updateDetailsMessage = `The lecture "${updatePayload.topicName}" has been rescheduled to ${scheduleLabel}.`;
           } else if (
             isLocationChanged &&
             updatePayload.lectureType === "Physical"
@@ -1895,9 +1961,17 @@ export const submitOnlineClassAttendance = async (req, res) => {
     }
 
     const lecture = lectureQuery.docs[0].data();
+    // The lecture's own course, never the client's value: some callers sent
+    // the populated course object, which the gradebook could never match.
+    const lectureCourseId =
+      typeof lecture.courseId === "string" ? lecture.courseId : String(courseId);
     const gracePeriod = 60 * 60 * 1000;
     const currentTime = new Date();
-    const expiryTime = new Date(lecture.endTime).getTime() + gracePeriod;
+    // resolveLectureTime handles repeat-week copies and "HH:mm" times; the raw
+    // `endTime` is week 1's for every repeat, which closed later weeks early.
+    const lectureEnd =
+      resolveLectureTime(lecture, "end") || resolveLectureTime(lecture, "start");
+    const expiryTime = lectureEnd ? lectureEnd.getTime() + gracePeriod : Infinity;
 
     if (currentTime.getTime() > expiryTime) {
       setImmediate(() =>
@@ -1912,12 +1986,31 @@ export const submitOnlineClassAttendance = async (req, res) => {
       return res.status(403).json({ error: "Submission window closed" });
     }
 
+    const safeStatus = status === "Present" ? "Present" : "Absent";
+    let notEnrolled = false;
     await db.runTransaction(async (transaction) => {
-      const attendanceQuery = await transaction.get(
-        Attendance.where("studentId", "==", studentId)
-          .where("lectureId", "==", lectureId)
-          .limit(1),
-      );
+      // Firestore transactions need every read before any write. The old code
+      // wrote the attendance row first and then read course/user, so the
+      // transaction always threw and online attendance was never saved.
+      const [attendanceQuery, courseQuery, userQuery] = await Promise.all([
+        transaction.get(
+          Attendance.where("studentId", "==", studentId)
+            .where("lectureId", "==", lectureId)
+            .limit(1),
+        ),
+        transaction.get(
+          Course.where("courseId", "==", lectureCourseId).limit(1),
+        ),
+        transaction.get(User.where("uid", "==", studentId).limit(1)),
+      ]);
+
+      if (
+        !courseQuery.empty &&
+        !(courseQuery.docs[0].data().studentsEnrolled || []).includes(studentId)
+      ) {
+        notEnrolled = true;
+        return;
+      }
 
       const existingRecord = attendanceQuery.empty
         ? null
@@ -1926,11 +2019,15 @@ export const submitOnlineClassAttendance = async (req, res) => {
         ? Attendance.doc()
         : attendanceQuery.docs[0].ref;
 
+      // Never downgrade an earlier "Present" (e.g. a reconnect) to "Absent".
+      const finalStatus =
+        existingRecord?.status === "Present" ? "Present" : safeStatus;
       const attendanceData = {
         studentId,
         lectureId,
-        courseId,
-        status,
+        courseId: lectureCourseId,
+        status: finalStatus,
+        mode: "online",
         checkData: [],
         timestamp: currentTime,
         updatedAt: currentTime,
@@ -1944,12 +2041,7 @@ export const submitOnlineClassAttendance = async (req, res) => {
 
       const wasNotPresentBefore =
         !existingRecord || existingRecord.status !== "Present";
-      if (status === "Present" && wasNotPresentBefore) {
-        const [courseQuery, userQuery] = await Promise.all([
-          transaction.get(Course.where("courseId", "==", courseId).limit(1)),
-          transaction.get(User.where("uid", "==", studentId).limit(1)),
-        ]);
-
+      if (finalStatus === "Present" && wasNotPresentBefore) {
         if (!courseQuery.empty) {
           const courseDocRef = courseQuery.docs[0].ref;
           const courseData = courseQuery.docs[0].data();
@@ -1988,6 +2080,11 @@ export const submitOnlineClassAttendance = async (req, res) => {
         }
       }
     });
+    if (notEnrolled) {
+      return res
+        .status(403)
+        .json({ error: "You are not enrolled in this course." });
+    }
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
@@ -2200,6 +2297,10 @@ export const uploadCourseDetailsManually = async (req, res) => {
 
     if (courseDocRef && courseData) {
       assignedCourseId = courseData.courseId;
+      // Back-fill older courses so they count in school analytics.
+      if (!courseData.schoolCode && req.user?.schoolCode) {
+        await courseDocRef.update({ schoolCode: req.user.schoolCode });
+      }
       if (usertype === "lecturer") {
         const lecturerIds = courseData.lecturerIds || [];
         if (!lecturerIds.includes(uid)) {
@@ -2228,7 +2329,10 @@ export const uploadCourseDetailsManually = async (req, res) => {
         credits: parseInt(credits, 10) || 0,
         semester: semester || null,
         session: session || null,
-        schoolName: schoolName,
+        schoolName: schoolName || null,
+        // School analytics are scoped by schoolCode; manual courses used to
+        // be saved without it and never showed up for the school's admins.
+        schoolCode: req.user?.schoolCode || null,
         department: department || "General",
         isActive: true,
         lecturerIds: usertype === "lecturer" ? [uid] : [],
@@ -2285,33 +2389,47 @@ export const handleUpcomingLectureRemindersCron = async () => {
   const controllerName = "handleUpcomingLectureRemindersCronController";
   const action = "handleUpcomingLectureRemindersCron";
   try {
-    const leadTimeMinutes = 45;
-    const targetTime = new Date(Date.now() + leadTimeMinutes * 60 * 1000);
-
-    const targetDateStr = targetTime.toISOString().split("T")[0];
-    const targetHourMin = targetTime.toLocaleTimeString([], {
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    });
-    console.log(
-      `[CRON_ENGINE] Scanning for live sessions matching: [Date: ${targetDateStr}] [Time: ${targetHourMin}]`,
+    // Remind once, as soon as a lecture is within the lead window. The old
+    // version matched `startTime == "HH:mm"` for the exact minute 45 minutes
+    // ahead, but lectures store startTime as an ISO instant (and the cron runs
+    // every 5 minutes, in the server's time zone), so nothing ever matched.
+    const leadTimeMinutes = Number(process.env.LECTURE_REMINDER_LEAD_MINUTES) || 45;
+    const now = new Date();
+    // `date` is the lecturer's local day; yesterday..tomorrow (UTC) covers it.
+    const dateKeys = [-1, 0, 1].map((offset) =>
+      new Date(now.getTime() + offset * 86400000).toISOString().slice(0, 10),
     );
+    const lectureQuery = await Lectures.where("date", "in", dateKeys).get();
 
-    const lectureQuery = await Lectures.where("date", "==", targetDateStr)
-      .where("startTime", "==", targetHourMin)
-      .where("status", "==", "scheduled")
-      .get();
+    const dueLectures = [];
+    lectureQuery.docs.forEach((doc) => {
+      const lecture = doc.data();
+      // Rescheduled lectures are "postponed" but still happen.
+      if (!["scheduled", "postponed"].includes(lecture.status)) return;
+      if (lecture.reminderSentAt) return;
+      const startsAt = resolveLectureTime(lecture, "start");
+      if (!startsAt) return;
+      const minutesAway = (startsAt.getTime() - now.getTime()) / 60000;
+      if (minutesAway > 0 && minutesAway <= leadTimeMinutes) {
+        dueLectures.push({ doc, lecture, startsAt, minutesAway });
+      }
+    });
 
-    if (lectureQuery.empty) {
-      console.log(
-        `[CRON_ENGINE] Verification cycle completed. 0 matching upcoming lectures identified.`,
-      );
-      return;
-    }
+    console.log(
+      `[CRON_ENGINE] ${lectureQuery.size} lectures on ${dateKeys.join(", ")}; ${dueLectures.length} due for a reminder.`,
+    );
+    if (dueLectures.length === 0) return;
 
-    for (const lectureDoc of lectureQuery.docs) {
-      const lecture = lectureDoc.data();
+    for (const { doc: lectureDoc, startsAt, minutesAway } of dueLectures) {
+      // Claim the reminder first so overlapping runs never send it twice.
+      const claimed = await db.runTransaction(async (t) => {
+        const fresh = await t.get(lectureDoc.ref);
+        if (!fresh.exists || fresh.data().reminderSentAt) return null;
+        t.update(lectureDoc.ref, { reminderSentAt: new Date() });
+        return fresh.data();
+      });
+      if (!claimed) continue;
+      const lecture = claimed;
       const courseId = lecture.courseId;
       const courseQuery = await Course.where("courseId", "==", courseId)
         .limit(1)
@@ -2324,7 +2442,12 @@ export const handleUpcomingLectureRemindersCron = async () => {
       }
 
       const courseData = courseQuery.docs[0].data();
-      const studentUids = courseData.studentsEnrolled || [];
+      // Students plus the lecturer hosting it.
+      const studentUids = [
+        ...new Set(
+          [...(courseData.studentsEnrolled || []), lecture.hostId].filter(Boolean),
+        ),
+      ];
 
       if (studentUids.length === 0) {
         console.log(
@@ -2332,6 +2455,12 @@ export const handleUpcomingLectureRemindersCron = async () => {
         );
         continue;
       }
+      const minutesLeft = Math.max(1, Math.round(minutesAway));
+      const clock = formatLectureClock(startsAt);
+      const where =
+        lecture.lectureType === "Physical"
+          ? `at ${lecture.location || "the usual venue"}`
+          : "online on iCampus";
 
       const batchSize = 30;
       const enrolledStudents = [];
@@ -2349,6 +2478,7 @@ export const handleUpcomingLectureRemindersCron = async () => {
             uid: userData.uid,
             firstname: userData.firstname,
             email: userData.email,
+            isHost: userData.uid === lecture.hostId,
           });
         });
       });
@@ -2364,13 +2494,16 @@ export const handleUpcomingLectureRemindersCron = async () => {
             category: "classroom",
             actionType: "LECTURE_REMINDER",
             title: `Class Starting Soon: ${courseData.courseCode}`,
-            message: `Your ${lecture.lectureType || "live"} lecture on "${lecture.topicName}" starts in 45 minutes at ${lecture.location || "Online"}.`,
+            message: student.isHost
+              ? `You're teaching "${lecture.topicName}" in ${minutesLeft} minutes (${clock}), ${where}.`
+              : `Your ${lecture.lectureType || "live"} lecture on "${lecture.topicName}" starts in ${minutesLeft} minutes (${clock}), ${where}.`,
             payload: {
               courseId: lecture.courseId,
               lectureId: lecture.id || lectureDoc.id,
               topicName: lecture.topicName,
-              startTime: lecture.startTime,
+              startTime: startsAt.toISOString(),
               location: lecture.location,
+              lectureType: lecture.lectureType || "Physical",
               userName: student.firstname || "Student",
             },
             entityId: student.uid,
@@ -2398,6 +2531,7 @@ export const handleUpcomingLectureRemindersCron = async () => {
       );
     }
   } catch (error) {
+    // A missing Firestore index shows up here with a link to create it.
     console.error(
       "[CRON_CRITICAL_EXCEPTION] Failed executing automated reminder cycles:",
       error.message,
@@ -2437,89 +2571,107 @@ export const getCourseGradebook = async (req, res) => {
     }
 
     const courseData = courseQuery.docs[0].data();
+    const requesterUid = req.user?.uid || req.user?.id;
+    // Grades are private to the course's lecturers (this was open to any
+    // signed-in user).
+    if (!(courseData.lecturerIds || []).includes(requesterUid)) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Only this course's lecturers can view its gradebook." });
+    }
     const studentsEnrolled = courseData.studentsEnrolled || [];
-    const tests = courseData.tests || [];
-    const testIds = tests.map((t) => t.id).filter(Boolean);
+    const emptySummary = {
+      studentCount: studentsEnrolled.length,
+      lecturesHeld: 0,
+      testsCount: 0,
+      totalTestMarks: 0,
+    };
 
     if (studentsEnrolled.length === 0) {
       setImmediate(() =>
         logControllerPerformance(controllerName, action, startTime, "success"),
       );
-      return res.status(200).json({ success: true, data: [] });
+      return res.status(200).json({ success: true, data: [], summary: emptySummary });
     }
 
     const batchSize = 30;
-    const studentsMap = new Map();
+    const now = Date.now();
 
-    // Parallelize user batch fetches
+    // Published tests for this course. `course.tests` stores plain ids, and
+    // the old `tests.map((t) => t.id)` turned them all into undefined, so no
+    // test score was ever counted.
+    const [assessmentsSnap, lecturesSnap] = await Promise.all([
+      Assessment.where("courseId", "==", courseId).get(),
+      Lectures.where("courseId", "==", courseId).get(),
+    ]);
+    const tests = assessmentsSnap.docs
+      .map((doc) => ({ id: doc.data().id || doc.id, ...doc.data() }))
+      .filter((t) => t.isPublished !== false);
+    const testIds = tests.map((t) => t.id);
+    const totalTestMarks = tests.reduce(
+      (sum, t) => sum + (Number(t.totalMarks) || 0),
+      0,
+    );
+
+    // Lectures that have actually taken place (not cancelled, already started).
+    const heldLectureIds = new Set(
+      lecturesSnap.docs
+        .map((doc) => doc.data())
+        .filter((l) => {
+          if (l.status === "cancelled") return false;
+          if (l.status === "completed" || l.isTaught) return true;
+          const start = resolveLectureTime(l, "start");
+          return !!start && start.getTime() <= now;
+        })
+        .map((l) => l.id),
+    );
+    const lecturesHeld = heldLectureIds.size;
+
     const userPromises = [];
     for (let i = 0; i < studentsEnrolled.length; i += batchSize) {
-      const batchIds = studentsEnrolled.slice(i, i + batchSize);
-      userPromises.push(User.where("uid", "in", batchIds).get());
+      userPromises.push(
+        User.where("uid", "in", studentsEnrolled.slice(i, i + batchSize)).get(),
+      );
     }
-
-    // Parallelize test submission batch fetches
     const subPromises = [];
-    if (testIds.length > 0) {
-      for (let i = 0; i < testIds.length; i += batchSize) {
-        const batchTestIds = testIds.slice(i, i + batchSize);
-        subPromises.push(
-          TestSubmission.where("testId", "in", batchTestIds).get(),
-        );
-      }
+    for (let i = 0; i < testIds.length; i += batchSize) {
+      subPromises.push(
+        TestSubmission.where("testId", "in", testIds.slice(i, i + batchSize)).get(),
+      );
     }
 
-    // Fetch attendance, exceptions, users, and submissions concurrently
-    const [
-      userSnapshots,
-      attendanceSnapshot,
-      subSnapshots,
-      exceptionsSnapshot,
-    ] = await Promise.all([
-      Promise.all(userPromises),
-      Attendance.where("courseId", "==", courseId).get(),
-      Promise.all(subPromises),
-      Exceptions.where("courseId", "==", courseId).get(),
-    ]);
+    const [userSnapshots, attendanceSnapshot, subSnapshots, exceptionsSnapshot] =
+      await Promise.all([
+        Promise.all(userPromises),
+        Attendance.where("courseId", "==", courseId).get(),
+        Promise.all(subPromises),
+        Exceptions.where("courseId", "==", courseId).get(),
+      ]);
 
-    userSnapshots.forEach((usersQuery) => {
-      usersQuery.forEach((doc) => {
+    const studentsMap = new Map();
+    userSnapshots.forEach((snap) =>
+      snap.forEach((doc) => {
         const uData = doc.data();
         studentsMap.set(uData.uid, uData);
-      });
-    });
+      }),
+    );
 
-    const attendanceByStudent = new Map();
-    attendanceSnapshot.forEach((doc) => {
-      const att = doc.data();
-      const sId = att.studentId;
-      if (!attendanceByStudent.has(sId)) {
-        attendanceByStudent.set(sId, []);
-      }
-      attendanceByStudent.get(sId).push(att);
-    });
-
-    const testSubmissionsByStudent = new Map();
-    subSnapshots.forEach((subSnapshot) => {
-      subSnapshot.forEach((doc) => {
-        const sub = doc.data();
-        const sId = sub.studentId;
-        if (!testSubmissionsByStudent.has(sId)) {
-          testSubmissionsByStudent.set(sId, []);
-        }
-        testSubmissionsByStudent.get(sId).push(sub);
-      });
-    });
-
-    const exceptionsByStudent = new Map();
-    exceptionsSnapshot.forEach((doc) => {
-      const ex = doc.data();
-      const sId = ex.studentId;
-      if (!exceptionsByStudent.has(sId)) {
-        exceptionsByStudent.set(sId, []);
-      }
-      exceptionsByStudent.get(sId).push(ex);
-    });
+    const groupBy = (snapshots, key = "studentId") => {
+      const map = new Map();
+      snapshots.forEach((snap) =>
+        snap.forEach((doc) => {
+          const row = doc.data();
+          const id = row[key];
+          if (!map.has(id)) map.set(id, []);
+          map.get(id).push(row);
+        }),
+      );
+      return map;
+    };
+    const attendanceByStudent = groupBy([attendanceSnapshot]);
+    const submissionsByStudent = groupBy(subSnapshots);
+    const exceptionsByStudent = groupBy([exceptionsSnapshot]);
+    const round1 = (n) => Math.round(n * 10) / 10;
 
     const gradebookData = studentsEnrolled.map((studentId) => {
       const student = studentsMap.get(studentId) || {
@@ -2528,52 +2680,75 @@ export const getCourseGradebook = async (req, res) => {
         lastname: "",
         matricNumber: "N/A",
       };
-
       const studentName =
         student.firstname && student.lastname
           ? `${student.firstname} ${student.lastname}`
           : student.name || "Unknown Student";
-      const matricNumber = student.matricNumber || "N/A";
 
       const attendanceRecords = attendanceByStudent.get(studentId) || [];
-      const testSubmissions = testSubmissionsByStudent.get(studentId) || [];
+      const testSubmissions = submissionsByStudent.get(studentId) || [];
       const exceptions = exceptionsByStudent.get(studentId) || [];
 
-      const presentAttendanceCount = attendanceRecords.filter(
-        (rec) => rec.status === "Present",
-      ).length;
+      // Count each lecture once: present, or excused by an approved exception.
+      const presentLectures = new Set(
+        attendanceRecords
+          .filter((r) => r.status === "Present")
+          .map((r) => r.lectureId),
+      );
+      const excusedLectures = new Set(
+        exceptions
+          .filter((e) => e.status === "approved" && !presentLectures.has(e.lectureId))
+          .map((e) => e.lectureId),
+      );
+      const presentCount = presentLectures.size;
+      const excusedCount = excusedLectures.size;
+      const attendancePct = lecturesHeld
+        ? round1(Math.min(100, ((presentCount + excusedCount) / lecturesHeld) * 100))
+        : null;
 
-      const approvedExceptionsCount = exceptions.filter(
-        (ex) => ex.status === "approved",
-      ).length;
-
-      const attendanceSum = presentAttendanceCount + approvedExceptionsCount;
-      const testScores = testSubmissions.map((sub) => sub.score || 0);
-      const testSum = testScores.reduce((acc, curr) => acc + curr, 0);
-
-      const allActivities = [
-        ...attendanceRecords,
-        ...testSubmissions,
-        ...exceptions,
-      ];
+      // One submission per test (the server enforces this); flagged
+      // impersonation submissions already carry a score of 0.
+      const testScore = testSubmissions.reduce(
+        (sum, s) => sum + (Number(s.score) || 0),
+        0,
+      );
+      const testPct = totalTestMarks
+        ? round1(Math.min(100, (testScore / totalTestMarks) * 100))
+        : null;
 
       return {
         _id: student.uid || studentId,
         studentName,
-        matricNumber,
+        matricNumber: student.matricNumber || "N/A",
+        presentCount,
+        excusedCount,
+        attendancePct,
+        testScore: round1(testScore),
+        testPct,
+        testsTaken: testSubmissions.length,
+        flaggedTests: testSubmissions.filter((s) => s.isFlagged).length,
+        // Older fields kept for existing clients.
         attendanceCount: attendanceRecords.length,
-        attendanceSum,
-        testScores,
-        testSum,
+        attendanceSum: presentCount + excusedCount,
+        testScores: testSubmissions.map((s) => Number(s.score) || 0),
+        testSum: round1(testScore),
         exceptions,
-        allActivities,
       };
     });
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
-    return res.status(200).json({ success: true, data: gradebookData });
+    return res.status(200).json({
+      success: true,
+      data: gradebookData,
+      summary: {
+        studentCount: studentsEnrolled.length,
+        lecturesHeld,
+        testsCount: tests.length,
+        totalTestMarks,
+      },
+    });
   } catch (error) {
     console.error("Gradebook Engine Error:", error.message);
     setImmediate(() =>
@@ -2641,13 +2816,20 @@ export const compareStudentFacesWithGemini = async (req, res) => {
       ? contentType.split(";")[0]
       : "image/jpeg";
 
+    // Also used for random snapshots during proctored tests, so the model
+    // reports attention signals (extra people, looking away) next to the
+    // identity verdict.
     const textInstructions =
-      "You are an automated biometric security system monitoring classroom attendance. " +
+      "You are an automated biometric security system monitoring classroom attendance and proctored tests. " +
       "Compare Image 1 (live front-camera phone snapshot) and Image 2 (official institutional database headshot). " +
       "Determine if they show the exact same student. Ignore differences in backgrounds, lighting conditions, " +
-      "or casual vs structured expressions. Be strict against proxy attempts or pictures held up to the camera.\n\n" +
+      "or casual vs structured expressions. Be strict against proxy attempts or pictures held up to the camera.\n" +
+      "Also describe Image 1 only: how many human faces are visible, whether the main person is looking at the " +
+      "phone screen (not turned away, not looking down at notes, eyes not closed), and anything suspicious such as " +
+      "a second person, another phone or book being read, or a photo/screen held up instead of a live face.\n\n" +
       "Return your verdict STRICTLY as a JSON object matching this schema:\n" +
-      '{"verified": boolean, "reason": "brief plain text explanation for audit logs"}';
+      '{"verified": boolean, "faceCount": integer, "lookingAtScreen": boolean, ' +
+      '"suspicious": string or null, "reason": "brief plain text explanation for audit logs"}';
 
     const response = await ai.models.generateContent({
       model: geminiModel(),
@@ -2688,6 +2870,16 @@ export const compareStudentFacesWithGemini = async (req, res) => {
     }
 
     const validationResult = JSON.parse(aiOutputText);
+    const attention = {
+      faceCount: Number.isInteger(validationResult.faceCount)
+        ? validationResult.faceCount
+        : null,
+      lookingAtScreen:
+        typeof validationResult.lookingAtScreen === "boolean"
+          ? validationResult.lookingAtScreen
+          : null,
+      suspicious: validationResult.suspicious || null,
+    };
 
     if (validationResult.verified === true) {
       setImmediate(() => {
@@ -2697,6 +2889,7 @@ export const compareStudentFacesWithGemini = async (req, res) => {
         verified: true,
         message: "Identity confirmed successfully.",
         similarity: 1.0,
+        ...attention,
       });
     } else {
       logControllerPerformance(
@@ -2710,6 +2903,7 @@ export const compareStudentFacesWithGemini = async (req, res) => {
         verified: false,
         similarity: 0,
         message: validationResult.reason || "Facial signature mismatch.",
+        ...attention,
       });
     }
   } catch (error) {
@@ -2804,12 +2998,26 @@ export const uploadCourseDetails = async (req, res) => {
     }
     const uploadedFile = req.files[0];
     const base64Data = uploadedFile.buffer.toString("base64");
-    // Photos of the form (gallery/camera) must not be labelled as PDFs.
+    // Photos of the form (gallery/camera) must not be labelled as PDFs. When
+    // the client sends a generic type, go by the file extension instead.
+    const extensionMime = {
+      ".pdf": "application/pdf",
+      ".jpg": "image/jpeg",
+      ".jpeg": "image/jpeg",
+      ".png": "image/png",
+      ".webp": "image/webp",
+      ".heic": "image/heic",
+      ".heif": "image/heif",
+    };
+    const extension = (uploadedFile.originalname || "")
+      .toLowerCase()
+      .match(/\.[a-z0-9]+$/)?.[0];
     const fileMimeType =
-      uploadedFile.mimetype === "application/octet-stream" ||
-      !uploadedFile.mimetype
-        ? "application/pdf"
-        : uploadedFile.mimetype;
+      /^(application\/pdf|image\/(jpeg|png|webp|heic|heif))$/i.test(
+        uploadedFile.mimetype || "",
+      )
+        ? uploadedFile.mimetype.toLowerCase()
+        : extensionMime[extension] || "application/pdf";
     const requesterUid = req.user?.uid || req.user?.id;
     const userType = req.user?.usertype;
 
@@ -2900,7 +3108,15 @@ export const uploadCourseDetails = async (req, res) => {
       // @google/genai exposes `result.text`; `result.response.text()` does not
       // exist and made every extraction fail as "invalid JSON".
       const rawText = (result.text || "").replace(/```json|```/g, "").trim();
-      extraction = JSON.parse(rawText);
+      // Tolerate stray prose around the object.
+      const start = rawText.indexOf("{");
+      const end = rawText.lastIndexOf("}");
+      extraction = JSON.parse(
+        start !== -1 && end > start ? rawText.slice(start, end + 1) : rawText,
+      );
+      if (!extraction || typeof extraction !== "object") {
+        throw new Error("Extraction is not an object");
+      }
     } catch (e) {
       setImmediate(() =>
         logControllerPerformance(
@@ -3428,12 +3644,27 @@ export const createLectureSchedule = async (req, res) => {
     const now = new Date();
     const batch = db.batch();
     const createdLecturesList = [];
+    // Week 1's real start/end; every repeat is the same time N weeks later.
+    const firstStart = resolveLectureTime(
+      { date: datesToCheck[0], startTime: lectureStartTime },
+      "start",
+    );
+    const firstEnd = resolveLectureTime(
+      { date: datesToCheck[0], endTime },
+      "end",
+    );
 
-    datesToCheck.forEach((d) => {
+    datesToCheck.forEach((d, weekIndex) => {
       const lectureId = generateLectureId(courseId, lectureType);
       const lectureRef = Lectures.doc(lectureId);
+      const shift = weekIndex * 7 * 24 * 60 * 60 * 1000;
+      const startAt = firstStart ? new Date(firstStart.getTime() + shift) : null;
+      const endAt = firstEnd ? new Date(firstEnd.getTime() + shift) : null;
       const newLectureData = {
         ...finalPayload,
+        ...(startAt && { startTime: startAt.toISOString(), startAt }),
+        ...(endAt && { endTime: endAt.toISOString(), endAt }),
+        reminderSentAt: null,
         id: lectureId,
         date: d,
         department: courseDetails.department,

@@ -1,4 +1,5 @@
 import { Notification, userPrefs } from "../tableDeclarations.js";
+import { normalizePreferences } from "../utils/preferences.js";
 import { getIO } from "../controllers/socket.js";
 import { sendPushNotification } from "./pushNotification.js";
 import {
@@ -56,7 +57,8 @@ export const createNotification = async ({
       .get();
     let prefs = null;
     if (!querySnapshot.empty) {
-      prefs = querySnapshot.docs[0].data();
+      // Folds in toggles saved under the old literal "notifications.x" keys.
+      prefs = normalizePreferences(querySnapshot.docs[0].data());
     }
     const isCritical = ["NEW_LOGIN", "PASSWORD_CHANGED"].includes(actionType);
 
@@ -230,8 +232,12 @@ export const createNotification = async ({
         htmlContent = emailVerificationTemplate(payload.code);
         break;
       case "LECTURE_REMINDER":
-        subject = `Reminder: ${payload.topicName} starts in 45 mins`;
+        subject = `Reminder: ${payload.topicName} starts soon`;
         priority = "normal";
+        break;
+      case "ATTENDANCE_OPEN":
+        subject = `Attendance is open: ${payload.topicName}`;
+        priority = "high";
         break;
       case "SUBSCRIPTION_UPGRADED":
         category = "finance";

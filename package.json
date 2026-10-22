@@ -28,6 +28,7 @@
     "@google/genai": "^2.27.0",
     "@upstash/qstash": "^2.11.2",
     "@upstash/redis": "^1.38.0",
+    "agora-token": "^2.0.7",
     "amqplib": "^0.10.9",
     "axios": "^1.16.1",
     "axios-retry": "^4.5.0",

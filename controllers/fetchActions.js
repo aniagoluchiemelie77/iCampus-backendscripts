@@ -1,3 +1,4 @@
+import { normalizePreferences } from "../utils/preferences.js";
 import {
   Follow,
   User,
@@ -999,13 +1000,17 @@ export const fetchPosts = async (req, res) => {
       }
       const snap = await query.get();
       if (snap.size < limit) exhausted = true;
-      snap.docs.forEach((doc) => {
+      for (const doc of snap.docs) {
+        // Stop at a full page without advancing the cursor, otherwise the
+        // remaining docs of this read are skipped by the next page.
+        if (visible.length >= limit) {
+          exhausted = false;
+          break;
+        }
         const post = { id: doc.id, ...doc.data() };
         lastScore = post.rankingScore;
-        if (visible.length < limit && canViewPost(post, viewer)) {
-          visible.push(post);
-        }
-      });
+        if (canViewPost(post, viewer)) visible.push(post);
+      }
     }
 
     const posts = await enrichPosts(visible, userId);
@@ -1194,9 +1199,17 @@ export const fetchProfileInformation = async (req, res) => {
     const target = await findProfileTarget(identifier);
     if (!target) {
       setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "error", "User not found"),
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        ),
       );
-      return res.status(404).json({ success: false, message: "User not found" });
+      return res
+        .status(404)
+        .json({ success: false, message: "User not found" });
     }
     const targetUid = target.uid;
     const isOwner = viewerUid === targetUid;
@@ -1204,10 +1217,18 @@ export const fetchProfileInformation = async (req, res) => {
     // Either direction of a block hides the profile. `blockedByViewer` lets the
     // app offer "Unblock" only when the viewer is the one who blocked.
     const blockedByViewer = (viewer.blockedUsers || []).includes(targetUid);
-    const viewerBlockedByTarget = (target.blockedUsers || []).includes(viewerUid);
+    const viewerBlockedByTarget = (target.blockedUsers || []).includes(
+      viewerUid,
+    );
     if (!isOwner && (blockedByViewer || viewerBlockedByTarget)) {
       setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "error", "Blocked profile"),
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Blocked profile",
+        ),
       );
       return res.status(403).json({
         success: false,
@@ -1243,7 +1264,9 @@ export const fetchProfileInformation = async (req, res) => {
             .limit(1)
             .get(),
       target.usertype === "lecturer" || target.usertype === "otherUser"
-        ? Course.where("lecturerIds", "array-contains", targetUid).limit(20).get()
+        ? Course.where("lecturerIds", "array-contains", targetUid)
+            .limit(20)
+            .get()
         : null,
       loadProfileContentPage({ tab: "Posts", target, viewer, limit: 6 }),
     ]);
@@ -1285,7 +1308,9 @@ export const fetchProfileInformation = async (req, res) => {
     }
 
     const canSeeScore =
-      isOwner || (viewerRole || viewer.usertype) === "enterprise" || (viewerTier || viewer.tier || "free") !== "free";
+      isOwner ||
+      (viewerRole || viewer.usertype) === "enterprise" ||
+      (viewerTier || viewer.tier || "free") !== "free";
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
@@ -1294,7 +1319,7 @@ export const fetchProfileInformation = async (req, res) => {
       success: true,
       data: {
         ...toProfileView(target),
-        currentIScore: canSeeScore ? target.currentIScore ?? null : "Locked",
+        currentIScore: canSeeScore ? (target.currentIScore ?? null) : "Locked",
         isOwner,
         isFollowing: isOwner ? false : !isFollowingSnap.empty,
         followersCount,
@@ -1310,80 +1335,15 @@ export const fetchProfileInformation = async (req, res) => {
   } catch (error) {
     console.error("Comprehensive Profile Fetch Error:", error.message);
     setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "error", error.message),
-    );
-    res.status(500).json({ success: false, message: "Server error" });
-  }
-};
-export const fetchBlockedUsers = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "fetchBlockedUsersController";
-  const action = "fetchBlockedUsers";
-  try {
-    const userDoc = await User.doc(req.user.uid).get();
-
-    if (!userDoc.exists) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        ),
-      );
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    const userData = userDoc.data();
-    const blockedIds = userData.blockedUsers || [];
-
-    if (blockedIds.length === 0) {
-      setImmediate(() =>
-        logControllerPerformance(controllerName, action, startTime, "success"),
-      );
-      return res.status(200).json([]);
-    }
-
-    const chunks = [];
-    for (let i = 0; i < blockedIds.length; i += 30) {
-      chunks.push(blockedIds.slice(i, i + 30));
-    }
-
-    const userResults = await Promise.all(
-      chunks.map((chunk) => User.where("uid", "in", chunk).get()),
-    );
-
-    const blockedList = userResults.flatMap((userSnapshot) =>
-      userSnapshot.docs.map((doc) => {
-        const u = doc.data();
-        return {
-          uid: u.uid,
-          firstname: u.firstname || "",
-          lastname: u.lastname || "",
-          username: u.username || "",
-          profilePic: u.profilePic || "",
-          tier: u.tier || "",
-          organizationName: u.organizationName || "",
-        };
-      }),
-    );
-
-    setImmediate(() =>
-      logControllerPerformance(controllerName, action, startTime, "success"),
-    );
-    res.status(200).json(blockedList);
-  } catch (err) {
-    setImmediate(() =>
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
-        err.message,
+        error.message,
       ),
     );
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 export const fetchLectureExceptions = async (req, res) => {
@@ -2019,30 +1979,14 @@ export const getUserPreferences = async (req, res) => {
     let preferences;
 
     if (prefsQuery.empty) {
-      preferences = {
+      preferences = normalizePreferences({
         userId,
-        notifications: {
-          auth: true,
-          social: true,
-          classroom: true,
-          store: true,
-          finance: true,
-          profile: true,
-          security: true,
-        },
-        channels: { push: true, email: true, socket: true },
-        theme: "light",
-        language: "en",
-        quietHours: { enabled: false },
         createdAt: new Date(),
         updatedAt: new Date(),
-      };
+      });
     } else {
       const doc = prefsQuery.docs[0];
-      preferences = {
-        id: doc.id,
-        ...doc.data(),
-      };
+      preferences = normalizePreferences({ id: doc.id, ...doc.data() });
     }
 
     res.status(200).json({

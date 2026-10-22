@@ -25,6 +25,7 @@ import {
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { createNotification } from "../services/notification.js";
+import { generateUsername, Usernames } from "../utils/username.js";
 import { client } from "../workers/reditFile.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { verifyAndNotifyLogin } from "../utils/suspiciousActivityDetector.js";
@@ -32,6 +33,59 @@ import { addFlag } from "../utils/flagger.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { promisify } from "util";
 import { embedUserWithInstitutionTier } from "../utils/embedFunctions.js";
+import { issueSignupProof, readSignupProof } from "../utils/signupProof.js";
+
+/**
+ * Looks one person up in the school's directory API. The school's endpoint
+ * gets `school_id` plus `matriculation_number` or `staff_id` as query params
+ * (the old code sent neither, so every lookup returned the same record).
+ */
+const querySchoolDirectory = async (schoolConfig, schoolId, params) => {
+  const url = new URL(schoolConfig.externalApiConfig.endpoint);
+  url.searchParams.set("school_id", schoolId);
+  Object.entries(params).forEach(([k, v]) => url.searchParams.set(k, String(v)));
+  const controller = new AbortController();
+  const timeoutId = setTimeout(
+    () => controller.abort(),
+    Number(schoolConfig.externalApiConfig.timeoutMs) || 8000,
+  );
+  try {
+    return await fetch(url.toString(), {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
+      },
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
+
+// Fields a new account may set itself. Everything else (tier, balances,
+// admin flags, verification, uid…) is decided by the server.
+const SIGNUP_ALLOWED_FIELDS = [
+  "usertype",
+  "email",
+  "firstname",
+  "lastname",
+  "country",
+  "profilePic",
+  "deviceId",
+  "deviceName",
+  "organizationName",
+  "website",
+  "jobTitle",
+  "providerId",
+];
+const isStrongPassword = (pw) =>
+  typeof pw === "string" &&
+  pw.length >= 10 &&
+  /[A-Z]/.test(pw) &&
+  /[a-z]/.test(pw) &&
+  /\d/.test(pw) &&
+  /[\W_]/.test(pw);
 const verifyJwtAsync = promisify(jwt.verify);
 axiosRetry(axios, { retries: 3 });
 
@@ -195,7 +249,20 @@ export const verifyEmailUsingCode = async (req, res) => {
     }
 
     const record = docSnapshot.data();
+    // A 6-digit code is guessable without a cap; after 5 wrong tries the
+    // code is burned and a new one must be requested.
+    const MAX_CODE_ATTEMPTS = 5;
+    if ((record.attempts || 0) >= MAX_CODE_ATTEMPTS) {
+      docRef.delete().catch(() => {});
+      return res.status(429).json({
+        message: "Too many wrong attempts. Request a new code.",
+        verified: false,
+      });
+    }
     if (record.code !== hashedCode) {
+      docRef
+        .update({ attempts: (record.attempts || 0) + 1 })
+        .catch(() => {});
       setImmediate(() => {
         logControllerPerformance(
           controllerName,
@@ -237,6 +304,8 @@ export const verifyEmailUsingCode = async (req, res) => {
       message: "Email verified successfully",
       verified: true,
       email: normalizedEmail,
+      // Required by signUp for password accounts.
+      emailProof: issueSignupProof("email", { email: normalizedEmail }),
     });
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
@@ -854,22 +923,10 @@ export const verifyStudent = async (req, res) => {
         .json({ message: "iCampus is not active at this institution." });
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    let schoolApiResponse;
-    try {
-      schoolApiResponse = await fetch(schoolConfig.externalApiConfig.endpoint, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
-        },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const matric = String(matriculation_number).trim().toUpperCase();
+    const schoolApiResponse = await querySchoolDirectory(schoolConfig, school_id, {
+      matriculation_number: matric,
+    });
 
     if (!schoolApiResponse.ok) {
       setImmediate(() => {
@@ -887,16 +944,50 @@ export const verifyStudent = async (req, res) => {
     }
 
     const schoolStudent = await schoolApiResponse.json();
-    res.status(200).json({
+    if (!schoolStudent?.first_name || !schoolStudent?.email) {
+      return res.status(404).json({
+        message: "Student record not found in school directory.",
+        verified: false,
+      });
+    }
+    if (schoolStudent.isStillInSchool === false) {
+      return res.status(403).json({
+        message: "This matriculation number belongs to a graduated or withdrawn student.",
+        verified: false,
+      });
+    }
+    // Already registered? Say so now instead of at the last step.
+    const existing = await User.where("usertype", "==", "student")
+      .where("schoolCode", "==", school_id)
+      .where("matricNumber", "==", matric)
+      .limit(1)
+      .get();
+    if (!existing.empty) {
+      return res.status(409).json({
+        message: "An account already exists for this matriculation number. Log in instead.",
+        verified: false,
+      });
+    }
+    const identity = {
       firstname: schoolStudent.first_name,
       lastname: schoolStudent.last_name,
-      department: schoolStudent.faculty_dept,
-      current_level: schoolStudent.level,
-      schoolAvatarUrl: schoolStudent.profile_picture_url,
-      email: schoolStudent.email,
-      isStillInSchool: schoolStudent.isStillInSchool,
-      matricNumber: matriculation_number,
+      department: schoolStudent.faculty_dept || schoolStudent.department || null,
+      current_level: schoolStudent.level || null,
+      schoolAvatarUrl: schoolStudent.profile_picture_url || null,
+      email: String(schoolStudent.email).trim().toLowerCase(),
+      isStillInSchool: schoolStudent.isStillInSchool !== false,
+      matricNumber: matric,
+    };
+    res.status(200).json({
+      success: true,
+      verified: true,
       isVerified: true,
+      ...identity,
+      // signUp takes the student's identity from this, not from the app.
+      verificationToken: issueSignupProof("student", {
+        ...identity,
+        schoolCode: school_id,
+      }),
     });
 
     setImmediate(() => {
@@ -927,7 +1018,10 @@ export const verifyLecturer = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "verifyLecturerController";
   const action = "verifyLecturer";
-  const { school_id, staff_id: incomingStaffId } = req.body;
+  // The app sent `school_name` (it holds the school code) while this read
+  // `school_id`, so every lecturer verification failed with "Missing fields".
+  const school_id = req.body?.school_id || req.body?.school_name;
+  const incomingStaffId = req.body?.staff_id;
 
   if (!school_id || !incomingStaffId) {
     setImmediate(() => {
@@ -990,22 +1084,10 @@ export const verifyLecturer = async (req, res) => {
       });
     }
 
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-    let portalResponse;
-    try {
-      portalResponse = await fetch(schoolConfig.externalApiConfig.endpoint, {
-        method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-          "X-iCampus-API-Key": schoolConfig.externalApiConfig.sharedSecret,
-        },
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(timeoutId);
-    }
+    const staffId = String(incomingStaffId).trim().toUpperCase();
+    const portalResponse = await querySchoolDirectory(schoolConfig, school_id, {
+      staff_id: staffId,
+    });
 
     if (!portalResponse.ok) {
       setImmediate(() => {
@@ -1024,14 +1106,43 @@ export const verifyLecturer = async (req, res) => {
     }
 
     const externalLecturer = await portalResponse.json();
-    res.status(200).json({
+    if (!externalLecturer?.first_name || !externalLecturer?.email) {
+      return res.status(404).json({
+        message: "Instructor credentials not found in school records",
+        verified: false,
+      });
+    }
+    const existing = await User.where("usertype", "==", "lecturer")
+      .where("schoolCode", "==", school_id)
+      .where("staffId", "==", staffId)
+      .limit(1)
+      .get();
+    if (!existing.empty) {
+      return res.status(409).json({
+        message: "An account already exists for this staff ID. Log in instead.",
+        verified: false,
+      });
+    }
+    const identity = {
       firstname: externalLecturer.first_name,
       lastname: externalLecturer.last_name,
-      department: externalLecturer.department,
-      staff_id: externalLecturer.staff_id,
-      schoolAvatarUrl: externalLecturer.profile_picture_url,
-      email: externalLecturer.email,
+      department: externalLecturer.department || null,
+      staffId: externalLecturer.staff_id || staffId,
+      schoolAvatarUrl: externalLecturer.profile_picture_url || null,
+      email: String(externalLecturer.email).trim().toLowerCase(),
+    };
+    res.status(200).json({
+      success: true,
+      // The app checks `verified`; only `isVerified` was sent before, so a
+      // found lecturer was still treated as "not found".
+      verified: true,
       isVerified: true,
+      ...identity,
+      staff_id: identity.staffId,
+      verificationToken: issueSignupProof("lecturer", {
+        ...identity,
+        schoolCode: school_id,
+      }),
     });
 
     setImmediate(() => {
@@ -1408,38 +1519,79 @@ export const signUp = async (req, res) => {
   const controllerName = "signUpController";
   const action = "signUp";
 
-  const {
-    usertype,
-    email,
-    matriculation_number,
-    staff_id,
-    department,
-    password,
-    firstname,
-    lastname,
-    deviceId,
-    deviceName,
-    organizationName,
-    providerId,
-  } = req.body;
+  const body = req.body || {};
+  const usertype = body.usertype;
+  const providerId = ["google", "github"].includes(body.providerId)
+    ? body.providerId
+    : "password";
+  const password = body.password;
+  const { deviceId, deviceName } = body;
+  const fail = (status, message) =>
+    res.status(status).json({ message, success: false });
 
-  if (!email) {
-    return res
-      .status(400)
-      .json({ message: "Email is required", success: false });
+  if (!["student", "lecturer", "otherUser", "enterprise"].includes(usertype)) {
+    return fail(400, "Choose a valid account type.");
   }
+
+  // ---- Proof of identity ---------------------------------------------------
+  // Students and lecturers: identity comes from the school directory lookup
+  // (verifyStudent / verifyLecturer), never from the app. Everyone else must
+  // prove the email: a code-verified email or a verified Google/GitHub login.
+  let schoolIdentity = null;
+  let email = String(body.email || "").trim().toLowerCase();
+  if (usertype === "student" || usertype === "lecturer") {
+    schoolIdentity = readSignupProof(body.verificationToken, usertype);
+    if (!schoolIdentity) {
+      return fail(
+        401,
+        "Your school verification has expired. Go back and verify again.",
+      );
+    }
+    email = schoolIdentity.email;
+  } else if (providerId === "google") {
+    if (!(await verifyGoogleToken(body.idToken, email))) {
+      return fail(401, "Google sign-in could not be verified. Try again.");
+    }
+  } else if (providerId === "github") {
+    if (!(await verifyGithubToken(body.idToken, email))) {
+      return fail(401, "GitHub sign-in could not be verified. Try again.");
+    }
+  } else {
+    const emailProof = readSignupProof(body.emailProof, "email");
+    if (!emailProof || emailProof.email !== email) {
+      return fail(401, "Verify your email address before creating an account.");
+    }
+  }
+
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return fail(400, "A valid email is required.");
+  }
+  const isSocial = providerId !== "password";
+  if (!isSocial && !isStrongPassword(password)) {
+    return fail(
+      400,
+      "Password must be at least 10 characters with upper and lower case letters, a number and a symbol.",
+    );
+  }
+  if (usertype === "enterprise" && !String(body.organizationName || "").trim()) {
+    return fail(400, "Organization name is required.");
+  }
+
+  const firstname = schoolIdentity?.firstname ?? String(body.firstname || "").trim();
+  const lastname = schoolIdentity?.lastname ?? String(body.lastname || "").trim();
+  const organizationName = String(body.organizationName || "").trim();
 
   try {
     let existingUserQuery = User.where("email", "==", email);
     let institutionalQuery = null;
-    if (usertype === "student" && matriculation_number && department) {
+    if (usertype === "student") {
       institutionalQuery = User.where("usertype", "==", "student")
-        .where("matriculation_number", "==", matriculation_number)
-        .where("department", "==", department);
-    } else if (usertype === "lecturer" && staff_id && department) {
+        .where("schoolCode", "==", schoolIdentity.schoolCode)
+        .where("matricNumber", "==", schoolIdentity.matricNumber);
+    } else if (usertype === "lecturer") {
       institutionalQuery = User.where("usertype", "==", "lecturer")
-        .where("staff_id", "==", staff_id)
-        .where("department", "==", department);
+        .where("schoolCode", "==", schoolIdentity.schoolCode)
+        .where("staffId", "==", schoolIdentity.staffId);
     }
     const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
     const ip = rawIp ? rawIp.split(",")[0].trim() : "";
@@ -1456,12 +1608,10 @@ export const signUp = async (req, res) => {
     const [uid] = await Promise.all([
       Promise.resolve(generateUserUID(usertype)),
     ]);
-    const isVerified = usertype === "student" || usertype === "lecturer";
+    const isVerified = !!schoolIdentity;
     const queriesToRun = [
       existingUserQuery.limit(1).get(),
-      password && password !== "SOCIAL_AUTH"
-        ? bcrypt.hash(password, 10)
-        : Promise.resolve(null),
+      !isSocial ? bcrypt.hash(password, 10) : Promise.resolve(null),
     ];
     if (institutionalQuery) {
       queriesToRun.push(institutionalQuery.limit(1).get());
@@ -1469,7 +1619,8 @@ export const signUp = async (req, res) => {
     const results = await Promise.all(queriesToRun);
     const emailSnapshot = results[0];
     const hashedPassword = results[1];
-    const institutionalSnapshot = institutionalQuery ? results[4] : null;
+    // Was results[4] on a 3-item array, so this check never ran.
+    const institutionalSnapshot = institutionalQuery ? results[2] : null;
     if (!emailSnapshot.empty) {
       setImmediate(() => {
         logControllerPerformance(
@@ -1501,20 +1652,53 @@ export const signUp = async (req, res) => {
         success: false,
       });
     }
+    // Only whitelisted fields from the request; `...req.body` let a client
+    // overwrite uid or set balances, suspension, credits, schoolCode, etc.
+    const allowed = Object.fromEntries(
+      SIGNUP_ALLOWED_FIELDS.filter((k) => body[k] !== undefined).map((k) => [k, body[k]]),
+    );
+    const profilePic = Array.isArray(body.profilePic)
+      ? body.profilePic.filter((u) => typeof u === "string" && u)
+      : typeof body.profilePic === "string" && body.profilePic
+        ? [body.profilePic]
+        : schoolIdentity?.schoolAvatarUrl
+          ? [schoolIdentity.schoolAvatarUrl]
+          : [];
     const newUserObj = {
+      ...allowed,
       uid,
-      ...req.body,
+      usertype,
+      email,
+      firstname,
+      lastname,
+      organizationName: usertype === "enterprise" ? organizationName : "",
+      profilePic,
       password: hashedPassword,
       isVerified,
-      providerId: providerId || "",
+      providerId,
+      currentIScore: 5,
       createdAt: new Date(),
       updatedAt: new Date(),
       tier: "free",
       hasSubscribed: false,
       twoFactorEnabled: false,
       isInstitutionAdmin: false,
+      ...(schoolIdentity
+        ? {
+            schoolCode: schoolIdentity.schoolCode,
+            schoolName: String(body.schoolName || "").trim() || null,
+            department: schoolIdentity.department || null,
+            schoolAvatarUrl: schoolIdentity.schoolAvatarUrl || null,
+            ...(usertype === "student"
+              ? {
+                  matricNumber: schoolIdentity.matricNumber,
+                  current_level: schoolIdentity.current_level || null,
+                  isStillInSchool: schoolIdentity.isStillInSchool !== false,
+                }
+              : { staffId: schoolIdentity.staffId }),
+          }
+        : {}),
     };
-    delete newUserObj.passwordConfirm;
     const defaultPreferencesData = {
       userId: uid,
       theme: "light",
@@ -1543,18 +1727,38 @@ export const signUp = async (req, res) => {
       lastUsed: new Date(),
       createdAt: new Date(),
     };
-    const dbWrites = [
-      User.doc(uid).set(newUserObj),
-      userPrefs.doc(uid).set(defaultPreferencesData),
-      UserSessions.doc(sessionId).set(initialSession),
-    ];
-    const [_, __, ___, ____, tokens] = await Promise.all([
-      ...dbWrites,
-      generateTokens({ uid, usertype, email, ...newUserObj }),
-    ]);
-
-    const { accessToken, refreshToken } = tokens;
+    // Tokens before any write: they used to be read from index 4 of a
+    // 4-item result, so `tokens` was undefined and every signup returned 500
+    // after the user had already been saved (retrying then said "exists").
+    const { accessToken, refreshToken } = await generateTokens({
+      ...newUserObj,
+      uid,
+      usertype,
+      email,
+    });
     initialSession.refreshToken = refreshToken;
+    // Every account gets a unique username (used for @mentions). The
+    // reservation is created in the same batch as the user, so if someone
+    // grabbed the name a moment ago the whole write fails and we retry with
+    // a fresh one — no account is ever saved with a duplicate.
+    for (let attempt = 0; ; attempt++) {
+      newUserObj.username = await generateUsername(newUserObj);
+      const batch = db.batch();
+      batch.create(Usernames.doc(newUserObj.username), {
+        uid,
+        createdAt: new Date(),
+      });
+      batch.set(User.doc(uid), newUserObj);
+      batch.set(userPrefs.doc(uid), defaultPreferencesData);
+      batch.set(UserSessions.doc(sessionId), initialSession);
+      try {
+        await batch.commit();
+        break;
+      } catch (err) {
+        // 6 = ALREADY_EXISTS (the username reservation).
+        if (err?.code !== 6 || attempt >= 2) throw err;
+      }
+    }
 
     const safeUser = { ...newUserObj };
     delete safeUser.password;

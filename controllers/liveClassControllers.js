@@ -6,6 +6,24 @@ import { createNotification } from "../services/notification.js";
 import { DeepgramClient } from "@deepgram/sdk";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
+import agoraToken from "agora-token";
+
+const { RtcTokenBuilder, RtcRole } = agoraToken;
+const AGORA_TOKEN_TTL_SECONDS = 3 * 60 * 60;
+
+/** Agora channel names: ≤64 chars of [A-Za-z0-9_-]. */
+export const agoraChannelFor = (lectureId) =>
+  `icampus_${String(lectureId).replace(/[^A-Za-z0-9_-]/g, "_")}`.slice(0, 64);
+
+/** Stable numeric Agora uid (1 … 2^31-1) for an iCampus user id. */
+export const agoraUidFor = (uid) => {
+  let hash = 5381;
+  const value = String(uid || "");
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) + hash + value.charCodeAt(i)) >>> 0;
+  }
+  return (hash % 2147483646) + 1;
+};
 
 const activeClassroomConnections = new Map();
 
@@ -70,7 +88,7 @@ export const registerLectureStreamHandlers = (io, socket) => {
     const action = "onlineClassStreamReady";
 
     try {
-      // Media flows peer-to-peer over WebRTC; this only flips the lecture live.
+      // Media flows over Agora; this only flips the lecture live.
       const { lectureId } = payload || {};
       if (!lectureId) {
         setImmediate(() => {
@@ -146,12 +164,40 @@ export const registerLectureStreamHandlers = (io, socket) => {
         )
           .limit(1)
           .get();
-        const studentUids = courseSnap.empty
-          ? []
-          : courseSnap.docs[0].data().studentsEnrolled || [];
+        const courseData = courseSnap.empty ? {} : courseSnap.docs[0].data();
+        const studentUids = courseData.studentsEnrolled || [];
         studentUids.forEach((uid) =>
           io.to(String(uid)).emit("lecture_started", updatedLecture),
         );
+        // The socket ping only reaches students with the app open; a push
+        // brings everyone else straight into the class.
+        setImmediate(() => {
+          Promise.all(
+            studentUids.map((uid) =>
+              createNotification({
+                notificationId: generateNotificationId("classroom"),
+                recipientId: uid,
+                isRead: false,
+                category: "classroom",
+                actionType: "LIVE_CLASS_STARTED",
+                title: `${courseData.courseCode || "Your class"} is live now`,
+                message: `"${updatedLecture.topicName || "Live class"}" has started. Tap to join.`,
+                payload: {
+                  lectureId: updatedLecture.id,
+                  courseId: updatedLecture.courseId,
+                  topicName: updatedLecture.topicName,
+                },
+                entityId: updatedLecture.id,
+                entityType: "lecture",
+                sendPush: true,
+                sendSocket: false,
+                saveToDb: true,
+              }).catch((err) =>
+                console.error(`[LIVE_CLASS_ENGINE] notify ${uid} failed:`, err.message),
+              ),
+            ),
+          );
+        });
       }
 
       setImmediate(() => {
@@ -1562,6 +1608,94 @@ export const registerMuteAllHandler = (io, socket) => {
     }
   });
 };
+/**
+ * GET /v1/auth/agora-token?lectureId=…
+ * Issues an Agora RTC token for a live class after checking the caller may
+ * join. AGORA_APP_ID and AGORA_APP_CERTIFICATE stay on the server; the app
+ * gets the App ID and a short-lived token from here.
+ */
+export const handleAgoraTokenGeneration = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "agoraTokenController";
+  const action = "agoraToken";
+  try {
+    const appId = process.env.AGORA_APP_ID;
+    const appCertificate = process.env.AGORA_APP_CERTIFICATE;
+    if (!appId || !appCertificate) {
+      return res.status(503).json({
+        success: false,
+        message: "Live classes are not configured on the server yet.",
+      });
+    }
+    const uid = req.user?.uid || req.user?.id;
+    const lectureId = String(req.query.lectureId || "");
+    if (!uid || !lectureId) {
+      return res.status(400).json({ success: false, message: "lectureId is required." });
+    }
+
+    const lecture = await getLecture(lectureId);
+    if (!lecture) {
+      return res.status(404).json({ success: false, message: "Lecture not found." });
+    }
+    if (["completed", "cancelled"].includes(lecture.status)) {
+      return res.status(410).json({ success: false, message: "This class has ended." });
+    }
+
+    let course = null;
+    if (lecture.courseId) {
+      const courseSnap = await Course.where("courseId", "==", lecture.courseId)
+        .limit(1)
+        .get();
+      course = courseSnap.empty ? null : courseSnap.docs[0].data();
+    }
+    const isHost =
+      lecture.hostId === uid || (course?.lecturerIds || []).includes(uid);
+    const isEnrolled = (course?.studentsEnrolled || []).includes(uid);
+    // Quick public meetings have no course: any signed-in user may join.
+    const isOpenMeeting = !lecture.courseId;
+    if (!isHost && !isEnrolled && !isOpenMeeting) {
+      return res.status(403).json({
+        success: false,
+        message: "You are not enrolled in this class.",
+      });
+    }
+
+    const channel = agoraChannelFor(lecture.id || lectureId);
+    const agoraUid = agoraUidFor(uid);
+    // Everyone gets publisher rights so a student given the floor can speak
+    // without a new token; the app joins students as audience until then.
+    const token = RtcTokenBuilder.buildTokenWithUid(
+      appId,
+      appCertificate,
+      channel,
+      agoraUid,
+      RtcRole.PUBLISHER,
+      AGORA_TOKEN_TTL_SECONDS,
+      AGORA_TOKEN_TTL_SECONDS,
+    );
+
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "success"),
+    );
+    return res.status(200).json({
+      success: true,
+      appId,
+      channel,
+      uid: agoraUid,
+      token,
+      expiresIn: AGORA_TOKEN_TTL_SECONDS,
+      isHost: lecture.hostId === uid,
+      hostAgoraUid: agoraUidFor(lecture.hostId),
+    });
+  } catch (error) {
+    console.error("Agora token error:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(controllerName, action, startTime, "error", error.message),
+    );
+    return res.status(500).json({ success: false, message: "Could not start the live connection." });
+  }
+};
+
 export const handleDeepgramTokenGeneration = async (req, res) => {
   try {
     const { lectureId } = req.query || {};
