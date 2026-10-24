@@ -91,15 +91,21 @@ export const createNotification = async ({
     switch (actionType) {
       //navigate to Notification detail
       case "WELCOME_USER":
-        subject = "Welcome to iCampus!";
-        if (canSendEmail) {
-          htmlContent = welcomeEmailTemplate(payload.userName);
+        {
+          const welcomeName =
+            typeof payload.userName === "string" && payload.userName.trim()
+              ? payload.userName.trim()
+              : "there";
+          subject = "Welcome to iCampus — your account is ready";
+          if (canSendEmail) {
+            htmlContent = welcomeEmailTemplate(welcomeName);
+          }
+          title = title || `Welcome, ${welcomeName}!`;
+          message =
+            message ||
+            "Your iCampus account is ready. Explore courses, connect with your campus community, and keep up with campus life—all in one place.";
+          break;
         }
-        title = title || "Welcome aboard!";
-        message =
-          message ||
-          `Hi ${payload.userName}, welcome to the iCampus community!`;
-        break;
       case "ORDER_CANCELLED":
         htmlContent = orderCancelledEmailTemplate(
           payload.recipientName,

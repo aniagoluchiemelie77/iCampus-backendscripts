@@ -145,7 +145,7 @@ const FAQ_DATA = [
   {
     id: "acad-3",
     question: "What happens if I exhaust my free monthly exceptions?",
-    answer: `Once you have used your free monthly allowance, each extra exception costs ${EXCEPTION_COST_USD} (US dollars), charged in your local currency at the current exchange rate. You pay by card, bank transfer or USSD through Flutterwave, and the purchased exception is used the next time you submit a request. The fee goes to iCampus, not to the lecturer, and it is not refunded if the lecturer rejects the exception.`,
+    answer: `Once you have used your free monthly allowance, you can replenish it with a bundle of exception requests. The bundle restores the number of requests in your monthly allowance. Its total is calculated at ${EXCEPTION_COST_USD} (US dollars) per request and charged in your local currency at the current exchange rate. You pay by card, bank transfer or USSD through Flutterwave. Replenished requests are used one at a time, and are not refunded if a lecturer rejects an exception.`,
   },
   {
     id: "acad-4",

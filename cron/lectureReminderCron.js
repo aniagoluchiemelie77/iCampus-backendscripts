@@ -4,7 +4,7 @@ import { handleUpcomingLectureRemindersCron } from "../controllers/classActions.
 let running = false;
 
 export const lectureReminderCron = () => {
-  // Every minute is cheap (one small query) and means a reminder goes out
+  // Every minute is cheap (two indexed queries) and means a reminder goes out
   // within a minute of entering the window. The handler sends each lecture's
   // reminder at most once, so overlapping or catch-up runs are safe.
   cron.schedule("* * * * *", async () => {

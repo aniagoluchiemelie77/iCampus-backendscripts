@@ -217,13 +217,13 @@ export const updateAdmin = async (req, res) => {
 };
 export const adminSendTicketNotification = async (req, res) => {
   try {
-    const { ticketRefId } = req.params;
+    const ticketRefId = req.params?.ticketRefId || req.body?.ticketRefId;
     const { recipientId, title, message, category } = req.body;
 
-    if (!message || !recipientId) {
+    if (!ticketRefId || !message || !recipientId) {
       return res.status(400).json({
         success: false,
-        message: "Message and recipientId are required.",
+        message: "ticketRefId, message, and recipientId are required.",
       });
     }
     const [ticketQuery, userDoc] = await Promise.all([
@@ -239,46 +239,44 @@ export const adminSendTicketNotification = async (req, res) => {
     }
 
     const ticketDoc = ticketQuery.docs[0];
-    const ticketRef = ticketDoc.ref;
     const ticketData = ticketDoc.data();
     const userData = userDoc.exists ? userDoc.data() : null;
+
+    if (ticketData.userId !== recipientId) {
+      return res.status(403).json({
+        success: false,
+        message: "Recipient does not own this ticket.",
+      });
+    }
 
     const now = new Date();
     const formattedDate = now.toLocaleDateString();
     const formattedTime = now.toLocaleTimeString();
 
-    const updatedTicketData = {
-      ...ticketData,
-      status: "pending",
-      updatedAt: now,
-    };
-    const [notification] = await Promise.all([
-      createNotification({
-        notificationId: generateNotificationId("system"),
-        recipientId: recipientId,
-        recipientEmail: userData?.email,
-        category: category || "system",
-        actionType: "SUPPORT_TICKET_REPLY",
-        title: title || `Update on Ticket #${ticketRefId}`,
-        message: message,
-        sendEmail: true,
-        payload: {
-          userName: userData?.firstname || "User",
-          ticketRefId,
-          adminMessage: message,
-          date: formattedDate,
-          time: formattedTime,
-        },
-        isRead: false,
-      }),
-      ticketRef.set(updatedTicketData, { merge: true }),
-    ]);
+    const notification = await createNotification({
+      notificationId: generateNotificationId("system"),
+      recipientId,
+      recipientEmail: userData?.email,
+      category: category || "system",
+      actionType: "SUPPORT_TICKET_REPLY",
+      title: title || `Update on Ticket #${ticketRefId}`,
+      message,
+      sendEmail: true,
+      payload: {
+        userName: userData?.firstname || "User",
+        ticketRefId,
+        adminMessage: message,
+        date: formattedDate,
+        time: formattedTime,
+      },
+      isRead: false,
+    });
 
     return res.status(200).json({
       success: true,
-      message: "Notification sent and ticket status updated to pending.",
+      message: "Notification sent successfully.",
       notification,
-      ticket: updatedTicketData,
+      ticket: ticketData,
     });
   } catch (error) {
     console.error("adminSendTicketNotification Error:", error);
@@ -1332,6 +1330,18 @@ export const deleteAd = async (req, res) => {
 
     const adDocRef = snapshot.docs[0].ref;
     const adData = snapshot.docs[0].data();
+    if (
+      adminType === "school_administrator" &&
+      (adData.addedBy !== adminId ||
+        !req.admin?.schoolCode ||
+        adData.schoolCode !== req.admin.schoolCode)
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "You may only delete your school's advertisement.",
+      });
+    }
+
     await adDocRef.delete();
     res.status(200).json({
       success: true,
@@ -1458,6 +1468,7 @@ export const createAd = async (req, res) => {
 export const updateAd = async (req, res) => {
   try {
     const adminType = req.admin?.adminType;
+    const adminId = req.admin?.uid || req.admin?.id;
     if (!["super_admin", "school_administrator"].includes(adminType)) {
       return res.status(403).json({
         success: false,
@@ -1467,7 +1478,6 @@ export const updateAd = async (req, res) => {
     }
 
     const { id } = req.params;
-    const updateData = req.body;
     const snapshot = await Ads.where("id", "==", id).limit(1).get();
     if (snapshot.empty) {
       return res
@@ -1476,12 +1486,42 @@ export const updateAd = async (req, res) => {
     }
     const adDocRef = snapshot.docs[0].ref;
     const existingAd = snapshot.docs[0].data();
+    if (
+      adminType === "school_administrator" &&
+      (existingAd.addedBy !== adminId ||
+        !req.admin?.schoolCode ||
+        existingAd.schoolCode !== req.admin.schoolCode)
+    ) {
+      return res.status(403).json({
+        success: false,
+        error: "You may only update your school's advertisement.",
+      });
+    }
+
+    if (adminType === "school_administrator" && req.body?.isActive === true) {
+      const schoolAds = await Ads.where("addedBy", "==", adminId).get();
+      const anotherActiveAd = schoolAds.docs.some(
+        (doc) => doc.id !== adDocRef.id && doc.data().isActive !== false,
+      );
+      if (anotherActiveAd) {
+        return res.status(400).json({
+          success: false,
+          error:
+            "Slot exhausted. School administrators are only permitted 1 active advertisement slot.",
+        });
+      }
+    }
+
+    const safeUpdateData = { ...req.body };
+    delete safeUpdateData.id;
+    delete safeUpdateData.addedBy;
+    delete safeUpdateData.creatorType;
+    delete safeUpdateData.schoolCode;
     const payload = {
-      ...updateData,
+      ...safeUpdateData,
       updatedAt: new Date().toISOString(),
-      updatedBy: req.admin.email || req.admin.id,
+      updatedBy: req.admin.email || adminId,
     };
-    delete payload.id;
     await adDocRef.update(payload);
     const updatedSnapshot = await adDocRef.get();
     const updatedAd = updatedSnapshot.data();
@@ -1524,7 +1564,7 @@ export const sendSupportMessage = async (req, res) => {
   try {
     const { ticketRefId } = req.params;
     const { message, attachments = [] } = req.body;
-    const currentUserId = req.user.id || req.user.uid;
+    const currentUserId = req.admin?.uid || req.admin?.id;
 
     if (!ticketRefId || (!message && attachments.length === 0)) {
       return res.status(400).json({
@@ -1534,8 +1574,9 @@ export const sendSupportMessage = async (req, res) => {
       });
     }
 
-    const isAdmin =
-      req.user.adminType === "support" || req.user.adminType === "super_admin";
+    const isAdmin = ["support", "super_admin"].includes(
+      req.admin?.adminType,
+    );
 
     if (!isAdmin) {
       return res.status(403).json({
@@ -1580,6 +1621,37 @@ export const sendSupportMessage = async (req, res) => {
       data: newMessage,
     });
     setImmediate(async () => {
+      if (ticketData.userId) {
+        try {
+          const userDoc = await User.doc(ticketData.userId).get();
+          const userData = userDoc.exists ? userDoc.data() : null;
+          await createNotification({
+            notificationId: generateNotificationId("system"),
+            recipientId: ticketData.userId,
+            recipientEmail: userData?.email,
+            category: "system",
+            actionType: "SUPPORT_TICKET_REPLY",
+            title: `Reply to Ticket #${ticketRefId}`,
+            message: message || "An administrator replied to your support ticket.",
+            entityId: ticketRefId,
+            entityType: "support_ticket",
+            sendEmail: false,
+            payload: {
+              userName: userData?.firstname || "User",
+              ticketRefId,
+              adminMessage: message || "",
+              date: new Date().toLocaleDateString(),
+              time: new Date().toLocaleTimeString(),
+            },
+          });
+        } catch (notificationError) {
+          console.error(
+            "Background ticket owner notification failed:",
+            notificationError,
+          );
+        }
+      }
+
       try {
         if (isAdmin && ticketData.source === "email" && ticketData.guestEmail) {
           await sendEmail({

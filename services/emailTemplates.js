@@ -14,37 +14,64 @@ const sanitize = (str) => {
 };
 
 export const welcomeEmailTemplate = (userName) => {
+  const safeUserName = sanitize(
+    typeof userName === "string" && userName.trim() ? userName.trim() : "there",
+  );
+  const safeDashboardUrl = sanitize(branding.appDashboardUrl);
+  const safeSupportEmail = sanitize(branding.supportEmailMain);
   const body = `
-    <p style="font-size: 16px; color: ${colors.text}; line-height: 1.5;">Hello ${userName},</p>
-    <p style="font-size: 16px; color: ${colors.text}; line-height: 1.5;">
-      We are delighted to welcome you to the iCampus ecosystem. You now have everything you need to manage your academic life, from live-streaming lectures to secure financial transactions via <strong>iCash</strong>.
-    </p>
-    <div style="text-align: center; margin: 30px 0;">
-      <a href=${branding.appDashboardUrl}
-         style="background-color: ${colors.primary}; color: #ffffff; padding: 12px 25px; text-decoration: none; border-radius: 5px; font-weight: bold;">
-         Access Your Dashboard
-      </a>
-    </div>
-    <div style="border-radius: 8px; padding: 25px; margin: 20px 0;">
-      <h3 style="margin-top: 0; color: ${colors.primary}; border-bottom: 2px solid ${colors.primary}; display: inline-block; padding-bottom: 5px;">Your Academic Toolkit</h3>
-      <ul style="padding-left: 20px; color: ${colors.text}; line-height: 1.8;">
-        <li><strong>iCash Wallet:</strong> Manage fees and payments securely.</li>
-        <li><strong>Live Lectures:</strong> Real-time streaming and archived sessions.</li>
-        <li><strong>Digital ID (iTag):</strong> Your official academic verification.</li>
-        <li><strong>Proctoring:</strong> Secure, fair, and automated test environments.</li>
-      </ul>
-    </div>
-    <div style="padding-top: 5px; margin-top: 30px;">
-      <p style="font-size: 14px; color: ${colors.textTint};">
-        <strong>Security Tip:</strong> Never share your login credentials or iCash transaction PINs with anyone. iCampus staff will never ask for your password.
-      </p>
-      <p style="font-size: 14px; color: ${colors.textTint};">
-        Need assistance? Our support team is ready to help at <a href="mailto:${branding.supportEmailMain}">support@icampus.com</a>.
-      </p>
-      <p style="font-size: 14px; color: ${colors.secondary}; margin-top: 20px;">
-        Best regards,<br><strong>The iCampus Development Team</strong>
-      </p>
-    </div>
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+      style="background-color: ${colors.background}; padding: 32px 12px; font-family: ${typography.fontFamily};">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+            style="max-width: 600px; background-color: ${colors.white}; border-radius: 16px; overflow: hidden;">
+            <tr>
+              <td style="height: 6px; background-color: ${colors.primary}; line-height: 6px;">&nbsp;</td>
+            </tr>
+            <tr>
+              <td style="padding: 36px 32px 32px;">
+                <p style="margin: 0 0 12px; color: ${colors.primary}; font-size: 12px; font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase;">
+                  ${sanitize(branding.companyName)}
+                </p>
+                <h1 style="margin: 0 0 16px; color: ${colors.text}; font-size: 28px; line-height: 1.25;">
+                  Welcome, ${safeUserName}.
+                </h1>
+                <p style="margin: 0 0 24px; color: ${colors.textTint}; font-size: 16px; line-height: 1.7;">
+                  Your iCampus account is ready. Discover courses, connect with your campus community, and keep your academic life organized—all in one place.
+                </p>
+                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+                  style="background-color: ${colors.background}; border-radius: 12px; margin: 0 0 28px;">
+                  <tr>
+                    <td style="padding: 20px 22px; color: ${colors.text}; font-size: 14px; line-height: 1.7;">
+                      <strong style="color: ${colors.primary};">Make iCampus yours</strong><br>
+                      Find your learning resources, follow campus updates, and stay connected to the people and opportunities around you.
+                    </td>
+                  </tr>
+                </table>
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" align="center">
+                  <tr>
+                    <td align="center" style="border-radius: 8px; background-color: ${colors.primary};">
+                      <a href="${safeDashboardUrl}"
+                        style="display: inline-block; padding: 14px 26px; color: ${colors.white}; font-size: 15px; font-weight: bold; text-decoration: none;">
+                        Explore iCampus
+                      </a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin: 28px 0 0; color: ${colors.muted}; font-size: 13px; line-height: 1.6;">
+                  Need a hand getting started? Contact our support team at
+                  <a href="mailto:${safeSupportEmail}" style="color: ${colors.primary}; text-decoration: none;">${safeSupportEmail}</a>.
+                </p>
+                <p style="margin: 20px 0 0; color: ${colors.textTint}; font-size: 14px; line-height: 1.6;">
+                  We’re glad you’re here,<br><strong>The iCampus Team</strong>
+                </p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
   `;
   return body;
 };

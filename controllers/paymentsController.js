@@ -1,6 +1,6 @@
 /**
- * Every in-app purchase (marketplace checkout, subscription, extra lecture
- * exception) goes through the same three steps:
+ * Every in-app purchase (marketplace checkout, subscription, exception
+ * allowance refill) goes through the same three steps:
  *
  *  1. POST /users/payments/intent   - the server prices the purchase and
  *     stores a pending intent keyed by its tx_ref. The app never decides
@@ -24,6 +24,7 @@ import {
 import {
   USD_SUBSCRIPTION_PRICES,
   EXCEPTION_COST_USD,
+  EXCEPTION_ACCOUNT_LIMITS,
   DELIVERY_FEES,
   TAX_RATE,
 } from "../constants/inAppConstants.js";
@@ -242,11 +243,22 @@ async function priceIntent(purpose, body, user, currency) {
     };
   }
   if (purpose === "exception") {
-    const amount = await convertAmount(EXCEPTION_COST_USD, "USD", currency);
+    const tier = Object.prototype.hasOwnProperty.call(
+      EXCEPTION_ACCOUNT_LIMITS,
+      user.tier,
+    )
+      ? user.tier
+      : "free";
+    const refillQuantity = EXCEPTION_ACCOUNT_LIMITS[tier];
+    const amount = await convertAmount(
+      EXCEPTION_COST_USD * refillQuantity,
+      "USD",
+      currency,
+    );
     return {
       amount: roundUpMoney(amount),
-      title: "Extra lecture exception",
-      payload: {},
+      title: `Lecture exception allowance refill (${refillQuantity} requests)`,
+      payload: { refillQuantity },
     };
   }
   // checkout
@@ -402,7 +414,14 @@ const FULFIL = {
     if (!userDoc) throw new FulfilmentError("User not found.");
     const user = userDoc.data();
     const now = new Date();
-    const exceptionCredits = (Number(user.exceptionCredits) || 0) + 1;
+    // Pending pre-refill intents were priced for one request; keep them valid.
+    const requestedRefillQuantity = Number(intent.payload?.refillQuantity);
+    const exceptionCreditsAdded =
+      Number.isInteger(requestedRefillQuantity) && requestedRefillQuantity > 0
+        ? requestedRefillQuantity
+        : 1;
+    const exceptionCredits =
+      (Number(user.exceptionCredits) || 0) + exceptionCreditsAdded;
     const transactionId = generateTransactionId("payment");
     t.update(userDoc.ref, { exceptionCredits, updatedAt: now });
     t.set(Transactions.doc(transactionId), {
@@ -416,6 +435,7 @@ const FULFIL = {
       title: intent.title,
       reference: intent.txRef,
       gatewayReference: String(flw.id),
+      exceptionCreditsAdded,
       createdAt: now,
       updatedAt: now,
     });
@@ -426,10 +446,14 @@ const FULFIL = {
       amount: intent.amount,
       currency: intent.currency,
       date: now,
-      sourceDetails: { studentId: intent.userId, relatedTransactionId: transactionId },
+      sourceDetails: {
+        studentId: intent.userId,
+        relatedTransactionId: transactionId,
+        exceptionCreditsAdded,
+      },
       createdAt: now,
     });
-    return { exceptionCredits, transactionId };
+    return { exceptionCredits, exceptionCreditsAdded, transactionId };
   },
 
   async checkout(t, intent, flw) {
@@ -581,8 +605,8 @@ const AFTER_FULFIL = {
       isRead: false,
       category: "finance",
       actionType: "EXCEPTION_PURCHASED",
-      title: "Extra exception purchased",
-      message: `Payment received. You have ${result.exceptionCredits} paid exception${result.exceptionCredits === 1 ? "" : "s"} available.`,
+      title: "Exception allowance replenished",
+      message: `Your exception allowance was replenished with ${result.exceptionCreditsAdded} requests. You have ${result.exceptionCredits} requests available.`,
       saveToDb: true,
       sendPush: true,
       sendSocket: true,
@@ -642,6 +666,7 @@ const publicResult = (intent, result) => {
   }
   return {
     exceptionCredits: result.exceptionCredits,
+    exceptionCreditsAdded: result.exceptionCreditsAdded,
     transactionId: result.transactionId,
   };
 };
@@ -917,4 +942,3 @@ export const savePayoutAccount = async (req, res) => {
     return sendError(res, error, controllerName, action, startTime);
   }
 };
-

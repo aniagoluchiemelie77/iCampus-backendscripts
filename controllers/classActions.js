@@ -62,8 +62,8 @@ const EXCEPTION_CATEGORIES = [
 
 /**
  * Students get EXCEPTION_ACCOUNT_LIMITS[tier] free exceptions a month. Past
- * that, each request uses one paid exception credit, bought for
- * EXCEPTION_COST_USD through POST /users/payments/intent { purpose: "exception" }.
+ * that, each request uses one paid exception credit from a refill bundle
+ * matching their monthly allowance, purchased through the payment intent.
  */
 export const submitLectureException = async (req, res) => {
   const startTime = Date.now();
@@ -139,8 +139,12 @@ export const submitLectureException = async (req, res) => {
       }
       const userDoc = userSnap.docs[0];
       const user = userDoc.data();
-      const freeLimit =
-        EXCEPTION_ACCOUNT_LIMITS[user.tier] ?? EXCEPTION_ACCOUNT_LIMITS.free;
+      const freeLimit = Object.prototype.hasOwnProperty.call(
+        EXCEPTION_ACCOUNT_LIMITS,
+        user.tier,
+      )
+        ? EXCEPTION_ACCOUNT_LIMITS[user.tier]
+        : EXCEPTION_ACCOUNT_LIMITS.free;
       const usedThisMonth = monthSnap.size;
       const isPaid = usedThisMonth >= freeLimit;
       let exceptionCredits = Number(user.exceptionCredits) || 0;
@@ -150,7 +154,7 @@ export const submitLectureException = async (req, res) => {
           return {
             error: [
               402,
-              `You've used your ${freeLimit} free exceptions this month. Buy an extra exception to continue.`,
+              `You've used your ${freeLimit} free exceptions this month. Replenish your exception allowance to continue.`,
               { code: "EXCEPTION_PAYMENT_REQUIRED", usedThisMonth, freeLimit, exceptionCredits },
             ],
           };
@@ -199,7 +203,7 @@ export const submitLectureException = async (req, res) => {
           actionType: "EXCEPTION_SUBMITTED",
           title: "Exception Submitted",
           message: outcome.isPaid
-            ? `Your exception for ${courseInfo.courseTitle} was submitted using 1 paid exception.`
+            ? `Your exception for ${courseInfo.courseTitle} was submitted using 1 replenished request.`
             : `Your free exception for ${courseInfo.courseTitle} was submitted.`,
           saveToDb: true,
           payload: {
@@ -570,7 +574,7 @@ export const createAssessment = async (req, res) => {
               title: "New Assessment Posted",
               message: `A new test "${title}" has been posted for ${course.courseCode || course.title}.`,
               recipientEmail: student.email,
-              sendEmail: !!student.email,
+              sendEmail: false,
               payload: {
                 userName: student.firstname,
                 courseTitle: course.courseTitle || course.title,
@@ -1827,6 +1831,7 @@ export const editLectures = async (req, res) => {
         endAt,
         // The new time deserves its own reminder.
         reminderSentAt: null,
+        reminderClaimedAt: null,
       });
     }
     const scheduleLabel = isScheduleChanged
@@ -2391,18 +2396,34 @@ export const handleUpcomingLectureRemindersCron = async () => {
   try {
     // Remind once, as soon as a lecture is within the lead window. The old
     // version matched `startTime == "HH:mm"` for the exact minute 45 minutes
-    // ahead, but lectures store startTime as an ISO instant (and the cron runs
-    // every 5 minutes, in the server's time zone), so nothing ever matched.
-    const leadTimeMinutes = Number(process.env.LECTURE_REMINDER_LEAD_MINUTES) || 45;
+    // ahead, but lectures store startTime as an ISO instant.
+    const configuredLeadTime = Number(process.env.LECTURE_REMINDER_LEAD_MINUTES);
+    const leadTimeMinutes =
+      Number.isFinite(configuredLeadTime) && configuredLeadTime > 0
+        ? configuredLeadTime
+        : 45;
     const now = new Date();
     // `date` is the lecturer's local day; yesterday..tomorrow (UTC) covers it.
     const dateKeys = [-1, 0, 1].map((offset) =>
       new Date(now.getTime() + offset * 86400000).toISOString().slice(0, 10),
     );
-    const lectureQuery = await Lectures.where("date", "in", dateKeys).get();
+    const reminderDeadline = new Date(
+      now.getTime() + leadTimeMinutes * 60000,
+    );
+    const [datedLectures, timedLectures] = await Promise.all([
+      Lectures.where("date", "in", dateKeys).get(),
+      Lectures.where("startAt", ">=", now)
+        .where("startAt", "<=", reminderDeadline)
+        .get(),
+    ]);
+    const lectureDocsById = new Map();
+    [...datedLectures.docs, ...timedLectures.docs].forEach((doc) =>
+      lectureDocsById.set(doc.id, doc),
+    );
+    const lectureDocs = [...lectureDocsById.values()];
 
     const dueLectures = [];
-    lectureQuery.docs.forEach((doc) => {
+    lectureDocs.forEach((doc) => {
       const lecture = doc.data();
       // Rescheduled lectures are "postponed" but still happen.
       if (!["scheduled", "postponed"].includes(lecture.status)) return;
@@ -2410,26 +2431,59 @@ export const handleUpcomingLectureRemindersCron = async () => {
       const startsAt = resolveLectureTime(lecture, "start");
       if (!startsAt) return;
       const minutesAway = (startsAt.getTime() - now.getTime()) / 60000;
-      if (minutesAway > 0 && minutesAway <= leadTimeMinutes) {
+      if (minutesAway >= -15 && minutesAway <= leadTimeMinutes) {
         dueLectures.push({ doc, lecture, startsAt, minutesAway });
       }
     });
 
     console.log(
-      `[CRON_ENGINE] ${lectureQuery.size} lectures on ${dateKeys.join(", ")}; ${dueLectures.length} due for a reminder.`,
+      `[CRON_ENGINE] ${lectureDocs.length} candidate lectures on ${dateKeys.join(", ")}; ${dueLectures.length} due for a reminder.`,
     );
     if (dueLectures.length === 0) return;
 
     for (const { doc: lectureDoc, startsAt, minutesAway } of dueLectures) {
-      // Claim the reminder first so overlapping runs never send it twice.
+      // A lease prevents concurrent workers from sending while allowing retry
+      // if a worker exits before the reminder is persisted.
+      const claimTime = new Date();
       const claimed = await db.runTransaction(async (t) => {
         const fresh = await t.get(lectureDoc.ref);
-        if (!fresh.exists || fresh.data().reminderSentAt) return null;
-        t.update(lectureDoc.ref, { reminderSentAt: new Date() });
+        if (!fresh.exists) return null;
+        const current = fresh.data();
+        if (current.reminderSentAt) return null;
+        const existingClaim = toDate(current.reminderClaimedAt);
+        if (
+          existingClaim &&
+          claimTime.getTime() - existingClaim.getTime() < 2 * 60000
+        ) {
+          return null;
+        }
+        const freshStart = resolveLectureTime(current, "start");
+        if (
+          !["scheduled", "postponed"].includes(current.status) ||
+          !freshStart ||
+          freshStart.getTime() < claimTime.getTime() - 15 * 60000 ||
+          freshStart.getTime() - claimTime.getTime() > leadTimeMinutes * 60000
+        ) {
+          return null;
+        }
+        t.update(lectureDoc.ref, { reminderClaimedAt: claimTime });
         return fresh.data();
       });
       if (!claimed) continue;
       const lecture = claimed;
+      const finishClaim = async (sent) =>
+        db.runTransaction(async (t) => {
+          const fresh = await t.get(lectureDoc.ref);
+          if (!fresh.exists) return;
+          const currentClaim = toDate(fresh.data().reminderClaimedAt);
+          if (!currentClaim || currentClaim.getTime() !== claimTime.getTime()) {
+            return;
+          }
+          t.update(lectureDoc.ref, {
+            reminderSentAt: sent ? new Date() : null,
+            reminderClaimedAt: null,
+          });
+        });
       const courseId = lecture.courseId;
       const courseQuery = await Course.where("courseId", "==", courseId)
         .limit(1)
@@ -2438,6 +2492,7 @@ export const handleUpcomingLectureRemindersCron = async () => {
         console.log(
           `[CRON_ENGINE] Skipping session ${lecture.id || lectureDoc.id}: Course context not found for courseId ${courseId}.`,
         );
+        await finishClaim(false);
         continue;
       }
 
@@ -2453,9 +2508,12 @@ export const handleUpcomingLectureRemindersCron = async () => {
         console.log(
           `[CRON_ENGINE] Skipping session ${lecture.id || lectureDoc.id}: No student enrollments detected.`,
         );
+        await finishClaim(false);
         continue;
       }
-      const minutesLeft = Math.max(1, Math.round(minutesAway));
+      const minutesLeft = Math.max(0, Math.round(minutesAway));
+      const startMessage =
+        minutesLeft === 0 ? "is starting now" : `starts in ${minutesLeft} minutes`;
       const clock = formatLectureClock(startsAt);
       const where =
         lecture.lectureType === "Physical"
@@ -2483,28 +2541,36 @@ export const handleUpcomingLectureRemindersCron = async () => {
         });
       });
 
+      const notificationIdFor = (studentId) =>
+        `lecture-reminder-${encodeURIComponent(
+          lecture.id || lectureDoc.id,
+        )}-${startsAt.getTime()}-${encodeURIComponent(studentId)}`;
       const notificationPromises = enrolledStudents.map(async (student) => {
         try {
           return await createNotification({
-            notificationId: generateNotificationId("classroom"),
+            notificationId: notificationIdFor(student.uid),
             recipientId: student.uid,
             isRead: false,
             recipientEmail: student.email,
-            sendEmail: !!student.email,
+            sendEmail: false,
             category: "classroom",
             actionType: "LECTURE_REMINDER",
             title: `Class Starting Soon: ${courseData.courseCode}`,
             message: student.isHost
-              ? `You're teaching "${lecture.topicName}" in ${minutesLeft} minutes (${clock}), ${where}.`
-              : `Your ${lecture.lectureType || "live"} lecture on "${lecture.topicName}" starts in ${minutesLeft} minutes (${clock}), ${where}.`,
+              ? `You're teaching "${lecture.topicName}" ${startMessage} (${clock}), ${where}.`
+              : `Your ${lecture.lectureType || "live"} lecture on "${lecture.topicName}" ${startMessage} (${clock}), ${where}.`,
             payload: {
               courseId: lecture.courseId,
               lectureId: lecture.id || lectureDoc.id,
               topicName: lecture.topicName,
               startTime: startsAt.toISOString(),
+              endTime: resolveLectureTime(lecture, "end")?.toISOString(),
+              date: lecture.date,
+              courseCode: courseData.courseCode,
               location: lecture.location,
               lectureType: lecture.lectureType || "Physical",
               userName: student.firstname || "Student",
+              isLecturer: student.isHost,
             },
             entityId: student.uid,
             entityType: "user",
@@ -2517,11 +2583,22 @@ export const handleUpcomingLectureRemindersCron = async () => {
             `[CRON_NOTIFICATION_ERR] Failed for recipient ${student.uid}:`,
             err.message,
           );
-          return null;
+          return undefined;
         }
       });
 
-      await Promise.all(notificationPromises);
+      const notificationResults = await Promise.all(notificationPromises);
+      if (
+        notificationResults.length === 0 ||
+        notificationResults.includes(undefined)
+      ) {
+        console.error(
+          `[CRON_NOTIFICATION_ERR] Reminder delivery incomplete for ${lecture.id || lectureDoc.id}; it will be retried.`,
+        );
+        await finishClaim(false);
+        continue;
+      }
+      await finishClaim(true);
 
       setImmediate(() =>
         logControllerPerformance(controllerName, action, startTime, "success"),
@@ -3665,6 +3742,7 @@ export const createLectureSchedule = async (req, res) => {
         ...(startAt && { startTime: startAt.toISOString(), startAt }),
         ...(endAt && { endTime: endAt.toISOString(), endAt }),
         reminderSentAt: null,
+        reminderClaimedAt: null,
         id: lectureId,
         date: d,
         department: courseDetails.department,

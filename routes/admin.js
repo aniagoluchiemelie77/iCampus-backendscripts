@@ -177,5 +177,3 @@ router.post(
 );
 
 export default router;
-
-//admin password:  AdminSecurePassword123?

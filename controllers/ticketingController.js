@@ -8,6 +8,13 @@ import { notifyAdmins } from "../services/adminNotification.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
 
+const SUPPORT_TICKET_STATUSES = new Set([
+  "open",
+  "pending",
+  "resolved",
+  "closed",
+]);
+
 export const createTicket = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "createTicketController";
@@ -45,6 +52,7 @@ export const createTicket = async (req, res) => {
       originalMessage: message,
       severity: "high",
       category,
+      status: "open",
       thread: [{ sender: userId, message, timestamp: now }],
       createdAt: now,
       updatedAt: now,
@@ -108,6 +116,16 @@ export const adminUpdateTicketStatus = async (req, res) => {
       return res
         .status(400)
         .json({ message: "Status is required", success: false });
+    }
+
+    if (
+      typeof status !== "string" ||
+      !SUPPORT_TICKET_STATUSES.has(status)
+    ) {
+      return res.status(400).json({
+        message: "Invalid ticket status",
+        success: false,
+      });
     }
 
     const ticketSnapshot = await SupportTicket.where(

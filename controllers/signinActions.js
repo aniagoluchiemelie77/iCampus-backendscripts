@@ -1784,8 +1784,6 @@ export const signUp = async (req, res) => {
         isRead: false,
         category: "signup",
         actionType: "WELCOME_USER",
-        title: "Welcome to iCampus!",
-        message: `Hi ${welcomeName}, we're excited to have you here!`,
         payload: { userName: welcomeName },
         recipientEmail: email,
         sendEmail: true,

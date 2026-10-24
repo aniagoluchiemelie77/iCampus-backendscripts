@@ -50,7 +50,7 @@ Users join a personal room (their uid) from the handshake. Live classes use `lec
 ### Scheduled jobs (`cron/`)
 | Job | Schedule | Purpose |
 | --- | --- | --- |
-| `lectureReminderCron` | every minute | One push/email reminder per lecture, `LECTURE_REMINDER_LEAD_MINUTES` before it starts (claimed in a transaction, so it is safe on several instances) |
+| `lectureReminderCron` | every minute | One in-app/push reminder per lecture, `LECTURE_REMINDER_LEAD_MINUTES` before it starts (leased and persisted in a transaction, so failed sends can retry safely) |
 | `subscriptionsCron` | daily, 00:00 | Expires lapsed subscriptions |
 | `flagSuspiciousAccountsCron` | daily, 00:00 | Flags suspicious sign-in activity |
 | `checkForAlumnisCron` | 1st of every 6th month | Moves graduated students/lecturers |
