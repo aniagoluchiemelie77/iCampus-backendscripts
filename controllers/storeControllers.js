@@ -1312,69 +1312,6 @@ export const clearFavorites = async (req, res) => {
     });
   }
 };
-export const bulkAddToCart = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "bulkAddToCartController";
-  const action = "bulkAddToCart";
-  const { items } = req.body;
-  const userId = req.user.id || req.user.uid;
-
-  try {
-    const userQuery = await User.where("uid", "==", userId).limit(1).get();
-
-    if (userQuery.empty) {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      }
-      return res.status(404).json({ status: false, message: "User not found" });
-    }
-
-    const userDoc = userQuery.docs[0];
-    const userData = userDoc.data();
-    const currentCart = userData.cart || [];
-    const existingProductIds = new Set(currentCart.map((i) => i.productId));
-    const itemsToAdd = (items || []).filter(
-      (item) => !existingProductIds.has(item.productId),
-    );
-
-    const updatedCart = [...currentCart, ...itemsToAdd];
-
-    if (itemsToAdd.length > 0) {
-      await userDoc.ref.update({
-        cart: updatedCart,
-        updatedAt: new Date(),
-      });
-    }
-    res.status(200).json({
-      status: true,
-      cart: updatedCart,
-      message: "Successfully added items to cart.",
-    });
-    setImmediate(() => {
-      if (typeof logControllerPerformance === "function") {
-        logControllerPerformance(controllerName, action, startTime, "success");
-      }
-    });
-  } catch (error) {
-    console.error("Bulk Add To Cart Error:", error.message);
-    if (typeof logControllerPerformance === "function") {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        error.message,
-      );
-    }
-    res.status(500).json({ status: false, message: "An error occurred" });
-  }
-};
 export const getPendingOrders = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "getPendingOrdersController";

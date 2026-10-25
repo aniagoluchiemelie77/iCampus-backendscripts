@@ -4,7 +4,6 @@ import {
   fetchAllProducts,
   getPayoutHistory,
   clearUserCart,
-  bulkAddToCart,
   initializeCheckout,
   clearFavorites,
   getPendingOrders,
@@ -61,12 +60,6 @@ router.delete(
   protect,
   idempotencyMiddleware,
   clearFavorites,
-);
-router.post(
-  "/favorites-to-cart/bulk-add",
-  protect,
-  idempotencyMiddleware,
-  bulkAddToCart,
 );
 router.post(
   "/initialize-checkout",

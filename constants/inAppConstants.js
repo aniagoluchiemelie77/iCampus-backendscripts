@@ -3,15 +3,7 @@ export const USD_SUBSCRIPTION_PRICES = Object.freeze({
   pro: 1.11,
   premium: 3.69,
 });
-// Per-request price used to calculate a refill bundle matching the student's
-// monthly allowance. Charged in the student's currency at the live rate.
-export const EXCEPTION_COST_USD = 1.5;
 export const USD_EQUIVALENCE_OF_1_ICASH = 0.75;
-export const EXCEPTION_ACCOUNT_LIMITS = Object.freeze({
-  free: 2,
-  pro: 3,
-  premium: 4,
-});
 export const DELIVERY_FEES = Object.freeze({
   free: {
     home_delivery: 0.08,

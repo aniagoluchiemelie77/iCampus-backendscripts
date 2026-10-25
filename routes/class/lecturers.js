@@ -1,5 +1,5 @@
 import express from "express";
-import { protect, idempotencyMiddleware } from "../../middleware/auth.js";
+import { protect, idempotencyMiddleware, upload } from "../../middleware/auth.js";
 import {
   manageExceptions,
   createLectureSchedule,
@@ -9,6 +9,7 @@ import {
   uploadCourseMaterial,
   deleteCourseMaterial,
   createCourseContent,
+  extractCourseContentFromImage,
   editCourseContent,
   deleteCourseContent,
   createCourseAssignment,
@@ -32,6 +33,12 @@ router.post(
   protect,
   idempotencyMiddleware,
   createCourseContent,
+);
+router.post(
+  "/courses/extractCourseContent/:courseId",
+  protect,
+  upload.single("image"),
+  extractCourseContentFromImage,
 );
 router.put(
   "/courses/editCourseContent/:courseId",

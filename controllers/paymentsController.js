@@ -1,6 +1,5 @@
 /**
- * Every in-app purchase (marketplace checkout, subscription, exception
- * allowance refill) goes through the same three steps:
+ * Every in-app purchase (marketplace checkout, subscription) goes through the same three steps:
  *
  *  1. POST /users/payments/intent   - the server prices the purchase and
  *     stores a pending intent keyed by its tx_ref. The app never decides
@@ -23,8 +22,6 @@ import {
 } from "../tableDeclarations.js";
 import {
   USD_SUBSCRIPTION_PRICES,
-  EXCEPTION_COST_USD,
-  EXCEPTION_ACCOUNT_LIMITS,
   DELIVERY_FEES,
   TAX_RATE,
 } from "../constants/inAppConstants.js";
@@ -51,7 +48,7 @@ import { client as redis } from "../workers/reditFile.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { sendOrderNotifications } from "./storeControllers.js";
 
-const PURPOSES = ["checkout", "subscription", "exception"];
+const PURPOSES = ["checkout", "subscription"];
 const PAID_TIERS = ["pro", "premium"];
 const MAX_CHECKOUT_ITEMS = 50;
 const MAX_ITEM_QUANTITY = 100;
@@ -242,25 +239,6 @@ async function priceIntent(purpose, body, user, currency) {
       payload: { tier },
     };
   }
-  if (purpose === "exception") {
-    const tier = Object.prototype.hasOwnProperty.call(
-      EXCEPTION_ACCOUNT_LIMITS,
-      user.tier,
-    )
-      ? user.tier
-      : "free";
-    const refillQuantity = EXCEPTION_ACCOUNT_LIMITS[tier];
-    const amount = await convertAmount(
-      EXCEPTION_COST_USD * refillQuantity,
-      "USD",
-      currency,
-    );
-    return {
-      amount: roundUpMoney(amount),
-      title: `Lecture exception allowance refill (${refillQuantity} requests)`,
-      payload: { refillQuantity },
-    };
-  }
   // checkout
   const quote = await quoteCheckout(body.items, user, currency);
   const phone = String(body.shippingContact?.phone || "").trim();
@@ -409,53 +387,6 @@ const FULFIL = {
     };
   },
 
-  async exception(t, intent, flw) {
-    const userDoc = await findUserDoc(intent.userId, t);
-    if (!userDoc) throw new FulfilmentError("User not found.");
-    const user = userDoc.data();
-    const now = new Date();
-    // Pending pre-refill intents were priced for one request; keep them valid.
-    const requestedRefillQuantity = Number(intent.payload?.refillQuantity);
-    const exceptionCreditsAdded =
-      Number.isInteger(requestedRefillQuantity) && requestedRefillQuantity > 0
-        ? requestedRefillQuantity
-        : 1;
-    const exceptionCredits =
-      (Number(user.exceptionCredits) || 0) + exceptionCreditsAdded;
-    const transactionId = generateTransactionId("payment");
-    t.update(userDoc.ref, { exceptionCredits, updatedAt: now });
-    t.set(Transactions.doc(transactionId), {
-      transactionId,
-      userId: intent.userId,
-      type: "payment",
-      amount: intent.amount,
-      currency: intent.currency,
-      status: "success",
-      payType: "out",
-      title: intent.title,
-      reference: intent.txRef,
-      gatewayReference: String(flw.id),
-      exceptionCreditsAdded,
-      createdAt: now,
-      updatedAt: now,
-    });
-    // Exceptions are platform revenue only; lecturers receive nothing.
-    t.set(TaxEntries.doc(generateTransactionId("appTax")), {
-      transactionReference: intent.txRef,
-      taxType: "exception_fee",
-      amount: intent.amount,
-      currency: intent.currency,
-      date: now,
-      sourceDetails: {
-        studentId: intent.userId,
-        relatedTransactionId: transactionId,
-        exceptionCreditsAdded,
-      },
-      createdAt: now,
-    });
-    return { exceptionCredits, exceptionCreditsAdded, transactionId };
-  },
-
   async checkout(t, intent, flw) {
     const { lines, shippingContact } = intent.payload;
     const productSnaps = await Promise.all(
@@ -598,20 +529,6 @@ const AFTER_FULFIL = {
       ),
     ]);
   },
-  async exception(intent, result) {
-    await createNotification({
-      notificationId: generateNotificationId("classroom"),
-      recipientId: intent.userId,
-      isRead: false,
-      category: "finance",
-      actionType: "EXCEPTION_PURCHASED",
-      title: "Exception allowance replenished",
-      message: `Your exception allowance was replenished with ${result.exceptionCreditsAdded} requests. You have ${result.exceptionCredits} requests available.`,
-      saveToDb: true,
-      sendPush: true,
-      sendSocket: true,
-    });
-  },
   async checkout(intent, result) {
     redis.del("catalog:all_products:v2").catch(() => {});
     const buyerDoc = await findUserDoc(intent.userId);
@@ -664,11 +581,7 @@ const publicResult = (intent, result) => {
       transactionId: result.transactionId,
     };
   }
-  return {
-    exceptionCredits: result.exceptionCredits,
-    exceptionCreditsAdded: result.exceptionCreditsAdded,
-    transactionId: result.transactionId,
-  };
+  throw new FulfilmentError("This payment type is no longer supported.");
 };
 
 async function refundFailedIntent(intentRef, flw, reason) {
@@ -774,7 +687,11 @@ export async function settleIntent(txRef, transactionId, { expectedUserId } = {}
       if (current.status !== "pending") {
         throw new PaymentError("This payment is no longer pending.", 409);
       }
-      const result = await FULFIL[intent.purpose](t, intent, flw);
+      const fulfilment = FULFIL[intent.purpose];
+      if (!fulfilment) {
+        throw new FulfilmentError("This payment type is no longer supported.");
+      }
+      const result = await fulfilment(t, intent, flw);
       const stored = publicResult(intent, result);
       t.update(intentRef, {
         status: "completed",
