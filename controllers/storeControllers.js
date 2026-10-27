@@ -481,6 +481,7 @@ export const saveProductController = async (req, res) => {
     const { productId } = req.params;
     const isEditing = !!productId;
     const { title, description, type, price, mediaUrls, niche } = req.body;
+    console.log("Step 1...");
 
     const amountInStock = Number(req.body.amountInStock) || 0;
 
@@ -514,6 +515,7 @@ export const saveProductController = async (req, res) => {
 
     let physicalDetails = null;
     if (type === "physical") {
+      console.log("Step 2...");
       physicalDetails = {
         weightKg: Number(req.body.weightKg) || 0,
         inStock: Number(req.body.inStock) || 0,
@@ -539,6 +541,7 @@ export const saveProductController = async (req, res) => {
       User.where("uid", "==", userUid).limit(1).get(),
     ]);
 
+    console.log("Step 3...");
     if (isEditing) {
       if (!productQuery || productQuery.empty) {
         if (req.file) await fs.unlink(req.file.path).catch(() => {});
@@ -568,6 +571,7 @@ export const saveProductController = async (req, res) => {
     let productData;
 
     if (isEditing) {
+      console.log("Editing...");
       productData = {
         title,
         description,
@@ -586,6 +590,7 @@ export const saveProductController = async (req, res) => {
       await redis.del("catalog:all_products:v2");
       productData = { productId, sellerId: userUid, ...productData };
     } else {
+      console.log("Creating new product...");
       const newCustomId = generateProductId(userUid);
       productDocRef = Product.doc(newCustomId);
       productData = {
@@ -608,6 +613,8 @@ export const saveProductController = async (req, res) => {
       };
       await productDocRef.set(productData);
     }
+    console.log("Step 4...");
+    console.log("New Product: ", productData);
 
     res.status(200).json({
       success: true,
