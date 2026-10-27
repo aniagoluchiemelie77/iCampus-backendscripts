@@ -91,6 +91,12 @@ export const idempotencyMiddleware = async (req, res, next) => {
       const statusCode = res.statusCode;
       setImmediate(async () => {
         try {
+          // A server crash is not a final answer: replaying a cached 500 would
+          // make every retry with the same key fail for 10 minutes.
+          if (statusCode >= 500) {
+            await keyDocRef.delete();
+            return;
+          }
           await keyDocRef.set({
             status: "COMPLETED",
             statusCode: statusCode,

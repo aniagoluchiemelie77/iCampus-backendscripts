@@ -6,6 +6,7 @@ import {
 import {
   Reviews,
   User,
+  Admin,
   DeletedUser,
   userPrefs,
   Posts,
@@ -692,7 +693,7 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
   const controllerName = "revokeLoggedInDeviceController";
   const action = "revokeLoggedInDevice";
   const userId = req.user?.uid || req.user?.id;
-  const { deviceIdToRevoke } = req.body;
+  const { deviceIdToRevoke, fcmToken } = req.body || {};
 
   if (!userId) {
     setImmediate(() => {
@@ -742,6 +743,13 @@ export const revokeLoggedInDeviceSession = async (req, res) => {
 
     const userDoc = userQuery.docs[0];
     const user = userDoc.data();
+
+    // Logging out on this phone: stop this account's pushes reaching it, so
+    // the next person to sign in here doesn't get them.
+    if (fcmToken && user.fcmToken === fcmToken) {
+      await userDoc.ref.update({ fcmToken: null, updatedAt: new Date() });
+    }
+
     const sessions = user.sessions || [];
     const originalLength = sessions.length;
 
@@ -1146,6 +1154,34 @@ export const saveFcmToken = async (req, res) => {
       fcmToken: fcmToken,
       updatedAt: now,
     });
+
+    // An FCM token identifies a device, and a device is signed in to one
+    // account at a time. If another account still holds this token (it
+    // logged out here, or the app was reinstalled), pushes meant for it
+    // would land on this user's phone, e.g. "Ada liked your post" shown to
+    // Ada herself. Take the token away from everyone else.
+    try {
+      const [userHolders, adminHolders] = await Promise.all([
+        User.where("fcmToken", "==", fcmToken).get(),
+        Admin.where("fcmToken", "==", fcmToken).get(),
+      ]);
+      const stale = [...userHolders.docs, ...adminHolders.docs].filter(
+        (doc) => doc.ref.path !== userDocRef.path,
+      );
+      if (stale.length) {
+        const batch = db.batch();
+        stale.forEach((doc) =>
+          batch.update(doc.ref, { fcmToken: null, updatedAt: now }),
+        );
+        await batch.commit();
+        console.log(
+          `[FCM] Detached token from ${stale.length} previous account(s) on this device.`,
+        );
+      }
+    } catch (detachError) {
+      // The new owner's token is saved; a failed cleanup must not fail login.
+      console.error("[FCM] Could not detach token from old accounts:", detachError.message);
+    }
 
     if (typeof logControllerPerformance === "function") {
       logControllerPerformance(controllerName, action, startTime, "success");

@@ -480,12 +480,29 @@ export const saveProductController = async (req, res) => {
     const userUid = req.user.id || req.user.uid;
     const { productId } = req.params;
     const isEditing = !!productId;
-    const { title, description, type, price, mediaUrls, niche } = req.body;
+    // Express 5 leaves req.body undefined when no parser matched the request
+    // (e.g. a multipart body on this JSON-only route).
+    const body = req.body ?? {};
+    const { title, mediaUrls, niche } = body;
+    const description = typeof body.description === "string" ? body.description : "";
+    const type = body.type || body.productType;
+    const price = body.price;
+    // Older clients send list fields as JSON strings, newer ones as arrays.
+    const parseList = (value) => {
+      if (Array.isArray(value)) return value;
+      if (typeof value !== "string" || !value.trim()) return [];
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [parsed];
+      } catch {
+        return [value];
+      }
+    };
     console.log("Step 1...");
 
-    const amountInStock = Number(req.body.amountInStock) || 0;
+    const amountInStock = Number(body.amountInStock ?? body.inStock) || 0;
 
-    if (!title || !description || !type || !price || !niche) {
+    if (!title || !type || !price || !niche) {
       if (req.file) await fs.unlink(req.file.path).catch(() => {});
       setImmediate(() => {
         logControllerPerformance(
@@ -501,32 +518,18 @@ export const saveProductController = async (req, res) => {
         .json({ success: false, message: "Missing required product fields." });
     }
 
-    let productThumbnails = [];
-    if (mediaUrls) {
-      try {
-        productThumbnails =
-          typeof mediaUrls === "string" && mediaUrls.startsWith("[")
-            ? JSON.parse(mediaUrls)
-            : [mediaUrls];
-      } catch (e) {
-        productThumbnails = [mediaUrls];
-      }
-    }
+    const productThumbnails = parseList(mediaUrls).filter(Boolean);
 
     let physicalDetails = null;
     if (type === "physical") {
       console.log("Step 2...");
       physicalDetails = {
-        weightKg: Number(req.body.weightKg) || 0,
-        inStock: Number(req.body.inStock) || 0,
-        colors: req.body.colors ? JSON.parse(req.body.colors) : [],
-        sizes: req.body.sizes ? JSON.parse(req.body.sizes) : [],
-        sellerGateways: req.body.sellerGateways
-          ? JSON.parse(req.body.sellerGateways)
-          : [],
-        dropOffAddress: req.body.dropOffAddress
-          ? JSON.parse(req.body.dropOffAddress)
-          : [],
+        weightKg: Number(body.weightKg) || 0,
+        inStock: Number(body.inStock) || 0,
+        colors: parseList(body.colors),
+        sizes: parseList(body.sizes),
+        sellerGateways: parseList(body.sellerGateways),
+        dropOffAddress: parseList(body.dropOffAddress),
       };
     }
 
