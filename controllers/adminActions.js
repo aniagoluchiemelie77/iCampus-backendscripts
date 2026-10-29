@@ -26,6 +26,7 @@ import { generateTaxStatementPDF } from "../templates/taxEntriesTemplate.js";
 import { storage } from "../config/firebaseAdmin.js";
 import { taxReportEmailTemplate } from "../services/emailTemplates.js";
 import { sendEmail } from "../services/emailService.js";
+import { buildSchoolAnalytics } from "../utils/schoolAnalytics.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {

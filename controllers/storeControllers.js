@@ -33,6 +33,10 @@ import {
   flwRequest,
   roundMoney,
 } from "../utils/flutterwave.js";
+import {
+  accountNameMatchesUser,
+  expectedPayoutName,
+} from "../utils/accountNameMatch.js";
 
 //Tested and trusted using jest
 export async function sendOrderNotifications(buyer, processedItems, transactionId) {
@@ -574,7 +578,6 @@ export const saveProductController = async (req, res) => {
     let productData;
 
     if (isEditing) {
-      console.log("Editing...");
       productData = {
         title,
         description,
@@ -593,7 +596,6 @@ export const saveProductController = async (req, res) => {
       await redis.del("catalog:all_products:v2");
       productData = { productId, sellerId: userUid, ...productData };
     } else {
-      console.log("Creating new product...");
       const newCustomId = generateProductId(userUid);
       productDocRef = Product.doc(newCustomId);
       productData = {
@@ -616,8 +618,6 @@ export const saveProductController = async (req, res) => {
       };
       await productDocRef.set(productData);
     }
-    console.log("Step 4...");
-    console.log("New Product: ", productData);
 
     res.status(200).json({
       success: true,
@@ -2094,6 +2094,23 @@ export const requestPayout = async (req, res) => {
     };
     if (!account?.bankCode || !account?.accountNumber) {
       return fail(400, "Add a payout bank account before withdrawing.");
+    }
+    // Checked again here (not only when the account is saved) so a name
+    // change, or an account linked before this rule, can't receive money.
+    // Only Nigerian accounts can be resolved to a holder name.
+    if ((user.country || "Nigeria") === "Nigeria") {
+      if (!account.accountName) {
+        return fail(
+          400,
+          "Re-link your payout account so we can confirm it is in your name.",
+        );
+      }
+      if (!accountNameMatchesUser(account.accountName, user)) {
+        return fail(
+          403,
+          `Your payout account (${account.accountName}) is not in your name (${expectedPayoutName(user)}). Link an account in your name to withdraw.`,
+        );
+      }
     }
     const currency = account.currency || currencyForCountry(user.country);
 

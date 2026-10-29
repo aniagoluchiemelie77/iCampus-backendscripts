@@ -39,6 +39,10 @@ import {
   roundUpMoney,
 } from "../utils/flutterwave.js";
 import {
+  accountNameMatchesUser,
+  expectedPayoutName,
+} from "../utils/accountNameMatch.js";
+import {
   generateNotificationId,
   generateTransactionId,
 } from "../utils/idGenerator.js";
@@ -787,7 +791,10 @@ export const resolveBankAccount = async (req, res) => {
   const controllerName = "resolveBankAccountController";
   const action = "resolveBankAccount";
   try {
-    const country = req.user?.country || "Nigeria";
+    const userDoc = await findUserDoc(userIdOf(req));
+    if (!userDoc) throw new PaymentError("User not found.", 404);
+    const user = userDoc.data();
+    const country = user.country || req.user?.country || "Nigeria";
     const { code, number } = validateAccountInput(
       req.query.bankCode,
       req.query.accountNumber,
@@ -800,7 +807,14 @@ export const resolveBankAccount = async (req, res) => {
     if (!accountName) {
       throw new PaymentError("We couldn't find that account. Check the details.");
     }
-    return res.status(200).json({ success: true, accountName });
+    // Reported up front so the app can explain a mismatch before saving;
+    // savePayoutAccount enforces it.
+    return res.status(200).json({
+      success: true,
+      accountName,
+      nameMatches: accountNameMatchesUser(accountName, user),
+      expectedName: expectedPayoutName(user),
+    });
   } catch (error) {
     return sendError(res, error, controllerName, action, startTime);
   }
@@ -827,6 +841,13 @@ export const savePayoutAccount = async (req, res) => {
       accountName = await resolveAccountName(code, number);
       if (!accountName) {
         throw new PaymentError("We couldn't find that account. Check the details.");
+      }
+      if (!accountNameMatchesUser(accountName, user)) {
+        throw new PaymentError(
+          `This account belongs to ${accountName}. Payouts can only go to an account in your name (${expectedPayoutName(user)}).`,
+          403,
+          "ACCOUNT_NAME_MISMATCH",
+        );
       }
     }
     const payoutAccount = {

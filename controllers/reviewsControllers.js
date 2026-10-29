@@ -240,3 +240,105 @@ export const fetchSellerReviews = async (req, res) => {
     });
   }
 };
+
+/**
+ * GET /reviews/product/:productId?limit=20
+ * Public reviews of one listing, newest first, for the product page.
+ */
+export const fetchProductReviews = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "fetchProductReviewsController";
+  const action = "fetchProductReviews";
+
+  try {
+    const productId = String(req.params.productId || "").trim();
+    if (!productId) {
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing product id." });
+    }
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+
+    const snapshot = await Reviews.where("targetId", "==", productId)
+      .where("targetType", "==", "product")
+      .get();
+
+    const toTime = (value) =>
+      value?.toDate ? value.toDate().getTime() : new Date(value || 0).getTime();
+    const reviews = snapshot.docs
+      .map((doc) => ({ id: doc.id, ...doc.data() }))
+      .sort((a, b) => toTime(b.createdAt) - toTime(a.createdAt));
+
+    const total = reviews.length;
+    const distribution = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    let ratingSum = 0;
+    reviews.forEach((r) => {
+      const rating = Number(r.rating) || 0;
+      ratingSum += rating;
+      if (rating > 0) distribution[Math.min(5, Math.max(1, Math.round(rating)))] += 1;
+    });
+
+    const page = reviews.slice(0, limit);
+    const reviewerUids = [
+      ...new Set(page.map((r) => r.reviewerId).filter(Boolean)),
+    ];
+    const userMap = {};
+    for (let i = 0; i < reviewerUids.length; i += 30) {
+      const snap = await User.where("uid", "in", reviewerUids.slice(i, i + 30)).get();
+      snap.docs.forEach((doc) => {
+        const data = doc.data();
+        userMap[data.uid || doc.id] = data;
+      });
+    }
+
+    const data = page.map((review) => {
+      const reviewer = userMap[review.reviewerId] || {};
+      return {
+        id: review.id,
+        rating: Number(review.rating) || 0,
+        comment: review.comment || "",
+        mediaUrls: Array.isArray(review.mediaUrls) ? review.mediaUrls : [],
+        isVerifiedPurchase: !!review.orderId,
+        createdAt: review.createdAt?.toDate
+          ? review.createdAt.toDate().toISOString()
+          : review.createdAt || null,
+        reviewerDetails: {
+          firstname: reviewer.firstname || reviewer.firstName || "Anonymous",
+          lastname: reviewer.lastname || reviewer.lastName || "",
+          username: reviewer.username || null,
+          profilePic: reviewer.profilePic || null,
+          isVerified: reviewer.isVerified || false,
+          organizationName: reviewer.organizationName || null,
+        },
+      };
+    });
+
+    res.status(200).json({
+      success: true,
+      data,
+      summary: {
+        total,
+        averageRating: total ? Math.round((ratingSum / total) * 10) / 10 : 0,
+        distribution,
+      },
+    });
+    setImmediate(() => {
+      logControllerPerformance(controllerName, action, startTime, "success");
+    });
+  } catch (error) {
+    console.error("Error fetching product reviews:", error.message);
+    setImmediate(() => {
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      );
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
