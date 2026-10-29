@@ -27,6 +27,14 @@ import { storage } from "../config/firebaseAdmin.js";
 import { taxReportEmailTemplate } from "../services/emailTemplates.js";
 import { sendEmail } from "../services/emailService.js";
 import { buildSchoolAnalytics } from "../utils/schoolAnalytics.js";
+import {
+  isSchoolAdmin,
+  isSchoolAdminA,
+  resolveSchoolScope,
+  SCHOOL_ADMIN_A,
+  SCHOOL_ADMIN_B,
+} from "../utils/schoolRoles.js";
+import { inviteSchoolRep, recordSchoolAudit } from "./schoolAdminActions.js";
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -91,6 +99,22 @@ export const deleteAdmin = async (req, res) => {
 export const createAdmin = async (req, res) => {
   if (req.admin?.adminType !== "super_admin") {
     return res.status(403).json({ error: "Unauthorized" });
+  }
+
+  // School representatives (the first A-level rep is created here when the
+  // contract is signed) go through the invite flow: seat limits, the school's
+  // email domain and an emailed one-time password.
+  if ([SCHOOL_ADMIN_A, SCHOOL_ADMIN_B].includes(req.body?.adminType)) {
+    try {
+      const result = await inviteSchoolRep(req.admin, {
+        ...req.body,
+        level: req.body.adminType === SCHOOL_ADMIN_A ? "a" : "b",
+      });
+      return res.status(result.status).json(result.body);
+    } catch (err) {
+      console.error("createAdmin (school rep) Error:", err);
+      return res.status(500).json({ error: "Failed to create the school representative." });
+    }
   }
 
   try {
@@ -371,15 +395,26 @@ export const getAdminMetrics = async (req, res) => {
     }
 
     // School administrators only ever see their own school's analytics,
-    // gated by the institution's subscription tier.
-    if (adminType === "school_administrator") {
-      if (!schoolCode) {
+    // gated by the institution's plan. Department reps are pinned to their
+    // department here, whatever the request asks for.
+    if (isSchoolAdmin(adminType)) {
+      const scope = resolveSchoolScope(req.admin, req.query);
+      if (!scope.schoolCode) {
         return res
           .status(400)
           .json({ error: "Your admin account is not linked to a school." });
       }
-      const schoolMetrics = await buildSchoolAnalytics(schoolCode);
-      return res.json({ schoolMetrics });
+      if (scope.locked && !scope.department) {
+        return res.status(400).json({
+          error: "Your account has no department yet. Ask your institution representative to set one.",
+        });
+      }
+      const schoolMetrics = await buildSchoolAnalytics(scope.schoolCode, {
+        department: scope.department,
+      });
+      res.json({ schoolMetrics });
+      recordSchoolAudit(req, "analytics_viewed", { department: scope.department });
+      return;
     }
 
     const needsUsers = [
@@ -395,8 +430,7 @@ export const getAdminMetrics = async (req, res) => {
     const needsStations = ["super_admin", "support"].includes(adminType);
     const needsLatency = ["super_admin", "analyst"].includes(adminType);
     const needsTaxes = ["super_admin", "finance"].includes(adminType);
-    const needsSchoolMetrics =
-      adminType === "school_administrator" || adminType === "super_admin";
+    const needsSchoolMetrics = adminType === "super_admin";
 
     const promiseMap = {};
 
@@ -443,7 +477,9 @@ export const getAdminMetrics = async (req, res) => {
 
     // A super admin can inspect any school's analytics with ?schoolCode=.
     if (needsSchoolMetrics && schoolCode) {
-      promiseMap.schoolMetrics = buildSchoolAnalytics(schoolCode);
+      promiseMap.schoolMetrics = buildSchoolAnalytics(schoolCode, {
+        department: resolveSchoolScope(req.admin, req.query).department,
+      });
     }
 
     const keys = Object.keys(promiseMap);
@@ -459,7 +495,6 @@ export const getAdminMetrics = async (req, res) => {
       responsePayload.schoolMetrics = snapshots.schoolMetrics;
     }
 
-    let totalLiquidity = 0;
     let totalUsers = 0;
     const locationCounts = {};
 
@@ -467,7 +502,6 @@ export const getAdminMetrics = async (req, res) => {
       snapshots.users.forEach((doc) => {
         const user = doc.data();
         totalUsers += 1;
-        totalLiquidity += user.pointsBalance || 0;
         if (Array.isArray(user.sessions)) {
           user.sessions.forEach((session) => {
             const loc = session.location;
@@ -576,7 +610,6 @@ export const getAdminMetrics = async (req, res) => {
     return res.json({
       ...responsePayload,
       activeUsers: totalUsers,
-      platformLiquidity: totalLiquidity,
       payoutStats,
       pendingTickets: pendingTicketsCount,
       recentSchools: {
@@ -775,7 +808,7 @@ export const createInstitution = async (req, res) => {
       schoolCode: schoolId,
       logo,
       createdAt: now,
-      tier: tier || "free",
+      tier: tier || "basic",
     };
 
     const configData = {
@@ -869,17 +902,22 @@ export const updateInstitution = async (req, res) => {
           .map((k) => [k, source[k]]),
       );
     const schoolName = updateData.name || updateData.schoolName;
-    const tier = ["free", "pro", "premium"].includes(updateData.tier)
+    const tier = ["basic", "pro", "enterprise"].includes(updateData.tier)
       ? updateData.tier
       : undefined;
     const updatedSchoolData = {
-      ...pick({ schoolName, tier, contactEmail: updateData.contactEmail, logo: updateData.logo }, [
-        "schoolName",
-        "tier",
-        "contactEmail",
-        "logo",
-      ]),
-      ...(tier ? { tierUpdatedAt: now, tierUpdatedBy: req.admin?.uid || null } : {}),
+      ...pick(
+        {
+          schoolName,
+          tier,
+          contactEmail: updateData.contactEmail,
+          logo: updateData.logo,
+        },
+        ["schoolName", "tier", "contactEmail", "logo"],
+      ),
+      ...(tier
+        ? { tierUpdatedAt: now, tierUpdatedBy: req.admin?.uid || null }
+        : {}),
       updatedAt: now,
     };
 
@@ -1312,7 +1350,7 @@ export const deleteAd = async (req, res) => {
     const adminType = req.admin?.adminType;
     const adminId = req.admin?.uid || req.admin?.id;
 
-    if (!["super_admin", "school_administrator"].includes(adminType)) {
+    if (!(adminType === "super_admin" || isSchoolAdminA(adminType))) {
       return res.status(403).json({
         success: false,
         error:
@@ -1332,7 +1370,7 @@ export const deleteAd = async (req, res) => {
     const adDocRef = snapshot.docs[0].ref;
     const adData = snapshot.docs[0].data();
     if (
-      adminType === "school_administrator" &&
+      isSchoolAdminA(adminType) &&
       (adData.addedBy !== adminId ||
         !req.admin?.schoolCode ||
         adData.schoolCode !== req.admin.schoolCode)
@@ -1379,14 +1417,14 @@ export const createAd = async (req, res) => {
     const adminType = req.admin?.adminType;
     const adminId = req.admin?.uid || req.admin?.id;
 
-    if (!["super_admin", "school_administrator"].includes(adminType)) {
+    if (!(adminType === "super_admin" || isSchoolAdminA(adminType))) {
       return res.status(403).json({
         success: false,
         error:
           "Unauthorized. Super admin or school administrator access required.",
       });
     }
-    if (adminType === "school_administrator") {
+    if (isSchoolAdminA(adminType)) {
       const existingAdsSnapshot = await Ads.where(
         "addedBy",
         "==",
@@ -1428,7 +1466,7 @@ export const createAd = async (req, res) => {
       advertiserName,
       tagline: tagline || "",
       addedBy: adminId,
-      creatorType: adminType,
+      creatorType: isSchoolAdminA(adminType) ? SCHOOL_ADMIN_A : adminType,
       schoolCode: schoolCode || req.admin?.schoolCode || "",
       isActive: true,
       createdAt: new Date().toISOString(),
@@ -1470,7 +1508,7 @@ export const updateAd = async (req, res) => {
   try {
     const adminType = req.admin?.adminType;
     const adminId = req.admin?.uid || req.admin?.id;
-    if (!["super_admin", "school_administrator"].includes(adminType)) {
+    if (!(adminType === "super_admin" || isSchoolAdminA(adminType))) {
       return res.status(403).json({
         success: false,
         error:
@@ -1488,7 +1526,7 @@ export const updateAd = async (req, res) => {
     const adDocRef = snapshot.docs[0].ref;
     const existingAd = snapshot.docs[0].data();
     if (
-      adminType === "school_administrator" &&
+      isSchoolAdminA(adminType) &&
       (existingAd.addedBy !== adminId ||
         !req.admin?.schoolCode ||
         existingAd.schoolCode !== req.admin.schoolCode)
@@ -1499,7 +1537,7 @@ export const updateAd = async (req, res) => {
       });
     }
 
-    if (adminType === "school_administrator" && req.body?.isActive === true) {
+    if (isSchoolAdminA(adminType) && req.body?.isActive === true) {
       const schoolAds = await Ads.where("addedBy", "==", adminId).get();
       const anotherActiveAd = schoolAds.docs.some(
         (doc) => doc.id !== adDocRef.id && doc.data().isActive !== false,

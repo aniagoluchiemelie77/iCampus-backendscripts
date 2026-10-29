@@ -25,14 +25,16 @@ export const fetchExchangeRates = async () => {
 
 export async function convertAmount(amount, fromCurrency, toCurrency) {
   if (fromCurrency === toCurrency) return Number(amount);
-  
+
   const rates = await fetchExchangeRates();
-  
+
   const rateFrom = rates[fromCurrency];
   const rateTo = rates[toCurrency];
 
   if (!rateFrom || !rateTo) {
-    throw new Error(`Unsupported currency conversion: ${fromCurrency} -> ${toCurrency}`);
+    throw new Error(
+      `Unsupported currency conversion: ${fromCurrency} -> ${toCurrency}`,
+    );
   }
   const amountInUSD = amount / rateFrom;
   const convertedAmount = amountInUSD * rateTo;

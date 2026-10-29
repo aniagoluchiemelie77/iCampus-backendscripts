@@ -35,6 +35,16 @@ import {
   updateAd,
   sendSupportMessage,
 } from "../controllers/adminActions.js";
+import {
+  getSchoolSection,
+  getSchoolReps,
+  createSchoolRep,
+  updateSchoolRep,
+  deleteSchoolRep,
+  sendSchoolNotification,
+  getSchoolNotifications,
+  getSchoolAuditLog,
+} from "../controllers/schoolAdminActions.js";
 
 const router = express.Router();
 
@@ -175,5 +185,39 @@ router.post(
   idempotencyMiddleware,
   sendSupportMessage,
 );
+
+// School administrators (A-level institution reps, B-level department reps).
+router.get("/school/sections/:section", protect, verifyAdmin, getSchoolSection);
+router.get("/school/reps", protect, verifyAdmin, getSchoolReps);
+router.post(
+  "/school/reps",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  createSchoolRep,
+);
+router.patch(
+  "/school/reps/:uid",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  updateSchoolRep,
+);
+router.delete(
+  "/school/reps/:uid",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  deleteSchoolRep,
+);
+router.get("/school/notifications", protect, verifyAdmin, getSchoolNotifications);
+router.post(
+  "/school/notifications",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  sendSchoolNotification,
+);
+router.get("/school/audit-log", protect, verifyAdmin, getSchoolAuditLog);
 
 export default router;

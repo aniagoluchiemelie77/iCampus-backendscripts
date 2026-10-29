@@ -38,3 +38,5 @@ export const TaxEntries = db.collection("taxentries");
 export const TaxStatements = db.collection("taxstatements");
 export const Ads = db.collection("ads");
 export const Message = db.collection("messages");
+export const SchoolAnnouncements = db.collection("schoolannouncements");
+export const SchoolAuditLog = db.collection("schoolauditlogs");

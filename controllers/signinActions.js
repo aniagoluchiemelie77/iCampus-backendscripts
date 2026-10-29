@@ -29,6 +29,7 @@ import { generateUsername, Usernames } from "../utils/username.js";
 import { client } from "../workers/reditFile.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { verifyAndNotifyLogin } from "../utils/suspiciousActivityDetector.js";
+import { SCHOOL_ADMIN_A, SCHOOL_ADMIN_B } from "../utils/schoolRoles.js";
 import { addFlag } from "../utils/flagger.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { promisify } from "util";
@@ -1860,7 +1861,7 @@ export const switchToInstitutionAdmin = async (req, res) => {
         lastname: userData.lastname || "Admin",
         email: userData.email,
         password: userData.password,
-        adminType: "school_administrator",
+        adminType: SCHOOL_ADMIN_A,
         profilePic: userData.profilePic || [],
         country: userData.country || "Unknown",
         isVerified: true,
@@ -1876,11 +1877,14 @@ export const switchToInstitutionAdmin = async (req, res) => {
         ...adminDocSnapshot.data(),
       };
 
+      // Existing department reps keep their level; anything else (including
+      // the legacy "school_administrator") becomes the institution rep.
       if (
-        adminData.adminType !== "school_administrator" &&
+        adminData.adminType !== SCHOOL_ADMIN_A &&
+        adminData.adminType !== SCHOOL_ADMIN_B &&
         adminData.adminType !== "super_admin"
       ) {
-        adminUpdates.adminType = "school_administrator";
+        adminUpdates.adminType = SCHOOL_ADMIN_A;
       }
     }
 

@@ -1980,3 +1980,47 @@ export const subscriptionExpiredTemplate = (userName) => {
     </div>
   `;
 };
+/** Invitation for a school representative, with a one-time password. */
+export const schoolRepInviteTemplate = ({
+  name,
+  inviterName,
+  schoolName,
+  roleLabel,
+  department,
+  email,
+  temporaryPassword,
+  portalUrl,
+}) => {
+  const p = (text, extra = "") =>
+    `<p style="color: ${colors.text || "#333333"}; font-family: Helvetica, Arial, sans-serif; font-size: 15px; line-height: 21px; margin: 0 0 14px 0;${extra}">${text}</p>`;
+  const scope = department
+    ? `the <strong>${sanitize(department)}</strong> department at <strong>${sanitize(schoolName)}</strong>`
+    : `<strong>${sanitize(schoolName)}</strong>`;
+  return `
+    <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%">
+      <tr>
+        <td align="center">
+          <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 500px; text-align: left;">
+            <tr>
+              <td>
+                ${p(`Hi <strong>${sanitize(name)}</strong>,`)}
+                ${p(`<strong>${sanitize(inviterName)}</strong> has added you as the ${sanitize(roleLabel)} for ${scope} on iCampus.`)}
+                ${p("Sign in to the iCampus admin portal with these details:")}
+                <table role="presentation" border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #f8f9fa; border: 1px solid #edf2f7; border-left: 4px solid ${colors.primary}; border-radius: 0 8px 8px 0; margin-bottom: 16px;">
+                  <tr>
+                    <td style="padding: 16px; font-family: Helvetica, Arial, sans-serif; font-size: 14px; line-height: 22px; color: ${colors.text || "#333333"};">
+                      Email: <strong>${sanitize(email)}</strong><br />
+                      One-time password: <strong style="font-family: Menlo, Consolas, monospace;">${sanitize(temporaryPassword)}</strong>
+                    </td>
+                  </tr>
+                </table>
+                ${portalUrl ? p(`<a href="${sanitize(portalUrl)}" style="color: ${colors.primary}; font-weight: bold;">Open the admin portal</a>`) : ""}
+                ${p("If you weren't expecting this, you can ignore this email.", " font-size: 13px; opacity: 0.8;")}
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  `;
+};

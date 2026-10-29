@@ -1,4 +1,5 @@
 import { normalizePreferences } from "../utils/preferences.js";
+import { isSchoolAdmin } from "../utils/schoolRoles.js";
 import {
   Follow,
   User,
@@ -428,7 +429,15 @@ export const fetchAllAdmins = async (req, res) => {
   const controllerName = "fetchAllAdminsController";
   const action = "fetchAllAdmins";
   try {
-    const snapshot = await Admin.get();
+    // School admins only ever see their own school's representatives.
+    const requester = req.admin;
+    const schoolScoped = isSchoolAdmin(requester.adminType);
+    if (schoolScoped && !requester.schoolCode) {
+      return res.status(200).json([]);
+    }
+    const snapshot = schoolScoped
+      ? await Admin.where("schoolCode", "==", requester.schoolCode).get()
+      : await Admin.get();
     const admins = snapshot.docs.map((doc) => {
       const data = doc.data();
       return {
@@ -439,6 +448,8 @@ export const fetchAllAdmins = async (req, res) => {
         profilePic: data.profilePic || "",
         adminType: data.adminType || "",
         lastAccessed: data.lastAccessed || null,
+        schoolCode: data.schoolCode || null,
+        department: data.department || null,
       };
     });
 

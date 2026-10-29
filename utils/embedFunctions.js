@@ -19,11 +19,11 @@ export const embedUserWithInstitutionTier = async (user) => {
       .limit(1)
       .get();
 
-    let institutionTier = "free";
+    let institutionTier = "basic";
 
     if (!institutionSnapshot.empty) {
       const institutionData = institutionSnapshot.docs[0].data();
-      institutionTier = institutionData.tier || "free";
+      institutionTier = institutionData.tier || "basic";
     }
     return {
       ...user,
@@ -36,7 +36,7 @@ export const embedUserWithInstitutionTier = async (user) => {
     );
     return {
       ...user,
-      institutionTier: "free",
+      institutionTier: "basic",
     };
   }
 };

@@ -126,7 +126,7 @@ const FAQ_DATA = [
     id: "acad-2",
     question: "Are Lecture Exception requests free?",
     answer:
-      "Lecture exception requests are free and are not limited by a monthly allowance. You can submit a request for an upcoming lecture, and your lecturer will review it.",
+      "Lecture exception requests are free. You can submit a request for an upcoming lecture, and your lecturer will review it.",
   },
   {
     id: "test-2",
