@@ -26,7 +26,9 @@ import {
 import { resolveLectureTime, toDate, localDateKey, tzOffsetMinutes } from "./lectureTime.js";
 import {
   academicSession,
+  availableSessions,
   normalizeTier,
+  resolveSession,
   sessionStartYear,
   TIER_LABELS,
   TIERS,
@@ -82,16 +84,16 @@ const weekKey = (date) => {
   d.setUTCDate(d.getUTCDate() - day);
   return d.toISOString().slice(0, 10);
 };
-const lastWeeks = (n) => {
+const lastWeeks = (n, ref = new Date()) => {
   const keys = [];
-  const now = Date.now();
+  const now = ref.getTime();
   for (let i = n - 1; i >= 0; i--) keys.push(weekKey(new Date(now - i * 7 * 86400000)));
   return keys;
 };
 const monthKey = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 /** The last `n` months, oldest first, with their [start, end) bounds. */
-const lastMonths = (n) => {
-  const now = new Date();
+const lastMonths = (n, ref = new Date()) => {
+  const now = ref;
   return Array.from({ length: n }, (_, i) => {
     const start = new Date(now.getFullYear(), now.getMonth() - (n - 1 - i), 1);
     const end = new Date(start.getFullYear(), start.getMonth() + 1, 1);
@@ -129,13 +131,17 @@ const inSession = (course, session) => {
  * @param schoolCode  the institution
  * @param options.department  limit every figure to one department (null = all)
  * @param options.full  also return complete lists, for the "View all" screens
+ * @param options.session  academic session to report ("2026/2027"); defaults to the current one
  */
-export const buildSchoolAnalytics = async (schoolCode, { department = null, full = false } = {}) => {
+export const buildSchoolAnalytics = async (schoolCode, { department = null, full = false, session: requestedSession = null } = {}) => {
   const institution = await loadInstitution(schoolCode);
   const tier = normalizeTier(institution?.tier);
   const level = TIERS.indexOf(tier);
   const access = { basic: true, professional: level >= 1, enterprise: level >= 2 };
-  const session = academicSession();
+  const session = resolveSession(requestedSession);
+  const isCurrentSession = session.startYear === academicSession().startYear;
+  // Monthly and weekly trends end today, or on the last day of a past session.
+  const trendEnd = isCurrentSession ? new Date() : new Date(session.endsAt.getTime() - 1);
   const inDept = (value) => !department || norm(value || "General") === norm(department);
   const take = (list, n = PREVIEW) => (full ? list : list.slice(0, n));
 
@@ -195,7 +201,7 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
   const verifiedLecturers = lecturers.filter((u) => u.isVerified).length;
 
   // ---- Monthly KPIs: this month against last month, with a 6-month trend ---
-  const months = lastMonths(KPI_MONTHS);
+  const months = lastMonths(KPI_MONTHS, trendEnd);
   const createdAtOf = (u) => toDate(u.createdAt);
   const enrolmentKpi = (list) => {
     const joined = list.map(createdAtOf);
@@ -261,8 +267,9 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
     return !!start && !!end && start.getTime() <= nowMs && nowMs < end.getTime();
   };
   const todayKey = localDateKey(now);
-  const ongoing = lectures.filter(isOngoing);
-  const today = lectures.filter((l) => {
+  // A past session has nothing live; its lectures still count everywhere else.
+  const ongoing = isCurrentSession ? lectures.filter(isOngoing) : [];
+  const today = (isCurrentSession ? lectures : []).filter((l) => {
     const start = startOf(l);
     return l.status !== "cancelled" && !!start && localDateKey(start) === todayKey;
   });
@@ -305,7 +312,7 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
     .sort((a, b) => b.enrolled - a.enrolled);
 
   // ---- Announcements (current session) -------------------------------------
-  const sinceSession = (d) => !!d && d >= session.startsAt;
+  const sinceSession = (d) => !!d && d >= session.startsAt && d < session.endsAt;
   const memos = memosSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((m) => sinceSession(toDate(m.createdAt)));
@@ -336,8 +343,32 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       sentBy: b.senderName || "School admin",
       department: b.department || null,
       audiences: b.audiences || [],
+      attachments: b.attachments || [],
     })),
   ].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+  // ---- Online vs physical ---------------------------------------------------
+  const isPhysical = (l) => l.lectureType === "Physical";
+  const modeMonths = months.map((m) => ({ month: m.key, physical: 0, online: 0 }));
+  const modeDepts = {};
+  lectures
+    .filter((l) => l.status !== "cancelled")
+    .forEach((l) => {
+      const mode = isPhysical(l) ? "physical" : "online";
+      const start = startOf(l);
+      const row = start && modeMonths.find((m, i) => start >= months[i].start && start < months[i].end);
+      if (row) row[mode] += 1;
+      const dept = courseById.get(l.courseId)?.department || "General";
+      modeDepts[dept] = modeDepts[dept] || { department: dept, physical: 0, online: 0 };
+      modeDepts[dept][mode] += 1;
+    });
+  const checkInsByMode = { physical: 0, online: 0 };
+  const seatsByMode = { physical: 0, online: 0 };
+  heldLectures.forEach((l) => {
+    const mode = isPhysical(l) ? "physical" : "online";
+    seatsByMode[mode] += seatsOf(l.courseId);
+    checkInsByMode[mode] += presentByLecture.get(l.id) || 0;
+  });
 
   const growth = {};
   users.forEach((u) => {
@@ -384,6 +415,18 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       list: take(courseRows),
     },
     onboardingGrowth: months.map((m) => ({ month: m.key, students: 0, lecturers: 0, ...growth[m.key] })),
+    lectureModes: {
+      // Held so far this session.
+      physical: heldLectures.filter(isPhysical).length,
+      online: heldLectures.filter((l) => !isPhysical(l)).length,
+      attendanceRatePct: {
+        physical: pct(checkInsByMode.physical, seatsByMode.physical),
+        online: pct(checkInsByMode.online, seatsByMode.online),
+      },
+      // Scheduled (cancelled excluded), by month and by department.
+      byMonth: modeMonths,
+      byDepartment: Object.values(modeDepts).sort((a, b) => b.physical + b.online - (a.physical + a.online)),
+    },
   };
 
   // ---- Professional -----------------------------------------------------------
@@ -432,7 +475,7 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       .filter((c) => c.attendanceRatePct !== null)
       .sort((a, b) => b.attendanceRatePct - a.attendanceRatePct);
 
-    const weeks = lastWeeks(8);
+    const weeks = lastWeeks(8, trendEnd);
     const weekly = Object.fromEntries(weeks.map((w) => [w, { present: 0, seats: 0 }]));
     const lectureWeek = new Map();
     heldLectures.forEach((l) => {
@@ -543,7 +586,7 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       if (s.scorePct !== null) d.score.push(s.scorePct);
     });
 
-    const weeks = lastWeeks(12);
+    const weeks = lastWeeks(12, trendEnd);
     const engagement = Object.fromEntries(weeks.map((w) => [w, { checkIns: 0, submissions: 0 }]));
     presentRecords.forEach((a) => {
       const d = toDate(a.timestamp) || toDate(a.createdAt);
@@ -650,7 +693,13 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       tierLabel: TIER_LABELS[tier],
     },
     scope: { department: department || null, departments },
-    session: { label: session.label, startsAt: session.startsAt.toISOString() },
+    session: {
+      label: session.label,
+      startsAt: session.startsAt.toISOString(),
+      endsAt: session.endsAt.toISOString(),
+      isCurrent: isCurrentSession,
+    },
+    sessions: availableSessions(),
     access,
     // What higher tiers add, for upgrade prompts.
     locked: TIERS.slice(level + 1).map((t) => ({ tier: t, label: TIER_LABELS[t], features: SCHOOL_TIER_FEATURES[t] })),

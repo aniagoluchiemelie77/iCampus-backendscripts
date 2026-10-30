@@ -56,11 +56,14 @@ export const sendPushNotification = async (
       }
       sanitizedData[key] = String(val);
     });
+    // Admin memos carry a picture; shown as the expanded push image.
+    const imageUrl = /^https:\/\//.test(String(data.imageUrl || "")) ? String(data.imageUrl) : null;
 
     const message = {
       notification: {
         title: title,
         body: body,
+        ...(imageUrl ? { imageUrl } : {}),
       },
       data: sanitizedData,
       token: userData.fcmToken,
@@ -103,8 +106,11 @@ export const sendPushNotification = async (
             },
             sound: "default",
             badge: 1,
+            // Lets the notification service extension attach the image.
+            ...(imageUrl ? { "mutable-content": 1 } : {}),
           },
         },
+        ...(imageUrl ? { fcmOptions: { imageUrl } } : {}),
       },
     };
 

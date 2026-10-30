@@ -40,3 +40,6 @@ export const Ads = db.collection("ads");
 export const Message = db.collection("messages");
 export const SchoolAnnouncements = db.collection("schoolannouncements");
 export const SchoolAuditLog = db.collection("schoolauditlogs");
+export const AdminActivityLog = db.collection("adminactivitylogs");
+export const AdminBroadcasts = db.collection("adminbroadcasts");
+export const SocialMediaSnapshots = db.collection("socialmediasnapshots");

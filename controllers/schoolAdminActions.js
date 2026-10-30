@@ -22,6 +22,7 @@ import {
   isSchoolAdminB,
   normalizeTier,
   resolveSchoolScope,
+  resolveSession,
   SCHOOL_ADMIN_A,
   SCHOOL_ADMIN_B,
   SEAT_LIMITS,
@@ -32,6 +33,9 @@ import { createNotification } from "../services/notification.js";
 import { sendEmail } from "../services/emailService.js";
 import { schoolRepInviteTemplate } from "../services/emailTemplates.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
+import { emailExport } from "../utils/exportService.js";
+import { attachmentPayload, parseAttachments } from "../utils/notificationAttachments.js";
+import { toDate } from "../utils/lectureTime.js";
 
 const ADMIN_PORTAL_URL = process.env.ADMIN_PORTAL_URL || null;
 const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
@@ -97,7 +101,7 @@ export const getSchoolSection = async (req, res) => {
     return res.status(404).json({ error: "Unknown section." });
   }
   try {
-    const data = await buildSchoolAnalytics(scope.schoolCode, { department: scope.department, full: true });
+    const data = await buildSchoolAnalytics(scope.schoolCode, { department: scope.department, full: true, session: req.query.session });
     let list;
     if (section === "courses") list = data.lists.courses;
     else if (section === "announcements") list = data.lists.announcements;
@@ -126,10 +130,286 @@ export const getSchoolSection = async (req, res) => {
       session: data.session,
       institution: data.institution,
     });
-    recordSchoolAudit(req, "section_viewed", { section, department: scope.department, q: q || null, page: page.page });
+    recordSchoolAudit(req, "section_viewed", { section, department: scope.department, session: data.session.label, q: q || null, page: page.page });
   } catch (err) {
     console.error("getSchoolSection Error:", err);
     res.status(500).json({ error: "Failed to load this list." });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Users: the school's students and lecturers, by department and level
+// ---------------------------------------------------------------------------
+
+const USER_ROLES = { students: "student", lecturers: "lecturer" };
+const norm = (value) => String(value || "").trim().toLowerCase();
+const levelKey = (u) => (u.current_level ? String(u.current_level) : "Unknown");
+
+// Only what a school needs to identify and support its members; contact
+// details, devices and identity documents stay out (data minimisation).
+const userRow = (u) => ({
+  uid: u.uid,
+  name: [u.firstname, u.lastname].filter(Boolean).join(" ") || u.username || "Unknown",
+  username: u.username || null,
+  usertype: u.usertype,
+  idNumber: (u.usertype === "student" ? u.matricNumber : u.staffId) || null,
+  department: String(u.department || "").trim() || "General",
+  level: u.usertype === "student" ? levelKey(u) : null,
+  isVerified: !!u.isVerified,
+  isSuspended: !!u.isSuspended,
+  profilePic: u.profilePic || [],
+  joinedAt: toDate(u.createdAt)?.toISOString() || null,
+});
+
+/** The school's students or lecturers in scope, plus department and level breakdowns. */
+const loadSchoolUsers = async (scope, query) => {
+  const role = USER_ROLES[query.role] ? query.role : "students";
+  const snap = await User.where("schoolCode", "==", scope.schoolCode).get();
+  const members = snap.docs.map((d) => d.data()).filter((u) => Object.values(USER_ROLES).includes(u.usertype));
+  const departments = [...new Set(members.map((u) => String(u.department || "").trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+  const inScope = members.filter((u) => !scope.department || norm(u.department || "General") === norm(scope.department));
+
+  const byDepartment = {};
+  const byLevel = {};
+  inScope.forEach((u) => {
+    const dept = String(u.department || "").trim() || "General";
+    byDepartment[dept] = byDepartment[dept] || { department: dept, students: 0, lecturers: 0 };
+    byDepartment[dept][u.usertype === "student" ? "students" : "lecturers"] += 1;
+    if (u.usertype === "student") byLevel[levelKey(u)] = (byLevel[levelKey(u)] || 0) + 1;
+  });
+
+  const level = String(query.level || "").trim();
+  const q = String(query.q || "").trim().toLowerCase();
+  const rows = inScope
+    .filter((u) => u.usertype === USER_ROLES[role])
+    .filter((u) => !level || role !== "students" || levelKey(u) === level)
+    .map(userRow)
+    .filter((r) => !q || [r.name, r.username, r.idNumber, r.department].some((v) => String(v || "").toLowerCase().includes(q)))
+    .sort((a, b) => a.department.localeCompare(b.department) || String(a.level).localeCompare(String(b.level), undefined, { numeric: true }) || a.name.localeCompare(b.name));
+
+  return {
+    role,
+    level: level || null,
+    rows,
+    scope: { department: scope.department, departments, locked: scope.locked },
+    breakdown: {
+      totals: {
+        students: inScope.filter((u) => u.usertype === "student").length,
+        lecturers: inScope.filter((u) => u.usertype === "lecturer").length,
+        verified: inScope.filter((u) => u.isVerified).length,
+        suspended: inScope.filter((u) => u.isSuspended).length,
+      },
+      byDepartment: Object.values(byDepartment).sort((a, b) => b.students + b.lecturers - (a.students + a.lecturers)),
+      byLevel: Object.entries(byLevel)
+        .map(([name, count]) => ({ level: name, students: count }))
+        .sort((a, b) => a.level.localeCompare(b.level, undefined, { numeric: true })),
+    },
+  };
+};
+
+export const getSchoolUsers = async (req, res) => {
+  const scope = requireSchool(req, res);
+  if (!scope) return;
+  if (scope.locked && !scope.department) {
+    return res.status(400).json({ error: "Your account has no department yet." });
+  }
+  try {
+    const data = await loadSchoolUsers(scope, req.query);
+    const { rows, ...rest } = data;
+    res.json({ ...paginate(rows, req.query), ...rest });
+    recordSchoolAudit(req, "users_viewed", { role: data.role, department: scope.department, level: data.level, page: req.query.page || 1 });
+  } catch (err) {
+    console.error("getSchoolUsers Error:", err);
+    res.status(500).json({ error: "Failed to load users." });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Exports (branded Excel, emailed to the requesting rep only)
+// ---------------------------------------------------------------------------
+
+const USER_COLUMNS = [
+  { key: "name", label: "Name" },
+  { key: "username", label: "Username" },
+  { key: "idNumber", label: "Matric / Staff ID" },
+  { key: "department", label: "Department" },
+  { key: "level", label: "Level" },
+  { label: "Verified", value: (r) => (r.isVerified ? "Yes" : "No") },
+  { label: "Suspended", value: (r) => (r.isSuspended ? "Yes" : "No") },
+  { key: "joinedAt", label: "Joined" },
+];
+
+const SCHOOL_EXPORTS = {
+  overview: { title: "Institution summary", personalData: false },
+  courses: { title: "Courses this session", personalData: false },
+  lectures: { title: "Lectures this session", personalData: false },
+  announcements: { title: "Announcements this session", personalData: false },
+  lecturers: { title: "Lecturer activity", personalData: true, tier: "professional" },
+  "at-risk": { title: "Students at risk", personalData: true, tier: "enterprise" },
+  students: { title: "Students", personalData: true },
+  "lecturer-accounts": { title: "Lecturers", personalData: true },
+};
+
+export const exportSchoolData = async (req, res) => {
+  const scope = requireSchool(req, res);
+  if (!scope) return;
+  const section = String(req.body?.section || "");
+  const spec = SCHOOL_EXPORTS[section];
+  if (!spec) return res.status(400).json({ error: "Choose what to export." });
+  if (scope.locked && !scope.department) {
+    return res.status(400).json({ error: "Your account has no department yet." });
+  }
+  // Scope comes from the signed-in rep; the body can only narrow an A-level rep's view.
+  const narrowed = resolveSchoolScope(req.admin, { department: req.body?.department });
+  try {
+    let files;
+    if (section === "students" || section === "lecturer-accounts") {
+      const data = await loadSchoolUsers(narrowed, {
+        role: section === "students" ? "students" : "lecturers",
+        level: req.body?.level,
+      });
+      files = [{ name: section, rows: data.rows, columns: USER_COLUMNS }];
+    } else {
+      const data = await buildSchoolAnalytics(narrowed.schoolCode, { department: narrowed.department, full: true, session: req.body?.session });
+      if (spec.tier && !data.access[spec.tier]) {
+        return res.status(403).json({ error: `${spec.title} is not included in your plan.` });
+      }
+      const b = data.basic;
+      files = {
+        overview: () => [
+          {
+            name: "summary",
+            columns: [
+              { key: "metric", label: "Metric" },
+              { key: "value", label: "Value" },
+            ],
+            rows: [
+              ["Institution", data.institution.name],
+              ["Plan", data.institution.tierLabel],
+              ["Session", data.session.label],
+              ["Department", narrowed.department || "All departments"],
+              ["Students", data.kpis.students.current],
+              ["Lecturers", data.kpis.lecturers.current],
+              ["Classes scheduled this month", data.kpis.classes.current],
+              ["Lectures held", b.attendance.lecturesHeld],
+              ["Physical lectures held", b.lectureModes.physical],
+              ["Online lectures held", b.lectureModes.online],
+              ["Attendance rate %", b.attendance.attendanceRatePct],
+              ["Physical attendance %", b.lectureModes.attendanceRatePct.physical],
+              ["Online attendance %", b.lectureModes.attendanceRatePct.online],
+              ["Active courses", b.courses.totalActiveCourses],
+              ["Courses without a lecturer", b.courses.allocationStatus.unassigned],
+              ["Memos posted", b.announcements.memosPosted],
+              ["Notifications sent", b.announcements.notificationsSent],
+            ].map(([metric, value]) => ({ metric, value })),
+          },
+          {
+            name: "lectures-by-month",
+            columns: [
+              { key: "month", label: "Month" },
+              { key: "physical", label: "Physical" },
+              { key: "online", label: "Online" },
+            ],
+            rows: b.lectureModes.byMonth,
+          },
+        ],
+        courses: () => [
+          {
+            name: "courses",
+            rows: data.lists.courses,
+            columns: [
+              { key: "courseCode", label: "Code" },
+              { key: "courseTitle", label: "Title" },
+              { key: "department", label: "Department" },
+              { key: "level", label: "Level" },
+              { key: "semester", label: "Semester" },
+              { key: "enrolled", label: "Enrolled" },
+              { key: "lecturesHeld", label: "Lectures held" },
+              { label: "Lecturers", value: (r) => r.lecturers.join("; ") },
+            ],
+          },
+        ],
+        lectures: () => [
+          {
+            name: "lectures",
+            rows: data.lists.lectures,
+            columns: [
+              { key: "startsAt", label: "Starts" },
+              { key: "courseCode", label: "Course" },
+              { key: "topicName", label: "Topic" },
+              { key: "department", label: "Department" },
+              { key: "lectureType", label: "Type" },
+              { key: "location", label: "Location" },
+              { key: "host", label: "Lecturer" },
+              { key: "status", label: "Status" },
+              { key: "checkIns", label: "Check-ins" },
+              { key: "enrolled", label: "Enrolled" },
+            ],
+          },
+        ],
+        announcements: () => [
+          {
+            name: "announcements",
+            rows: data.lists.announcements,
+            columns: [
+              { key: "createdAt", label: "Date" },
+              { key: "kind", label: "Kind" },
+              { key: "title", label: "Title" },
+              { key: "body", label: "Message" },
+              { key: "department", label: "Department" },
+              { key: "sentBy", label: "Sent by" },
+              { key: "reach", label: "Reach" },
+              { key: "reachLabel", label: "Reach type" },
+            ],
+          },
+        ],
+        lecturers: () => [
+          {
+            name: "lecturer-activity",
+            rows: data.professional.lecturers,
+            columns: [
+              { key: "name", label: "Lecturer" },
+              { key: "lecturesDelivered", label: "Lectures delivered" },
+              { key: "physical", label: "Physical" },
+              { key: "online", label: "Online" },
+            ],
+          },
+        ],
+        "at-risk": () => [
+          {
+            name: "students-at-risk",
+            rows: data.enterprise.atRisk.students,
+            columns: [
+              { key: "name", label: "Student" },
+              { key: "matricNumber", label: "Matric number" },
+              { key: "department", label: "Department" },
+              { key: "level", label: "Level" },
+              { key: "attendancePct", label: "Attendance %" },
+              { key: "scorePct", label: "Average score %" },
+            ],
+          },
+        ],
+      }[section]();
+    }
+    const result = await emailExport(req, {
+      title: spec.title,
+      files,
+      personalData: spec.personalData,
+      scope: {
+        School: req.admin.organizationName || narrowed.schoolCode,
+        Session: section === "students" || section === "lecturer-accounts" ? null : resolveSession(req.body?.session).label,
+        Department: narrowed.department || "All departments",
+      },
+    });
+    res.status(result.status).json(result.body);
+    if (result.status === 200) {
+      recordSchoolAudit(req, "data_exported", { section, department: narrowed.department, rows: result.body.rows, personalData: spec.personalData });
+    }
+  } catch (err) {
+    console.error("exportSchoolData Error:", err);
+    res.status(500).json({ error: "Failed to prepare the export." });
   }
 };
 
@@ -419,9 +699,15 @@ export const sendSchoolNotification = async (req, res) => {
   const audiences = [...new Set(Array.isArray(req.body?.audiences) ? req.body.audiences : [])];
   // B-level reps always send to their own department.
   const department = level === "b" ? scope.department : String(req.body?.department || "").trim() || null;
+  const { attachments, error: attachmentError } = parseAttachments(req.body?.attachments);
 
+  if (attachmentError) return res.status(400).json({ error: attachmentError });
   if (title.length < 3 || title.length > 80) return res.status(400).json({ error: "Title must be 3–80 characters." });
-  if (message.length < 3 || message.length > 1000) return res.status(400).json({ error: "Message must be 3–1000 characters." });
+  // A memo image can carry the whole message, so the text may be short then.
+  const minMessage = attachments.length ? 0 : 3;
+  if (message.length < minMessage || message.length > 1000) {
+    return res.status(400).json({ error: `Message must be ${minMessage}–1000 characters.` });
+  }
   if (!audiences.length || audiences.some((a) => !AUDIENCES[level].includes(a))) {
     return res.status(400).json({ error: `Choose who receives this: ${AUDIENCES[level].join(", ")}.` });
   }
@@ -460,6 +746,7 @@ export const sendSchoolNotification = async (req, res) => {
       senderLevel: level,
       title,
       message,
+      attachments,
       audiences,
       department,
       recipientCount: recipients.length,
@@ -481,7 +768,9 @@ export const sendSchoolNotification = async (req, res) => {
         school: schoolName,
         from: `${senderName} (${roleLabel(level)})`,
         department: department || "All departments",
+        ...attachmentPayload(attachments),
       };
+      const body = message || (attachments.length ? "Open to view the attached memo." : message);
       for (let i = 0; i < recipients.length; i += SEND_BATCH) {
         const results = await Promise.allSettled(
           recipients.slice(i, i + SEND_BATCH).map((recipientId) =>
@@ -491,7 +780,7 @@ export const sendSchoolNotification = async (req, res) => {
               category: "classroom",
               actionType: "SCHOOL_ANNOUNCEMENT",
               title,
-              message,
+              message: body,
               entityId: ref.id,
               entityType: "school_announcement",
               payload,

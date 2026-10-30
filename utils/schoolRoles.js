@@ -74,3 +74,24 @@ export const sessionStartYear = (session) => {
   const match = String(session || "").match(/(\d{4})/);
   return match ? Number(match[1]) : null;
 };
+
+/** iCampus school analytics start with the 2026/2027 session. */
+export const FIRST_SESSION_START_YEAR = 2026;
+
+export const sessionForStartYear = (startYear) => academicSession(new Date(startYear, 8, 1));
+
+/** Sessions a school can view, newest first: the current one back to 2026/2027. */
+export const availableSessions = (date = new Date()) => {
+  const current = academicSession(date).startYear;
+  const sessions = [];
+  for (let y = current; y >= Math.min(FIRST_SESSION_START_YEAR, current); y--) sessions.push(`${y}/${y + 1}`);
+  return sessions;
+};
+
+/** The requested session ("2026/2027"), or the current one if it's missing or out of range. */
+export const resolveSession = (requested) => {
+  const current = academicSession();
+  const year = sessionStartYear(requested);
+  if (year === null || year < FIRST_SESSION_START_YEAR || year > current.startYear) return current;
+  return sessionForStartYear(year);
+};

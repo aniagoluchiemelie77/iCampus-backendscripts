@@ -14,6 +14,7 @@ import {
 } from "./cron/checkForAlumnisCron.js";
 import { lectureReminderCron } from "./cron/lectureReminderCron.js";
 import { assessmentReminderCron } from "./cron/assessmentReminderCron.js";
+import { socialMediaSnapshotCron } from "./cron/socialMediaCron.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -32,6 +33,7 @@ updateStudentInfo();
 updateLecturerInfo();
 lectureReminderCron();
 assessmentReminderCron();
+socialMediaSnapshotCron();
 monitorSubscriptions();
 
 app.use(cors());

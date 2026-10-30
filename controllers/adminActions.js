@@ -35,6 +35,12 @@ import {
   SCHOOL_ADMIN_B,
 } from "../utils/schoolRoles.js";
 import { inviteSchoolRep, recordSchoolAudit } from "./schoolAdminActions.js";
+import bcrypt from "bcrypt";
+import crypto from "crypto";
+import { schoolRepInviteTemplate } from "../services/emailTemplates.js";
+
+/** Roles a super admin creates here; school reps go through inviteSchoolRep. */
+const STAFF_ADMIN_TYPES = ["super_admin", "finance", "support", "moderator", "analyst", "social_media"];
 
 const now = new Date();
 const formattedDate = now.toLocaleDateString("en-US", {
@@ -117,19 +123,66 @@ export const createAdmin = async (req, res) => {
     }
   }
 
+  // Staff admins: only known fields are stored (never the raw body), and the
+  // new admin gets a one-time password by email, like school reps do.
+  const adminType = String(req.body?.adminType || "");
+  const firstname = String(req.body?.firstname || "").trim();
+  const lastname = String(req.body?.lastname || "").trim();
+  const email = String(req.body?.email || "").trim().toLowerCase();
+  if (!STAFF_ADMIN_TYPES.includes(adminType)) {
+    return res.status(400).json({ error: `Admin role must be one of: ${STAFF_ADMIN_TYPES.join(", ")}.` });
+  }
+  if (!firstname || !lastname) {
+    return res.status(400).json({ error: "First and last name are required." });
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return res.status(400).json({ error: "Enter a valid email address." });
+  }
+
   try {
-    const adminRef = req.body.uid ? Admin.doc(req.body.uid) : Admin.doc();
-    const generatedUid = req.body.uid || adminRef.id;
+    const existing = await Admin.where("email", "==", email).limit(1).get();
+    if (!existing.empty) {
+      return res.status(409).json({ error: "An administrator with this email already exists." });
+    }
+    const adminRef = Admin.doc();
+    const generatedUid = adminRef.id;
+    const temporaryPassword = crypto.randomBytes(9).toString("base64url");
 
     const adminData = {
-      ...req.body,
       uid: generatedUid,
+      firstname,
+      lastname,
+      email,
+      adminType,
+      password: await bcrypt.hash(temporaryPassword, 10),
+      providerId: "password",
+      isVerified: true,
+      profilePic: [],
+      invitedBy: req.admin.uid,
+      lastAccessed: null,
       createdAt: new Date(),
     };
     await adminRef.set(adminData);
-    res
-      .status(200)
-      .json({ message: "Admin created successfully", uid: generatedUid });
+    res.status(200).json({
+      message: "Admin created. Their sign-in details were emailed to them.",
+      uid: generatedUid,
+    });
+    setImmediate(() => {
+      sendEmail({
+        to: email,
+        subject: "You've been added to the iCampus admin team",
+        html: schoolRepInviteTemplate({
+          name: firstname,
+          inviterName: `${req.admin.firstname || ""} ${req.admin.lastname || ""}`.trim() || "An iCampus super admin",
+          schoolName: "iCampus",
+          roleLabel: `${adminType.replace(/_/g, " ")} administrator`,
+          department: null,
+          email,
+          temporaryPassword,
+          portalUrl: process.env.ADMIN_PORTAL_URL || null,
+        }),
+      }).catch((err) => console.error("Admin invite email failed:", err.message));
+    });
     setImmediate(() => {
       Promise.all([
         notifyAdmins(
@@ -186,13 +239,26 @@ export const updateAdmin = async (req, res) => {
       return res.status(404).json({ error: "Admin not found." });
     }
 
-    const updateData = {
-      ...req.body,
-      updatedAt: new Date(),
-    };
+    // Names and (for staff) the role; passwords, emails and school links are
+    // never changed through this endpoint.
+    const updateData = { updatedAt: new Date() };
+    ["firstname", "lastname"].forEach((key) => {
+      const value = String(req.body?.[key] ?? "").trim();
+      if (value) updateData[key] = value;
+    });
+    const currentType = adminDoc.data().adminType;
+    if (req.body?.adminType && req.body.adminType !== currentType) {
+      if (isSchoolAdmin(currentType) || !STAFF_ADMIN_TYPES.includes(req.body.adminType)) {
+        return res.status(400).json({ error: "That role change isn't allowed here." });
+      }
+      if (uid === req.admin.uid) {
+        return res.status(400).json({ error: "You cannot change your own role." });
+      }
+      updateData.adminType = req.body.adminType;
+    }
     await adminRef.set(updateData, { merge: true });
     const updatedDoc = await adminRef.get();
-    const updated = updatedDoc.data();
+    const { password: _password, ...updated } = updatedDoc.data();
     res.status(200).json(updated);
     setImmediate(() => {
       const tasks = [
@@ -211,7 +277,7 @@ export const updateAdmin = async (req, res) => {
         ),
       ];
 
-      if (req.body.adminType) {
+      if (updateData.adminType) {
         tasks.push(
           notifyAdmins(
             { role: "super_admin" },
@@ -411,9 +477,10 @@ export const getAdminMetrics = async (req, res) => {
       }
       const schoolMetrics = await buildSchoolAnalytics(scope.schoolCode, {
         department: scope.department,
+        session: req.query.session,
       });
       res.json({ schoolMetrics });
-      recordSchoolAudit(req, "analytics_viewed", { department: scope.department });
+      recordSchoolAudit(req, "analytics_viewed", { department: scope.department, session: schoolMetrics.session.label });
       return;
     }
 
@@ -479,6 +546,7 @@ export const getAdminMetrics = async (req, res) => {
     if (needsSchoolMetrics && schoolCode) {
       promiseMap.schoolMetrics = buildSchoolAnalytics(schoolCode, {
         department: resolveSchoolScope(req.admin, req.query).department,
+        session: req.query.session,
       });
     }
 

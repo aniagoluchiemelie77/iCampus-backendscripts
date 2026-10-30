@@ -36,6 +36,7 @@
     "cheerio": "^1.2.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "express-rate-limit": "^8.3.2",
     "firebase-admin": "^13.7.0",
