@@ -3,9 +3,11 @@
 // The financial year is measured in three four-month periods:
 //   P1 Jan–Apr · P2 May–Aug · P3 Sep–Dec
 //
-// Money is never summed across currencies: every figure is for one currency
-// (the request's ?currency=, else the one most transactions used). Counts
-// (orders, subscribers) are currency-free.
+// Money is shown in one display currency (?currency=NGN|USD, default NGN):
+// every amount is converted into it with the day's exchange rates
+// (utils/currency.js, cached for an hour) before it's summed. Amounts in a
+// currency the rates don't cover (e.g. legacy "iCash" tax entries) are left
+// out and named in `conversion.unconverted`. Counts are currency-free.
 //
 // Sources: orders (marketplace), transactions (checkout, subscription,
 // refund, payout), payment intents (attempts, including failed ones), users
@@ -20,6 +22,7 @@ import {
 } from "../tableDeclarations.js";
 import { toDate } from "./lectureTime.js";
 import { normalizeTier, TIER_LABELS } from "./schoolRoles.js";
+import { convertWithRates, fetchExchangeRates } from "./currency.js";
 
 export const PERIODS = [
   { id: 1, label: "Jan – Apr", startMonth: 0 },
@@ -179,15 +182,49 @@ export const loadFinanceData = async (range) => {
 
 const orderCurrency = (o) => o.amountPaidCurrencyCode || "NGN";
 const txCurrency = (t) => t.currency || "NGN";
+const round2 = (n) => Math.round(n * 100) / 100;
 
-const pickCurrency = (data, requested) => {
-  const counts = {};
-  data.transactions.forEach((t) => (counts[txCurrency(t)] = (counts[txCurrency(t)] || 0) + 1));
-  data.orders.forEach((o) => (counts[orderCurrency(o)] = (counts[orderCurrency(o)] || 0) + 1));
-  const currencies = Object.keys(counts).sort((a, b) => counts[b] - counts[a]);
-  if (!currencies.length) currencies.push("NGN");
-  const currency = requested && currencies.includes(requested) ? requested : currencies[0];
-  return { currency, currencies };
+// ---------------------------------------------------------------------------
+// Display currency
+// ---------------------------------------------------------------------------
+
+export const DISPLAY_CURRENCIES = ["NGN", "USD"];
+
+/**
+ * Converts amounts into the requested display currency. `convert` returns
+ * null for a currency the rates don't cover. If the rates can't be fetched,
+ * only amounts already in the display currency count, and `summary().live`
+ * is false so the dashboard can say so.
+ */
+export const currencyConverter = async (requested) => {
+  const code = String(requested || "").toUpperCase();
+  const currency = DISPLAY_CURRENCIES.includes(code) ? code : DISPLAY_CURRENCIES[0];
+  const rates = await fetchExchangeRates().catch(() => null);
+  const unconverted = new Set();
+  const convert = (amount, from) => {
+    const value = convertWithRates(rates, amount, String(from || "NGN").toUpperCase(), currency);
+    if (value === null) unconverted.add(String(from));
+    return value;
+  };
+  return {
+    currency,
+    convert,
+    summary: () => ({
+      currency,
+      live: !!rates,
+      // 1 USD in each display currency, for the "1 USD = NGN ..." note.
+      usdRates: rates ? Object.fromEntries(DISPLAY_CURRENCIES.map((c) => [c, rates[c] ?? null])) : null,
+      unconverted: [...unconverted],
+    }),
+  };
+};
+
+/** Adds the row's main amount in the display currency (`displayAmount`), for lists and exports. */
+export const withDisplayAmount = (row, converter) => {
+  const key = ["amount", "amountPaid"].find((k) => typeof row[k] === "number");
+  if (!key || !row.currency) return row;
+  const value = converter.convert(row[key], row.currency);
+  return { ...row, displayAmount: value === null ? null : round2(value), displayCurrency: converter.currency };
 };
 
 const isActiveSubscriber = (u, now) => {
@@ -304,15 +341,16 @@ export const productIssueRows = (orders) => {
 
 export const buildFinanceOverview = async (query = {}) => {
   const range = parsePeriod(query);
-  const data = await loadFinanceData(range);
-  const { currency, currencies } = pickCurrency(data, query.currency);
+  const [data, converter] = await Promise.all([loadFinanceData(range), currencyConverter(query.currency)]);
+  const { currency, convert } = converter;
   const now = new Date();
-  const inCur = (list, fn) => list.filter((x) => fn(x) === currency);
+  const orderAmount = (o, field = "amountPaid") => convert(o[field], orderCurrency(o));
+  const txAmount = (t) => convert(t.amount, txCurrency(t));
+  const notCancelled = (o) => o.status !== "cancelled";
 
   const orders = data.orders;
-  const ordersCur = inCur(orders, orderCurrency);
-  const tx = inCur(data.transactions, txCurrency);
-  const prevTx = inCur(data.prevTransactions, txCurrency);
+  const tx = data.transactions;
+  const prevTx = data.prevTransactions;
   const byType = (list, type, status = "success") => list.filter((t) => t.type === type && (!status || t.status === status));
 
   const count = (list, group) => list.filter((o) => orderGroup(o.status) === group).length;
@@ -336,16 +374,16 @@ export const buildFinanceOverview = async (query = {}) => {
     const i = monthIndex(o._date, range);
     if (i < 0) return;
     monthly[i][orderGroup(o.status)] += 1;
-    if (o.status !== "cancelled" && orderCurrency(o) === currency) monthly[i].gmv += Number(o.amountPaid) || 0;
+    if (notCancelled(o)) monthly[i].gmv += orderAmount(o) || 0;
   });
   tx.forEach((t) => {
     const i = monthIndex(t._date, range);
     if (i < 0 || t.status !== "success") return;
     if (t.type === "subscription") {
-      monthly[i].subscriptionRevenue += Number(t.amount) || 0;
+      monthly[i].subscriptionRevenue += txAmount(t) || 0;
       monthly[i].subscriptions += 1;
-    } else if (t.type === "refund") monthly[i].refunds += Number(t.amount) || 0;
-    else if (t.type === "payout") monthly[i].payouts += Number(t.amount) || 0;
+    } else if (t.type === "refund") monthly[i].refunds += txAmount(t) || 0;
+    else if (t.type === "payout") monthly[i].payouts += txAmount(t) || 0;
   });
   monthly.forEach((m) => ["gmv", "subscriptionRevenue", "refunds", "payouts"].forEach((k) => (m[k] = Math.round(m[k] * 100) / 100)));
 
@@ -359,7 +397,7 @@ export const buildFinanceOverview = async (query = {}) => {
       orders: list.length,
       completed: count(list, "completed"),
       cancelled: count(list, "cancelled"),
-      gmv: sum(list.filter((o) => o.status !== "cancelled" && orderCurrency(o) === currency), (o) => o.amountPaid),
+      gmv: sum(list.filter(notCancelled), (o) => orderAmount(o)),
       isFuture: r.start > now,
     };
   });
@@ -391,7 +429,8 @@ export const buildFinanceOverview = async (query = {}) => {
   const recentTransactions = [...data.transactions]
     .sort((a, b) => (b._date?.getTime() || 0) - (a._date?.getTime() || 0))
     .slice(0, 8)
-    .map((t) => transactionRow(t, users));
+    .map((t) => withDisplayAmount(transactionRow(t, users), converter));
+  const sourceCurrencies = [...new Set([...orders.map(orderCurrency), ...tx.map(txCurrency)])].sort();
 
   return {
     generatedAt: now.toISOString(),
@@ -399,7 +438,8 @@ export const buildFinanceOverview = async (query = {}) => {
     previousLabel: data.prev.label,
     periods: PERIODS.map((p) => ({ id: p.id, label: p.label })),
     currency,
-    currencies,
+    currencies: DISPLAY_CURRENCIES,
+    sourceCurrencies,
     cards: {
       successfulOrders: { current: count(orders, "completed"), previous: count(data.prevOrders, "completed") },
       cancelledOrders: { current: count(orders, "cancelled"), previous: count(data.prevOrders, "cancelled") },
@@ -409,16 +449,16 @@ export const buildFinanceOverview = async (query = {}) => {
       totalOrders: orders.length,
       inProgressOrders: count(orders, "inProgress"),
       cancellationRatePct: pct(count(orders, "cancelled"), orders.length),
-      gmv: sum(ordersCur.filter((o) => o.status !== "cancelled"), (o) => o.amountPaid),
-      deliveryFees: sum(ordersCur.filter((o) => o.status !== "cancelled"), (o) => o.deliveryFee),
-      averageOrderValue: ordersCur.length ? Math.round((sum(ordersCur, (o) => o.amountPaid) / ordersCur.length) * 100) / 100 : 0,
-      subscriptionRevenue: sum(byType(tx, "subscription"), (t) => t.amount),
-      previousSubscriptionRevenue: sum(byType(prevTx, "subscription"), (t) => t.amount),
-      refunds: sum(byType(tx, "refund"), (t) => t.amount),
-      payouts: sum(byType(tx, "payout", null).filter((t) => t.status !== "failed"), (t) => t.amount),
+      gmv: sum(orders.filter(notCancelled), (o) => orderAmount(o)),
+      deliveryFees: sum(orders.filter(notCancelled), (o) => orderAmount(o, "deliveryFee")),
+      averageOrderValue: orders.length ? round2(sum(orders, (o) => orderAmount(o)) / orders.length) : 0,
+      subscriptionRevenue: sum(byType(tx, "subscription"), txAmount),
+      previousSubscriptionRevenue: sum(byType(prevTx, "subscription"), txAmount),
+      refunds: sum(byType(tx, "refund"), txAmount),
+      payouts: sum(byType(tx, "payout", null).filter((t) => t.status !== "failed"), txAmount),
       pendingPayouts: byType(tx, "payout", "pending").length,
       failedPayouts: byType(tx, "payout", "failed").length,
-      taxCollected: sum(data.taxes.filter((t) => (t.currency || "NGN") === currency), (t) => t.amount),
+      taxCollected: sum(data.taxes, (t) => convert(t.amount, t.currency || "NGN")),
       expiringSoon,
     },
     monthly,
@@ -449,7 +489,9 @@ export const buildFinanceOverview = async (query = {}) => {
       dueSoon: schools.filter((s) => s.status === "due_soon").length,
       notSet: schools.filter((s) => s.status === "not_set").length,
       byTier: ["basic", "pro", "enterprise"].map((t) => ({ tier: t, label: TIER_LABELS[t], count: schools.filter((s) => s.tier === t).length })),
-      items: schools.slice(0, 6),
+      items: schools.slice(0, 6).map((s) => withDisplayAmount(s, converter)),
     },
+    // Last, so it names every currency the figures above couldn't convert.
+    conversion: converter.summary(),
   };
 };

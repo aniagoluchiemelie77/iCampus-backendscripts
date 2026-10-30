@@ -701,21 +701,32 @@ export const getAdminMetrics = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch dashboard metrics" });
   }
 };
+// Firestore's orderBy drops every document without that field, so schools
+// and stations created without `createdAt` (seeded ones) vanished from these
+// lists while the overview, which reads the whole collection, still showed
+// them. Both collections are small, so they're sorted in memory instead:
+// newest first, undated last.
+const createdAtMs = (doc) => {
+  const value = doc.createdAt;
+  const date = value?.toDate ? value.toDate() : value ? new Date(value) : null;
+  return date && !Number.isNaN(date.getTime()) ? date.getTime() : 0;
+};
+const newestFirst = (a, b) => createdAtMs(b) - createdAtMs(a);
+
 export const getInstitutions = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    const [snapshot, totalCountSnapshot] = await Promise.all([
-      OperationalInstitutions.orderBy("createdAt", "desc").get(),
-      OperationalInstitutions.get(),
-    ]);
+    const snapshot = await OperationalInstitutions.get();
 
-    const allInstitutions = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const allInstitutions = snapshot.docs
+      .map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+      .sort(newestFirst);
 
     const paginatedInstitutions = allInstitutions.slice(skip, skip + limit);
     res.json(paginatedInstitutions);
@@ -730,15 +741,14 @@ export const getDropOffStations = async (req, res) => {
     const limit = parseInt(req.query.limit) || 20;
     const skip = (page - 1) * limit;
 
-    const [snapshot, totalCountSnapshot] = await Promise.all([
-      DropOffStation.orderBy("createdAt", "desc").get(),
-      DropOffStation.get(),
-    ]);
+    const snapshot = await DropOffStation.get();
 
-    const allStations = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const allStations = snapshot.docs
+      .map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }))
+      .sort(newestFirst);
 
     const paginatedStations = allStations.slice(skip, skip + limit);
     res.json(paginatedStations);

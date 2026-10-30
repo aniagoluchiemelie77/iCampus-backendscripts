@@ -5,6 +5,7 @@ import {
   advanceDueDate,
   BILLING_CYCLES,
   buildFinanceOverview,
+  currencyConverter,
   intentRow,
   loadFinanceData,
   loadSchoolBilling,
@@ -17,6 +18,7 @@ import {
   sellerIssueRows,
   subscriberRow,
   transactionRow,
+  withDisplayAmount,
 } from "../utils/financeAnalytics.js";
 import { emailExport } from "../utils/exportService.js";
 import { recordAdminActivity } from "../utils/adminActivity.js";
@@ -118,10 +120,18 @@ export const getFinanceSection = async (req, res) => {
   const { section } = req.params;
   if (!FINANCE_SECTIONS.includes(section)) return res.status(404).json({ error: "Unknown section." });
   try {
-    const rows = await sectionRows(section, req.query);
+    const [rows, converter] = await Promise.all([sectionRows(section, req.query), currencyConverter(req.query.currency)]);
     const q = String(req.query.q || "").trim();
     const range = ["schools", "subscribers"].includes(section) ? null : parsePeriod(req.query);
-    res.json({ ...paginate(rows.filter((r) => matches(r, q)), req.query), section, period: range ? { label: range.label, year: range.year, period: range.period } : null });
+    const page = paginate(rows.filter((r) => matches(r, q)), req.query);
+    res.json({
+      ...page,
+      // Only this page's rows are converted; the originals stay alongside.
+      items: page.items.map((r) => withDisplayAmount(r, converter)),
+      section,
+      period: range ? { label: range.label, year: range.year, period: range.period } : null,
+      conversion: converter.summary(),
+    });
   } catch (err) {
     console.error("getFinanceSection Error:", err);
     res.status(500).json({ error: "Failed to load this list." });
@@ -262,6 +272,7 @@ const COLUMNS = {
   ],
 };
 const PERSONAL = new Set(["transactions", "orders", "sellers", "subscribers"]);
+const CONVERTED = new Set(["transactions", "orders", "payments", "schools"]);
 
 export const exportFinanceData = async (req, res) => {
   if (!requireFinance(req, res)) return;
@@ -270,15 +281,25 @@ export const exportFinanceData = async (req, res) => {
   if (!sections.length) return res.status(400).json({ error: "Choose what to export." });
   const query = { ...req.body, status: req.body?.status || "all" };
   try {
+    const converter = await currencyConverter(req.body?.currency);
+    // Money sections get an extra column in the display currency the admin was viewing.
     const files = await Promise.all(
-      sections.map(async (section) => ({ name: section, columns: COLUMNS[section], rows: await sectionRows(section, query) })),
+      sections.map(async (section) => {
+        const rows = await sectionRows(section, query);
+        if (!CONVERTED.has(section)) return { name: section, columns: COLUMNS[section], rows };
+        return {
+          name: section,
+          columns: [...COLUMNS[section], { key: "displayAmount", label: `Amount in ${converter.currency}` }],
+          rows: rows.map((r) => withDisplayAmount(r, converter)),
+        };
+      }),
     );
     const range = parsePeriod(query);
     const result = await emailExport(req, {
       title: sections.length > 1 ? `Finance report · ${range.label}` : `Finance ${sections[0]} · ${range.label}`,
       files,
       personalData: sections.some((s) => PERSONAL.has(s)),
-      scope: { Period: range.label, Filter: query.status !== "all" ? query.status : null },
+      scope: { Period: range.label, Filter: query.status !== "all" ? query.status : null, "Converted to": converter.currency },
     });
     res.status(result.status).json(result.body);
   } catch (err) {

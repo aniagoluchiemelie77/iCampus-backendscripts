@@ -1,7 +1,7 @@
 // Super admin and support endpoints:
 //   /admins/platform/overview         super admin: a little of everything
-//   /admins/platform/directory        super admin: staff admins + A-level school reps
-//   /admins/platform/admins/:uid      super admin: one admin's school, reps and activity
+//   /admins/platform/directory        staff (read) : staff admins + A-level school reps, paged
+//   /admins/platform/admins/:uid      staff (read) : one admin's school and reps; activity for super admins
 //   /admins/platform/activity         super admin: what admins did
 //   /admins/platform/notify-admins    super admin: message admins directly
 //   /admins/support/overview          support (+ super admin): tickets, inbox, accounts
@@ -24,7 +24,7 @@ import { createNotification } from "../services/notification.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import { toDate } from "../utils/lectureTime.js";
-import { isSchoolAdmin, isSchoolAdminA, isSchoolAdminB, normalizeTier, SEAT_LIMITS, TIER_LABELS } from "../utils/schoolRoles.js";
+import { isSchoolAdmin, isSchoolAdminA, normalizeTier, SEAT_LIMITS, TIER_LABELS } from "../utils/schoolRoles.js";
 import { buildFinanceOverview, schoolBillingRow } from "../utils/financeAnalytics.js";
 import { attachmentPayload, parseAttachments } from "../utils/notificationAttachments.js";
 import { recordAdminActivity } from "../utils/adminActivity.js";
@@ -326,16 +326,35 @@ const adminView = (a) => ({
   invitedBy: a.invitedBy || null,
 });
 
+// The directory and profiles are readable by every iCampus staff role
+// (Access Control); only super admins manage admins or see their activity.
+const requireStaff = requireRole(STAFF_ROLES);
+
+/**
+ * Staff admins (all of them, a few dozen at most), then A-level institution
+ * reps one page at a time (`page`, `limit`, `q` searches school, name, email
+ * and code). Department reps (B) are only counted here; each A rep's profile
+ * lists the ones they added.
+ */
 export const getAdminDirectory = async (req, res) => {
-  if (!requireSuper(req, res)) return;
+  if (!requireStaff(req, res)) return;
   try {
-    const [adminsSnap, schoolsSnap] = await Promise.all([Admin.get(), OperationalInstitutions.get()]);
+    const [adminsSnap, bRepsSnap, schoolsSnap] = await Promise.all([
+      // "school_administrator" is the legacy name for A-level reps.
+      Admin.where("adminType", "in", [...STAFF_ROLES, "school_admin_a", "school_administrator"]).get(),
+      Admin.where("adminType", "==", "school_admin_b").select("schoolCode").get(),
+      OperationalInstitutions.get(),
+    ]);
     const admins = adminsSnap.docs.map((d) => d.data());
     const schools = new Map(schoolsSnap.docs.map((d) => [d.data().schoolCode || d.id, { id: d.id, ...d.data() }]));
     const repsBySchool = {};
-    admins.filter((a) => isSchoolAdminB(a.adminType)).forEach((a) => (repsBySchool[a.schoolCode] = (repsBySchool[a.schoolCode] || 0) + 1));
+    bRepsSnap.docs.forEach((d) => {
+      const code = d.data().schoolCode;
+      repsBySchool[code] = (repsBySchool[code] || 0) + 1;
+    });
 
-    const schoolAdmins = admins
+    const q = String(req.query.q || "").trim().toLowerCase();
+    const allSchoolAdmins = admins
       .filter((a) => isSchoolAdminA(a.adminType))
       .map((a) => {
         const school = schools.get(a.schoolCode);
@@ -352,13 +371,21 @@ export const getAdminDirectory = async (req, res) => {
         };
       })
       .sort((a, b) => a.schoolName.localeCompare(b.schoolName));
+    const matching = allSchoolAdmins.filter(
+      (a) => !q || [a.schoolName, a.firstname, a.lastname, a.email, a.schoolCode].some((v) => String(v || "").toLowerCase().includes(q)),
+    );
+    const staff = admins.filter((a) => !isSchoolAdmin(a.adminType));
+    const weekAgo = Date.now() - 7 * DAY;
     res.json({
-      admins: admins
-        .filter((a) => !isSchoolAdmin(a.adminType))
+      admins: staff
         .map(adminView)
         .sort((a, b) => STAFF_ROLES.indexOf(a.adminType) - STAFF_ROLES.indexOf(b.adminType) || a.firstname.localeCompare(b.firstname)),
-      schoolAdmins,
-      departmentReps: admins.filter((a) => isSchoolAdminB(a.adminType)).length,
+      schoolAdmins: paginate(matching, req.query),
+      totals: {
+        schoolAdmins: allSchoolAdmins.length,
+        departmentReps: bRepsSnap.size,
+        activeThisWeek: [...staff, ...allSchoolAdmins].filter((a) => time(a.lastAccessed) >= weekAgo).length,
+      },
     });
   } catch (err) {
     console.error("getAdminDirectory Error:", err);
@@ -382,7 +409,10 @@ const loadActivity = async (uid, limit = 200) => {
 };
 
 export const getAdminProfile = async (req, res) => {
-  if (!requireSuper(req, res)) return;
+  if (!requireStaff(req, res)) return;
+  const superAdmin = req.admin.adminType === "super_admin";
+  // Billing is finance's business; other staff see the plan, not the money.
+  const seesBilling = superAdmin || req.admin.adminType === "finance";
   try {
     const snap = await Admin.where("uid", "==", req.params.uid).limit(1).get();
     if (snap.empty) return res.status(404).json({ error: "Administrator not found." });
@@ -399,7 +429,10 @@ export const getAdminProfile = async (req, res) => {
       if (schoolDoc) {
         const data = schoolDoc.data();
         const tier = normalizeTier(data.tier);
-        school = { ...schoolBillingRow({ id: schoolDoc.id, ...data }), seats: SEAT_LIMITS[tier] };
+        const row = schoolBillingRow({ id: schoolDoc.id, ...data });
+        school = seesBilling
+          ? { ...row, seats: SEAT_LIMITS[tier] }
+          : { id: row.id, schoolCode: row.schoolCode, name: row.name, logo: row.logo, tier: row.tier, tierLabel: row.tierLabel, seats: SEAT_LIMITS[tier] };
       }
       reps = repsSnap.docs
         .map((d) => d.data())
@@ -408,17 +441,20 @@ export const getAdminProfile = async (req, res) => {
         .sort((a, b) => a.adminType.localeCompare(b.adminType) || String(a.department).localeCompare(String(b.department)));
     }
     const inviter = target.invitedBy ? await Admin.where("uid", "==", target.invitedBy).limit(1).get() : null;
-    const activity = await loadActivity(target.uid, 30);
+    // What an admin did (exports, messages, views) stays with super admins.
+    const activity = superAdmin ? await loadActivity(target.uid, 30) : null;
     res.json({
       admin: adminView(target),
       invitedBy: inviter && !inviter.empty ? adminView(inviter.docs[0].data()) : null,
       school,
       reps,
       activity,
-      stats: {
-        actionsLast30Days: activity.filter((a) => time(a.createdAt) >= Date.now() - 30 * DAY).length,
-        exports: activity.filter((a) => a.action === "data_exported").length,
-      },
+      stats: activity
+        ? {
+            actionsLast30Days: activity.filter((a) => time(a.createdAt) >= Date.now() - 30 * DAY).length,
+            exports: activity.filter((a) => a.action === "data_exported").length,
+          }
+        : null,
     });
   } catch (err) {
     console.error("getAdminProfile Error:", err);

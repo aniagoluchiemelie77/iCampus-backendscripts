@@ -41,6 +41,19 @@ export async function convertAmount(amount, fromCurrency, toCurrency) {
   return Number(convertedAmount.toFixed(2));
 }
 
+/**
+ * Same maths as convertAmount, but with an already-fetched rates table and
+ * unrounded, so a dashboard can convert and sum thousands of amounts from one
+ * lookup. Returns null when either currency isn't in the table.
+ */
+export const convertWithRates = (rates, amount, fromCurrency, toCurrency) => {
+  if (fromCurrency === toCurrency) return Number(amount) || 0;
+  const rateFrom = rates?.[fromCurrency];
+  const rateTo = rates?.[toCurrency];
+  if (!rateFrom || !rateTo) return null;
+  return ((Number(amount) || 0) / rateFrom) * rateTo;
+};
+
 // Mirrors currencyMap in the app (src/utils/UserTransactionsHelpers.ts).
 export const CURRENCY_BY_COUNTRY = Object.freeze({
   Nigeria: "NGN",

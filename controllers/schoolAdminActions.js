@@ -161,11 +161,43 @@ const userRow = (u) => ({
   joinedAt: toDate(u.createdAt)?.toISOString() || null,
 });
 
-/** The school's students or lecturers in scope, plus department and level breakdowns. */
-const loadSchoolUsers = async (scope, query) => {
+// A school can have thousands of students. Its members are read once per
+// MEMBERS_TTL_MS, with only the fields the Users tab needs, and every page,
+// search keystroke and breakdown is served from that copy, so paging through
+// 4,000 students doesn't re-read the whole school from Firestore each time.
+// Only one page (`limit`, max 100) is ever sent to the portal.
+const MEMBER_FIELDS = [
+  "uid", "firstname", "lastname", "username", "usertype", "matricNumber", "staffId",
+  "department", "current_level", "isVerified", "isSuspended", "profilePic", "createdAt",
+];
+const MEMBERS_TTL_MS = 2 * 60 * 1000;
+const MAX_CACHED_SCHOOLS = 50;
+const memberCache = new Map(); // schoolCode -> { at, promise }
+
+const loadMembers = (schoolCode, { fresh = false } = {}) => {
+  const hit = memberCache.get(schoolCode);
+  if (!fresh && hit && Date.now() - hit.at < MEMBERS_TTL_MS) return hit.promise;
+  const promise = User.where("schoolCode", "==", schoolCode)
+    .select(...MEMBER_FIELDS)
+    .get()
+    .then((snap) => snap.docs.map((d) => d.data()).filter((u) => Object.values(USER_ROLES).includes(u.usertype)));
+  // Re-inserting keeps the Map in least-recently-loaded order for eviction.
+  memberCache.delete(schoolCode);
+  memberCache.set(schoolCode, { at: Date.now(), promise });
+  if (memberCache.size > MAX_CACHED_SCHOOLS) memberCache.delete(memberCache.keys().next().value);
+  promise.catch(() => {
+    if (memberCache.get(schoolCode)?.promise === promise) memberCache.delete(schoolCode);
+  });
+  return promise;
+};
+
+/**
+ * The school's students or lecturers in scope, plus department and level
+ * breakdowns. `fresh` skips the member cache (exports must be current).
+ */
+const loadSchoolUsers = async (scope, query, { fresh = false } = {}) => {
   const role = USER_ROLES[query.role] ? query.role : "students";
-  const snap = await User.where("schoolCode", "==", scope.schoolCode).get();
-  const members = snap.docs.map((d) => d.data()).filter((u) => Object.values(USER_ROLES).includes(u.usertype));
+  const members = await loadMembers(scope.schoolCode, { fresh });
   const departments = [...new Set(members.map((u) => String(u.department || "").trim()).filter(Boolean))].sort((a, b) =>
     a.localeCompare(b),
   );
@@ -266,10 +298,11 @@ export const exportSchoolData = async (req, res) => {
   try {
     let files;
     if (section === "students" || section === "lecturer-accounts") {
-      const data = await loadSchoolUsers(narrowed, {
-        role: section === "students" ? "students" : "lecturers",
-        level: req.body?.level,
-      });
+      const data = await loadSchoolUsers(
+        narrowed,
+        { role: section === "students" ? "students" : "lecturers", level: req.body?.level },
+        { fresh: true },
+      );
       files = [{ name: section, rows: data.rows, columns: USER_COLUMNS }];
     } else {
       const data = await buildSchoolAnalytics(narrowed.schoolCode, { department: narrowed.department, full: true, session: req.body?.session });
