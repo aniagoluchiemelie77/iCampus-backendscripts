@@ -134,11 +134,18 @@ const inSession = (course, session) => {
  * @param options.full  also return complete lists, for the "View all" screens
  * @param options.session  academic session to report ("2026/2027"); defaults to the current one
  */
-export const buildSchoolAnalytics = async (schoolCode, { department = null, full = false, session: requestedSession = null } = {}) => {
+export const buildSchoolAnalytics = async (
+  schoolCode,
+  { department = null, full = false, session: requestedSession = null } = {},
+) => {
   const institution = await loadInstitution(schoolCode);
   const tier = normalizeTier(institution?.tier);
   const level = TIERS.indexOf(tier);
-  const access = { basic: true, professional: level >= 1, enterprise: level >= 2 };
+  const access = {
+    basic: true,
+    professional: level >= 1,
+    enterprise: level >= 2,
+  };
   let session = resolveSession(requestedSession);
 
   // ---- Shared base data -----------------------------------------------------
@@ -154,8 +161,6 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
   );
   const institutionCourses = coursesSnap.docs.map((d) => d.data());
   // Monthly and weekly trends end today, or on the last day of a past session.
-  const isCurrentSession =
-    session.startYear === currentInstitutionSession.startYear;
   const trendEnd = isCurrentSession
     ? new Date()
     : new Date(session.endsAt.getTime() - 1);
@@ -170,6 +175,8 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
     institution,
     courses: institutionCourses,
   });
+  const isCurrentSession =
+    session.startYear === currentInstitutionSession.startYear;
   const allUsers = usersSnap.docs.map((d) => d.data());
   const allCourses = coursesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
@@ -177,14 +184,19 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
   // makes the other choices disappear.
   const departments = [
     ...new Set(
-      [...allCourses.map((c) => c.department), ...allUsers.map((u) => u.department)]
+      [
+        ...allCourses.map((c) => c.department),
+        ...allUsers.map((u) => u.department),
+      ]
         .map((d) => String(d || "").trim())
         .filter(Boolean),
     ),
   ].sort((a, b) => a.localeCompare(b));
 
   const users = allUsers.filter((u) => inDept(u.department));
-  const courses = allCourses.filter((c) => inSession(c, session) && inDept(c.department));
+  const courses = allCourses.filter(
+    (c) => inSession(c, session) && inDept(c.department),
+  );
   const courseIds = courses.map((c) => c.courseId).filter(Boolean);
   const courseById = new Map(courses.map((c) => [c.courseId, c]));
   const userById = new Map(allUsers.map((u) => [u.uid, u]));
@@ -205,13 +217,24 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
     return !!start && start.getTime() <= nowMs;
   });
   const heldIds = new Set(heldLectures.map((l) => l.id));
-  const presentRecords = attendance.filter((a) => a.status === "Present" && heldIds.has(a.lectureId));
+  const presentRecords = attendance.filter(
+    (a) => a.status === "Present" && heldIds.has(a.lectureId),
+  );
   const presentByLecture = new Map();
   attendance
     .filter((a) => a.status === "Present")
-    .forEach((a) => presentByLecture.set(a.lectureId, (presentByLecture.get(a.lectureId) || 0) + 1));
-  const seatsOf = (courseId) => listLength(courseById.get(courseId)?.studentsEnrolled);
-  const expectedSeats = heldLectures.reduce((sum, l) => sum + seatsOf(l.courseId), 0);
+    .forEach((a) =>
+      presentByLecture.set(
+        a.lectureId,
+        (presentByLecture.get(a.lectureId) || 0) + 1,
+      ),
+    );
+  const seatsOf = (courseId) =>
+    listLength(courseById.get(courseId)?.studentsEnrolled);
+  const expectedSeats = heldLectures.reduce(
+    (sum, l) => sum + seatsOf(l.courseId),
+    0,
+  );
 
   const students = users.filter((u) => u.usertype === "student");
   const lecturers = users.filter((u) => u.usertype === "lecturer");
@@ -278,18 +301,23 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
     };
   };
   const isOngoing = (l) => {
-    if (["cancelled", "completed", "postponed"].includes(l.status)) return false;
+    if (["cancelled", "completed", "postponed"].includes(l.status))
+      return false;
     if (l.status === "ongoing" || l.isLive) return true;
     const start = startOf(l);
     const end = endOf(l);
-    return !!start && !!end && start.getTime() <= nowMs && nowMs < end.getTime();
+    return (
+      !!start && !!end && start.getTime() <= nowMs && nowMs < end.getTime()
+    );
   };
   const todayKey = localDateKey(now);
   // A past session has nothing live; its lectures still count everywhere else.
   const ongoing = isCurrentSession ? lectures.filter(isOngoing) : [];
   const today = (isCurrentSession ? lectures : []).filter((l) => {
     const start = startOf(l);
-    return l.status !== "cancelled" && !!start && localDateKey(start) === todayKey;
+    return (
+      l.status !== "cancelled" && !!start && localDateKey(start) === todayKey
+    );
   });
   const upcomingToday = today
     .filter((l) => !isOngoing(l) && (startOf(l)?.getTime() || 0) > nowMs)
@@ -297,7 +325,9 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
   const live = {
     ongoingCount: ongoing.length,
     todayCount: today.length,
-    completedToday: today.filter((l) => (endOf(l)?.getTime() ?? Infinity) <= nowMs).length,
+    completedToday: today.filter(
+      (l) => (endOf(l)?.getTime() ?? Infinity) <= nowMs,
+    ).length,
     ongoing: take(ongoing.map(lectureRow), 8),
     upcomingToday: take(upcomingToday.map(lectureRow), 5),
   };
@@ -307,7 +337,9 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
   let enrollments = 0;
   const deptCourses = {};
   const heldByCourse = new Map();
-  heldLectures.forEach((l) => heldByCourse.set(l.courseId, (heldByCourse.get(l.courseId) || 0) + 1));
+  heldLectures.forEach((l) =>
+    heldByCourse.set(l.courseId, (heldByCourse.get(l.courseId) || 0) + 1),
+  );
   courses.forEach((c) => {
     const dept = c.department || "General";
     deptCourses[dept] = (deptCourses[dept] || 0) + 1;
@@ -324,20 +356,27 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       semester: c.semester || null,
       session: c.session || session.label,
       enrolled: listLength(c.studentsEnrolled),
-      lecturers: (Array.isArray(c.lecturerIds) ? c.lecturerIds : []).map((uid) => fullName(userById.get(uid))),
+      lecturers: (Array.isArray(c.lecturerIds) ? c.lecturerIds : []).map(
+        (uid) => fullName(userById.get(uid)),
+      ),
       lecturesHeld: heldByCourse.get(c.courseId) || 0,
     }))
     .sort((a, b) => b.enrolled - a.enrolled);
 
   // ---- Announcements (current session) -------------------------------------
-  const sinceSession = (d) => !!d && d >= session.startsAt && d < session.endsAt;
+  const sinceSession = (d) =>
+    !!d && d >= session.startsAt && d < session.endsAt;
   const memos = memosSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((m) => sinceSession(toDate(m.createdAt)));
   const broadcasts = broadcastsSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     // Department reps see school-wide notices and their own department's.
-    .filter((b) => sinceSession(toDate(b.createdAt)) && (!department || !b.department || inDept(b.department)));
+    .filter(
+      (b) =>
+        sinceSession(toDate(b.createdAt)) &&
+        (!department || !b.department || inDept(b.department)),
+    );
   const announcementRows = [
     ...memos.map((m) => ({
       id: m.postId || m.id,
@@ -347,7 +386,9 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       createdAt: toDate(m.createdAt)?.toISOString() || null,
       reach: Number(m.impressions) || 0,
       reachLabel: "views",
-      sentBy: m.postAuthorsDetails?.organizationName || fullName(m.postAuthorsDetails),
+      sentBy:
+        m.postAuthorsDetails?.organizationName ||
+        fullName(m.postAuthorsDetails),
       department: null,
     })),
     ...broadcasts.map((b) => ({
@@ -367,17 +408,29 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
 
   // ---- Online vs physical ---------------------------------------------------
   const isPhysical = (l) => l.lectureType === "Physical";
-  const modeMonths = months.map((m) => ({ month: m.key, physical: 0, online: 0 }));
+  const modeMonths = months.map((m) => ({
+    month: m.key,
+    physical: 0,
+    online: 0,
+  }));
   const modeDepts = {};
   lectures
     .filter((l) => l.status !== "cancelled")
     .forEach((l) => {
       const mode = isPhysical(l) ? "physical" : "online";
       const start = startOf(l);
-      const row = start && modeMonths.find((m, i) => start >= months[i].start && start < months[i].end);
+      const row =
+        start &&
+        modeMonths.find(
+          (m, i) => start >= months[i].start && start < months[i].end,
+        );
       if (row) row[mode] += 1;
       const dept = courseById.get(l.courseId)?.department || "General";
-      modeDepts[dept] = modeDepts[dept] || { department: dept, physical: 0, online: 0 };
+      modeDepts[dept] = modeDepts[dept] || {
+        department: dept,
+        physical: 0,
+        online: 0,
+      };
       modeDepts[dept][mode] += 1;
     });
   const checkInsByMode = { physical: 0, online: 0 };
@@ -404,21 +457,30 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       verifiedStudents,
       totalLecturers: lecturers.length,
       verifiedLecturers,
-      verificationRatePct: pct(verifiedStudents + verifiedLecturers, students.length + lecturers.length),
+      verificationRatePct: pct(
+        verifiedStudents + verifiedLecturers,
+        students.length + lecturers.length,
+      ),
     },
     attendance: {
       lecturesScheduled: lectures.length,
       lecturesHeld: heldLectures.length,
-      lecturesCancelled: lectures.filter((l) => l.status === "cancelled").length,
-      physicalLectures: heldLectures.filter((l) => l.lectureType === "Physical").length,
-      onlineLectures: heldLectures.filter((l) => l.lectureType !== "Physical").length,
+      lecturesCancelled: lectures.filter((l) => l.status === "cancelled")
+        .length,
+      physicalLectures: heldLectures.filter((l) => l.lectureType === "Physical")
+        .length,
+      onlineLectures: heldLectures.filter((l) => l.lectureType !== "Physical")
+        .length,
       checkIns: presentRecords.length,
       attendanceRatePct: pct(presentRecords.length, expectedSeats),
     },
     announcements: {
       memosPosted: memos.length,
       notificationsSent: broadcasts.length,
-      totalImpressions: memos.reduce((s, m) => s + (Number(m.impressions) || 0), 0),
+      totalImpressions: memos.reduce(
+        (s, m) => s + (Number(m.impressions) || 0),
+        0,
+      ),
       lastPostedAt: announcementRows[0]?.createdAt || null,
       recent: take(announcementRows, 5),
       total: announcementRows.length,
@@ -432,7 +494,12 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       studentEnrollments: enrollments,
       list: take(courseRows),
     },
-    onboardingGrowth: months.map((m) => ({ month: m.key, students: 0, lecturers: 0, ...growth[m.key] })),
+    onboardingGrowth: months.map((m) => ({
+      month: m.key,
+      students: 0,
+      lecturers: 0,
+      ...growth[m.key],
+    })),
     lectureModes: {
       // Held so far this session.
       physical: heldLectures.filter(isPhysical).length,
@@ -443,7 +510,9 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       },
       // Scheduled (cancelled excluded), by month and by department.
       byMonth: modeMonths,
-      byDepartment: Object.values(modeDepts).sort((a, b) => b.physical + b.online - (a.physical + a.online)),
+      byDepartment: Object.values(modeDepts).sort(
+        (a, b) => b.physical + b.online - (a.physical + a.online),
+      ),
     },
   };
 
@@ -458,8 +527,14 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       queryIn(Exceptions, "courseId", courseIds),
     ]);
     const published = assessments.filter((a) => a.isPublished !== false);
-    const marksByTest = new Map(published.map((a) => [a.id, Number(a.totalMarks) || 0]));
-    submissions = await queryIn(TestSubmission, "testId", published.map((a) => a.id));
+    const marksByTest = new Map(
+      published.map((a) => [a.id, Number(a.totalMarks) || 0]),
+    );
+    submissions = await queryIn(
+      TestSubmission,
+      "testId",
+      published.map((a) => a.id),
+    );
     const scorePcts = submissions
       .map((s) => pct(Number(s.score) || 0, marksByTest.get(s.testId) || 0))
       .filter((v) => v !== null);
@@ -471,7 +546,11 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       const dept = courseById.get(l.courseId)?.department || "General";
       deptAgg[dept] = deptAgg[dept] || { present: 0, seats: 0 };
       deptAgg[dept].seats += seats;
-      const ca = courseAgg.get(l.courseId) || { present: 0, seats: 0, lectures: 0 };
+      const ca = courseAgg.get(l.courseId) || {
+        present: 0,
+        seats: 0,
+        lectures: 0,
+      };
       ca.seats += seats;
       ca.lectures += 1;
       courseAgg.set(l.courseId, ca);
@@ -494,7 +573,9 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       .sort((a, b) => b.attendanceRatePct - a.attendanceRatePct);
 
     const weeks = lastWeeks(8, trendEnd);
-    const weekly = Object.fromEntries(weeks.map((w) => [w, { present: 0, seats: 0 }]));
+    const weekly = Object.fromEntries(
+      weeks.map((w) => [w, { present: 0, seats: 0 }]),
+    );
     const lectureWeek = new Map();
     heldLectures.forEach((l) => {
       const start = startOf(l);
@@ -510,11 +591,19 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
     const byLecturer = {};
     heldLectures.forEach((l) => {
       if (!l.hostId) return;
-      byLecturer[l.hostId] = byLecturer[l.hostId] || { lecturesDelivered: 0, online: 0, physical: 0 };
+      byLecturer[l.hostId] = byLecturer[l.hostId] || {
+        lecturesDelivered: 0,
+        online: 0,
+        physical: 0,
+      };
       byLecturer[l.hostId].lecturesDelivered += 1;
-      byLecturer[l.hostId][l.lectureType === "Physical" ? "physical" : "online"] += 1;
+      byLecturer[l.hostId][
+        l.lectureType === "Physical" ? "physical" : "online"
+      ] += 1;
     });
-    const withSyllabus = courses.filter((c) => listLength(c.courseContents) > 0).length;
+    const withSyllabus = courses.filter(
+      (c) => listLength(c.courseContents) > 0,
+    ).length;
 
     professional = {
       assessments: {
@@ -522,26 +611,47 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
         drafts: assessments.length - published.length,
         submissions: submissions.length,
         averageScorePct: avg(scorePcts),
-        passRatePct: pct(scorePcts.filter((p) => p >= 40).length, scorePcts.length),
+        passRatePct: pct(
+          scorePcts.filter((p) => p >= 40).length,
+          scorePcts.length,
+        ),
         flaggedSubmissions: submissions.filter((s) => s.isFlagged).length,
-        impersonationBlocked: submissions.filter((s) => s.verificationStatus === "Impersonation_Detected").length,
+        impersonationBlocked: submissions.filter(
+          (s) => s.verificationStatus === "Impersonation_Detected",
+        ).length,
         scoreBands: bands(scorePcts),
       },
       lms: {
         coursesWithSyllabus: withSyllabus,
         syllabusCoveragePct: pct(withSyllabus, courses.length),
-        materialsUploaded: courses.reduce((s, c) => s + listLength(c.resources), 0),
-        assignmentsPosted: courses.reduce((s, c) => s + listLength(c.assignments), 0),
+        materialsUploaded: courses.reduce(
+          (s, c) => s + listLength(c.resources),
+          0,
+        ),
+        assignmentsPosted: courses.reduce(
+          (s, c) => s + listLength(c.assignments),
+          0,
+        ),
       },
       attendance: {
         byDepartment: Object.entries(deptAgg)
-          .map(([name, v]) => ({ department: name, attendanceRatePct: pct(v.present, v.seats) }))
-          .sort((a, b) => (b.attendanceRatePct ?? 0) - (a.attendanceRatePct ?? 0)),
+          .map(([name, v]) => ({
+            department: name,
+            attendanceRatePct: pct(v.present, v.seats),
+          }))
+          .sort(
+            (a, b) => (b.attendanceRatePct ?? 0) - (a.attendanceRatePct ?? 0),
+          ),
         topCourses: courseRates.slice(0, 5),
         lowestCourses: courseRates.slice(-5).reverse(),
-        weeklyTrend: weeks.map((w) => ({ week: w, attendanceRatePct: pct(weekly[w].present, weekly[w].seats) })),
-        exceptionsApproved: exceptions.filter((e) => e.status === "approved").length,
-        exceptionsPending: exceptions.filter((e) => e.status === "pending").length,
+        weeklyTrend: weeks.map((w) => ({
+          week: w,
+          attendanceRatePct: pct(weekly[w].present, weekly[w].seats),
+        })),
+        exceptionsApproved: exceptions.filter((e) => e.status === "approved")
+          .length,
+        exceptionsPending: exceptions.filter((e) => e.status === "pending")
+          .length,
       },
       lecturers: take(
         Object.entries(byLecturer)
@@ -558,22 +668,50 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
     const possibleByCourse = new Map();
     assessments
       .filter((a) => a.isPublished !== false)
-      .forEach((a) => possibleByCourse.set(a.courseId, (possibleByCourse.get(a.courseId) || 0) + (Number(a.totalMarks) || 0)));
+      .forEach((a) =>
+        possibleByCourse.set(
+          a.courseId,
+          (possibleByCourse.get(a.courseId) || 0) + (Number(a.totalMarks) || 0),
+        ),
+      );
     const presentByStudent = new Map();
-    presentRecords.forEach((a) => presentByStudent.set(a.studentId, (presentByStudent.get(a.studentId) || 0) + 1));
+    presentRecords.forEach((a) =>
+      presentByStudent.set(
+        a.studentId,
+        (presentByStudent.get(a.studentId) || 0) + 1,
+      ),
+    );
     const excusedByStudent = new Map();
     exceptions
       .filter((e) => e.status === "approved")
-      .forEach((e) => excusedByStudent.set(e.studentId, (excusedByStudent.get(e.studentId) || 0) + 1));
+      .forEach((e) =>
+        excusedByStudent.set(
+          e.studentId,
+          (excusedByStudent.get(e.studentId) || 0) + 1,
+        ),
+      );
     const scoreByStudent = new Map();
-    submissions.forEach((s) => scoreByStudent.set(s.studentId, (scoreByStudent.get(s.studentId) || 0) + (Number(s.score) || 0)));
+    submissions.forEach((s) =>
+      scoreByStudent.set(
+        s.studentId,
+        (scoreByStudent.get(s.studentId) || 0) + (Number(s.score) || 0),
+      ),
+    );
     const expected = new Map();
     const possible = new Map();
     courses.forEach((c) => {
-      (Array.isArray(c.studentsEnrolled) ? c.studentsEnrolled : []).forEach((sid) => {
-        expected.set(sid, (expected.get(sid) || 0) + (heldByCourse.get(c.courseId) || 0));
-        possible.set(sid, (possible.get(sid) || 0) + (possibleByCourse.get(c.courseId) || 0));
-      });
+      (Array.isArray(c.studentsEnrolled) ? c.studentsEnrolled : []).forEach(
+        (sid) => {
+          expected.set(
+            sid,
+            (expected.get(sid) || 0) + (heldByCourse.get(c.courseId) || 0),
+          );
+          possible.set(
+            sid,
+            (possible.get(sid) || 0) + (possibleByCourse.get(c.courseId) || 0),
+          );
+        },
+      );
     });
 
     const studentRows = students.map((u) => {
@@ -584,28 +722,47 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
         matricNumber: u.matricNumber || "N/A",
         department: u.department || "General",
         level: u.current_level || null,
-        attendancePct: pct(Math.min(exp, (presentByStudent.get(u.uid) || 0) + (excusedByStudent.get(u.uid) || 0)), exp),
+        attendancePct: pct(
+          Math.min(
+            exp,
+            (presentByStudent.get(u.uid) || 0) +
+              (excusedByStudent.get(u.uid) || 0),
+          ),
+          exp,
+        ),
         scorePct: pct(scoreByStudent.get(u.uid) || 0, possible.get(u.uid) || 0),
       };
     });
     const atRisk = studentRows
       .filter(
         (s) =>
-          (s.attendancePct !== null && s.attendancePct < AT_RISK_ATTENDANCE_PCT) ||
+          (s.attendancePct !== null &&
+            s.attendancePct < AT_RISK_ATTENDANCE_PCT) ||
           (s.scorePct !== null && s.scorePct < AT_RISK_SCORE_PCT),
       )
-      .sort((a, b) => (a.attendancePct ?? 100) + (a.scorePct ?? 100) - ((b.attendancePct ?? 100) + (b.scorePct ?? 100)));
+      .sort(
+        (a, b) =>
+          (a.attendancePct ?? 100) +
+          (a.scorePct ?? 100) -
+          ((b.attendancePct ?? 100) + (b.scorePct ?? 100)),
+      );
 
     const deptStats = {};
     studentRows.forEach((s) => {
-      const d = (deptStats[s.department] = deptStats[s.department] || { students: 0, att: [], score: [] });
+      const d = (deptStats[s.department] = deptStats[s.department] || {
+        students: 0,
+        att: [],
+        score: [],
+      });
       d.students += 1;
       if (s.attendancePct !== null) d.att.push(s.attendancePct);
       if (s.scorePct !== null) d.score.push(s.scorePct);
     });
 
     const weeks = lastWeeks(12, trendEnd);
-    const engagement = Object.fromEntries(weeks.map((w) => [w, { checkIns: 0, submissions: 0 }]));
+    const engagement = Object.fromEntries(
+      weeks.map((w) => [w, { checkIns: 0, submissions: 0 }]),
+    );
     presentRecords.forEach((a) => {
       const d = toDate(a.timestamp) || toDate(a.createdAt);
       const w = d ? weekKey(d) : null;
@@ -638,7 +795,10 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
     const lecturerLoad = {};
     courses.forEach((c) =>
       (Array.isArray(c.lecturerIds) ? c.lecturerIds : []).forEach((uid) => {
-        const row = (lecturerLoad[uid] = lecturerLoad[uid] || { courses: 0, students: 0 });
+        const row = (lecturerLoad[uid] = lecturerLoad[uid] || {
+          courses: 0,
+          students: 0,
+        });
         row.courses += 1;
         row.students += listLength(c.studentsEnrolled);
       }),
@@ -656,11 +816,17 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       exceptionReasons[r] = (exceptionReasons[r] || 0) + 1;
     });
     const sumProctoring = (field) =>
-      submissions.reduce((sum, s) => sum + (Number(s.proctoringData?.[field]) || 0), 0);
+      submissions.reduce(
+        (sum, s) => sum + (Number(s.proctoringData?.[field]) || 0),
+        0,
+      );
 
     enterprise = {
       atRisk: {
-        thresholds: { attendancePct: AT_RISK_ATTENDANCE_PCT, scorePct: AT_RISK_SCORE_PCT },
+        thresholds: {
+          attendancePct: AT_RISK_ATTENDANCE_PCT,
+          scorePct: AT_RISK_SCORE_PCT,
+        },
         count: atRisk.length,
         students: take(atRisk, 8),
       },
@@ -675,9 +841,15 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
         .sort((a, b) => (b.averageScorePct ?? 0) - (a.averageScorePct ?? 0)),
       levels: Object.entries(levels)
         .map(([name, count]) => ({ level: name, students: count }))
-        .sort((a, b) => a.level.localeCompare(b.level, undefined, { numeric: true })),
+        .sort((a, b) =>
+          a.level.localeCompare(b.level, undefined, { numeric: true }),
+        ),
       engagementTrend: weeks.map((w) => ({ week: w, ...engagement[w] })),
-      heatmap: { days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"], hours: HOURS, counts: heatmap },
+      heatmap: {
+        days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+        hours: HOURS,
+        counts: heatmap,
+      },
       lecturerLoad: take(
         Object.entries(lecturerLoad)
           .map(([uid, v]) => ({ uid, name: fullName(userById.get(uid)), ...v }))
@@ -694,11 +866,18 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
         multiplePeopleDetected: sumProctoring("multipleFaceCount"),
         lookAways: sumProctoring("lookAwayCount"),
         testInterruptions: sumProctoring("tabSwitchCount"),
-        averageStrikes: avg(submissions.map((s) => Number(s.proctoringData?.totalStrikes) || 0)),
-        accountsWithSuspiciousActivity: users.filter((u) => listLength(u.suspiciousActivity) > 0).length,
+        averageStrikes: avg(
+          submissions.map((s) => Number(s.proctoringData?.totalStrikes) || 0),
+        ),
+        accountsWithSuspiciousActivity: users.filter(
+          (u) => listLength(u.suspiciousActivity) > 0,
+        ).length,
         suspendedAccounts: users.filter((u) => u.isSuspended).length,
       },
-      support: { dedicatedSupport: true, contactEmail: process.env.ENTERPRISE_SUPPORT_EMAIL || null },
+      support: {
+        dedicatedSupport: true,
+        contactEmail: process.env.ENTERPRISE_SUPPORT_EMAIL || null,
+      },
     };
   }
 
@@ -717,25 +896,36 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       endsAt: session.endsAt.toISOString(),
       isCurrent: isCurrentSession,
     },
-    sessions: [...new Set([
-      institution?.currentAcademicSession,
-      institution?.activeAcademicSession,
-      ...institutionCourses.map((course) => course.session),
-    ].filter(Boolean))]
-      .sort((a, b) => sessionStartYear(b) - sessionStartYear(a))
-      .slice(0, 12)
-      .length
-      ? [...new Set([
+    sessions: [
+      ...new Set(
+        [
           institution?.currentAcademicSession,
           institution?.activeAcademicSession,
           ...institutionCourses.map((course) => course.session),
-        ].filter(Boolean))]
+        ].filter(Boolean),
+      ),
+    ]
+      .sort((a, b) => sessionStartYear(b) - sessionStartYear(a))
+      .slice(0, 12).length
+      ? [
+          ...new Set(
+            [
+              institution?.currentAcademicSession,
+              institution?.activeAcademicSession,
+              ...institutionCourses.map((course) => course.session),
+            ].filter(Boolean),
+          ),
+        ]
           .sort((a, b) => sessionStartYear(b) - sessionStartYear(a))
           .slice(0, 12)
       : availableSessions(),
     access,
     // What higher tiers add, for upgrade prompts.
-    locked: TIERS.slice(level + 1).map((t) => ({ tier: t, label: TIER_LABELS[t], features: SCHOOL_TIER_FEATURES[t] })),
+    locked: TIERS.slice(level + 1).map((t) => ({
+      tier: t,
+      label: TIER_LABELS[t],
+      features: SCHOOL_TIER_FEATURES[t],
+    })),
     generatedAt: new Date().toISOString(),
     kpis,
     live,
@@ -750,9 +940,11 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
             lectures: lectures
               .filter((l) => l.status !== "cancelled")
               .map(lectureRow)
-              .sort((a, b) => String(b.startsAt).localeCompare(String(a.startsAt))),
+              .sort((a, b) =>
+                String(b.startsAt).localeCompare(String(a.startsAt)),
+              ),
           },
         }
       : {}),
   };
-};
+};;
