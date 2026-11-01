@@ -161,9 +161,6 @@ export const buildSchoolAnalytics = async (
   );
   const institutionCourses = coursesSnap.docs.map((d) => d.data());
   // Monthly and weekly trends end today, or on the last day of a past session.
-  const trendEnd = isCurrentSession
-    ? new Date()
-    : new Date(session.endsAt.getTime() - 1);
   const inDept = (value) =>
     !department || norm(value || "General") === norm(department);
   const take = (list, n = PREVIEW) => (full ? list : list.slice(0, n));
@@ -177,6 +174,9 @@ export const buildSchoolAnalytics = async (
   });
   const isCurrentSession =
     session.startYear === currentInstitutionSession.startYear;
+  const trendEnd = isCurrentSession
+    ? new Date()
+    : new Date(session.endsAt.getTime() - 1);
   const allUsers = usersSnap.docs.map((d) => d.data());
   const allCourses = coursesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
@@ -947,4 +947,4 @@ export const buildSchoolAnalytics = async (
         }
       : {}),
   };
-};;
+};;;
