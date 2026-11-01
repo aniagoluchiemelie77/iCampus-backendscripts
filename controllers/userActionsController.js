@@ -49,6 +49,7 @@ import { db } from "../config/firebaseAdmin.js";
 import { embedPostWithAuthorDetails } from "../utils/reposterPriorityChecker.js";
 import { prepareChatHistory } from "../utils/chatFormatter.js";
 import { canViewPost, enrichPosts } from "../utils/postPipeline.js";
+import { buildChatSystemInstruction } from "../utils/aiPrompts.js";
 import {
   geminiModel,
   isGeminiQuotaError,
@@ -1241,46 +1242,7 @@ export const aiChat = async (req, res) => {
     }
 
     const { type = "general", data = {} } = context;
-    let systemInstruction = "";
-    if (type === "support") {
-      systemInstruction = `You are iAssistant, the official Support AI for iCampus. 
-        Use the provided FAQ knowledge: ${JSON.stringify(typeof FAQ_DATA !== "undefined" ? FAQ_DATA : {})}. 
-        If the user's issue cannot be resolved via the FAQs, acknowledge the limitation 
-        and state that you are escalating the issue to a human support ticket.
-        If the issue requires escalation, respond strictly in a valid JSON format:
-          {
-            "reply": "Your natural language response to the user...",
-            "requiresEscalation": true,
-            "suggestedCategory": "technical|billing|content|other",
-            "suggestedSummary": "A very short 5- 10 words summary of the issue",
-            "suggestedSeverity": "low|medium|high|critical"
-          }
-          If no escalation is needed, just provide your response as plain text or wrapped in the same JSON structure with "requiresEscalation": false.
-        `;
-    } else {
-      const courseLabel = [data.courseCode, data.courseTitle || data.title]
-        .filter(Boolean)
-        .join(" - ");
-      systemInstruction = `You are iAssistant, the official Academic AI Tutor for iCampus.
-      Your purpose is to help students and lecturers understand educational material.
-      Academic Context: ${type === "course" ? `Course: ${courseLabel || "General Course"}` : type === "lecture" ? `Topic: ${data.topicName || "General Lecture"}` : "General Study"}.
-      When the user shares an image or document, read it and explain or answer based on its content.`;
-    }
-    // House style for every reply: a knowledgeable friend in a chat app.
-    systemInstruction += `
-
-      How to reply:
-      - Write like a friendly, smart classmate texting back: warm, direct, no fluff.
-      - Lead with the answer in the first sentence. Keep most replies under 120 words;
-        go longer only when the user asks for detail or a step-by-step solution.
-      - Use short paragraphs (1–3 sentences). Use "- " bullets or "1. " steps only
-        when listing things. Use **bold** sparingly for key terms. Put formulas or
-        code inside \`backticks\`.
-      - No headings, no tables, no greetings like "Great question!", and don't
-        repeat the question back.
-      - If something is ambiguous, answer the most likely meaning and offer the
-        alternative in one short line.
-      - End with a short follow-up question only when it genuinely helps.`;
+    const systemInstruction = buildChatSystemInstruction(type, data);
     const formattedHistory = prepareChatHistory(history);
 
     // Attachments (images/PDFs uploaded from the app) arrive as a URL in the
@@ -1303,6 +1265,7 @@ export const aiChat = async (req, res) => {
       history: formattedHistory,
       config: {
         systemInstruction: systemInstruction,
+        thinkingConfig: { thinkingBudget: 0 },
       },
     });
     // @google/genai takes { message }; a bare string throws

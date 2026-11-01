@@ -140,22 +140,36 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
   const level = TIERS.indexOf(tier);
   const access = { basic: true, professional: level >= 1, enterprise: level >= 2 };
   let session = resolveSession(requestedSession);
-  // Monthly and weekly trends end today, or on the last day of a past session.
-  const trendEnd = isCurrentSession ? new Date() : new Date(session.endsAt.getTime() - 1);
-  const inDept = (value) => !department || norm(value || "General") === norm(department);
-  const take = (list, n = PREVIEW) => (full ? list : list.slice(0, n));
 
   // ---- Shared base data -----------------------------------------------------
-  const [usersSnap, coursesSnap, memosSnap, broadcastsSnap] = await Promise.all([
-    User.where("schoolCode", "==", schoolCode).get(),
-    Course.where("schoolCode", "==", schoolCode).get(),
-    Posts.where("schoolCode", "==", schoolCode).where("audience", "==", "school").get(),
-    SchoolAnnouncements.where("schoolCode", "==", schoolCode).get(),
-  ]);
+  const [usersSnap, coursesSnap, memosSnap, broadcastsSnap] = await Promise.all(
+    [
+      User.where("schoolCode", "==", schoolCode).get(),
+      Course.where("schoolCode", "==", schoolCode).get(),
+      Posts.where("schoolCode", "==", schoolCode)
+        .where("audience", "==", "school")
+        .get(),
+      SchoolAnnouncements.where("schoolCode", "==", schoolCode).get(),
+    ],
+  );
   const institutionCourses = coursesSnap.docs.map((d) => d.data());
-  session = resolveSchoolSession(requestedSession, { institution, courses: institutionCourses });
-  const currentInstitutionSession = resolveSchoolSession(null, { institution, courses: institutionCourses });
-  const isCurrentSession = session.startYear === currentInstitutionSession.startYear;
+  // Monthly and weekly trends end today, or on the last day of a past session.
+  const isCurrentSession =
+    session.startYear === currentInstitutionSession.startYear;
+  const trendEnd = isCurrentSession
+    ? new Date()
+    : new Date(session.endsAt.getTime() - 1);
+  const inDept = (value) =>
+    !department || norm(value || "General") === norm(department);
+  const take = (list, n = PREVIEW) => (full ? list : list.slice(0, n));
+  session = resolveSchoolSession(requestedSession, {
+    institution,
+    courses: institutionCourses,
+  });
+  const currentInstitutionSession = resolveSchoolSession(null, {
+    institution,
+    courses: institutionCourses,
+  });
   const allUsers = usersSnap.docs.map((d) => d.data());
   const allCourses = coursesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
