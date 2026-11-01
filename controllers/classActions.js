@@ -17,6 +17,7 @@ import {
   Course,
   Attendance,
   TaxEntries,
+  OperationalInstitutions,
 } from "../tableDeclarations.js";
 import { createNotification } from "../services/notification.js";
 import { generateTestAnalysisPDF } from "../templates/courseAssessmentTemplate.js";
@@ -42,6 +43,7 @@ import {
   isGeminiQuotaError,
   GEMINI_BUSY_MESSAGE,
 } from "../utils/gemini.js";
+import { detectAcademicSessionRecap } from "./academicRecapController.js";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
@@ -3614,6 +3616,7 @@ export const uploadCourseDetails = async (req, res) => {
         );
         await userDocRef.update({
           enrolledCourses: updatedEnrolled,
+          ...(studentInfo?.level ? { current_level: String(studentInfo.level).trim() } : {}),
           updatedAt: now,
         });
       } else if (userType === "lecturer") {
@@ -3647,6 +3650,32 @@ export const uploadCourseDetails = async (req, res) => {
         credits: c.credits,
       })),
     });
+    setImmediate(async () => {
+      try {
+        await detectAcademicSessionRecap({
+          requesterUid,
+          requesterEmail: req.user?.email,
+          role: userType,
+          sessions: extractedSessions,
+          newLevel: studentInfo?.level,
+        });
+      } catch (error) {
+        console.error("Failed to detect academic session recap:", error.message);
+      }
+    });
+    const extractedSessions = [...new Set(courses.map((course) => String(course.session || "").trim()).filter(Boolean))];
+    const extractedSchoolCode = req.user?.schoolCode || null;
+    if (extractedSchoolCode && extractedSessions.length) {
+      setImmediate(async () => {
+        try {
+          const latest = extractedSessions.sort((a, b) => Number(String(b).match(/\d{4}/)?.[0] || 0) - Number(String(a).match(/\d{4}/)?.[0] || 0))[0];
+          const snap = await OperationalInstitutions.where("schoolCode", "==", extractedSchoolCode).limit(1).get();
+          if (!snap.empty) await snap.docs[0].ref.set({ currentAcademicSession: latest, currentAcademicSessionUpdatedAt: new Date() }, { merge: true });
+        } catch (error) {
+          console.error("Failed to remember extracted academic session:", error.message);
+        }
+      });
+    }
     setImmediate(async () => {
       try {
         await createNotification({

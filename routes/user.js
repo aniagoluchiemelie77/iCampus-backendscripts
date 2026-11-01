@@ -71,6 +71,7 @@ import {
 import { upload } from "../middleware/auth.js";
 import { uploadCourseDetails } from "../controllers/classActions.js";
 import { initiateFlwCharge } from "../controllers/paymentController.js";
+import { requestAcademicSessionRecap } from "../controllers/academicRecapController.js";
 import {
   createPaymentIntent,
   confirmPayment,
@@ -79,6 +80,7 @@ import {
 } from "../controllers/paymentsController.js";
 
 const router = express.Router();
+router.post("/academic-session-recap", protect, idempotencyMiddleware, requestAcademicSessionRecap);
 router.patch(
   "/notifications/mark-all-read",
   protect,

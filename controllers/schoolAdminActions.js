@@ -274,6 +274,7 @@ const USER_COLUMNS = [
 ];
 
 const SCHOOL_EXPORTS = {
+  all: { title: "All institution sections", personalData: true },
   overview: { title: "Institution summary", personalData: false },
   courses: { title: "Courses this session", personalData: false },
   lectures: { title: "Lectures this session", personalData: false },
@@ -310,6 +311,25 @@ export const exportSchoolData = async (req, res) => {
         return res.status(403).json({ error: `${spec.title} is not included in your plan.` });
       }
       const b = data.basic;
+      if (section === "all") {
+        files = [
+          {
+            name: "summary",
+            columns: [{ key: "metric", label: "Metric" }, { key: "value", label: "Value" }],
+            rows: [
+              { metric: "Institution", value: data.institution.name },
+              { metric: "Session", value: data.session.label },
+              { metric: "Students", value: data.kpis.students.current },
+              { metric: "Lecturers", value: data.kpis.lecturers.current },
+              { metric: "Lectures held", value: b.attendance.lecturesHeld },
+              { metric: "Attendance rate %", value: b.attendance.attendanceRatePct },
+            ],
+          },
+          { name: "courses", rows: data.lists.courses, columns: [{ key: "courseCode", label: "Code" }, { key: "courseTitle", label: "Title" }, { key: "department", label: "Department" }, { key: "level", label: "Level" }] },
+          { name: "lectures", rows: data.lists.lectures, columns: [{ key: "startsAt", label: "Starts" }, { key: "courseCode", label: "Course" }, { key: "topicName", label: "Topic" }, { key: "lectureType", label: "Type" }, { key: "host", label: "Lecturer" }, { key: "checkIns", label: "Check-ins" }] },
+          { name: "announcements", rows: data.lists.announcements, columns: [{ key: "createdAt", label: "Date" }, { key: "title", label: "Title" }, { key: "body", label: "Message" }] },
+        ];
+      } else {
       files = {
         overview: () => [
           {
@@ -425,6 +445,7 @@ export const exportSchoolData = async (req, res) => {
           },
         ],
       }[section]();
+      }
     }
     const result = await emailExport(req, {
       title: spec.title,

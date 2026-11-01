@@ -95,3 +95,27 @@ export const resolveSession = (requested) => {
   if (year === null || year < FIRST_SESSION_START_YEAR || year > current.startYear) return current;
   return sessionForStartYear(year);
 };
+
+/** Prefer a session discovered in course/allocations data over calendar assumptions. */
+export const resolveSchoolSession = (requested, { institution, courses = [], date = new Date() } = {}) => {
+  const recorded = [];
+  const addSession = (value) => {
+    const year = sessionStartYear(value);
+    if (year !== null && year >= FIRST_SESSION_START_YEAR && !recorded.includes(`${year}/${year + 1}`)) {
+      recorded.push(`${year}/${year + 1}`);
+    }
+  };
+  addSession(institution?.currentAcademicSession);
+  addSession(institution?.activeAcademicSession);
+  courses.forEach((course) => addSession(course.session));
+
+  const requestedYear = sessionStartYear(requested);
+  if (requestedYear !== null && requested.includes("/")) {
+    return resolveSession(requested);
+  }
+  if (recorded.length) {
+    recorded.sort((a, b) => sessionStartYear(b) - sessionStartYear(a));
+    return sessionForStartYear(sessionStartYear(recorded[0]));
+  }
+  return academicSession(date);
+};

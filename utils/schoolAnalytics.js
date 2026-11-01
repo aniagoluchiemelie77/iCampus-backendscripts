@@ -29,6 +29,7 @@ import {
   availableSessions,
   normalizeTier,
   resolveSession,
+  resolveSchoolSession,
   sessionStartYear,
   TIER_LABELS,
   TIERS,
@@ -138,8 +139,7 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
   const tier = normalizeTier(institution?.tier);
   const level = TIERS.indexOf(tier);
   const access = { basic: true, professional: level >= 1, enterprise: level >= 2 };
-  const session = resolveSession(requestedSession);
-  const isCurrentSession = session.startYear === academicSession().startYear;
+  let session = resolveSession(requestedSession);
   // Monthly and weekly trends end today, or on the last day of a past session.
   const trendEnd = isCurrentSession ? new Date() : new Date(session.endsAt.getTime() - 1);
   const inDept = (value) => !department || norm(value || "General") === norm(department);
@@ -152,6 +152,10 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
     Posts.where("schoolCode", "==", schoolCode).where("audience", "==", "school").get(),
     SchoolAnnouncements.where("schoolCode", "==", schoolCode).get(),
   ]);
+  const institutionCourses = coursesSnap.docs.map((d) => d.data());
+  session = resolveSchoolSession(requestedSession, { institution, courses: institutionCourses });
+  const currentInstitutionSession = resolveSchoolSession(null, { institution, courses: institutionCourses });
+  const isCurrentSession = session.startYear === currentInstitutionSession.startYear;
   const allUsers = usersSnap.docs.map((d) => d.data());
   const allCourses = coursesSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
 
@@ -699,7 +703,22 @@ export const buildSchoolAnalytics = async (schoolCode, { department = null, full
       endsAt: session.endsAt.toISOString(),
       isCurrent: isCurrentSession,
     },
-    sessions: availableSessions(),
+    sessions: [...new Set([
+      institution?.currentAcademicSession,
+      institution?.activeAcademicSession,
+      ...institutionCourses.map((course) => course.session),
+    ].filter(Boolean))]
+      .sort((a, b) => sessionStartYear(b) - sessionStartYear(a))
+      .slice(0, 12)
+      .length
+      ? [...new Set([
+          institution?.currentAcademicSession,
+          institution?.activeAcademicSession,
+          ...institutionCourses.map((course) => course.session),
+        ].filter(Boolean))]
+          .sort((a, b) => sessionStartYear(b) - sessionStartYear(a))
+          .slice(0, 12)
+      : availableSessions(),
     access,
     // What higher tiers add, for upgrade prompts.
     locked: TIERS.slice(level + 1).map((t) => ({ tier: t, label: TIER_LABELS[t], features: SCHOOL_TIER_FEATURES[t] })),

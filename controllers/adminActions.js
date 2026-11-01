@@ -11,6 +11,7 @@ import {
   TaxEntries,
   TaxStatements,
   Ads,
+  SchoolAuditLog,
 } from "../tableDeclarations.js";
 import { setImmediate } from "timers";
 import { notifyAdmins } from "../services/adminNotification.js";
@@ -1160,7 +1161,7 @@ export const updateStation = async (req, res) => {
 export const getInstitutionDetails = async (req, res) => {
   try {
     const { schoolId } = req.params;
-    const [studentsSnapshot, lecturersSnapshot, schoolSnapshot] =
+    const [studentsSnapshot, lecturersSnapshot, schoolSnapshot, adminsSnapshot, auditSnapshot, configSnapshot] =
       await Promise.all([
         User.where("schoolCode", "==", schoolId)
           .where("role", "==", "student")
@@ -1171,6 +1172,9 @@ export const getInstitutionDetails = async (req, res) => {
         OperationalInstitutions.where("schoolCode", "==", schoolId)
           .limit(1)
           .get(),
+        Admin.where("schoolCode", "==", schoolId).get(),
+        SchoolAuditLog.where("schoolCode", "==", schoolId).orderBy("createdAt", "desc").limit(25).get(),
+        SchoolConfiguration.where("schoolId", "==", schoolId).limit(1).get(),
       ]);
 
     if (schoolSnapshot.empty) {
@@ -1180,6 +1184,15 @@ export const getInstitutionDetails = async (req, res) => {
     }
 
     const schoolData = schoolSnapshot.docs[0].data();
+    const configData = configSnapshot.empty ? {} : configSnapshot.docs[0].data();
+    const allUsers = [...studentsSnapshot.docs, ...lecturersSnapshot.docs]
+      .map((doc) => ({ uid: doc.id, ...doc.data() }));
+    const alumniCount = allUsers.filter((user) => String(user.isStillInSchool).toLowerCase() === "false").length;
+    const reps = adminsSnapshot.docs.map((doc) => ({ uid: doc.id, ...doc.data() })).filter((admin) =>
+      ["school_admin_a", "school_administrator"].includes(admin.adminType) || admin.adminType === "school_admin_b"
+    );
+    const levelA = reps.filter((rep) => ["school_admin_a", "school_administrator"].includes(rep.adminType));
+    const levelB = reps.filter((rep) => rep.adminType === "school_admin_b");
 
     return res.json({
       schoolName: schoolData.schoolName,
@@ -1187,6 +1200,16 @@ export const getInstitutionDetails = async (req, res) => {
       logo: schoolData.logo,
       studentCount: studentsSnapshot.size,
       lecturerCount: lecturersSnapshot.size,
+      alumniCount,
+      tier: schoolData.tier || "basic",
+      amountPaid: configData.amountPaid ?? schoolData.amountPaid ?? 0,
+      dueDate: configData.nextPaymentDue ?? schoolData.nextPaymentDue ?? null,
+      createdAt: schoolData.createdAt ?? null,
+      reps: {
+        a: levelA.map((rep) => ({ uid: rep.uid, firstname: rep.firstname, lastname: rep.lastname, email: rep.email, department: rep.department || null })),
+        b: levelB.map((rep) => ({ uid: rep.uid, firstname: rep.firstname, lastname: rep.lastname, email: rep.email, department: rep.department || null })),
+      },
+      activity: auditSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
     });
   } catch (error) {
     console.error("Get Institution Details Error:", error);

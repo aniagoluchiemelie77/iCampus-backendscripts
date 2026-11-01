@@ -225,6 +225,12 @@ export const createNotification = async ({
         subject = "Courses Verification Complete";
         message = `Courses extraction for ${payload.semester} semester ${payload.session} session completed and verified`;
         break;
+      case "ACADEMIC_SESSION_RECAP":
+        subject = "Your previous academic session recap is ready";
+        message = payload.previousSession
+          ? `Would you like a recap of your ${payload.previousSession} activities?`
+          : "Would you like a recap of your previous academic session?";
+        break;
       case "PASSWORD_RESET_CODE":
         subject = "Your iCampus Verification Code";
         htmlContent = passwordResetTemplate(
