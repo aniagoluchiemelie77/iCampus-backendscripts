@@ -68,13 +68,21 @@ export const idempotencyMiddleware = async (req, res, next) => {
     if (doc.exists) {
       const data = doc.data();
       if (data.status === "PROCESSING") {
-        return res.status(409).json({
-          error: "Request already processing, please wait.",
-        });
-      }
-      if (data.status === "COMPLETED") {
-        console.log(`[Idempotency] Cache hit for key: ${idempotencyKey}`);
-        return res.status(data.statusCode).json(data.responseBody);
+        const expiresAt = data.expiresAt?.toDate?.();
+        if (!expiresAt || expiresAt.getTime() > Date.now()) {
+          return res.status(409).json({
+            error: "Request already processing, please wait.",
+          });
+        }
+        await keyDocRef.delete();
+      } else if (data.status === "COMPLETED") {
+        const expiresAt = data.expiresAt?.toDate?.();
+        if (expiresAt && expiresAt.getTime() <= Date.now()) {
+          await keyDocRef.delete();
+        } else {
+          console.log(`[Idempotency] Cache hit for key: ${idempotencyKey}`);
+          return res.status(data.statusCode).json(data.responseBody);
+        }
       }
     }
 

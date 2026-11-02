@@ -39,6 +39,12 @@ monitorSubscriptions();
 app.use(cors());
 
 app.use((req, res, next) => {
+  console.log(`🔗 ${req.method} ${req.url}`);
+  req.io = io;
+  next();
+});
+
+app.use((req, res, next) => {
   if (req.method === "POST" || req.method === "PUT" || req.method === "PATCH") {
     // Face-verification selfies are sent as base64 and exceed the 100kb default.
     const limit = req.path.endsWith("/verify-student") ? "10mb" : "100kb";
@@ -48,13 +54,7 @@ app.use((req, res, next) => {
   }
 });
 
-app.use((req, res, next) => {
-  console.log(`🔗 ${req.method} ${req.url}`);
-  req.io = io;
-  next();
-});
-
-(async () => {
+const startServer = async () => {
   try {
     const studentVerifyModule = await import(
       pathToFileURL(path.join(__dirname, "routes/verify/students.js")).href
@@ -115,12 +115,28 @@ app.use((req, res, next) => {
     app.use("/verifyUser", userVerifyModule.default);
 
     console.log("✅ All routes successfully loaded");
+
+    app.use((error, req, res, next) => {
+      if (error instanceof SyntaxError && error.status === 400 && "body" in error) {
+        return res.status(400).json({ error: "Invalid JSON request body" });
+      }
+      if (error?.type === "entity.too.large") {
+        return res.status(413).json({ error: "Request body is too large" });
+      }
+      console.error("Unhandled Express error:", error);
+      return res.status(error?.status || 500).json({
+        error: error?.message || "Internal server error",
+      });
+    });
+
+    const PORT = process.env.PORT || 5000;
+    httpServer.listen(PORT, "0.0.0.0", () => {
+      console.log(`🚀 Backend & Socket.io running on port ${PORT}`);
+    });
   } catch (error) {
     console.error("❌ Error loading routes:", error);
+    process.exit(1);
   }
-})();
+};
 
-const PORT = process.env.PORT || 5000;
-httpServer.listen(PORT, "0.0.0.0", () => {
-  console.log(`🚀 Backend & Socket.io running on port ${PORT}`);
-});
+startServer();
