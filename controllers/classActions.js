@@ -41,6 +41,8 @@ import { setImmediate } from "timers";
 import {
   geminiModel,
   isGeminiQuotaError,
+  isGeminiUnavailableError,
+  generateGeminiContent,
   GEMINI_BUSY_MESSAGE,
 } from "../utils/gemini.js";
 import { detectAcademicSessionRecap } from "./academicRecapController.js";
@@ -3115,7 +3117,7 @@ export const compareStudentFacesWithGemini = async (req, res) => {
       ? contentType.split(";")[0]
       : "image/jpeg";
 
-    const response = await ai.models.generateContent({
+    const response = await generateGeminiContent(ai, {
       model: geminiModel(),
       config: {
         responseMimeType: "application/json",
@@ -3200,6 +3202,12 @@ export const compareStudentFacesWithGemini = async (req, res) => {
       "error",
       error.message,
     );
+    if (isGeminiUnavailableError(error)) {
+      return res.status(503).json({
+        verified: false,
+        message: "AI capacity is temporarily unavailable. Please retry.",
+      });
+    }
     return res.status(500).json({
       verified: false,
       message: "Internal server processing failure.",
@@ -3323,7 +3331,7 @@ export const uploadCourseDetails = async (req, res) => {
         ? LECTURER_COURSE_EXTRACTION_PROMPT
         : STUDENT_COURSE_EXTRACTION_PROMPT;
 
-    const result = await ai.models.generateContent({
+    const result = await generateGeminiContent(ai, {
       model: geminiModel(),
       config: {
         responseMimeType: "application/json",
@@ -3671,6 +3679,11 @@ export const uploadCourseDetails = async (req, res) => {
     if (!res.headersSent && isGeminiQuotaError(error)) {
       return res.status(429).json({ message: GEMINI_BUSY_MESSAGE });
     }
+    if (!res.headersSent && isGeminiUnavailableError(error)) {
+      return res.status(503).json({
+        message: "AI capacity is temporarily unavailable. Please retry.",
+      });
+    }
     if (!res.headersSent) {
       return res.status(500).json({
         message: "We couldn't process that document. Please try again.",
@@ -3854,7 +3867,7 @@ export const extractCourseContentFromImage = async (req, res) => {
       .join("\n");
     const prompt = buildCourseImageExtractionPrompt(courseContext);
 
-    const response = await ai.models.generateContent({
+    const response = await generateGeminiContent(ai, {
       model: geminiModel(),
       config: {
         responseMimeType: "application/json",
@@ -3915,6 +3928,11 @@ export const extractCourseContentFromImage = async (req, res) => {
       "error",
       error.message,
     );
+    if (isGeminiUnavailableError(error)) {
+      return res.status(503).json({
+        message: "AI capacity is temporarily unavailable. Please retry.",
+      });
+    }
     return res.status(500).json({ message: "Unable to extract course content right now." });
   }
 };

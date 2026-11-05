@@ -1033,6 +1033,7 @@ export const toggleCartActionController = async (req, res) => {
     selectedColor,
     quantity = 1,
   } = req.body;
+  const normalizedProductId = String(productId);
   const userId = req.user.id || req.user.uid;
 
   if (!productId || !action) {
@@ -1051,6 +1052,22 @@ export const toggleCartActionController = async (req, res) => {
       message: "Missing required productId or action.",
     });
   }
+  if (!["add", "remove", "update"].includes(action)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid cart action.",
+    });
+  }
+  const requestedQuantity = Number(quantity);
+  if (
+    !Number.isInteger(requestedQuantity) ||
+    requestedQuantity < 1
+  ) {
+    return res.status(400).json({
+      success: false,
+      message: "Quantity must be a positive number.",
+    });
+  }
 
   try {
     const result = await db.runTransaction(async (transaction) => {
@@ -1061,15 +1078,37 @@ export const toggleCartActionController = async (req, res) => {
 
       const userDoc = userQuery.docs[0];
       const userData = userDoc.data();
-      const cart = userData.cart || [];
-      let updatedCart = [...cart];
+      const normalizeCartItem = (item) => {
+        if (!item || typeof item !== "object" || !item.productId) return null;
+        const normalized = {
+          productId: String(item.productId),
+          quantity: Math.max(1, Math.floor(Number(item.quantity) || 1)),
+        };
+        if (typeof item.selectedSize === "string" && item.selectedSize) {
+          normalized.selectedSize = item.selectedSize;
+        }
+        if (typeof item.selectedColor === "string" && item.selectedColor) {
+          normalized.selectedColor = item.selectedColor;
+        }
+        return normalized;
+      };
+      const cart = Array.isArray(userData.cart) ? userData.cart : [];
+      let updatedCart = cart.map(normalizeCartItem).filter(Boolean);
+      const normalizedSize =
+        typeof selectedSize === "string" && selectedSize
+          ? selectedSize
+          : undefined;
+      const normalizedColor =
+        typeof selectedColor === "string" && selectedColor
+          ? selectedColor
+          : undefined;
 
       if (action === "add") {
         const existingIndex = updatedCart.findIndex(
           (item) =>
-            item.productId === productId &&
-            item.selectedSize === selectedSize &&
-            item.selectedColor === selectedColor,
+            item.productId === normalizedProductId &&
+            item.selectedSize === normalizedSize &&
+            item.selectedColor === normalizedColor,
         );
 
         if (existingIndex > -1) {
@@ -1080,25 +1119,25 @@ export const toggleCartActionController = async (req, res) => {
           };
         } else {
           updatedCart.push({
-            productId,
-            quantity: Number(quantity),
-            selectedSize,
-            selectedColor,
+            productId: normalizedProductId,
+            quantity: requestedQuantity,
+            ...(normalizedSize ? { selectedSize: normalizedSize } : {}),
+            ...(normalizedColor ? { selectedColor: normalizedColor } : {}),
           });
         }
       } else if (action === "remove") {
         updatedCart = updatedCart.filter(
-          (item) => item.productId !== productId,
+          (item) => item.productId !== normalizedProductId,
         );
       } else if (action === "update") {
         const existingIndex = updatedCart.findIndex(
-          (item) => item.productId === productId,
+          (item) => item.productId === normalizedProductId,
         );
 
         if (existingIndex > -1) {
           updatedCart[existingIndex] = {
             ...updatedCart[existingIndex],
-            quantity: Number(quantity),
+            quantity: requestedQuantity,
           };
         }
       }

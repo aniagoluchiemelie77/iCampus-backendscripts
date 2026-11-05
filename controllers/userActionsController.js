@@ -52,7 +52,10 @@ import { canViewPost, enrichPosts } from "../utils/postPipeline.js";
 import { buildChatSystemInstruction } from "../utils/aiPrompts.js";
 import {
   geminiModel,
+  geminiModels,
   isGeminiQuotaError,
+  isGeminiUnavailableError,
+  withGeminiRetry,
   GEMINI_BUSY_MESSAGE,
 } from "../utils/gemini.js";
 import {
@@ -1260,17 +1263,18 @@ export const aiChat = async (req, res) => {
       messageParts.push(attachment);
     }
 
-    const chat = ai.chats.create({
-      model: geminiModel(),
-      history: formattedHistory,
-      config: {
-        systemInstruction: systemInstruction,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
+    const result = await withGeminiRetry(async (attempt) => {
+      const models = geminiModels();
+      const chat = ai.chats.create({
+        model: models[attempt % models.length],
+        history: formattedHistory,
+        config: {
+          systemInstruction: systemInstruction,
+          thinkingConfig: { thinkingBudget: 0 },
+        },
+      });
+      return chat.sendMessage({ message: messageParts });
     });
-    // @google/genai takes { message }; a bare string throws
-    // "ContentUnion is required", which broke every chat request.
-    const result = await chat.sendMessage({ message: messageParts });
     const replyText = result.text;
 
     if (!replyText) {
@@ -1385,6 +1389,12 @@ export const aiChat = async (req, res) => {
     );
     if (isGeminiQuotaError(error)) {
       return res.status(429).json({ success: false, error: GEMINI_BUSY_MESSAGE });
+    }
+    if (isGeminiUnavailableError(error)) {
+      return res.status(503).json({
+        success: false,
+        error: "AI service capacity is temporarily unavailable. Please retry.",
+      });
     }
     return res
       .status(500)
