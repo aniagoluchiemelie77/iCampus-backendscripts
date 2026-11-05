@@ -16,8 +16,8 @@ export const theme = {
   branding: {
     logoUrl: "https://useicampus.io/assets/logo-email.png",
     companyName: "iCampus",
-    supportEmail: "@inbound.useicampus.io.",
-    supportEmailMain: "support@inbound.useicampus.io.",
+    supportEmail: "support@inbound.useicampus.io",
+    supportEmailMain: "support@inbound.useicampus.io",
     websiteUrl: "https://useicampus.io",
     appDashboardUrl: "https://useicampus.io/login",
     appReviewsScreenUrl: "https://useicampus.io/reviews",

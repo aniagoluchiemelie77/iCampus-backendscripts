@@ -1,5 +1,6 @@
 import { ServerClient } from "postmark";
 import dotenv from "dotenv";
+import { wrapEmailHtml } from "./emailTemplates.js";
 
 dotenv.config();
 
@@ -13,12 +14,13 @@ export const sendEmail = async ({
   attachments = [],
 }) => {
   try {
+    const finalHtml = wrapEmailHtml(html, subject);
     const response = await postmarkClient.sendEmail({
       From: process.env.POSTMARK_SENDER_SIGNATURE,
       To: to,
       Subject: subject,
       TextBody: text,
-      HtmlBody: html,
+      HtmlBody: finalHtml,
       MessageStream: "broadcast",
       Attachments: attachments.map((att) => ({
         Name: att.filename,

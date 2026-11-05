@@ -4,6 +4,7 @@ import { theme } from "./emailTheme.js";
 const { colors, branding, typography } = theme;
 
 const sanitize = (str) => {
+  if (str === null || str === undefined) return "";
   if (typeof str !== "string") return String(str);
   return str
     .replace(/&/g, "&amp;")
@@ -11,6 +12,80 @@ const sanitize = (str) => {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+};
+
+const escapePreviewText = (text) =>
+  sanitize(String(text || ""))
+    .replace(/[\r\n]+/g, " ")
+    .slice(0, 150);
+
+export const wrapEmailHtml = (content, subject = "Update from iCampus") => {
+  if (/<!doctype html|<html[\s>]/i.test(String(content))) return content;
+
+  const safeContent = String(content || "");
+  const safeSubject = escapePreviewText(subject);
+  const supportEmail = sanitize(branding.supportEmailMain);
+  const dashboardUrl = sanitize(branding.appDashboardUrl);
+  const websiteUrl = sanitize(branding.websiteUrl);
+  const logoUrl = sanitize(branding.logoUrl);
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="x-apple-disable-message-reformatting">
+  <title>${safeSubject}</title>
+</head>
+<body style="margin:0; padding:0; width:100%; background:#F4F5F7; font-family:${typography.fontFamily}; -webkit-text-size-adjust:100%;">
+  <div style="display:none; max-height:0; overflow:hidden; opacity:0;">${safeSubject}</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; background:#F4F5F7;">
+    <tr>
+      <td align="center" style="padding:28px 12px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="width:100%; max-width:600px;">
+          <tr>
+            <td style="padding:0 8px 18px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td align="left">
+                    <a href="${websiteUrl}" style="text-decoration:none;">
+                      <img src="${logoUrl}" width="132" height="40" alt="${sanitize(branding.companyName)}" style="display:block; border:0; max-width:132px; height:auto;">
+                    </a>
+                  </td>
+                  <td align="right" style="color:#8A9199; font-size:12px; line-height:20px;">
+                    <a href="${websiteUrl}" style="color:#8A9199; text-decoration:none;">${sanitize(branding.companyName)}</a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td style="background:${colors.white}; border:1px solid #E6E8EB; border-radius:16px; overflow:hidden;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td style="height:4px; background:${colors.primary}; font-size:0; line-height:4px;">&nbsp;</td>
+                </tr>
+                <tr>
+                  <td style="padding:36px 32px; color:${colors.text}; font-size:15px; line-height:1.65;">
+                    ${safeContent}
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+          <tr>
+            <td align="center" style="padding:22px 12px 0; color:#7A8088; font-size:12px; line-height:20px;">
+              Need help? <a href="mailto:${supportEmail}" style="color:${colors.primary}; text-decoration:none;">${supportEmail}</a>
+              &nbsp;&middot;&nbsp; <a href="${dashboardUrl}" style="color:${colors.primary}; text-decoration:none;">Open iCampus</a><br>
+              &copy; ${new Date().getFullYear()} ${sanitize(branding.companyName)}. All rights reserved.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>`;
 };
 
 export const welcomeEmailTemplate = (userName) => {
@@ -82,18 +157,24 @@ export const loginAlertTemplate = (
   date,
   time,
 ) => {
+  const safeUserName = sanitize(userName);
+  const safeIpAddress = sanitize(ipAddress);
+  const safeLocation = sanitize(location);
+  const safeDate = sanitize(date);
+  const safeTime = sanitize(time);
+  const safeSupportEmail = sanitize(branding.supportEmailMain);
   const body = `
-    <p style="color: ${colors.text}; font-size: 16px; line-height: 1.5;">Hello ${userName},</p>
+    <p style="color: ${colors.text}; font-size: 16px; line-height: 1.5;">Hello ${safeUserName},</p>
     <p style="color: ${colors.text}; font-size: 16px; line-height: 1.5;">
       We detected a sign-in to your <strong>iCampus</strong> account from an unrecognized device or location.
     </p>
     <div style="border: 1px solid ${colors.danger}; border-radius: 6px; padding: 20px; margin: 20px 0;">
-      <h3 style="margin-top: 0; color: ${colors.danger}; font-size: 16px; margin-bottom: 15px;">Login Details</h3>
+      <h2 style="margin-top: 0; color: ${colors.danger}; font-size: 16px; margin-bottom: 15px;">Login details</h2>
       <table style="width: 100%; color: ${colors.text}; font-size: 14px;">
-        <tr><td style="padding: 5px 0;"><strong>Date:</strong></td><td>${date}</td></tr>
-        <tr><td style="padding: 5px 0;"><strong>Time:</strong></td><td>${time}</td></tr>
-        <tr><td style="padding: 5px 0;"><strong>Location:</strong></td><td>${location}</td></tr>
-        <tr><td style="padding: 5px 0;"><strong>IP Address:</strong></td><td>${ipAddress}</td></tr>
+        <tr><td style="padding: 5px 0;"><strong>Date:</strong></td><td>${safeDate}</td></tr>
+        <tr><td style="padding: 5px 0;"><strong>Time:</strong></td><td>${safeTime}</td></tr>
+        <tr><td style="padding: 5px 0;"><strong>Location:</strong></td><td>${safeLocation}</td></tr>
+        <tr><td style="padding: 5px 0;"><strong>IP address:</strong></td><td>${safeIpAddress}</td></tr>
       </table>
     </div>
     <div style="background: ${theme.colors.background}; padding: 20px; border-radius: 6px; margin-bottom: 20px;">
@@ -103,8 +184,8 @@ export const loginAlertTemplate = (
       </p>
       <p style="margin-top: 20px; font-size: 13px; color: #666;">
         Contact our support team at 
-        <a href="mailto:ticket+${userId}${theme.branding.supportEmail}" style="color: ${theme.colors.primary};">
-          ${theme.branding.supportEmail}
+        <a href="mailto:${safeSupportEmail}" style="color: ${theme.colors.primary};">
+          ${safeSupportEmail}
         </a>
       </p>
     </div>
