@@ -1108,6 +1108,8 @@ export const toggleCartActionController = async (req, res) => {
       });
       return updatedCart;
     });
+    console.log("Cart updated successfully:", result);
+    console.log("Action performed:", action, "on productId:", productId);
     res.status(200).json({
       success: true,
       cart: result,

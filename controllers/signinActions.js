@@ -33,7 +33,11 @@ import { SCHOOL_ADMIN_A, SCHOOL_ADMIN_B } from "../utils/schoolRoles.js";
 import { addFlag } from "../utils/flagger.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { promisify } from "util";
-import { embedUserWithInstitutionTier } from "../utils/embedFunctions.js";
+import {
+  embedUserWithInstitutionTier,
+  normalizeInstitutionTier,
+  institutionTierToUserTier,
+} from "../utils/embedFunctions.js";
 import { issueSignupProof, readSignupProof } from "../utils/signupProof.js";
 
 /**
@@ -604,6 +608,7 @@ export const validateInstitution = async (req, res) => {
       message: "Institution verified",
       schoolName: institution.schoolName,
       schoolCode: institution.schoolCode,
+      institutionTier: normalizeInstitutionTier(institution.tier),
       verified: true,
       logo: institution.logo || null,
     };
@@ -1700,6 +1705,13 @@ export const signUp = async (req, res) => {
           }
         : {}),
     };
+    const enrichedNewUser = await embedUserWithInstitutionTier(newUserObj);
+    const institutionTier = enrichedNewUser.institutionTier;
+    if (schoolIdentity && institutionTier) {
+      newUserObj.institutionTier = institutionTier;
+      newUserObj.tier = institutionTierToUserTier(institutionTier);
+      newUserObj.hasSubscribed = true;
+    }
     const defaultPreferencesData = {
       userId: uid,
       theme: "light",

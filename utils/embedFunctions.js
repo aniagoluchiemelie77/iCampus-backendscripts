@@ -1,10 +1,24 @@
 import { OperationalInstitutions, User } from "../tableDeclarations.js";
 
+export const normalizeInstitutionTier = (tier) => {
+  const normalized = String(tier || "basic").trim().toLowerCase();
+  if (normalized === "enterprise" || normalized === "premium") return "premium";
+  if (normalized === "pro" || normalized === "professional") return "pro";
+  return "basic";
+};
+
+export const institutionTierToUserTier = (tier) => {
+  const normalized = normalizeInstitutionTier(tier);
+  return normalized === "basic" ? "free" : normalized;
+};
+
 export const embedUserWithInstitutionTier = async (user) => {
   if (!user) return user;
   const isInstitutionalUser =
     user.usertype === "student" || user.usertype === "lecturer";
-  if (!isInstitutionalUser || !user.schoolCode) {
+  const isInstitutionAdmin =
+    user.usertype === "enterprise" && user.isInstitutionAdmin === true;
+  if ((!isInstitutionalUser && !isInstitutionAdmin) || !user.schoolCode) {
     return {
       ...user,
     };
@@ -23,11 +37,13 @@ export const embedUserWithInstitutionTier = async (user) => {
 
     if (!institutionSnapshot.empty) {
       const institutionData = institutionSnapshot.docs[0].data();
-      institutionTier = institutionData.tier || "basic";
+      institutionTier = normalizeInstitutionTier(institutionData.tier);
     }
     return {
       ...user,
       institutionTier,
+      tier: institutionTierToUserTier(institutionTier),
+      hasSubscribed: true,
     };
   } catch (err) {
     console.error(
@@ -37,6 +53,8 @@ export const embedUserWithInstitutionTier = async (user) => {
     return {
       ...user,
       institutionTier: "basic",
+      tier: "free",
+      hasSubscribed: true,
     };
   }
 };
