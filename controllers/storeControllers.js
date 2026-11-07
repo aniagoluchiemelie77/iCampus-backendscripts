@@ -21,6 +21,12 @@ import {
   generateProductId,
 } from "../utils/idGenerator.js";
 import { calculateHaversineDistance } from "../utils/distanceCalHelper.js";
+import {
+  isWithinSalesRadius,
+  parseGeoPoint,
+  parseSalesRadius,
+  publicProduct,
+} from "../utils/salesRadius.js";
 import fs from "fs/promises";
 import { TAX_RATE, DELIVERY_FEES } from "../constants/inAppConstants.js";
 import { notifyAdmins } from "../services/adminNotification.js";
@@ -525,8 +531,18 @@ export const saveProductController = async (req, res) => {
     const productThumbnails = parseList(mediaUrls).filter(Boolean);
 
     let physicalDetails = null;
+    let salesOrigin = null;
     if (type === "physical") {
       console.log("Step 2...");
+      const salesRadiusKm = parseSalesRadius(body.salesRadiusKm);
+      salesOrigin = salesRadiusKm != null ? parseGeoPoint(body.sellerLocation) : null;
+      if (salesRadiusKm != null && !salesOrigin) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Turn on location to limit how far this listing can be sold, or choose Anywhere.",
+        });
+      }
       physicalDetails = {
         weightKg: Number(body.weightKg) || 0,
         inStock: Number(body.inStock) || 0,
@@ -534,6 +550,7 @@ export const saveProductController = async (req, res) => {
         sizes: parseList(body.sizes),
         sellerGateways: parseList(body.sellerGateways),
         dropOffAddress: parseList(body.dropOffAddress),
+        salesRadiusKm,
       };
     }
 
@@ -587,6 +604,7 @@ export const saveProductController = async (req, res) => {
         currency: sellerCurrency,
         nationalityOfSeller: sellerNationality,
         physicalDetails,
+        salesOrigin,
         mediaUrls: productThumbnails,
         updatedAt: new Date(),
         niche,
@@ -609,6 +627,7 @@ export const saveProductController = async (req, res) => {
         currency: sellerCurrency,
         nationalityOfSeller: sellerNationality,
         physicalDetails,
+        salesOrigin,
         mediaUrls: productThumbnails,
         impressions: 0,
         createdAt: new Date(),
@@ -624,7 +643,7 @@ export const saveProductController = async (req, res) => {
       message: isEditing
         ? "Product entry successfully patched."
         : "Product entry successfully saved.",
-      data: productData,
+      data: publicProduct(productData),
     });
 
     setImmediate(() => {
@@ -656,7 +675,7 @@ export const saveProductController = async (req, res) => {
           processNotificationFanOut(
             userUid,
             sellerName,
-            productData,
+            publicProduct(productData),
             isEditing,
           ),
         ];
@@ -875,48 +894,51 @@ export const fetchStoreProducts = async (req, res) => {
       }
     }
 
-    const fetchLimit = q ? pageLimit * 3 : pageLimit + 1;
-    queryRef = queryRef.limit(fetchLimit);
-    console.log(
-      `[${controllerName}] Final Firestore fetchLimit set to:`,
-      fetchLimit,
-    );
+    // Search and the seller's sales radius are applied after the query, so
+    // scan in batches until the page is full. The cursor is the last document
+    // *scanned* (not the last one returned), so filtered-out items are never
+    // re-read and matching items are never skipped.
+    const buyerPoint = parseGeoPoint({ lat: req.query.lat, lng: req.query.lng });
+    const searchTerm = q ? String(q).toLowerCase().trim() : "";
+    const needsFiltering = !!searchTerm || !!buyerPoint;
+    const batchSize = needsFiltering ? pageLimit * 3 : pageLimit + 1;
+    const maxBatches = needsFiltering ? 4 : 1;
 
-    const snapshot = await queryRef.get();
-    let products = [];
-
-    snapshot.forEach((doc) => {
-      const data = doc.data();
-      products.push({ id: doc.id, productId: doc.id, ...data });
-    });
-
-    console.log(
-      `[${controllerName}] Raw documents fetched from Firestore:`,
-      products.length,
-    );
-
-    if (q) {
-      const searchTerm = q.toLowerCase().trim();
-      console.log(
-        `[${controllerName}] Filtering products locally by search term: "${searchTerm}"`,
-      );
-      products = products.filter((p) => {
+    const matches = (p) => {
+      if (searchTerm) {
         const title = (p.title || "").toLowerCase();
         const description = (p.description || "").toLowerCase();
-        return title.includes(searchTerm) || description.includes(searchTerm);
-      });
-      console.log(
-        `[${controllerName}] Products remaining after search filter:`,
-        products.length,
-      );
-    }
+        if (!title.includes(searchTerm) && !description.includes(searchTerm)) {
+          return false;
+        }
+      }
+      return isWithinSalesRadius(p, buyerPoint);
+    };
 
-    const paginatedProducts = products.slice(0, pageLimit);
-    let nextCursor = null;
-    if (products.length > pageLimit) {
-      nextCursor =
-        paginatedProducts[paginatedProducts.length - 1]?.productId || null;
+    const paginatedProducts = [];
+    let lastScannedDoc = null;
+    let hasMore = false;
+    let batchQuery = queryRef;
+    for (let batch = 0; batch < maxBatches; batch += 1) {
+      const snapshot = await batchQuery.limit(batchSize).get();
+      for (const doc of snapshot.docs) {
+        if (paginatedProducts.length === pageLimit) {
+          hasMore = true;
+          break;
+        }
+        lastScannedDoc = doc;
+        const product = { id: doc.id, productId: doc.id, ...doc.data() };
+        if (matches(product)) paginatedProducts.push(publicProduct(product));
+      }
+      if (hasMore) break;
+      if (snapshot.size < batchSize) break; // nothing left to scan
+      if (batch === maxBatches - 1) {
+        hasMore = true; // gave up scanning; the client can ask for more
+        break;
+      }
+      batchQuery = queryRef.startAfter(lastScannedDoc);
     }
+    const nextCursor = hasMore && lastScannedDoc ? lastScannedDoc.id : null;
 
     console.log(
       `[${controllerName}] Response summary -> Returning items: ${paginatedProducts.length}, Next Cursor: ${nextCursor}`,

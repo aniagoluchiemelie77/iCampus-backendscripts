@@ -38,10 +38,12 @@ import axios from "axios";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 import { setImmediate } from "timers";
+import { compareFaces, getReferenceImage } from "../utils/faceVerification.js";
 import {
   geminiModel,
   isGeminiQuotaError,
   isGeminiUnavailableError,
+  isGeminiTransientError,
   generateGeminiContent,
   GEMINI_BUSY_MESSAGE,
 } from "../utils/gemini.js";
@@ -3068,9 +3070,31 @@ export const compareStudentFacesWithGemini = async (req, res) => {
   const startTime = Date.now();
   const controllerName = "compareStudentFacesWithGeminiController";
   const action = "compareStudentFacesWithGemini";
+  const timings = {};
+  const mark = (step, since) => {
+    timings[step] = Date.now() - since;
+  };
+  const logTimings = (outcome, extra = {}) =>
+    console.log(
+      `[FACE_VERIFY] ${outcome} total=${Date.now() - startTime}ms`,
+      JSON.stringify({ ...timings, ...extra }),
+    );
+  // Visible in browser/devtools and logs: "ref;dur=12, ai;dur=1400".
+  const setServerTiming = () =>
+    res.set(
+      "Server-Timing",
+      Object.entries(timings)
+        .map(([k, v]) => `${k};dur=${v}`)
+        .join(", "),
+    );
+
   try {
-    const { selfieBase64, targetImageUrl } = req.body;
-    if (!selfieBase64 || !targetImageUrl) {
+    const { selfieBase64 } = req.body || {};
+    // The reference photo comes from the student's own record, never from
+    // the request: otherwise a student could send their own selfie's URL
+    // as the "official" photo and always pass.
+    const referenceUrl = req.user?.schoolAvatarUrl;
+    if (!selfieBase64) {
       logControllerPerformance(
         controllerName,
         action,
@@ -3083,17 +3107,27 @@ export const compareStudentFacesWithGemini = async (req, res) => {
         message: "Verification parameters are missing.",
       });
     }
+    if (!referenceUrl) {
+      return res.status(409).json({
+        verified: false,
+        message:
+          "Your school has no official photo on file for you, so your face can't be checked.",
+      });
+    }
 
     // Clients may send a data URI; Gemini expects raw base64.
-    const selfieData = selfieBase64.replace(/^data:image\/\w+;base64,/, "");
+    const selfieData = String(selfieBase64).replace(
+      /^data:image\/\w+;base64,/,
+      "",
+    );
 
-    let responseImage;
+    let reference;
+    const refStart = Date.now();
     try {
-      responseImage = await axios.get(targetImageUrl, {
-        responseType: "arraybuffer",
-        timeout: 15000,
-      });
+      reference = await getReferenceImage(referenceUrl);
     } catch (fetchError) {
+      mark("ref", refStart);
+      logTimings("ref_failed");
       setImmediate(() =>
         logControllerPerformance(
           controllerName,
@@ -3109,54 +3143,28 @@ export const compareStudentFacesWithGemini = async (req, res) => {
         message: "Could not load your profile picture for comparison.",
       });
     }
-    const targetImageBase64 = Buffer.from(responseImage.data).toString(
-      "base64",
-    );
-    const contentType = String(responseImage.headers["content-type"] || "");
-    const targetMimeType = contentType.startsWith("image/")
-      ? contentType.split(";")[0]
-      : "image/jpeg";
+    mark("ref", refStart);
 
-    const response = await generateGeminiContent(ai, {
-      model: geminiModel(),
-      config: {
-        responseMimeType: "application/json",
-        temperature: 0.2,
-        thinkingConfig: { thinkingBudget: 0 },
-      },
-      contents: [
+    const aiStart = Date.now();
+    const { result: validationResult, model, attempts } = await compareFaces(
+      ai,
+      [
         FACE_COMPARISON_INSTRUCTIONS,
+        { inlineData: { data: selfieData, mimeType: "image/jpeg" } },
         {
-          inlineData: {
-            data: selfieData,
-            mimeType: "image/jpeg",
-          },
-        },
-        {
-          inlineData: {
-            data: targetImageBase64,
-            mimeType: targetMimeType,
-          },
+          inlineData: { data: reference.data, mimeType: reference.mimeType },
         },
       ],
+    );
+    mark("ai", aiStart);
+    setServerTiming();
+    logTimings(validationResult.verified ? "verified" : "mismatch", {
+      model,
+      attempts,
+      refCacheHit: reference.cacheHit,
+      selfieKb: Math.round((selfieData.length * 3) / 4 / 1024),
     });
 
-    const aiOutputText = response.text?.replace(/```json|```/g, "").trim();
-    if (!aiOutputText) {
-      logControllerPerformance(
-        controllerName,
-        action,
-        startTime,
-        "error",
-        "AI Engine returned empty validation text.",
-      );
-      return res.status(500).json({
-        verified: false,
-        message: "AI Engine returned empty validation text.",
-      });
-    }
-
-    const validationResult = JSON.parse(aiOutputText);
     const attention = {
       faceCount: Number.isInteger(validationResult.faceCount)
         ? validationResult.faceCount
@@ -3178,31 +3186,35 @@ export const compareStudentFacesWithGemini = async (req, res) => {
         similarity: 1.0,
         ...attention,
       });
-    } else {
+    }
+    setImmediate(() =>
       logControllerPerformance(
         controllerName,
         action,
         startTime,
         "error",
         validationResult.reason || "Facial signature mismatch.",
-      );
-      return res.status(403).json({
-        verified: false,
-        similarity: 0,
-        message: validationResult.reason || "Facial signature mismatch.",
-        ...attention,
-      });
-    }
-  } catch (error) {
-    console.error("Gemini Multi-Modal verification exception:", error.message);
-    logControllerPerformance(
-      controllerName,
-      action,
-      startTime,
-      "error",
-      error.message,
+      ),
     );
-    if (isGeminiUnavailableError(error)) {
+    return res.status(403).json({
+      verified: false,
+      similarity: 0,
+      message: validationResult.reason || "Facial signature mismatch.",
+      ...attention,
+    });
+  } catch (error) {
+    logTimings("error", { error: error.message });
+    console.error("Gemini Multi-Modal verification exception:", error.message);
+    setImmediate(() =>
+      logControllerPerformance(
+        controllerName,
+        action,
+        startTime,
+        "error",
+        error.message,
+      ),
+    );
+    if (isGeminiTransientError(error)) {
       return res.status(503).json({
         verified: false,
         message: "AI capacity is temporarily unavailable. Please retry.",

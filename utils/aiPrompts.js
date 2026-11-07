@@ -6,9 +6,8 @@ export const FACE_COMPARISON_INSTRUCTIONS =
   "Also describe Image 1 only: how many human faces are visible, whether the main person is looking at the " +
   "phone screen (not turned away, not looking down at notes, eyes not closed), and anything suspicious such as " +
   "a second person, another phone or book being read, or a photo/screen held up instead of a live face.\n\n" +
-  "Return your verdict STRICTLY as a JSON object matching this schema:\n" +
-  '{"verified": boolean, "faceCount": integer, "lookingAtScreen": boolean, ' +
-  '"suspicious": string or null, "reason": "brief plain text explanation for audit logs"}';
+  "Reply with JSON only: verified, faceCount, lookingAtScreen, suspicious (null if nothing), " +
+  "and reason (at most 12 words, for audit logs).";
 
 export const LECTURER_COURSE_EXTRACTION_PROMPT = `
 Extract all details from this course allocation document.

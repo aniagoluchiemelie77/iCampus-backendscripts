@@ -51,6 +51,12 @@ import { notifyAdmins } from "../services/adminNotification.js";
 import { client as redis } from "../workers/reditFile.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
 import { sendOrderNotifications } from "./storeControllers.js";
+import {
+  distanceToBuyerKm,
+  hasSalesRadius,
+  parseGeoPoint,
+  parseSalesRadius,
+} from "../utils/salesRadius.js";
 
 const PURPOSES = ["checkout", "subscription"];
 const PAID_TIERS = ["pro", "premium"];
@@ -110,7 +116,13 @@ const sameStation = (a, b) =>
  * currency, seller, delivery fee, drop-off agent) comes from the database,
  * not from the request.
  */
-export async function quoteCheckout(rawItems, buyer, buyerCurrency) {
+export async function quoteCheckout(
+  rawItems,
+  buyer,
+  buyerCurrency,
+  { buyerLocation = null } = {},
+) {
+  const buyerPoint = parseGeoPoint(buyerLocation);
   if (!Array.isArray(rawItems) || rawItems.length === 0) {
     throw new PaymentError("Your cart is empty.");
   }
@@ -192,6 +204,24 @@ export async function quoteCheckout(rawItems, buyer, buyerCurrency) {
         deliveryMethod = "none";
       }
 
+      // Seller-chosen maximum distance. Home delivery always needs the
+      // buyer's location; drop-off is checked when the location is known
+      // (the seller picked those stations, so they're reachable anyway).
+      if (isPhysical && hasSalesRadius(product)) {
+        const radiusKm = parseSalesRadius(product.physicalDetails.salesRadiusKm);
+        if (!buyerPoint && deliveryMethod === "home_delivery") {
+          throw new PaymentError(
+            `${product.title} only delivers within ${radiusKm} km of the seller. Turn on location so we can confirm you're in range.`,
+          );
+        }
+        const distance = distanceToBuyerKm(product, buyerPoint);
+        if (distance != null && distance > radiusKm) {
+          throw new PaymentError(
+            `${product.title} is only sold within ${radiusKm} km of the seller, and you're about ${Math.round(distance)} km away.`,
+          );
+        }
+      }
+
       const feeRate = isPhysical
         ? DELIVERY_FEES[tier][deliveryMethod] || 0
         : 0;
@@ -244,7 +274,9 @@ async function priceIntent(purpose, body, user, currency) {
     };
   }
   // checkout
-  const quote = await quoteCheckout(body.items, user, currency);
+  const quote = await quoteCheckout(body.items, user, currency, {
+    buyerLocation: body.buyerLocation,
+  });
   const phone = String(body.shippingContact?.phone || "").trim();
   const address = String(body.shippingContact?.address || "").trim();
   if (quote.lines.some((l) => l.deliveryMethod === "home_delivery")) {

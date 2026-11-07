@@ -183,6 +183,8 @@ export const registerAttendanceHandlers = (io, socket) => {
       if (!lectureQuery.empty) {
         await lectureQuery.docs[0].ref.update({
           attendanceOpen: false,
+          // Lets the lecturer's Classroom card show "Redo" instead of "Start".
+          attendanceTakenAt: endedAt,
           updatedAt: new Date(),
         });
       } else {
@@ -191,6 +193,7 @@ export const registerAttendanceHandlers = (io, socket) => {
         if (lectureDoc.exists) {
           await lectureDocRef.update({
             attendanceOpen: false,
+            attendanceTakenAt: endedAt,
             updatedAt: new Date(),
           });
         }
