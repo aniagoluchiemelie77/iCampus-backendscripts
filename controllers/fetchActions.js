@@ -255,13 +255,9 @@ export const fetchBanksUsingCountryCode = async (req, res) => {
       },
     );
     const data = await flwResponse.json();
-    console.log(
-      `Step 2: Received response from Flutterwave API for country code: ${countryCode}`,
-    );
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
-    console.log(`Step 3: Response: ${JSON.stringify(data)}`);
     res.status(flwResponse.status).json(data);
   } catch (error) {
     setImmediate(() =>

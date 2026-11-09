@@ -377,7 +377,7 @@ export const verifyPhoneNumberOTP = async (req, res) => {
   try {
     const hashedInput = crypto
       .createHash("sha256")
-      .update(codeInput)
+      .update(String(codeInput || ""))
       .digest("hex");
 
     const [verificationQuery, userQuery] = await Promise.all([
