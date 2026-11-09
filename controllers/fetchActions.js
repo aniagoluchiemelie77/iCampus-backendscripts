@@ -241,10 +241,14 @@ export const fetchBanksUsingCountryCode = async (req, res) => {
   const countryCode = String(req.params.countryCode || "").toUpperCase();
   // Interpolated into the Flutterwave URL: anything but a 2-letter code
   // (e.g. "../transactions") would reach other endpoints with our secret key.
+  console.log(`Fetching banks for country code: ${countryCode}`);
   if (!/^[A-Z]{2}$/.test(countryCode)) {
     return res.status(400).json({ status: "error", message: "Invalid country code" });
   }
   try {
+    console.log(
+      `Step 1: Sending request to Flutterwave API for country code: ${countryCode}`,
+    );
     const flwResponse = await fetch(
       `https://api.flutterwave.com/v3/banks/${countryCode}`,
       {
@@ -254,6 +258,9 @@ export const fetchBanksUsingCountryCode = async (req, res) => {
       },
     );
     const data = await flwResponse.json();
+    console.log(
+      `Step 2: Received response from Flutterwave API for country code: ${countryCode}`,
+    );
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
     );
