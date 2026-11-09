@@ -246,9 +246,6 @@ export const fetchBanksUsingCountryCode = async (req, res) => {
     return res.status(400).json({ status: "error", message: "Invalid country code" });
   }
   try {
-    console.log(
-      `Step 1: Sending request to Flutterwave API for country code: ${countryCode}`,
-    );
     const flwResponse = await fetch(
       `https://api.flutterwave.com/v3/banks/${countryCode}`,
       {
