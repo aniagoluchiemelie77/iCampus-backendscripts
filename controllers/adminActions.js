@@ -12,6 +12,7 @@ import {
   TaxStatements,
   Ads,
   SchoolAuditLog,
+  Course,
 } from "../tableDeclarations.js";
 import { setImmediate } from "timers";
 import { notifyAdmins } from "../services/adminNotification.js";
@@ -31,10 +32,22 @@ import { buildSchoolAnalytics } from "../utils/schoolAnalytics.js";
 import {
   isSchoolAdmin,
   isSchoolAdminA,
+  normalizeLevel,
+  normalizeTier,
   resolveSchoolScope,
   SCHOOL_ADMIN_A,
+  SCHOOL_ADMIN_A_TYPES,
   SCHOOL_ADMIN_B,
+  SEAT_LIMITS,
+  TIER_LABELS,
 } from "../utils/schoolRoles.js";
+import {
+  courseInSession,
+  loadDetections,
+  resolveAcademicSession,
+  sessionView,
+} from "../utils/academicCalendar.js";
+import { schoolBillingRow } from "../utils/financeAnalytics.js";
 import { inviteSchoolRep, recordSchoolAudit } from "./schoolAdminActions.js";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
@@ -478,10 +491,11 @@ export const getAdminMetrics = async (req, res) => {
       }
       const schoolMetrics = await buildSchoolAnalytics(scope.schoolCode, {
         department: scope.department,
+        level: scope.level,
         session: req.query.session,
       });
       res.json({ schoolMetrics });
-      recordSchoolAudit(req, "analytics_viewed", { department: scope.department, session: schoolMetrics.session.label });
+      recordSchoolAudit(req, "analytics_viewed", { department: scope.department, level: scope.level, session: schoolMetrics.session.label });
       return;
     }
 
@@ -545,8 +559,10 @@ export const getAdminMetrics = async (req, res) => {
 
     // A super admin can inspect any school's analytics with ?schoolCode=.
     if (needsSchoolMetrics && schoolCode) {
+      const inspected = resolveSchoolScope(req.admin, req.query);
       promiseMap.schoolMetrics = buildSchoolAnalytics(schoolCode, {
-        department: resolveSchoolScope(req.admin, req.query).department,
+        department: inspected.department,
+        level: inspected.level,
         session: req.query.session,
       });
     }
@@ -1158,64 +1174,167 @@ export const updateStation = async (req, res) => {
     }
   }
 };
+/**
+ * Everything a super admin (or support) needs about one institution:
+ * profile and verification settings, plan and seats, billing state, student
+ * and lecturer counts (with department/level splits), courses, every
+ * A-level rep with the B-level reps they added, and recent audit activity.
+ *
+ * "Active" means verified, not suspended and (for students) not graduated;
+ * the app doesn't record a per-student last-seen time.
+ */
 export const getInstitutionDetails = async (req, res) => {
   try {
-    const { schoolId } = req.params;
-    const [studentsSnapshot, lecturersSnapshot, schoolSnapshot, adminsSnapshot, auditSnapshot, configSnapshot] =
-      await Promise.all([
-        User.where("schoolCode", "==", schoolId)
-          .where("role", "==", "student")
-          .get(),
-        User.where("schoolCode", "==", schoolId)
-          .where("role", "==", "lecturer")
-          .get(),
-        OperationalInstitutions.where("schoolCode", "==", schoolId)
-          .limit(1)
-          .get(),
-        Admin.where("schoolCode", "==", schoolId).get(),
-        SchoolAuditLog.where("schoolCode", "==", schoolId).orderBy("createdAt", "desc").limit(25).get(),
-        SchoolConfiguration.where("schoolId", "==", schoolId).limit(1).get(),
-      ]);
-
-    if (schoolSnapshot.empty) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Institution not found." });
+    if (!["super_admin", "support"].includes(req.admin?.adminType)) {
+      return res.status(403).json({ error: "Unauthorized" });
     }
+    const { schoolId } = req.params;
 
-    const schoolData = schoolSnapshot.docs[0].data();
+    // Schools are keyed by id; older ones are only findable by schoolCode.
+    let schoolDoc = await OperationalInstitutions.doc(String(schoolId)).get();
+    if (!schoolDoc.exists) {
+      const bySchoolCode = await OperationalInstitutions.where("schoolCode", "==", schoolId).limit(1).get();
+      schoolDoc = bySchoolCode.empty ? null : bySchoolCode.docs[0];
+    }
+    if (!schoolDoc) {
+      return res.status(404).json({ success: false, message: "Institution not found." });
+    }
+    const schoolData = schoolDoc.data();
+    const schoolCode = schoolData.schoolCode || schoolData.id || schoolDoc.id;
+
+    const [usersSnapshot, adminsSnapshot, auditSnapshot, configSnapshot, coursesSnapshot, detections] = await Promise.all([
+      User.where("schoolCode", "==", schoolCode)
+        .select("uid", "usertype", "department", "current_level", "isVerified", "isSuspended", "isStillInSchool", "createdAt")
+        .get(),
+      Admin.where("schoolCode", "==", schoolCode).get(),
+      SchoolAuditLog.where("schoolCode", "==", schoolCode).orderBy("createdAt", "desc").limit(25).get(),
+      SchoolConfiguration.where("schoolId", "==", schoolCode).limit(1).get(),
+      Course.where("schoolCode", "==", schoolCode).select("courseId", "department", "level", "session", "createdAt").get(),
+      loadDetections(schoolCode),
+    ]);
     const configData = configSnapshot.empty ? {} : configSnapshot.docs[0].data();
-    const allUsers = [...studentsSnapshot.docs, ...lecturersSnapshot.docs]
-      .map((doc) => ({ uid: doc.id, ...doc.data() }));
-    const alumniCount = allUsers.filter((user) => String(user.isStillInSchool).toLowerCase() === "false").length;
-    const reps = adminsSnapshot.docs.map((doc) => ({ uid: doc.id, ...doc.data() })).filter((admin) =>
-      ["school_admin_a", "school_administrator"].includes(admin.adminType) || admin.adminType === "school_admin_b"
-    );
-    const levelA = reps.filter((rep) => ["school_admin_a", "school_administrator"].includes(rep.adminType));
-    const levelB = reps.filter((rep) => rep.adminType === "school_admin_b");
+
+    // ---- Students and lecturers -------------------------------------------
+    const users = usersSnapshot.docs.map((doc) => ({ uid: doc.id, ...doc.data() }));
+    const isAlumnus = (u) => String(u.isStillInSchool).toLowerCase() === "false";
+    const isActive = (u) => u.isVerified && !u.isSuspended && !(u.usertype === "student" && isAlumnus(u));
+    const students = users.filter((u) => u.usertype === "student");
+    const lecturers = users.filter((u) => u.usertype === "lecturer");
+    const summarise = (list, student) => ({
+      total: list.length,
+      active: list.filter(isActive).length,
+      verified: list.filter((u) => u.isVerified).length,
+      unverified: list.filter((u) => !u.isVerified).length,
+      suspended: list.filter((u) => u.isSuspended).length,
+      ...(student ? { alumni: list.filter(isAlumnus).length } : {}),
+    });
+    const since30 = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const joinedLast30Days = users.filter((u) => {
+      const joined = u.createdAt?.toDate ? u.createdAt.toDate() : u.createdAt ? new Date(u.createdAt) : null;
+      return joined && joined.getTime() >= since30;
+    }).length;
+
+    const deptOf = (value) => String(value || "").trim() || "General";
+    const byDepartment = {};
+    [...students, ...lecturers].forEach((u) => {
+      const name = deptOf(u.department);
+      const row = (byDepartment[name] = byDepartment[name] || { department: name, students: 0, activeStudents: 0, lecturers: 0 });
+      if (u.usertype === "student") {
+        row.students += 1;
+        if (isActive(u)) row.activeStudents += 1;
+      } else {
+        row.lecturers += 1;
+      }
+    });
+    const byLevel = {};
+    students
+      .filter((u) => !isAlumnus(u))
+      .forEach((u) => {
+        const key = normalizeLevel(u.current_level) || "Unknown";
+        byLevel[key] = (byLevel[key] || 0) + 1;
+      });
+
+    // ---- Courses -----------------------------------------------------------
+    const courses = coursesSnapshot.docs.map((doc) => doc.data());
+    const calendar = resolveAcademicSession({ institution: schoolData, courses, detections });
+    const coursesThisSession = courses.filter((c) => courseInSession(c, calendar.current)).length;
+
+    // ---- Representatives ---------------------------------------------------
+    const iso = (value) => (value?.toDate ? value.toDate().toISOString() : value || null);
+    const repView = (rep) => ({
+      uid: rep.uid,
+      firstname: rep.firstname || "",
+      lastname: rep.lastname || "",
+      email: rep.email || "",
+      department: rep.department || null,
+      profilePic: rep.profilePic || [],
+      isVerified: rep.isVerified !== false,
+      lastAccessed: iso(rep.lastAccessed),
+      createdAt: iso(rep.createdAt),
+    });
+    const admins = adminsSnapshot.docs.map((doc) => ({ uid: doc.id, ...doc.data() }));
+    const levelA = admins.filter((a) => SCHOOL_ADMIN_A_TYPES.includes(a.adminType));
+    const levelB = admins.filter((a) => a.adminType === SCHOOL_ADMIN_B);
+    const aUids = new Set(levelA.map((a) => a.uid));
+    const tier = normalizeTier(schoolData.tier);
+    const seats = SEAT_LIMITS[tier];
 
     return res.json({
+      id: schoolDoc.id,
+      schoolCode,
       schoolName: schoolData.schoolName,
-      contactEmail: schoolData.contactEmail,
-      logo: schoolData.logo,
-      studentCount: studentsSnapshot.size,
-      lecturerCount: lecturersSnapshot.size,
-      alumniCount,
-      tier: schoolData.tier || "basic",
-      amountPaid: configData.amountPaid ?? schoolData.amountPaid ?? 0,
-      dueDate: configData.nextPaymentDue ?? schoolData.nextPaymentDue ?? null,
-      createdAt: schoolData.createdAt ?? null,
-      reps: {
-        a: levelA.map((rep) => ({ uid: rep.uid, firstname: rep.firstname, lastname: rep.lastname, email: rep.email, department: rep.department || null })),
-        b: levelB.map((rep) => ({ uid: rep.uid, firstname: rep.firstname, lastname: rep.lastname, email: rep.email, department: rep.department || null })),
+      contactEmail: schoolData.contactEmail || null,
+      logo: schoolData.logo || null,
+      countryCode: configData.countryCode || null,
+      domainWhitelist: Array.isArray(configData.domainWhitelist) ? configData.domainWhitelist : [],
+      verificationMethod: configData.verificationMethod || null,
+      isOperational: configData.isOperational === true,
+      // For the edit form; secrets never leave the server.
+      ssoConfig: configData.ssoConfig
+        ? { provider: configData.ssoConfig.provider, issuerUrl: configData.ssoConfig.issuerUrl, clientId: configData.ssoConfig.clientId }
+        : null,
+      externalApiConfig: configData.externalApiConfig
+        ? { endpoint: configData.externalApiConfig.endpoint, timeoutMs: configData.externalApiConfig.timeoutMs }
+        : null,
+      createdAt: iso(schoolData.createdAt),
+      updatedAt: iso(schoolData.updatedAt ?? configData.updatedAt),
+
+      tier,
+      tierLabel: TIER_LABELS[tier],
+      tierUpdatedAt: iso(schoolData.tierUpdatedAt),
+      seats: {
+        a: { used: levelA.length, limit: seats.a },
+        b: { used: levelB.length, limit: seats.b },
       },
-      activity: auditSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
+      // Amount, cycle, due date, days left and status (overdue / due_soon / active / not_set).
+      billing: schoolBillingRow({ id: schoolDoc.id, ...schoolData }),
+
+      students: summarise(students, true),
+      lecturers: summarise(lecturers, false),
+      joinedLast30Days,
+      byDepartment: Object.values(byDepartment).sort((a, b) => b.students - a.students),
+      byLevel: Object.entries(byLevel)
+        .map(([level, count]) => ({ level, students: count }))
+        .sort((a, b) => a.level.localeCompare(b.level, undefined, { numeric: true })),
+      courses: { total: courses.length, thisSession: coursesThisSession, session: calendar.current.label },
+      // Current session, whether the school's rep set it, and any pending suggestion.
+      academicSession: { ...sessionView(calendar.current), ...calendar.status },
+
+      reps: {
+        // Each institution rep with the department reps they added.
+        a: levelA.map((a) => ({
+          ...repView(a),
+          departmentReps: levelB.filter((b) => b.invitedBy === a.uid).map(repView),
+        })),
+        // Department reps added by someone else (e.g. iCampus staff) or whose inviter has left.
+        unassignedB: levelB.filter((b) => !aUids.has(b.invitedBy)).map(repView),
+        b: levelB.map(repView),
+      },
+      activity: auditSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data(), createdAt: iso(doc.data().createdAt) })),
     });
   } catch (error) {
     console.error("Get Institution Details Error:", error);
-    return res
-      .status(500)
-      .json({ success: false, message: "Failed to retrieve details." });
+    return res.status(500).json({ success: false, message: "Failed to retrieve details." });
   }
 };
 export const getStationDetails = async (req, res) => {

@@ -39,83 +39,33 @@ export const SEAT_LIMITS = {
 };
 
 /**
+ * Study level as a comparable key: "100", "100L", "100 Level" and 100 all
+ * become "100"; anything without digits is kept lower-cased; empty → null.
+ */
+export const normalizeLevel = (value) => {
+  const text = String(value ?? "").trim();
+  if (!text || text.toLowerCase() === "all") return null;
+  const digits = text.match(/[0-9]+/);
+  return digits ? String(Number(digits[0])) : text.toLowerCase();
+};
+
+/**
  * What an admin may see of a school. B-level reps are pinned to their own
  * department whatever the request asks for; A-level reps (and super admins
- * inspecting a school) may narrow to one department.
+ * inspecting a school) may narrow to one department. Every school admin,
+ * A or B, may narrow to one study level (`level`, null = all levels).
  */
 export const resolveSchoolScope = (admin, requested = {}) => {
   const adminType = admin?.adminType;
   const schoolCode =
     adminType === "super_admin" ? requested.schoolCode || admin?.schoolCode : admin?.schoolCode;
+  const level = normalizeLevel(requested.level);
   if (isSchoolAdminB(adminType)) {
-    return { schoolCode, department: admin?.department || null, locked: true };
+    return { schoolCode, department: admin?.department || null, level, locked: true };
   }
   const department = String(requested.department || "").trim();
-  return { schoolCode, department: department && department !== "all" ? department : null, locked: false };
+  return { schoolCode, department: department && department !== "all" ? department : null, level, locked: false };
 };
 
-/**
- * The academic session a date falls in. Nigerian sessions start around
- * September, so September 2026 – August 2027 is "2026/2027".
- */
-export const academicSession = (date = new Date()) => {
-  const year = date.getFullYear();
-  const start = date.getMonth() >= 8 ? year : year - 1;
-  return {
-    label: `${start}/${start + 1}`,
-    startYear: start,
-    startsAt: new Date(start, 8, 1),
-    endsAt: new Date(start + 1, 8, 1),
-  };
-};
-
-/** "2026/2027", "2026-27" and "2026 / 2027" all → 2026; null when unreadable. */
-export const sessionStartYear = (session) => {
-  const match = String(session || "").match(/(\d{4})/);
-  return match ? Number(match[1]) : null;
-};
-
-/** iCampus school analytics start with the 2026/2027 session. */
-export const FIRST_SESSION_START_YEAR = 2026;
-
-export const sessionForStartYear = (startYear) => academicSession(new Date(startYear, 8, 1));
-
-/** Sessions a school can view, newest first: the current one back to 2026/2027. */
-export const availableSessions = (date = new Date()) => {
-  const current = academicSession(date).startYear;
-  const sessions = [];
-  for (let y = current; y >= Math.min(FIRST_SESSION_START_YEAR, current); y--) sessions.push(`${y}/${y + 1}`);
-  return sessions;
-};
-
-/** The requested session ("2026/2027"), or the current one if it's missing or out of range. */
-export const resolveSession = (requested) => {
-  const current = academicSession();
-  const year = sessionStartYear(requested);
-  if (year === null || year < FIRST_SESSION_START_YEAR || year > current.startYear) return current;
-  return sessionForStartYear(year);
-};
-
-/** Prefer a session discovered in course/allocations data over calendar assumptions. */
-export const resolveSchoolSession = (requested, { institution, courses = [], date = new Date() } = {}) => {
-  const recorded = [];
-  const addSession = (value) => {
-    const year = sessionStartYear(value);
-    if (year !== null && year >= FIRST_SESSION_START_YEAR && !recorded.includes(`${year}/${year + 1}`)) {
-      recorded.push(`${year}/${year + 1}`);
-    }
-  };
-  addSession(institution?.currentAcademicSession);
-  addSession(institution?.activeAcademicSession);
-  courses.forEach((course) => addSession(course.session));
-
-  const requestedYear = sessionStartYear(requested);
-  if (requestedYear !== null && requested.includes("/")) {
-    return resolveSession(requested);
-  }
-  if (recorded.length) {
-    recorded.sort((a, b) => sessionStartYear(b) - sessionStartYear(a));
-    return sessionForStartYear(sessionStartYear(recorded[0]));
-  }
-  return academicSession(date);
-};
+// Academic sessions (which one is current, and its dates) live in
+// utils/academicCalendar.js: each institution rep sets their own calendar.

@@ -22,7 +22,6 @@ import {
   isSchoolAdminB,
   normalizeTier,
   resolveSchoolScope,
-  resolveSession,
   SCHOOL_ADMIN_A,
   SCHOOL_ADMIN_B,
   SEAT_LIMITS,
@@ -36,6 +35,23 @@ import { generateNotificationId } from "../utils/idGenerator.js";
 import { emailExport } from "../utils/exportService.js";
 import { attachmentPayload, parseAttachments } from "../utils/notificationAttachments.js";
 import { toDate } from "../utils/lectureTime.js";
+import { notifyAdmins } from "../services/adminNotification.js";
+import {
+  CalendarError,
+  dismissSuggestion,
+  labelYear,
+  loadDetections,
+  loadInstitutionDoc,
+  readCalendar,
+  resolveAcademicSession,
+  sessionView,
+  startSession,
+  SUGGEST_MIN_LECTURERS,
+  SUGGEST_MIN_REPORTERS,
+  undoLastSession,
+  updateCalendarSettings,
+  updateCurrentSession,
+} from "../utils/academicCalendar.js";
 
 const ADMIN_PORTAL_URL = process.env.ADMIN_PORTAL_URL || null;
 const isEmail = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
@@ -93,6 +109,21 @@ const matchesSearch = (row, q) =>
 
 const SECTIONS = ["courses", "announcements", "lectures", "at-risk", "lecturers"];
 
+const riskScore = (s) => (s.attendancePct ?? 100) + (s.scorePct ?? 100);
+const levelOrder = (s) => Number(String(s.level || "").match(/[0-9]+/)?.[0]) || Number.MAX_SAFE_INTEGER;
+/**
+ * At-risk order: "risk" (most at risk first, the default), "department"
+ * (A–Z, most at risk first within each) or "level" (100L up, likewise).
+ */
+const sortAtRisk = (rows, sort) => {
+  const list = [...rows];
+  if (sort === "department") {
+    return list.sort((a, b) => String(a.department).localeCompare(String(b.department)) || riskScore(a) - riskScore(b));
+  }
+  if (sort === "level") return list.sort((a, b) => levelOrder(a) - levelOrder(b) || riskScore(a) - riskScore(b));
+  return list.sort((a, b) => riskScore(a) - riskScore(b));
+};
+
 export const getSchoolSection = async (req, res) => {
   const scope = requireSchool(req, res);
   if (!scope) return;
@@ -101,7 +132,7 @@ export const getSchoolSection = async (req, res) => {
     return res.status(404).json({ error: "Unknown section." });
   }
   try {
-    const data = await buildSchoolAnalytics(scope.schoolCode, { department: scope.department, full: true, session: req.query.session });
+    const data = await buildSchoolAnalytics(scope.schoolCode, { department: scope.department, level: scope.level, full: true, session: req.query.session });
     let list;
     if (section === "courses") list = data.lists.courses;
     else if (section === "announcements") list = data.lists.announcements;
@@ -116,7 +147,7 @@ export const getSchoolSection = async (req, res) => {
             : data.lists.lectures;
     } else if (section === "at-risk") {
       if (!data.enterprise) return res.status(403).json({ error: "At-risk students are part of the Enterprise plan." });
-      list = data.enterprise.atRisk.students;
+      list = sortAtRisk(data.enterprise.atRisk.students, req.query.sort);
     } else {
       if (!data.professional) return res.status(403).json({ error: "Lecturer activity is part of the Professional plan." });
       list = data.professional.lecturers;
@@ -129,8 +160,11 @@ export const getSchoolSection = async (req, res) => {
       scope: data.scope,
       session: data.session,
       institution: data.institution,
+      ...(section === "at-risk"
+        ? { breakdown: { byDepartment: data.enterprise.atRisk.byDepartment, byLevel: data.enterprise.atRisk.byLevel } }
+        : {}),
     });
-    recordSchoolAudit(req, "section_viewed", { section, department: scope.department, session: data.session.label, q: q || null, page: page.page });
+    recordSchoolAudit(req, "section_viewed", { section, department: scope.department, level: scope.level, session: data.session.label, q: q || null, page: page.page });
   } catch (err) {
     console.error("getSchoolSection Error:", err);
     res.status(500).json({ error: "Failed to load this list." });
@@ -295,9 +329,10 @@ export const exportSchoolData = async (req, res) => {
     return res.status(400).json({ error: "Your account has no department yet." });
   }
   // Scope comes from the signed-in rep; the body can only narrow an A-level rep's view.
-  const narrowed = resolveSchoolScope(req.admin, { department: req.body?.department });
+  const narrowed = resolveSchoolScope(req.admin, { department: req.body?.department, level: req.body?.level });
   try {
     let files;
+    let sessionLabel = null;
     if (section === "students" || section === "lecturer-accounts") {
       const data = await loadSchoolUsers(
         narrowed,
@@ -306,7 +341,8 @@ export const exportSchoolData = async (req, res) => {
       );
       files = [{ name: section, rows: data.rows, columns: USER_COLUMNS }];
     } else {
-      const data = await buildSchoolAnalytics(narrowed.schoolCode, { department: narrowed.department, full: true, session: req.body?.session });
+      const data = await buildSchoolAnalytics(narrowed.schoolCode, { department: narrowed.department, level: narrowed.level, full: true, session: req.body?.session });
+      sessionLabel = data.session.label;
       if (spec.tier && !data.access[spec.tier]) {
         return res.status(403).json({ error: `${spec.title} is not included in your plan.` });
       }
@@ -433,7 +469,7 @@ export const exportSchoolData = async (req, res) => {
         "at-risk": () => [
           {
             name: "students-at-risk",
-            rows: data.enterprise.atRisk.students,
+            rows: sortAtRisk(data.enterprise.atRisk.students, req.body?.sort),
             columns: [
               { key: "name", label: "Student" },
               { key: "matricNumber", label: "Matric number" },
@@ -441,6 +477,30 @@ export const exportSchoolData = async (req, res) => {
               { key: "level", label: "Level" },
               { key: "attendancePct", label: "Attendance %" },
               { key: "scorePct", label: "Average score %" },
+            ],
+          },
+          {
+            name: "at-risk-by-department",
+            rows: data.enterprise.atRisk.byDepartment,
+            columns: [
+              { key: "key", label: "Department" },
+              { key: "count", label: "At-risk students" },
+              { key: "lowAttendance", label: "Low attendance" },
+              { key: "lowScore", label: "Low score" },
+              { key: "averageAttendancePct", label: "Avg attendance %" },
+              { key: "averageScorePct", label: "Avg score %" },
+            ],
+          },
+          {
+            name: "at-risk-by-level",
+            rows: data.enterprise.atRisk.byLevel,
+            columns: [
+              { key: "key", label: "Level" },
+              { key: "count", label: "At-risk students" },
+              { key: "lowAttendance", label: "Low attendance" },
+              { key: "lowScore", label: "Low score" },
+              { key: "averageAttendancePct", label: "Avg attendance %" },
+              { key: "averageScorePct", label: "Avg score %" },
             ],
           },
         ],
@@ -453,7 +513,7 @@ export const exportSchoolData = async (req, res) => {
       personalData: spec.personalData,
       scope: {
         School: req.admin.organizationName || narrowed.schoolCode,
-        Session: section === "students" || section === "lecturer-accounts" ? null : resolveSession(req.body?.session).label,
+        Session: sessionLabel,
         Department: narrowed.department || "All departments",
       },
     });
@@ -912,3 +972,179 @@ export const getSchoolAuditLog = async (req, res) => {
     res.status(500).json({ error: "Failed to load the audit log." });
   }
 };
+// ---------------------------------------------------------------------------
+// Academic calendar: the A-level rep sets when sessions start and end
+// (utils/academicCalendar.js). B-level reps can see it but not change it.
+// Super admins manage any school's calendar with ?schoolCode= / body.schoolCode;
+// support can view it.
+// ---------------------------------------------------------------------------
+
+/** { schoolCode, canManage } for the requester, or null after sending an error. */
+const calendarScope = (req, res, { manage = false } = {}) => {
+  const adminType = req.admin?.adminType;
+  if (adminType === "super_admin" || (adminType === "support" && !manage)) {
+    const schoolCode = String(req.query.schoolCode || req.body?.schoolCode || "").trim();
+    if (!schoolCode) {
+      res.status(400).json({ error: "Which institution?" });
+      return null;
+    }
+    return { schoolCode, canManage: adminType === "super_admin" };
+  }
+  if (!isSchoolAdmin(adminType)) {
+    res.status(403).json({ error: "Only school administrators can use this." });
+    return null;
+  }
+  if (!req.admin.schoolCode) {
+    res.status(400).json({ error: "Your admin account is not linked to a school." });
+    return null;
+  }
+  const canManage = isSchoolAdminA(adminType);
+  if (manage && !canManage) {
+    res.status(403).json({ error: "Only your institution representative can change the academic calendar." });
+    return null;
+  }
+  return { schoolCode: req.admin.schoolCode, canManage };
+};
+
+const calendarEntryView = (s) =>
+  s && {
+    label: s.label,
+    startsAt: s.startsAt?.toISOString() ?? null,
+    endsAt: s.endsAt?.toISOString() ?? null,
+    plannedEndsAt: s.plannedEndsAt?.toISOString() ?? null,
+    setAt: s.setAt?.toISOString() ?? null,
+  };
+
+/** The calendar as the portal shows it: what's set, what analytics uses, and what uploads report. */
+const calendarResponse = async (doc, schoolCode, canManage) => {
+  const institution = doc.data();
+  const [coursesSnap, detections] = await Promise.all([
+    Course.where("schoolCode", "==", schoolCode).select("session", "createdAt").get(),
+    loadDetections(schoolCode),
+  ]);
+  const cal = readCalendar(institution);
+  const resolved = resolveAcademicSession({
+    institution,
+    courses: coursesSnap.docs.map((d) => d.data()),
+    detections,
+  });
+  return {
+    schoolCode,
+    schoolName: institution.schoolName || institution.name || schoolCode,
+    canManage,
+    current: calendarEntryView(cal.current),
+    history: cal.history.map(calendarEntryView),
+    defaultStartMonth: cal.defaultStartMonth,
+    // The session analytics use right now, and where it came from.
+    inUse: sessionView(resolved.current),
+    status: resolved.status,
+    // What students and lecturers have been uploading, newest session first.
+    detected: detections
+      .sort((a, b) => (labelYear(b.label) ?? 0) - (labelYear(a.label) ?? 0) || b.reporters - a.reporters)
+      .slice(0, 10)
+      .map((d) => ({
+        label: d.label,
+        reporters: d.reporters,
+        lecturers: d.lecturers,
+        lastSeenAt: d.lastSeenAt?.toISOString() ?? null,
+        matchesCurrent: d.key === resolved.current.key,
+        dismissed: cal.dismissed.includes(d.key),
+      })),
+    thresholds: { reporters: SUGGEST_MIN_REPORTERS, lecturers: SUGGEST_MIN_LECTURERS },
+  };
+};
+
+const withCalendar = (manage, action) => async (req, res) => {
+  const scope = calendarScope(req, res, { manage });
+  if (!scope) return;
+  try {
+    const doc = await loadInstitutionDoc(scope.schoolCode);
+    if (!doc) return res.status(404).json({ error: "Institution not found." });
+    const message = action ? await action(req, doc, scope) : null;
+    // Re-read so the response reflects what was saved.
+    const fresh = action ? await doc.ref.get() : doc;
+    res.json({ ...(message ? { message } : {}), ...(await calendarResponse(fresh, scope.schoolCode, scope.canManage)) });
+  } catch (err) {
+    if (err instanceof CalendarError) return res.status(err.status).json({ error: err.message });
+    console.error("Academic calendar Error:", err);
+    res.status(500).json({ error: "Couldn't update the academic calendar." });
+  }
+};
+
+/** Tells the school's other reps that the session changed. Never blocks the request. */
+const notifySchoolReps = (req, schoolCode, title, message) => {
+  setImmediate(async () => {
+    try {
+      const snap = await Admin.where("schoolCode", "==", schoolCode).get();
+      const uids = snap.docs
+        .map((d) => d.data())
+        .filter((a) => isSchoolAdmin(a.adminType) && a.uid !== req.admin?.uid)
+        .map((a) => a.uid);
+      if (!uids.length) return;
+      await notifyAdmins(
+        { uids },
+        {
+          notificationId: generateNotificationId("classroom"),
+          category: "classroom",
+          actionType: "SCHOOL_SESSION_CHANGED",
+          title,
+          message,
+          payload: { schoolCode },
+        },
+        false,
+      );
+    } catch (err) {
+      console.error("Session change notification failed:", err.message);
+    }
+  });
+};
+
+export const getAcademicCalendar = withCalendar(false, null);
+
+export const startAcademicSession = withCalendar(true, async (req, doc, scope) => {
+  const { previous, current } = await startSession(doc, req.body || {}, req.admin.uid);
+  recordSchoolAudit(req, "academic_session_started", {
+    schoolCode: scope.schoolCode,
+    session: current.label,
+    startsAt: current.startsAt,
+    endsAt: current.endsAt,
+    previous: previous?.label || null,
+  });
+  notifySchoolReps(
+    req,
+    scope.schoolCode,
+    "New academic session",
+    `${fullName(req.admin)} started the ${current.label} session. Dashboards now show ${current.label}${previous ? `; ${previous.label} is in the session picker` : ""}.`,
+  );
+  return `${current.label} is now the current session.`;
+});
+
+export const updateAcademicSession = withCalendar(true, async (req, doc, scope) => {
+  await updateCurrentSession(doc, req.body || {}, req.admin.uid);
+  recordSchoolAudit(req, "academic_session_updated", { schoolCode: scope.schoolCode, fields: Object.keys(req.body || {}).filter((k) => k !== "schoolCode") });
+  return "Session updated.";
+});
+
+export const undoAcademicSession = withCalendar(true, async (req, doc, scope) => {
+  const { removed, current } = await undoLastSession(doc, req.admin.uid);
+  recordSchoolAudit(req, "academic_session_undone", { schoolCode: scope.schoolCode, removed: removed.label, restored: current?.label || null });
+  notifySchoolReps(
+    req,
+    scope.schoolCode,
+    "Academic session reverted",
+    `${fullName(req.admin)} removed the ${removed.label} session${current ? `; ${current.label} is current again` : ""}.`,
+  );
+  return current ? `${removed.label} removed. ${current.label} is current again.` : `${removed.label} removed.`;
+});
+
+export const updateAcademicCalendarSettings = withCalendar(true, async (req, doc, scope) => {
+  await updateCalendarSettings(doc, req.body || {}, req.admin.uid);
+  recordSchoolAudit(req, "academic_calendar_settings_updated", { schoolCode: scope.schoolCode, defaultStartMonth: req.body?.defaultStartMonth });
+  return "Calendar settings saved.";
+});
+
+export const dismissSessionSuggestion = withCalendar(true, async (req, doc, scope) => {
+  await dismissSuggestion(doc, req.body?.label, req.admin.uid);
+  recordSchoolAudit(req, "session_suggestion_dismissed", { schoolCode: scope.schoolCode, session: req.body?.label });
+  return "Suggestion dismissed.";
+});

@@ -10,7 +10,8 @@
 //
 // Scope is applied here, on the server: a department-scoped request only ever
 // reads that department's users and courses. Courses and announcements are
-// limited to the current academic session.
+// limited to the academic session in view; which session that is, and its
+// dates, come from the school's academic calendar (utils/academicCalendar.js).
 import {
   User,
   Course,
@@ -25,15 +26,18 @@ import {
 } from "../tableDeclarations.js";
 import { resolveLectureTime, toDate, localDateKey, tzOffsetMinutes } from "./lectureTime.js";
 import {
-  academicSession,
-  availableSessions,
+  normalizeLevel,
   normalizeTier,
-  resolveSession,
-  resolveSchoolSession,
-  sessionStartYear,
   TIER_LABELS,
   TIERS,
 } from "./schoolRoles.js";
+import {
+  courseInSession,
+  inSessionWindow,
+  loadDetections,
+  resolveAcademicSession,
+  sessionView,
+} from "./academicCalendar.js";
 
 export const SCHOOL_TIER_FEATURES = {
   basic: [
@@ -113,6 +117,23 @@ const bands = (values) =>
     count: values.filter((v) => v !== null && v >= from && (from === 80 ? v <= 100 : v < from + 20)).length,
   }));
 
+/** At-risk students grouped by `keyOf`: count, low-attendance and low-score splits. */
+const groupAtRisk = (rows, keyOf) => {
+  const groups = {};
+  rows.forEach((s) => {
+    const key = keyOf(s);
+    const g = (groups[key] = groups[key] || { key, count: 0, lowAttendance: 0, lowScore: 0, att: [], score: [] });
+    g.count += 1;
+    if (s.attendancePct !== null && s.attendancePct < AT_RISK_ATTENDANCE_PCT) g.lowAttendance += 1;
+    if (s.scorePct !== null && s.scorePct < AT_RISK_SCORE_PCT) g.lowScore += 1;
+    if (s.attendancePct !== null) g.att.push(s.attendancePct);
+    if (s.scorePct !== null) g.score.push(s.scorePct);
+  });
+  return Object.values(groups)
+    .map(({ att, score, ...g }) => ({ ...g, averageAttendancePct: avg(att), averageScorePct: avg(score) }))
+    .sort((a, b) => b.count - a.count || String(a.key).localeCompare(String(b.key), undefined, { numeric: true }));
+};
+
 export const loadInstitution = async (schoolCode) => {
   const direct = await OperationalInstitutions.doc(String(schoolCode)).get();
   if (direct.exists) return direct.data();
@@ -120,23 +141,17 @@ export const loadInstitution = async (schoolCode) => {
   return snap.empty ? null : snap.docs[0].data();
 };
 
-/** Course belongs to the session: by its `session` field, else by when it was created. */
-const inSession = (course, session) => {
-  const year = sessionStartYear(course.session);
-  if (year !== null) return year === session.startYear;
-  const created = toDate(course.createdAt) || toDate(course.updatedAt);
-  return !!created && created >= session.startsAt && created < session.endsAt;
-};
-
 /**
  * @param schoolCode  the institution
  * @param options.department  limit every figure to one department (null = all)
+ * @param options.level  limit students and courses to one study level (null = all);
+ *                       lecturers aren't tied to a level, so they stay in scope
  * @param options.full  also return complete lists, for the "View all" screens
  * @param options.session  academic session to report ("2026/2027"); defaults to the current one
  */
 export const buildSchoolAnalytics = async (
   schoolCode,
-  { department = null, full = false, session: requestedSession = null } = {},
+  { department = null, level: studyLevel = null, full = false, session: requestedSession = null } = {},
 ) => {
   const institution = await loadInstitution(schoolCode);
   const tier = normalizeTier(institution?.tier);
@@ -146,10 +161,9 @@ export const buildSchoolAnalytics = async (
     professional: level >= 1,
     enterprise: level >= 2,
   };
-  let session = resolveSession(requestedSession);
 
   // ---- Shared base data -----------------------------------------------------
-  const [usersSnap, coursesSnap, memosSnap, broadcastsSnap] = await Promise.all(
+  const [usersSnap, coursesSnap, memosSnap, broadcastsSnap, detections] = await Promise.all(
     [
       User.where("schoolCode", "==", schoolCode).get(),
       Course.where("schoolCode", "==", schoolCode).get(),
@@ -157,6 +171,7 @@ export const buildSchoolAnalytics = async (
         .where("audience", "==", "school")
         .get(),
       SchoolAnnouncements.where("schoolCode", "==", schoolCode).get(),
+      loadDetections(schoolCode),
     ],
   );
   const institutionCourses = coursesSnap.docs.map((d) => d.data());
@@ -164,17 +179,15 @@ export const buildSchoolAnalytics = async (
   const inDept = (value) =>
     !department || norm(value || "General") === norm(department);
   const take = (list, n = PREVIEW) => (full ? list : list.slice(0, n));
-  session = resolveSchoolSession(requestedSession, {
+  const calendar = resolveAcademicSession({
     institution,
     courses: institutionCourses,
+    detections,
+    requested: requestedSession,
   });
-  const currentInstitutionSession = resolveSchoolSession(null, {
-    institution,
-    courses: institutionCourses,
-  });
-  const isCurrentSession =
-    session.startYear === currentInstitutionSession.startYear;
-  const trendEnd = isCurrentSession
+  const session = calendar.session;
+  const isCurrentSession = session.isCurrent;
+  const trendEnd = isCurrentSession || !session.endsAt
     ? new Date()
     : new Date(session.endsAt.getTime() - 1);
   const allUsers = usersSnap.docs.map((d) => d.data());
@@ -193,9 +206,30 @@ export const buildSchoolAnalytics = async (
     ),
   ].sort((a, b) => a.localeCompare(b));
 
-  const users = allUsers.filter((u) => inDept(u.department));
+  // Level choices come from the department in view (a B rep only sees their
+  // department's levels), and stay put when a level is picked.
+  const levelKey = normalizeLevel(studyLevel);
+  const inLevel = (value) => !levelKey || normalizeLevel(value) === levelKey;
+  const levelOptions = [
+    ...new Set(
+      [
+        ...allUsers
+          .filter((u) => u.usertype === "student" && inDept(u.department))
+          .map((u) => u.current_level),
+        ...allCourses.filter((c) => inDept(c.department)).map((c) => c.level),
+      ]
+        .map(normalizeLevel)
+        .filter(Boolean),
+    ),
+  ].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+
+  const users = allUsers.filter(
+    (u) =>
+      inDept(u.department) &&
+      (u.usertype !== "student" || inLevel(u.current_level)),
+  );
   const courses = allCourses.filter(
-    (c) => inSession(c, session) && inDept(c.department),
+    (c) => courseInSession(c, session) && inDept(c.department) && inLevel(c.level),
   );
   const courseIds = courses.map((c) => c.courseId).filter(Boolean);
   const courseById = new Map(courses.map((c) => [c.courseId, c]));
@@ -364,8 +398,7 @@ export const buildSchoolAnalytics = async (
     .sort((a, b) => b.enrolled - a.enrolled);
 
   // ---- Announcements (current session) -------------------------------------
-  const sinceSession = (d) =>
-    !!d && d >= session.startsAt && d < session.endsAt;
+  const sinceSession = (d) => inSessionWindow(d, session);
   const memos = memosSnap.docs
     .map((d) => ({ id: d.id, ...d.data() }))
     .filter((m) => sinceSession(toDate(m.createdAt)));
@@ -829,6 +862,9 @@ export const buildSchoolAnalytics = async (
         },
         count: atRisk.length,
         students: take(atRisk, 8),
+        // How the at-risk list splits, for the per-department / per-level views.
+        byDepartment: groupAtRisk(atRisk, (s) => s.department || "General"),
+        byLevel: groupAtRisk(atRisk, (s) => normalizeLevel(s.level) || "Unknown"),
       },
       attendanceDistribution: bands(studentRows.map((s) => s.attendancePct)),
       departments: Object.entries(deptStats)
@@ -889,36 +925,12 @@ export const buildSchoolAnalytics = async (
       tier,
       tierLabel: TIER_LABELS[tier],
     },
-    scope: { department: department || null, departments },
-    session: {
-      label: session.label,
-      startsAt: session.startsAt.toISOString(),
-      endsAt: session.endsAt.toISOString(),
-      isCurrent: isCurrentSession,
-    },
-    sessions: [
-      ...new Set(
-        [
-          institution?.currentAcademicSession,
-          institution?.activeAcademicSession,
-          ...institutionCourses.map((course) => course.session),
-        ].filter(Boolean),
-      ),
-    ]
-      .sort((a, b) => sessionStartYear(b) - sessionStartYear(a))
-      .slice(0, 12).length
-      ? [
-          ...new Set(
-            [
-              institution?.currentAcademicSession,
-              institution?.activeAcademicSession,
-              ...institutionCourses.map((course) => course.session),
-            ].filter(Boolean),
-          ),
-        ]
-          .sort((a, b) => sessionStartYear(b) - sessionStartYear(a))
-          .slice(0, 12)
-      : availableSessions(),
+    scope: { department: department || null, departments, level: levelKey, levels: levelOptions },
+    session: sessionView(session),
+    // Labels for the session picker, newest (current) first.
+    sessions: calendar.sessions.map((s) => s.label),
+    // Whether the rep has set the calendar, and anything they should act on.
+    calendar: { ...calendar.status, current: sessionView(calendar.current) },
     access,
     // What higher tiers add, for upgrade prompts.
     locked: TIERS.slice(level + 1).map((t) => ({

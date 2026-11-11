@@ -46,6 +46,12 @@ import {
   getSchoolAuditLog,
   getSchoolUsers,
   exportSchoolData,
+  getAcademicCalendar,
+  startAcademicSession,
+  updateAcademicSession,
+  undoAcademicSession,
+  updateAcademicCalendarSettings,
+  dismissSessionSuggestion,
 } from "../controllers/schoolAdminActions.js";
 import {
   getFinanceOverview,
@@ -249,6 +255,30 @@ router.post(
 router.get("/school/audit-log", protect, verifyAdmin, getSchoolAuditLog);
 router.get("/school/users", protect, verifyAdmin, getSchoolUsers);
 router.post("/school/exports", protect, verifyAdmin, exportSchoolData);
+router.get("/school/calendar", protect, verifyAdmin, getAcademicCalendar);
+router.post(
+  "/school/calendar/sessions",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  startAcademicSession,
+);
+router.patch(
+  "/school/calendar/current",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  updateAcademicSession,
+);
+router.delete(
+  "/school/calendar/current",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  undoAcademicSession,
+);
+router.patch("/school/calendar/settings", protect, verifyAdmin, updateAcademicCalendarSettings);
+router.post("/school/calendar/dismiss-suggestion", protect, verifyAdmin, dismissSessionSuggestion);
 
 // Finance (finance + super admins).
 router.get("/finance/overview", protect, verifyAdmin, getFinanceOverview);

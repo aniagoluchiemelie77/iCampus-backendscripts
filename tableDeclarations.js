@@ -43,3 +43,4 @@ export const SchoolAuditLog = db.collection("schoolauditlogs");
 export const AdminActivityLog = db.collection("adminactivitylogs");
 export const AdminBroadcasts = db.collection("adminbroadcasts");
 export const SocialMediaSnapshots = db.collection("socialmediasnapshots");
+export const SessionDetections = db.collection("sessiondetections");
