@@ -39,6 +39,11 @@ import { prepareLectureData } from "../utils/onlineClassLinkGenerator.js";
 import { setImmediate } from "timers";
 import { compareFaces, getReferenceImage } from "../utils/faceVerification.js";
 import {
+  gradeSubmission,
+  questionProblem,
+  stripAnswerKeys,
+} from "../utils/assessmentGrading.js";
+import {
   geminiModel,
   isGeminiQuotaError,
   isGeminiUnavailableError,
@@ -228,13 +233,26 @@ export const checkTestStatus = async (req, res) => {
     const test = { id: testDoc.id, ...testDoc.data() };
     const hasSubmitted = !submissionQuery.empty;
 
+    const courseQuery = await Course.where("courseId", "==", test.courseId)
+      .limit(1)
+      .get();
+    const isCourseLecturer =
+      !courseQuery.empty &&
+      (await checkContentAuthorization(studentId, courseQuery.docs[0].data()));
+    // Drafts are invisible to students.
+    if (!isCourseLecturer && !test.isPublished) {
+      return res.status(404).json({ message: "Assessment not found" });
+    }
+
     setImmediate(() => {
       logControllerPerformance(controllerName, action, startTime, "success");
     });
 
     return res.status(200).json({
       hasSubmitted: hasSubmitted,
-      test: test,
+      // Answer keys never leave the server for students; grading happens
+      // in submitAssessment.
+      test: isCourseLecturer ? test : stripAnswerKeys(test),
     });
   } catch (error) {
     console.error("Error checking test status:", error.message);
@@ -422,6 +440,28 @@ export const createAssessment = async (req, res) => {
     const courseDocRef = courseQuery.docs[0].ref;
     const course = courseQuery.docs[0].data();
 
+    // Only this course's lecturers may create or edit its assessments.
+    const requesterUid = req.user?.uid || req.user?.id;
+    if (!(await checkContentAuthorization(requesterUid, course))) {
+      return res
+        .status(403)
+        .json({ message: "Only this course's lecturers can manage its assessments." });
+    }
+
+    // The lecturer must supply a valid answer key for every question before
+    // students can sit the test (the app checks too; this can't be skipped).
+    if (isPublished) {
+      if (!Array.isArray(questions) || questions.length === 0) {
+        return res.status(400).json({ message: "Add at least one question before publishing." });
+      }
+      const badIndex = questions.findIndex((q) => questionProblem(q));
+      if (badIndex >= 0) {
+        return res.status(400).json({
+          message: `Question ${badIndex + 1}: ${questionProblem(questions[badIndex])}.`,
+        });
+      }
+    }
+
     let assessmentId = id;
     let existingAssessment = null;
 
@@ -435,6 +475,11 @@ export const createAssessment = async (req, res) => {
           ...assessmentQuery.docs[0].data(),
         };
       }
+    }
+
+    if (existingAssessment && existingAssessment.courseId !== courseId) {
+      // An id from another course must not let a lecturer overwrite it.
+      return res.status(403).json({ message: "This assessment belongs to another course." });
     }
 
     if (existingAssessment) {
@@ -1438,7 +1483,7 @@ export const submitAssessment = async (req, res) => {
   const action = "submitAssessment";
 
   try {
-    const { testId, answers, proctoringData, score } = req.body;
+    const { testId, answers, proctoringData } = req.body;
     const currentUserId = req.user?.uid || req.user?.id;
 
     if (!testId || !answers) {
@@ -1455,6 +1500,19 @@ export const submitAssessment = async (req, res) => {
         .status(400)
         .json({ message: "Missing required submission data." });
     }
+
+    // Grade from the stored answer key. Any score or isCorrect the app sends
+    // is ignored. Done before the transaction: AI grading is slow and
+    // transactions may retry.
+    const storedTestQuery = await Assessment.where("id", "==", testId).limit(1).get();
+    if (storedTestQuery.empty) {
+      return res.status(404).json({ message: "Assessment not found." });
+    }
+    const storedTest = storedTestQuery.docs[0].data();
+    if (!storedTest.isPublished) {
+      return res.status(403).json({ message: "This assessment is not open." });
+    }
+    const grading = await gradeSubmission(storedTest, answers, { ai });
 
     const result = await db.runTransaction(async (transaction) => {
       const [existingSubmissionQuery, userQuery, testQuery] = await Promise.all(
@@ -1509,11 +1567,20 @@ export const submitAssessment = async (req, res) => {
       const newSubmissionData = {
         id: customSubmissionId,
         verificationStatus,
-        ...req.body,
+        // Whitelisted: spreading req.body let the app write any field,
+        // including its own score.
+        testId,
+        studentName: String(req.body.studentName || "").slice(0, 200),
+        matricNumber,
+        status: "submitted",
+        submittedAt: new Date(),
+        startTime: req.body.startTime || null,
+        answers: grading.gradedAnswers,
+        totalPossibleScore: grading.total,
         studentId: currentUserId,
         isFlagged: isFlagged,
         flagReasons,
-        score: isImpersonator ? 0 : score || 0,
+        score: isImpersonator ? 0 : grading.score,
         proctoringData: {
           deviceId: proctoringData?.deviceId || "Unknown",
           entrySelfieUrl: rawSelfieStatus,
@@ -1572,6 +1639,12 @@ export const submitAssessment = async (req, res) => {
     }
 
     const { isImpersonator, isFlagged, customSubmissionId, test } = result;
+    // Classmates may still be sitting the test, so correct answers are only
+    // shown once its window has closed; before that, just right/wrong.
+    const windowEnd = new Date(
+      storedTest.endTime?.toDate?.() ?? storedTest.endTime ?? 0,
+    ).getTime();
+    const revealAnswers = windowEnd > 0 && Date.now() > windowEnd;
     res.status(200).json({
       success: !isImpersonator,
       message: isImpersonator
@@ -1579,6 +1652,15 @@ export const submitAssessment = async (req, res) => {
         : "Test submitted and graded successfully.",
       submissionId: customSubmissionId,
       flagged: isFlagged,
+      result: {
+        score: isImpersonator ? 0 : grading.score,
+        total: grading.total,
+        correct: isImpersonator ? 0 : grading.correct,
+        answersRevealed: revealAnswers,
+        answers: grading.gradedAnswers.map(({ correctAnswer, aiScore, ...a }) =>
+          revealAnswers ? { ...a, correctAnswer } : a,
+        ),
+      },
     });
     setImmediate(async () => {
       try {

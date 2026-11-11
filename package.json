@@ -48,6 +48,7 @@
     "google-auth-library": "^10.6.2",
     "jsonwebtoken": "^9.0.2",
     "mammoth": "^1.11.0",
+    "mathjs": "^15.2.0",
     "mongoose": "^8.18.0",
     "multer": "^2.1.1",
     "node-cron": "^4.2.1",

@@ -30,6 +30,7 @@ import {
   embedPostWithAuthorDetails,
 } from "../utils/reposterPriorityChecker.js";
 import { logControllerPerformance } from "../utils/eventLogger.js";
+import { stripAnswerKeys } from "../utils/assessmentGrading.js";
 import { embedCourseInstructor } from "../utils/embedFunctions.js";
 import {
   canViewPost,
@@ -555,10 +556,12 @@ export const fetchActiveTickets = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
     const cursor = req.query.cursor;
+
+    // Sort by createdAt or updatedAt instead of __name__
     let queryRef = SupportTicket.where("status", "not-in", [
       "closed",
       "resolved",
-    ]).orderBy("__name__", "desc");
+    ]).orderBy("createdAt", "desc");
 
     if (cursor) {
       const cursorDoc = await SupportTicket.doc(cursor).get();
@@ -566,6 +569,7 @@ export const fetchActiveTickets = async (req, res) => {
         queryRef = queryRef.startAfter(cursorDoc);
       }
     }
+
     const snapshot = await queryRef.limit(limit + 1).get();
 
     const docs = snapshot.docs;
@@ -1226,33 +1230,6 @@ export const fetchProfileInformation = async (req, res) => {
     const targetUid = target.uid;
     const isOwner = viewerUid === targetUid;
 
-    // Either direction of a block hides the profile. `blockedByViewer` lets the
-    // app offer "Unblock" only when the viewer is the one who blocked.
-    const blockedByViewer = (viewer.blockedUsers || []).includes(targetUid);
-    const viewerBlockedByTarget = (target.blockedUsers || []).includes(
-      viewerUid,
-    );
-    if (!isOwner && (blockedByViewer || viewerBlockedByTarget)) {
-      setImmediate(() =>
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Blocked profile",
-        ),
-      );
-      return res.status(403).json({
-        success: false,
-        isBlocked: true,
-        blockedByViewer,
-        targetUid: blockedByViewer ? targetUid : undefined,
-        message: blockedByViewer
-          ? "You have blocked this user."
-          : "This profile isn't available.",
-      });
-    }
-
     // Counts only; lists load per tab via /profile/:uid/content and
     // /profile/:uid/connections, a page at a time.
     const countOf = async (query) => (await query.count().get()).data().count;
@@ -1819,18 +1796,29 @@ export const fetchAllCourseAssessments = async (req, res) => {
   const action = "fetchAllCourseAssessments";
   try {
     const { courseId } = req.params;
-    const snapshot = await Assessment.where("courseId", "==", courseId)
-      .orderBy("updatedAt", "desc")
-      .get();
+    const requesterUid = req.user?.uid || req.user?.id;
+    const [snapshot, courseQuery] = await Promise.all([
+      Assessment.where("courseId", "==", courseId)
+        .orderBy("updatedAt", "desc")
+        .get(),
+      Course.where("courseId", "==", courseId).limit(1).get(),
+    ]);
+    const isCourseLecturer =
+      !courseQuery.empty &&
+      (courseQuery.docs[0].data().lecturerIds || []).includes(requesterUid);
 
-    const assessments = snapshot.docs.map((doc) => {
-      const data = doc.data();
-      const { __v, ...rest } = data;
-      return {
-        id: doc.id,
-        ...rest,
-      };
-    });
+    const assessments = snapshot.docs
+      .map((doc) => {
+        const data = doc.data();
+        const { __v, ...rest } = data;
+        return {
+          id: doc.id,
+          ...rest,
+        };
+      })
+      // Students see published tests only, without answer keys.
+      .filter((test) => isCourseLecturer || test.isPublished)
+      .map((test) => (isCourseLecturer ? test : stripAnswerKeys(test)));
 
     setImmediate(() =>
       logControllerPerformance(controllerName, action, startTime, "success"),
@@ -2261,13 +2249,6 @@ export const fetchProfileContent = async (req, res) => {
     if (!target) return res.status(404).json({ success: false, message: "User not found" });
 
     const isOwner = (viewer.uid || viewer.id) === target.uid;
-    if (
-      !isOwner &&
-      ((viewer.blockedUsers || []).includes(target.uid) ||
-        (target.blockedUsers || []).includes(viewer.uid || viewer.id))
-    ) {
-      return res.status(403).json({ success: false, message: "This profile isn't available." });
-    }
     if (tab === "Bookmarks" && !isOwner) {
       return res.status(403).json({ success: false, message: "Bookmarks are private." });
     }

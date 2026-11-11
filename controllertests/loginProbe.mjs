@@ -59,7 +59,6 @@ async function main() {
   // Sample some GET endpoints with the user token.
   const gets = [
     "users/fetch-connections",
-    "users/blocked-list",
     "users/preferences",
     "users/ads/fetch-active",
     "users/get-notifications",

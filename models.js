@@ -333,7 +333,6 @@ export const userSchema = new mongoose.Schema({
     set: (v) => parseFloat(v.toFixed(2)),
   },
   hasSubscribed: { type: Boolean, default: false },
-  blockedUsers: [{ type: String }],
   createdAt: Date,
   country: String,
   currencyCode: String,

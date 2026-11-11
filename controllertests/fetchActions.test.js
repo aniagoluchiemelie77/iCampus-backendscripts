@@ -43,7 +43,6 @@ describe("fetchActions controller (read endpoints)", () => {
         { name: "user notifications", method: "get", path: "users/get-notifications", expected: 200 },
         { name: "active ads", method: "get", path: "users/ads/fetch-active", expected: 200 },
         { name: "preferences", method: "get", path: "users/preferences", expected: 200 },
-        { name: "blocked users", method: "get", path: "users/blocked-list", expected: 200 },
         { name: "all users", method: "get", path: "users/fetch-all-users", expected: 200 },
         { name: "user sessions", method: "get", path: "users/fetch-sessions", expected: 200 },
         { name: "single notification", method: "get", path: `users/notifications/${ctx.notificationId}`, allowed: [200, 404] },

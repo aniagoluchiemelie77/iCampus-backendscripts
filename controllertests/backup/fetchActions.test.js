@@ -76,14 +76,6 @@ describe("First User, delete his/her post and like third user's comment", () => 
       expected: 200,
     },
     {
-      name: "Fetch Blocked Users",
-      method: "get",
-      path: "users/blocked-list",
-      auth: true,
-      idempotent: false,
-      expected: 200,
-    },
-    {
       name: "Fetch Lecture Exceptions",
       method: "get",
       path: () => `users/exceptions?courseId=${sharedContext.courseId}`,
