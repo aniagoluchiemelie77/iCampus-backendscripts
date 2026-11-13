@@ -19,6 +19,7 @@ import {
   userPrefs,
 } from "../tableDeclarations.js";
 import { Filter } from "../config/firebaseAdmin.js";
+import { Usernames, normalizeUsername } from "../utils/username.js";
 import { createNotification } from "../services/notification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import { setImmediate } from "timers";
@@ -2344,21 +2345,68 @@ const millisOf = (v) =>
       : new Date(v || 0).getTime() || 0;
 
 /** Resolves a profile by uid, username, first or last name. */
+/** A Firestore document id can't contain "/" or be "." / "..". */
+const isValidDocId = (value) => !!value && !value.includes("/") && value !== "." && value !== "..";
+
+const toProfileTarget = (doc) =>
+  doc?.exists ? { ...doc.data(), uid: doc.data()?.uid || doc.id } : null;
+
+/** Loads a user by uid: the doc id first, then the legacy `uid` field. */
+const findUserByUid = async (uid) => {
+  if (isValidDocId(uid)) {
+    const byId = await User.doc(uid).get();
+    if (byId.exists) return toProfileTarget(byId);
+  }
+  const byField = await User.where("uid", "==", uid).limit(1).get();
+  return byField.empty ? null : toProfileTarget(byField.docs[0]);
+};
+
+/**
+ * Resolves a profile link (/user/:identifier) to exactly one account, most
+ * specific match first:
+ *
+ *   1. uid       - the permanent link
+ *   2. username  - the custom URL; the `usernames` reservation is the unique
+ *                  index, the user field covers accounts made before it
+ *   3. name      - old links/mentions by first or last name, only when
+ *                  exactly one account has that name
+ *
+ * Previously all four fields were OR-ed with limit(1), so /user/ada could
+ * return someone whose first name is "ada" instead of the account whose
+ * custom URL is "ada".
+ */
 const findProfileTarget = async (identifier) => {
-  if (!identifier) return null;
-  const snap = await User.where(
-    Filter.or(
-      Filter.where("uid", "==", identifier),
-      Filter.where("username", "==", identifier),
-      Filter.where("firstname", "==", identifier),
-      Filter.where("lastname", "==", identifier),
-    ),
+  const raw = String(identifier || "").trim();
+  if (!raw) return null;
+
+  // 1. Permanent link.
+  const byUid = await findUserByUid(raw);
+  if (byUid) return byUid;
+
+  // 2. Custom URL. Usernames are stored lowercase without "@".
+  const handle = normalizeUsername(raw);
+  if (handle) {
+    // Older accounts can hold names today's rules reject, so only the doc
+    // id has to be safe here, not the name.
+    if (isValidDocId(handle)) {
+      const reservation = await Usernames.doc(handle).get();
+      const reservedUid = reservation.exists ? reservation.data()?.uid : null;
+      if (reservedUid) {
+        const owner = await findUserByUid(reservedUid);
+        if (owner) return owner;
+      }
+    }
+    const legacy = await User.where("username", "==", handle).limit(1).get();
+    if (!legacy.empty) return toProfileTarget(legacy.docs[0]);
+  }
+
+  // 3. Legacy name links: never guess between two people.
+  const byName = await User.where(
+    Filter.or(Filter.where("firstname", "==", raw), Filter.where("lastname", "==", raw)),
   )
-    .limit(1)
+    .limit(2)
     .get();
-  if (snap.empty) return null;
-  const data = snap.docs[0].data();
-  return { ...data, uid: data.uid || snap.docs[0].id };
+  return byName.size === 1 ? toProfileTarget(byName.docs[0]) : null;
 };
 
 const loadPostsByPostIds = async (postIds) => {
