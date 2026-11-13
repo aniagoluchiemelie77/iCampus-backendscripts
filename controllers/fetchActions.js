@@ -595,6 +595,9 @@ export const fetchActiveTickets = async (req, res) => {
 };
 export const adminFetchUserDetails = async (req, res) => {
   try {
+    if (!["super_admin", "support"].includes(req.admin?.adminType)) {
+      return res.status(403).json({ message: "Only support and super admins can view this.", success: false });
+    }
     const { userId } = req.params;
 
     const userSnapshot = await User.where("uid", "==", userId).limit(1).get();
@@ -631,6 +634,9 @@ export const adminFetchUserDetails = async (req, res) => {
 };
 export const adminFetchUserNotifications = async (req, res) => {
   try {
+    if (!["super_admin", "support"].includes(req.admin?.adminType)) {
+      return res.status(403).json({ message: "Only support and super admins can view this.", success: false });
+    }
     const { userId } = req.params;
     const { limit = "10", offset = "0" } = req.query;
 

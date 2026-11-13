@@ -52,7 +52,13 @@ import {
   undoAcademicSession,
   updateAcademicCalendarSettings,
   dismissSessionSuggestion,
+  getSchoolCourseDetail,
 } from "../controllers/schoolAdminActions.js";
+import {
+  searchUsersForAdmin,
+  getUserProfileForAdmin,
+  deleteUserAsAdmin,
+} from "../controllers/adminUserActions.js";
 import {
   getFinanceOverview,
   getFinanceSection,
@@ -254,6 +260,7 @@ router.post(
 );
 router.get("/school/audit-log", protect, verifyAdmin, getSchoolAuditLog);
 router.get("/school/users", protect, verifyAdmin, getSchoolUsers);
+router.get("/school/courses/:courseId", protect, verifyAdmin, getSchoolCourseDetail);
 router.post("/school/exports", protect, verifyAdmin, exportSchoolData);
 router.get("/school/calendar", protect, verifyAdmin, getAcademicCalendar);
 router.post(
@@ -279,6 +286,18 @@ router.delete(
 );
 router.patch("/school/calendar/settings", protect, verifyAdmin, updateAcademicCalendarSettings);
 router.post("/school/calendar/dismiss-suggestion", protect, verifyAdmin, dismissSessionSuggestion);
+
+// User lookup for every admin role; scope and edit rights are decided in
+// controllers/adminUserActions.js.
+router.get("/users/search", protect, verifyAdmin, searchUsersForAdmin);
+router.get("/users/:uid/profile", protect, verifyAdmin, getUserProfileForAdmin);
+router.delete(
+  "/users/:uid",
+  protect,
+  verifyAdmin,
+  idempotencyMiddleware,
+  deleteUserAsAdmin,
+);
 
 // Finance (finance + super admins).
 router.get("/finance/overview", protect, verifyAdmin, getFinanceOverview);

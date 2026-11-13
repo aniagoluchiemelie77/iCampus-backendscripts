@@ -8,7 +8,12 @@ import crypto from "crypto";
 import { setImmediate } from "timers";
 import {
   Admin,
+  Assessment,
+  Attendance,
   Course,
+  Exceptions,
+  Lectures,
+  TestSubmission,
   User,
   Notification,
   SchoolConfiguration,
@@ -34,7 +39,7 @@ import { schoolRepInviteTemplate } from "../services/emailTemplates.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
 import { emailExport } from "../utils/exportService.js";
 import { attachmentPayload, parseAttachments } from "../utils/notificationAttachments.js";
-import { toDate } from "../utils/lectureTime.js";
+import { resolveLectureTime, toDate } from "../utils/lectureTime.js";
 import { notifyAdmins } from "../services/adminNotification.js";
 import {
   CalendarError,
@@ -134,7 +139,17 @@ export const getSchoolSection = async (req, res) => {
   try {
     const data = await buildSchoolAnalytics(scope.schoolCode, { department: scope.department, level: scope.level, full: true, session: req.query.session });
     let list;
-    if (section === "courses") list = data.lists.courses;
+    if (section === "courses") {
+      // "department" groups the Courses tab A–Z by department, then by code.
+      list =
+        req.query.sort === "department"
+          ? [...data.lists.courses].sort(
+              (a, b) =>
+                String(a.department).localeCompare(String(b.department)) ||
+                String(a.courseCode).localeCompare(String(b.courseCode), undefined, { numeric: true }),
+            )
+          : data.lists.courses;
+    }
     else if (section === "announcements") list = data.lists.announcements;
     else if (section === "lectures") {
       const filter = String(req.query.filter || "all");
@@ -168,6 +183,259 @@ export const getSchoolSection = async (req, res) => {
   } catch (err) {
     console.error("getSchoolSection Error:", err);
     res.status(500).json({ error: "Failed to load this list." });
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Course detail: lecturers, enrolled students, lectures, assessments and a
+// timeline of what has happened in the course. Same scope as every other
+// school endpoint: the course must belong to the admin's school, and to a
+// department rep's own department.
+// ---------------------------------------------------------------------------
+
+const chunked = async (collection, field, values) => {
+  const unique = [...new Set(values.filter(Boolean))];
+  const results = [];
+  for (let i = 0; i < unique.length; i += 30) {
+    const snap = await collection.where(field, "in", unique.slice(i, i + 30)).get();
+    snap.docs.forEach((d) => results.push({ id: d.id, ...d.data() }));
+  }
+  return results;
+};
+const listOf = (value) => (Array.isArray(value) ? value : []);
+const pctOf = (num, den) => (den > 0 ? Math.round((num / den) * 1000) / 10 : null);
+const iso = (value) => toDate(value)?.toISOString() || null;
+const personName = (u) => [u?.firstname, u?.lastname].filter(Boolean).join(" ").trim() || u?.username || "Unknown";
+const average = (list) => (list.length ? Math.round((list.reduce((a, b) => a + b, 0) / list.length) * 10) / 10 : null);
+
+/** The course, or null when it doesn't exist or is outside the admin's scope. */
+const loadScopedCourse = async (scope, courseId) => {
+  const id = String(courseId || "").trim();
+  if (!id) return null;
+  const byField = await Course.where("courseId", "==", id).limit(1).get();
+  const doc = byField.empty ? await Course.doc(id).get() : byField.docs[0];
+  if (!doc.exists) return null;
+  const course = { id: doc.id, ...doc.data() };
+  if (course.schoolCode !== scope.schoolCode) return null;
+  if (scope.department && norm(course.department || "General") !== norm(scope.department)) return null;
+  return course;
+};
+
+export const getSchoolCourseDetail = async (req, res) => {
+  const scope = requireSchool(req, res);
+  if (!scope) return;
+  try {
+    const course = await loadScopedCourse(scope, req.params.courseId);
+    // 404 for "out of scope" too, so reps can't probe other departments' courses.
+    if (!course) return res.status(404).json({ error: "Course not found." });
+    const courseId = course.courseId || course.id;
+
+    const institution = await loadInstitution(scope.schoolCode);
+    // Test scores are a Professional-plan feature, as on the dashboard.
+    const access = { assessments: normalizeTier(institution?.tier) !== "basic" };
+
+    const lecturerIds = listOf(course.lecturerIds);
+    const studentIds = listOf(course.studentsEnrolled);
+    const [members, lectureSnap, attendanceSnap, assessments, exceptionsSnap] = await Promise.all([
+      loadMembers(scope.schoolCode),
+      Lectures.where("courseId", "==", courseId).get(),
+      Attendance.where("courseId", "==", courseId).get(),
+      access.assessments ? chunked(Assessment, "courseId", [courseId]) : Promise.resolve([]),
+      Exceptions.where("courseId", "==", courseId).get(),
+    ]);
+    const people = new Map(members.map((u) => [u.uid, u]));
+    // Enrolled people missing from the school's member list (e.g. carry-over
+    // students) are looked up directly.
+    const missing = [...lecturerIds, ...studentIds].filter((uid) => !people.has(uid));
+    if (missing.length) {
+      (await chunked(User, "uid", missing)).forEach((u) => people.set(u.uid, u));
+    }
+
+    const nowMs = Date.now();
+    const startOf = (l) => resolveLectureTime(l, "start");
+    const endOf = (l) => resolveLectureTime(l, "end");
+    const lectures = lectureSnap.docs.map((d) => ({ id: d.id, ...d.data() }));
+    const isHeld = (l) => {
+      if (l.status === "cancelled") return false;
+      if (l.status === "completed" || l.isTaught) return true;
+      const start = startOf(l);
+      return !!start && start.getTime() <= nowMs;
+    };
+    const held = lectures.filter(isHeld);
+    const heldIds = new Set(held.map((l) => l.id));
+    const present = attendanceSnap.docs.map((d) => d.data()).filter((a) => a.status === "Present");
+    const presentByLecture = new Map();
+    const presentByStudent = new Map();
+    let presentAtHeld = 0;
+    present.forEach((a) => {
+      presentByLecture.set(a.lectureId, (presentByLecture.get(a.lectureId) || 0) + 1);
+      if (heldIds.has(a.lectureId)) {
+        presentAtHeld += 1;
+        presentByStudent.set(a.studentId, (presentByStudent.get(a.studentId) || 0) + 1);
+      }
+    });
+
+    const published = assessments.filter((a) => a.isPublished !== false);
+    const submissions = access.assessments ? await chunked(TestSubmission, "testId", published.map((a) => a.id)) : [];
+    const marksByTest = new Map(published.map((a) => [a.id, Number(a.totalMarks) || 0]));
+    const scorePct = (s) => pctOf(Number(s.score) || 0, marksByTest.get(s.testId) || Number(s.totalPossibleScore) || 0);
+    const scoresByStudent = new Map();
+    const submissionsByTest = new Map();
+    submissions.forEach((s) => {
+      submissionsByTest.set(s.testId, [...(submissionsByTest.get(s.testId) || []), s]);
+      const value = scorePct(s);
+      if (value !== null) scoresByStudent.set(s.studentId, [...(scoresByStudent.get(s.studentId) || []), value]);
+    });
+
+    const hosted = new Map();
+    held.forEach((l) => l.hostId && hosted.set(l.hostId, (hosted.get(l.hostId) || 0) + 1));
+    const lecturers = lecturerIds.map((uid) => {
+      const u = people.get(uid) || {};
+      return {
+        uid,
+        name: personName(u),
+        staffId: u.staffId || null,
+        department: u.department || null,
+        profilePic: u.profilePic || [],
+        isVerified: !!u.isVerified,
+        lecturesHeld: hosted.get(uid) || 0,
+      };
+    });
+
+    const students = studentIds
+      .map((uid) => {
+        const u = people.get(uid) || {};
+        const attended = presentByStudent.get(uid) || 0;
+        const scores = scoresByStudent.get(uid) || [];
+        return {
+          uid,
+          name: personName(u),
+          matricNumber: u.matricNumber || null,
+          department: u.department || null,
+          level: u.current_level ? String(u.current_level) : null,
+          profilePic: u.profilePic || [],
+          isSuspended: !!u.isSuspended,
+          lecturesAttended: attended,
+          attendancePct: pctOf(attended, held.length),
+          ...(access.assessments ? { averageScorePct: average(scores), testsTaken: scores.length } : {}),
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    const lectureRows = lectures
+      .map((l) => ({
+        id: l.id,
+        topicName: l.topicName || "Lecture",
+        host: personName(people.get(l.hostId)),
+        hostId: l.hostId || null,
+        lectureType: l.lectureType || "Physical",
+        location: l.location || null,
+        status: l.status === "cancelled" ? "cancelled" : isHeld(l) ? "held" : l.status || "scheduled",
+        startsAt: startOf(l)?.toISOString() || null,
+        endsAt: endOf(l)?.toISOString() || null,
+        checkIns: presentByLecture.get(l.id) || 0,
+      }))
+      .sort((a, b) => String(b.startsAt).localeCompare(String(a.startsAt)));
+
+    const assessmentRows = assessments
+      .map((a) => {
+        const subs = submissionsByTest.get(a.id) || [];
+        return {
+          id: a.id,
+          title: a.title || "Assessment",
+          totalMarks: Number(a.totalMarks) || 0,
+          isPublished: a.isPublished !== false,
+          status: a.status || null,
+          dueDate: iso(a.dueDate || a.endTime),
+          createdAt: iso(a.createdAt),
+          submissions: subs.length,
+          averageScorePct: average(subs.map(scorePct).filter((v) => v !== null)),
+          flagged: subs.filter((s) => s.isFlagged).length,
+        };
+      })
+      .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+
+    const materials = listOf(course.resources).map((r) =>
+      typeof r === "string"
+        ? { title: "Course material", uploadedAt: null }
+        : { title: r.title || r.resourceTitle || r.fileName || "Course material", uploadedAt: iso(r.uploadedAt || r.createdAt) },
+    );
+    const assignments = listOf(course.assignments).map((a) => ({
+      title: a.title || "Assignment",
+      dueDate: iso(a.dueDate),
+      submissions: listOf(a.submissions).length,
+    }));
+    const exceptions = exceptionsSnap.docs.map((d) => d.data());
+
+    // Everything that happened in the course, newest first.
+    const timeline = [
+      ...lectureRows.map((l) => ({
+        kind: l.status === "cancelled" ? "lecture_cancelled" : l.status === "held" ? "lecture_held" : "lecture_scheduled",
+        title: l.topicName,
+        detail: `${l.host} · ${l.lectureType}${l.status === "held" ? ` · ${l.checkIns} checked in` : ""}`,
+        at: l.startsAt,
+      })),
+      ...assessmentRows.map((a) => ({
+        kind: a.isPublished ? "assessment_published" : "assessment_draft",
+        title: a.title,
+        detail: a.isPublished ? `${a.submissions} submissions` : "Draft",
+        at: a.createdAt,
+      })),
+      ...materials.filter((m) => m.uploadedAt).map((m) => ({ kind: "material_uploaded", title: m.title, detail: "Course material", at: m.uploadedAt })),
+      ...assignments.map((a) => ({ kind: "assignment_due", title: a.title, detail: `${a.submissions} submissions`, at: a.dueDate })),
+    ]
+      .filter((e) => e.at)
+      .sort((a, b) => String(b.at).localeCompare(String(a.at)))
+      .slice(0, 60);
+
+    res.json({
+      access,
+      course: {
+        courseId,
+        courseCode: course.courseCode || "",
+        courseTitle: course.courseTitle || "",
+        department: course.department || "General",
+        level: course.level || null,
+        semester: course.semester || null,
+        session: course.session || null,
+        credits: Number(course.credits) || null,
+        description: course.description || course.courseDescription || null,
+        isActive: course.isActive !== false,
+        contents: listOf(course.courseContents)
+          .map((c) => (typeof c === "string" ? c : c?.title || c?.topic || ""))
+          .filter(Boolean),
+      },
+      summary: {
+        enrolled: studentIds.length,
+        lecturers: lecturerIds.length,
+        lecturesScheduled: lectures.length,
+        lecturesHeld: held.length,
+        lecturesCancelled: lectures.filter((l) => l.status === "cancelled").length,
+        attendanceRatePct: pctOf(presentAtHeld, held.length * studentIds.length),
+        materials: materials.length,
+        assignments: assignments.length,
+        exceptionsPending: exceptions.filter((e) => e.status === "pending").length,
+        exceptionsApproved: exceptions.filter((e) => e.status === "approved").length,
+        ...(access.assessments
+          ? {
+              assessments: assessmentRows.length,
+              submissions: submissions.length,
+              averageScorePct: average(submissions.map(scorePct).filter((v) => v !== null)),
+            }
+          : {}),
+      },
+      lecturers,
+      students,
+      lectures: lectureRows,
+      assessments: assessmentRows,
+      materials,
+      assignments,
+      timeline,
+    });
+    recordSchoolAudit(req, "course_viewed", { courseId, department: course.department || null });
+  } catch (err) {
+    console.error("getSchoolCourseDetail Error:", err);
+    res.status(500).json({ error: "Failed to load this course." });
   }
 };
 
@@ -208,7 +476,7 @@ const MEMBERS_TTL_MS = 2 * 60 * 1000;
 const MAX_CACHED_SCHOOLS = 50;
 const memberCache = new Map(); // schoolCode -> { at, promise }
 
-const loadMembers = (schoolCode, { fresh = false } = {}) => {
+export const loadMembers = (schoolCode, { fresh = false } = {}) => {
   const hit = memberCache.get(schoolCode);
   if (!fresh && hit && Date.now() - hit.at < MEMBERS_TTL_MS) return hit.promise;
   const promise = User.where("schoolCode", "==", schoolCode)

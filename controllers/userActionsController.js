@@ -185,29 +185,13 @@ const FAQ_DATA = [
   },
 ];
 
-export const deleteAccount = async (req, res) => {
-  const startTime = Date.now();
-  const controllerName = "deleteAccountController";
-  const action = "deleteAccount";
-
-  try {
-    const userUid = req.user?.id || req.user?.uid;
-    const { reason } = req.body;
-
-    if (!userUid) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "Unauthorized user context",
-        );
-      });
-      return res
-        .status(401)
-        .json({ status: false, message: "Unauthorized user context." });
-    }
+/**
+ * Permanently deletes an account and everything tied to it (prefs, cards,
+ * iTags, follows, posts, comments, reposts, course memberships). Shared by
+ * self-deletion and admin deletion. Returns the deleted user, or null if
+ * there was no such account.
+ */
+export const purgeUserAccount = async (userUid, { reason, deletedBy } = {}) => {
     const [
       userQuery,
       prefsQuery,
@@ -236,18 +220,7 @@ export const deleteAccount = async (req, res) => {
       PostReposters.where("userId", "==", userUid).get(),
     ]);
 
-    if (userQuery.empty) {
-      setImmediate(() => {
-        logControllerPerformance(
-          controllerName,
-          action,
-          startTime,
-          "error",
-          "User not found",
-        );
-      });
-      return res.status(404).json({ status: false, message: "User not found" });
-    }
+    if (userQuery.empty) return null;
 
     const userDoc = userQuery.docs[0];
     const user = userDoc.data();
@@ -265,6 +238,7 @@ export const deleteAccount = async (req, res) => {
       data: {
         uid: userUid,
         reason: reason || "N/A",
+        deletedBy: deletedBy || "self",
         accountAgeDays,
         tierAtDeletion: user.tier || "standard",
         finalBalance: user.balance || 0,
@@ -326,6 +300,45 @@ export const deleteAccount = async (req, res) => {
     }
 
     await Promise.all(batchPromises);
+    return user;
+};
+
+export const deleteAccount = async (req, res) => {
+  const startTime = Date.now();
+  const controllerName = "deleteAccountController";
+  const action = "deleteAccount";
+
+  try {
+    const userUid = req.user?.id || req.user?.uid;
+    const { reason } = req.body;
+
+    if (!userUid) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "Unauthorized user context",
+        );
+      });
+      return res
+        .status(401)
+        .json({ status: false, message: "Unauthorized user context." });
+    }
+    const purged = await purgeUserAccount(userUid, { reason });
+    if (!purged) {
+      setImmediate(() => {
+        logControllerPerformance(
+          controllerName,
+          action,
+          startTime,
+          "error",
+          "User not found",
+        );
+      });
+      return res.status(404).json({ status: false, message: "User not found" });
+    }
     res
       .status(200)
       .json({ status: true, message: "Account deleted successfully." });
