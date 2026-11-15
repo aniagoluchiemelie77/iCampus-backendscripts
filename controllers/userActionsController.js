@@ -3057,7 +3057,7 @@ export const handleUnifiedCourseSearch = async (req, res) => {
     });
 
     const dynamicUnifiedResults = normalizedInstitutional.sort((a, b) =>
-      a.title.localeCompare(b.title),
+      (a.courseTitle || "").localeCompare(b.courseTitle || ""),
     );
 
     res.status(200).json({
