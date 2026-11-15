@@ -1610,27 +1610,29 @@ export const createReviewController = async (req, res) => {
       }
     }
 
-    let parsedAttributes = {
-      accuracy: undefined,
-      deliverySpeed: undefined,
-      clarity: undefined,
-    };
+    // Firestore rejects `undefined` field values, so only keep the
+    // attributes the reviewer actually rated (a lecturer review, for
+    // example, only sends `clarity`).
+    const parsedAttributes = {};
 
     if (attributes) {
       try {
         const rawAttrs =
           typeof attributes === "string" ? JSON.parse(attributes) : attributes;
-        parsedAttributes = {
-          accuracy: rawAttrs?.accuracy ? Number(rawAttrs.accuracy) : undefined,
-          deliverySpeed: rawAttrs?.deliverySpeed
-            ? Number(rawAttrs.deliverySpeed)
-            : undefined,
-          clarity: rawAttrs?.clarity ? Number(rawAttrs.clarity) : undefined,
-        };
+        for (const key of ["accuracy", "deliverySpeed", "clarity"]) {
+          const value = Number(rawAttrs?.[key]);
+          if (Number.isFinite(value) && value >= 1 && value <= 5) {
+            parsedAttributes[key] = value;
+          }
+        }
       } catch (e) {
-        console.error("Attributes parsing layout mismatch anomaly:", e);
+        console.error("Could not parse review attributes:", e);
       }
     }
+
+    parsedMediaUrls = parsedMediaUrls.filter(
+      (url) => typeof url === "string" && url.length > 0,
+    );
 
     const newReviewDocRef = Reviews.doc();
     const reviewData = {
@@ -1654,7 +1656,7 @@ export const createReviewController = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: "Reviews validation metrics published successfully.",
+      message: "Review posted.",
       reviewId: newReviewDocRef.id,
     });
   } catch (error) {
@@ -1673,8 +1675,7 @@ export const createReviewController = async (req, res) => {
     });
     return res.status(500).json({
       success: false,
-      message:
-        "Internal application routing anomaly during review storage commit pipeline.",
+      message: "We couldn't save your review right now. Please try again.",
     });
   }
 };
