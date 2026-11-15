@@ -142,6 +142,30 @@ export const loadInstitution = async (schoolCode) => {
 };
 
 /**
+ * The school's courses. Older courses were saved with only `schoolName`, so
+ * they're matched by name too, and given their `schoolCode` in the background
+ * so every other schoolCode query finds them from then on. Returns a
+ * snapshot-like `{ docs }`.
+ */
+export const loadSchoolCourses = async (schoolCode, institution) => {
+  const schoolName = String(institution?.schoolName || "").trim();
+  const [byCode, byName] = await Promise.all([
+    Course.where("schoolCode", "==", schoolCode).get(),
+    schoolName ? Course.where("schoolName", "==", schoolName).get() : null,
+  ]);
+  const seen = new Set(byCode.docs.map((d) => d.id));
+  const legacy = (byName?.docs || []).filter((d) => !seen.has(d.id) && !d.data().schoolCode);
+  if (legacy.length) {
+    setImmediate(() =>
+      Promise.all(legacy.map((d) => d.ref.update({ schoolCode }))).catch((err) =>
+        console.error("Course schoolCode backfill error:", err.message),
+      ),
+    );
+  }
+  return { docs: [...byCode.docs, ...legacy] };
+};
+
+/**
  * @param schoolCode  the institution
  * @param options.department  limit every figure to one department (null = all)
  * @param options.level  limit students and courses to one study level (null = all);
@@ -166,7 +190,7 @@ export const buildSchoolAnalytics = async (
   const [usersSnap, coursesSnap, memosSnap, broadcastsSnap, detections] = await Promise.all(
     [
       User.where("schoolCode", "==", schoolCode).get(),
-      Course.where("schoolCode", "==", schoolCode).get(),
+      loadSchoolCourses(schoolCode, institution),
       Posts.where("schoolCode", "==", schoolCode)
         .where("audience", "==", "school")
         .get(),

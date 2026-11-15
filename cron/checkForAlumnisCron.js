@@ -6,9 +6,6 @@ import { generateNotificationId } from "../utils/idGenerator.js";
 // Runs at 00:00 on the 1st day of every 6th month (Jan and July)
 export const updateStudentInfo = () => {
   cron.schedule("0 0 1 */6 *", async () => {
-    console.log(
-      "Starting bi-annual student status and details verification...",
-    );
 
     try {
       const studentsSnapshot = await User.where("usertype", "==", "student")
@@ -129,7 +126,6 @@ export const updateStudentInfo = () => {
           }),
         );
       }
-      console.log("Bi-annual student verification completed successfully.");
     } catch (error) {
       console.error("Cron job student verification error:", error.message);
     }
@@ -137,7 +133,6 @@ export const updateStudentInfo = () => {
 };
 export const updateLecturerInfo = () => {
   cron.schedule("0 0 1 */6 *", async () => {
-    console.log("Starting bi-annual lecturer details verification...");
 
     try {
       const lecturersSnapshot = await User.where(
@@ -230,7 +225,6 @@ export const updateLecturerInfo = () => {
           }),
         );
       }
-      console.log("Bi-annual lecturer verification completed successfully.");
     } catch (error) {
       console.error("Cron job lecturer verification error:", error.message);
     }

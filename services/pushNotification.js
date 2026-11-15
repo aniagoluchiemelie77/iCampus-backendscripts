@@ -115,7 +115,6 @@ export const sendPushNotification = async (
     };
 
     const response = await admin.messaging().send(message);
-    console.log("Push sent successfully:", response);
   } catch (error) {
     console.error("Error sending push notification:", error.message);
     if (

@@ -216,7 +216,13 @@ const loadScopedCourse = async (scope, courseId) => {
   const doc = byField.empty ? await Course.doc(id).get() : byField.docs[0];
   if (!doc.exists) return null;
   const course = { id: doc.id, ...doc.data() };
-  if (course.schoolCode !== scope.schoolCode) return null;
+  if (course.schoolCode !== scope.schoolCode) {
+    // Older courses only carry `schoolName`; buildSchoolAnalytics backfills them.
+    if (course.schoolCode) return null;
+    const institution = await loadInstitution(scope.schoolCode);
+    const name = String(institution?.schoolName || "").trim();
+    if (!name || String(course.schoolName || "").trim() !== name) return null;
+  }
   if (scope.department && norm(course.department || "General") !== norm(scope.department)) return null;
   return course;
 };

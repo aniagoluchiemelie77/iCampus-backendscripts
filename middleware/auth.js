@@ -80,7 +80,6 @@ export const idempotencyMiddleware = async (req, res, next) => {
         if (expiresAt && expiresAt.getTime() <= Date.now()) {
           await keyDocRef.delete();
         } else {
-          console.log(`[Idempotency] Cache hit for key: ${idempotencyKey}`);
           return res.status(data.statusCode).json(data.responseBody);
         }
       }

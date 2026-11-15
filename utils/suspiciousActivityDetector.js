@@ -1,5 +1,5 @@
 import { notifyAdmins } from "../services/adminNotification.js";
-import geoip from "geoip-lite";
+import { resolveLocation, locationMatchesCountry } from "./geoLocation.js";
 import { generateNotificationId } from "./idGenerator.js";
 import { UserSessions } from "../tableDeclarations.js";
 
@@ -20,16 +20,15 @@ export const verifyAndNotifyLogin = async (
       UserSessions.where("userId", "==", userId).get(),
     ]);
 
-    const geo = geoip.lookup(ip);
-    const currentLocation = geo ? `${geo.city}, ${geo.country}` : "Unknown";
-    const currentCountry = geo?.country || "Unknown";
+    const resolvedLocation = resolveLocation(ip);
+    const currentLocation = resolvedLocation.label;
 
     const userSessions = sessionsSnapshot.docs.map((doc) => doc.data());
 
     const isSuspicious =
       userSessions.length > 0
         ? !userSessions.some(
-            (s) => s.location && s.location.includes(currentCountry),
+            (s) => locationMatchesCountry(s.location, resolvedLocation),
           )
         : false;
 

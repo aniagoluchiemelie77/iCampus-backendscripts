@@ -28,8 +28,6 @@ export const sendEmail = async ({
         ContentType: att.contentType,
       })),
     });
-
-    console.log("Email sent successfully. Message ID:", response.MessageID);
     return response;
   } catch (error) {
     console.error("Postmark Email Sending Error:", error);

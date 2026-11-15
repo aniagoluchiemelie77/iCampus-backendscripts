@@ -6,8 +6,6 @@ import { generateNotificationId } from "../utils/idGenerator.js";
 export const flagSuspiciousAccounts = () => {
   cron.schedule("0 0 * * *", async () => {
     const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
-    console.log("Starting daily suspicious accounts check...");
-
     try {
       const querySnapshot = await User.where("isSuspended", "==", false).get();
 

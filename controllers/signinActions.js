@@ -11,7 +11,7 @@ import { db } from "../config/firebaseAdmin.js";
 import axiosRetry from "axios-retry";
 import axios from "axios";
 import crypto from "crypto";
-import geoip from "geoip-lite";
+import { resolveLocation, locationMatchesCountry } from "../utils/geoLocation.js";
 import { setImmediate } from "timers";
 import {
   generateNotificationId,
@@ -404,8 +404,7 @@ export const changePassword = async (req, res) => {
     const rawIp =
       req.headers["x-forwarded-for"] || req.socket.remoteAddress || "";
     const ip = rawIp.split(",")[0].trim();
-    const geo = geoip.lookup(ip);
-    const currentCountry = geo ? geo.country : "Unknown";
+    const resolvedLocation = resolveLocation(ip);
 
     const sessionsSnapshot = await UserSessions.where(
       "userId",
@@ -427,7 +426,8 @@ export const changePassword = async (req, res) => {
     const lastKnownLocation =
       sortedSessions.length > 0 ? sortedSessions[0].location : null;
     const isSuspicious =
-      lastKnownLocation && !lastKnownLocation.includes(currentCountry);
+      lastKnownLocation &&
+      !locationMatchesCountry(lastKnownLocation, resolvedLocation);
 
     const sessionBatch = UserSessions.firestore.batch();
     sessionsSnapshot.docs.forEach((doc) => {
@@ -494,7 +494,7 @@ export const changePassword = async (req, res) => {
             userEmail: userData.email,
             userUid: userId,
             previousLocation: lastKnownLocation || "None",
-            currentLocation: `${geo?.city || "Unknown"}, ${currentCountry}`,
+            currentLocation: resolvedLocation.label,
             severity: isSuspicious ? "HIGH" : "LOW",
           },
           senderId: "system",
@@ -1340,8 +1340,7 @@ export const Login = async (req, res) => {
         const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
           .split(",")[0]
           .trim();
-        const geo = geoip.lookup(ip);
-        const location = geo.city ? `${geo.city}, ${geo.country}` : geo.country;
+        const location = resolveLocation(ip).label;
         const sessionData = {
           userId: user.uid,
           deviceId,
@@ -1455,8 +1454,7 @@ export const AdminLogin = async (req, res) => {
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress)
       .split(",")[0]
       .trim();
-    const geo = geoip.lookup(ip);
-    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+    const location = resolveLocation(ip).label;
 
     const adminUid = admin.uid || admin.id;
     const sessionData = {
@@ -1601,12 +1599,7 @@ export const signUp = async (req, res) => {
     }
     const rawIp = req.headers["x-forwarded-for"] || req.socket.remoteAddress;
     const ip = rawIp ? rawIp.split(",")[0].trim() : "";
-    const geo = geoip.lookup(ip);
-    const location = !geo
-      ? "Unknown Location"
-      : geo.city
-        ? `${geo.city}, ${geo.country}`
-        : geo.country;
+    const location = resolveLocation(ip).label;
 
     const displayNameForGen =
       firstname || lastname || organizationName || "User";
@@ -1910,8 +1903,7 @@ export const switchToInstitutionAdmin = async (req, res) => {
     )
       .split(",")[0]
       .trim();
-    const geo = geoip.lookup(ip);
-    const location = geo ? `${geo.city}, ${geo.country}` : "Unknown Location";
+    const location = resolveLocation(ip).label;
     const deviceId = req.body?.deviceId || "switch_device";
     const deviceName = req.body?.deviceName || "Web/Mobile Switch";
 
