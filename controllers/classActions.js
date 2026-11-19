@@ -1,4 +1,5 @@
 import { storage, db } from "../config/firebaseAdmin.js";
+import { issueIdentityProof } from "../utils/attendanceSecurity.js";
 import {
   formatLectureClock,
   formatLectureDateTime,
@@ -3262,10 +3263,19 @@ export const compareStudentFacesWithGemini = async (req, res) => {
       setImmediate(() => {
         logControllerPerformance(controllerName, action, startTime, "success");
       });
+      // Signed, 5-minute proof the attendance socket event must carry.
+      const { lectureId, liveness } = req.body || {};
+      const attendanceProof = issueIdentityProof({
+        uid: req.user.uid,
+        lectureId: typeof lectureId === "string" ? lectureId : null,
+        method: "selfie",
+        liveness: liveness === "passed" ? "passed" : "unavailable",
+      });
       return res.status(200).json({
         verified: true,
         message: "Identity confirmed successfully.",
         similarity: 1.0,
+        attendanceProof,
         ...attention,
       });
     }

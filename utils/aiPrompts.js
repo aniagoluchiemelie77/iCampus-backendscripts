@@ -117,3 +117,24 @@ When the user shares an image or document, read it and explain or answer based o
   }
   return `${instruction}\n\n${ICAMPUS_CHAT_STYLE}`;
 };
+
+// Lecturer question-paper import (POST /v1/secure/ai/extract-assessment-questions).
+export const ASSESSMENT_EXTRACTION_PROMPT = `You are digitising a university test or exam for an online assessment platform.
+Read every page of the attached file(s) and extract EVERY question, in order. Papers often have 30 or more questions; do not stop early or merge questions.
+
+Return ONLY JSON in this exact shape:
+{"questions":[{"type":"MCQ"|"TrueFalse"|"ShortAnswer","questionText":string,"options":string[],"correctAnswer":string,"answerSource":"document"|"ai"|"none"}]}
+
+Rules:
+- type "MCQ" when lettered/numbered options are given; "TrueFalse" for true/false questions; otherwise "ShortAnswer".
+- options: the option texts WITHOUT their labels (drop "A.", "(b)", "iii)" etc.). TrueFalse options are exactly ["True","False"]. ShortAnswer options are [].
+- Keep all mathematical, scientific and special symbols exactly, written as Unicode characters, never LaTeX or images: e.g. × ÷ ± ∓ √ ∛ π θ α β γ Δ λ μ σ Σ Ω ∞ ≈ ≠ ≤ ≥ ∫ ∂ ∑ ∏ → ⇌ ° ′ ″ ∈ ∉ ⊂ ∪ ∩ ∅ ∀ ∃ ¬ ∧ ∨ ⊕ and superscripts/subscripts like x², 10⁻³, H₂O, CO₂, ₙ.
+- Write fractions as a/b, and keep chemical equations and units intact.
+- correctAnswer is REQUIRED for every question:
+  - If the document marks or lists the answer (answer key, ticked/bold/underlined option, "Ans:"), use it and set answerSource "document".
+  - Otherwise work out the correct answer yourself and set answerSource "ai".
+  - Only if a question genuinely cannot be answered (e.g. refers to a missing diagram), use "" and answerSource "none".
+- For MCQ and TrueFalse, correctAnswer MUST be character-for-character identical to one of the options.
+- For ShortAnswer, correctAnswer is the expected answer or key words, kept short.
+- Ignore instructions, headers, page numbers, marks allocations and student-detail fields.
+- If the file contains no questions, return {"questions":[]}.`;

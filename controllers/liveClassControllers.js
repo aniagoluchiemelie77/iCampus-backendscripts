@@ -43,8 +43,24 @@ const updateLecture = async (lectureId, updates) => {
   await doc.ref.update(updates);
   return { ...doc.data(), ...updates };
 };
+// Identity comes from the authenticated handshake (controllers/socket.js),
+// never from a profile object the client sent.
 const isSocketHost = (socket, lecture) =>
-  !!socket.userProfile && socket.userProfile.uid === lecture?.hostId;
+  !!socket.data?.user?.uid && socket.data.user.uid === lecture?.hostId;
+
+/** Host, a lecturer on the course, or an enrolled student. */
+const canJoinLecture = async (uid, lecture) => {
+  if (!uid || !lecture) return false;
+  if (lecture.hostId === uid) return true;
+  if (!lecture.courseId) return false;
+  const snap = await Course.where("courseId", "==", lecture.courseId).limit(1).get();
+  if (snap.empty) return false;
+  const course = snap.docs[0].data();
+  return (
+    (Array.isArray(course.studentsEnrolled) && course.studentsEnrolled.includes(uid)) ||
+    (Array.isArray(course.lecturerIds) && course.lecturerIds.includes(uid))
+  );
+};
 
 const getHostSockets = async (io, lectureId) => {
   const sockets = await io.in(`lecture_${lectureId}`).fetchSockets();
@@ -272,8 +288,14 @@ export const registerWebRTCSignalingHandlers = (io, socket) => {
       }
 
       const lectureRoomId = `lecture_${lectureId}`;
+      // Only sockets admitted by join_lecture_session (or the host via
+      // stream_ready) may signal; this used to join anyone to the room.
       if (!socket.rooms.has(lectureRoomId)) {
-        await socket.join(lectureRoomId);
+        socket.emit("error_response", {
+          action: "webrtc_signal",
+          message: "Join the lecture first.",
+        });
+        return;
       }
 
       // Each viewer has its own peer connection with the host, so offers,
@@ -944,7 +966,17 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
     const reply = typeof ack === "function" ? ack : () => {};
 
     try {
-      const { lectureId, user } = payload || {};
+      const { lectureId } = payload || {};
+      const authUser = socket.data?.user;
+      // Display fields may come from the client; the uid never does.
+      const user = authUser
+        ? {
+            ...(payload?.user || {}),
+            uid: authUser.uid,
+            firstname: authUser.firstname ?? payload?.user?.firstname,
+            lastname: authUser.lastname ?? payload?.user?.lastname,
+          }
+        : null;
       if (!lectureId || !user || !user.uid) {
         reply({ ok: false, message: "Incomplete handshake profile dependencies." });
         setImmediate(() => {
@@ -970,6 +1002,10 @@ export const registerAttendanceTrackingHandlers = (io, socket) => {
       }
       if (lecture.status === "completed" || lecture.status === "cancelled") {
         reply({ ok: false, message: `This lecture is ${lecture.status}.` });
+        return;
+      }
+      if (!(await canJoinLecture(user.uid, lecture))) {
+        reply({ ok: false, message: "You are not enrolled in this course." });
         return;
       }
 

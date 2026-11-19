@@ -137,46 +137,57 @@ export const protect = async (req, res, next) => {
   }
 
   try {
-    let decoded;
-    let uid;
-    let tableType = "users";
-
-    if (token.length > 500) {
-      decoded = await admin.auth().verifyIdToken(token);
-      uid = decoded.uid;
-    } else {
-      decoded = jwt.verify(token, process.env.JWT_SECRET);
-      uid = decoded.id || decoded.uid;
-      tableType = decoded.role || "users";
-    }
-
-    const collectionName = tableType === "admin" ? "admins" : "users";
-    const querySnapshot = await db
-      .collection(collectionName)
-      .where("uid", "==", uid)
-      .limit(1)
-      .get();
-
-    if (querySnapshot.empty) {
+    const user = await resolveAuthUser(token);
+    if (!user) {
       return res.status(401).json({ message: "User not found in records" });
     }
-
-    const userDoc = querySnapshot.docs[0];
-    const userData = userDoc.data();
-
-    req.user = {
-      id: userData.uid || uid,
-      uid: userData.uid || uid,
-      docId: userDoc.id,
-      role: tableType,
-      ...userData,
-    };
-
+    req.user = user;
     return next();
   } catch (error) {
     console.error("Auth Error:", error.message);
     return res.status(401).json({ message: "Token invalid or expired" });
   }
+};
+
+/**
+ * Verifies an access token (Firebase ID token or our own JWT) and loads the
+ * matching user or admin record. Throws on a bad/expired token; returns null
+ * when the token is valid but the account no longer exists. Shared by the
+ * HTTP `protect` middleware and the Socket.IO handshake.
+ */
+export const resolveAuthUser = async (token) => {
+  let decoded;
+  let uid;
+  let tableType = "users";
+
+  if (token.length > 500) {
+    decoded = await admin.auth().verifyIdToken(token);
+    uid = decoded.uid;
+  } else {
+    // Pin the algorithm so a token can't pick a weaker one.
+    decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ["HS256"] });
+    uid = decoded.id || decoded.uid;
+    tableType = decoded.role || "users";
+  }
+  if (!uid) return null;
+
+  const collectionName = tableType === "admin" ? "admins" : "users";
+  const querySnapshot = await db
+    .collection(collectionName)
+    .where("uid", "==", uid)
+    .limit(1)
+    .get();
+  if (querySnapshot.empty) return null;
+
+  const userDoc = querySnapshot.docs[0];
+  const userData = userDoc.data();
+  return {
+    id: userData.uid || uid,
+    uid: userData.uid || uid,
+    docId: userDoc.id,
+    role: tableType,
+    ...userData,
+  };
 };
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

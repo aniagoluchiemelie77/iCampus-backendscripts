@@ -1,0 +1,27 @@
+rules_version = '2';
+
+// iCampus clients (mobile app, web app, admin portal) never read or write
+// Firestore directly: every query goes through this backend, which uses the
+// Admin SDK and is not subject to these rules. So clients get no access at
+// all. That is the strictest possible setting and closes the "anyone with
+// the public Firebase config can read the database" hole.
+//
+// If a client ever needs direct access to a collection, open only that
+// collection, scoped to the signed-in user's own school. The app signs in
+// with a custom token from POST /v1/secure/firebase-token, which carries
+// `schoolCode` and `usertype` claims. Example:
+//
+//   match /courses/{courseId} {
+//     allow read: if request.auth != null
+//       && request.auth.token.schoolCode != null
+//       && request.auth.token.schoolCode == resource.data.schoolCode;
+//   }
+//
+// Deploy: firebase deploy --only firestore:rules
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

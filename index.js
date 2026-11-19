@@ -15,6 +15,14 @@ import {
 import { lectureReminderCron } from "./cron/lectureReminderCron.js";
 import { assessmentReminderCron } from "./cron/assessmentReminderCron.js";
 import { socialMediaSnapshotCron } from "./cron/socialMediaCron.js";
+import {
+  corsOrigin,
+  errorHandler,
+  requestLogger,
+  requireEdgeOrigin,
+  securityHeaders,
+  warnIfCorsOpen,
+} from "./middleware/security.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -22,7 +30,11 @@ dotenv.config();
 
 const app = express();
 
-app.set("trust proxy", 1);
+// Behind Cloudflare + the platform load balancer. Rate limits key on the
+// client IP, so this must match the real number of proxy hops.
+app.set("trust proxy", Number(process.env.TRUST_PROXY_HOPS || 1));
+app.disable("x-powered-by");
+warnIfCorsOpen();
 
 const httpServer = createServer(app);
 const io = initSocket(httpServer);
@@ -36,10 +48,15 @@ assessmentReminderCron();
 socialMediaSnapshotCron();
 monitorSubscriptions();
 
-app.use(cors());
+// Unauthenticated liveness probe for Render / App Engine health checks.
+app.get("/healthz", (req, res) => res.json({ ok: true }));
+
+app.use(requireEdgeOrigin);
+app.use(securityHeaders());
+app.use(cors({ origin: corsOrigin }));
+app.use(requestLogger);
 
 app.use((req, res, next) => {
-  console.log(`🔗 ${req.method} ${req.url}`);
   req.io = io;
   next();
 });
@@ -98,6 +115,9 @@ const startServer = async () => {
     const userModule = await import(
       pathToFileURL(path.join(__dirname, "routes/user.js")).href
     );
+    const secureProxyModule = await import(
+      pathToFileURL(path.join(__dirname, "routes/secureProxy.js")).href
+    );
 
     app.use("/users", userModule.default);
     app.use("/reviews", reviewsModule.default);
@@ -113,21 +133,11 @@ const startServer = async () => {
     app.use("/verifyStudent", studentVerifyModule.default);
     app.use("/verifyInstructor", lecturerVerifyModule.default);
     app.use("/verifyUser", userVerifyModule.default);
+    app.use("/v1/secure", secureProxyModule.default);
 
     console.log("✅ All routes successfully loaded");
 
-    app.use((error, req, res, next) => {
-      if (error instanceof SyntaxError && error.status === 400 && "body" in error) {
-        return res.status(400).json({ error: "Invalid JSON request body" });
-      }
-      if (error?.type === "entity.too.large") {
-        return res.status(413).json({ error: "Request body is too large" });
-      }
-      console.error("Unhandled Express error:", error);
-      return res.status(error?.status || 500).json({
-        error: error?.message || "Internal server error",
-      });
-    });
+    app.use(errorHandler);
 
     const PORT = process.env.PORT || 5000;
     httpServer.listen(PORT, "0.0.0.0", () => {

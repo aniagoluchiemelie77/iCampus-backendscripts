@@ -3,8 +3,40 @@ import { logControllerPerformance } from "../utils/eventLogger.js";
 import { setImmediate } from "timers";
 import { createNotification } from "../services/notification.js";
 import { generateNotificationId } from "../utils/idGenerator.js";
+import { db } from "../config/firebaseAdmin.js";
+import {
+  BEACON_WINDOW_SECONDS,
+  createBeaconSecret,
+  isFreshBeaconCode,
+  verifyIdentityProof,
+} from "../utils/attendanceSecurity.js";
 
 const activeSessions = new Map();
+
+// Beacon secrets live in their own collection, never on the lecture document:
+// lectures are returned to students by several endpoints.
+const AttendanceSessions = db.collection("attendance_sessions");
+
+// Set ATTENDANCE_REQUIRE_FACE_PROOF=false only as a temporary escape hatch
+// while old app versions are still being replaced.
+const faceProofRequired = () => process.env.ATTENDANCE_REQUIRE_FACE_PROOF !== "false";
+
+const findCourse = async (courseId) => {
+  if (!courseId) return null;
+  const snap = await Course.where("courseId", "==", courseId).limit(1).get();
+  return snap.empty ? null : snap.docs[0].data();
+};
+
+/** The lecture's host or one of the course's lecturers. */
+const canRunAttendance = (uid, lecture, course) =>
+  !!uid &&
+  !!lecture &&
+  (lecture.hostId === uid ||
+    lecture.lecturerId === uid ||
+    (Array.isArray(course?.lecturerIds) && course.lecturerIds.includes(uid)));
+
+const isEnrolled = (uid, course) =>
+  Array.isArray(course?.studentsEnrolled) && course.studentsEnrolled.includes(uid);
 
 /** Lecture docs are keyed by id, but older ones only have an `id` field. */
 const findLectureDoc = async (lectureId) => {
@@ -62,7 +94,9 @@ export const registerAttendanceHandlers = (io, socket) => {
     const action = "physicalClassAttendanceScanner";
 
     try {
-      const { lectureId, lecturerId } = payload || {};
+      const { lectureId, beaconVersion } = payload || {};
+      // Who is asking comes from the authenticated socket, not the payload.
+      const lecturerId = socket.data?.user?.uid;
       if (!lectureId || !lecturerId) {
         setImmediate(() => {
           logControllerPerformance(
@@ -82,12 +116,44 @@ export const registerAttendanceHandlers = (io, socket) => {
 
       const attendanceRoomId = `lecture_attendance_${lectureId}`;
       const startedAt = new Date();
-      const [, lectureDoc] = await Promise.all([
-        socket.join(attendanceRoomId),
-        findLectureDoc(lectureId),
-      ]);
+      const lectureDoc = await findLectureDoc(lectureId);
       const lecture = lectureDoc?.data() || null;
+      const course = await findCourse(lecture?.courseId);
+      if (!canRunAttendance(lecturerId, lecture, course)) {
+        socket.emit("error_response", {
+          action: "start_attendance_session",
+          message: "Only this lecture's lecturer can take attendance.",
+        });
+        return;
+      }
+      await socket.join(attendanceRoomId);
       const wasAlreadyOpen = !!lecture?.attendanceOpen;
+
+      // Rotating beacon (app versions that send beaconVersion >= 2). A
+      // reopen/reconnect keeps the same secret so codes students already
+      // heard stay valid.
+      const sessionRef = AttendanceSessions.doc(String(lectureId));
+      if (Number(beaconVersion) >= 2) {
+        const existing = wasAlreadyOpen ? (await sessionRef.get()).data() : null;
+        const secret = existing?.secret || createBeaconSecret();
+        await sessionRef.set({
+          lectureId: String(lectureId),
+          lecturerId,
+          secret,
+          windowSeconds: BEACON_WINDOW_SECONDS,
+          startedAt,
+        });
+        // Only to this socket: the secret must never reach students.
+        socket.emit("attendance_beacon_config", {
+          lectureId,
+          secret,
+          windowSeconds: BEACON_WINDOW_SECONDS,
+          serverTime: Date.now(),
+        });
+      } else {
+        // Older lecturer app with a fixed beacon name: no code to check.
+        await sessionRef.delete().catch(() => {});
+      }
       if (lectureDoc) {
         await lectureDoc.ref.update({
           attendanceOpen: true,
@@ -172,10 +238,26 @@ export const registerAttendanceHandlers = (io, socket) => {
         return;
       }
 
+      const closingLecture = (await findLectureDoc(lectureId))?.data() || null;
+      if (
+        !canRunAttendance(
+          socket.data?.user?.uid,
+          closingLecture,
+          await findCourse(closingLecture?.courseId),
+        )
+      ) {
+        socket.emit("error_response", {
+          action: "end_attendance_session",
+          message: "Only this lecture's lecturer can end attendance.",
+        });
+        return;
+      }
+
       const attendanceRoomId = `lecture_attendance_${lectureId}`;
       console.log(
         `[ATTENDANCE_ENGINE] Closing session room: ${attendanceRoomId}`,
       );
+      await AttendanceSessions.doc(String(lectureId)).delete().catch(() => {});
       const endedAt = new Date();
       const lectureQuery = await Lectures.where("id", "==", lectureId)
         .limit(1)
@@ -244,7 +326,10 @@ export const registerAttendanceHandlers = (io, socket) => {
     const action = "physicalClassStudentAttendenceConfirmer";
 
     try {
-      const { lectureId, studentId, timestamp } = payload || {};
+      const { lectureId, identityProof, beaconCodes } = payload || {};
+      // The student is whoever is signed in on this socket; a studentId in
+      // the payload used to let anyone mark anyone present.
+      const studentId = socket.data?.user?.uid;
       if (!lectureId || !studentId) {
         setImmediate(() => {
           logControllerPerformance(
@@ -291,7 +376,45 @@ export const registerAttendanceHandlers = (io, socket) => {
       }
 
       const student = !studentQuery.empty ? studentQuery.docs[0].data() : null;
-      const lecture = !lectureQuery.empty ? lectureQuery.docs[0].data() : null;
+      const lecture = !lectureQuery.empty
+        ? lectureQuery.docs[0].data()
+        : (await findLectureDoc(lectureId))?.data() || null;
+
+      const reject = (message) => {
+        setImmediate(() =>
+          logControllerPerformance(controllerName, action, startTime, "error", message),
+        );
+        return socket.emit("error", message);
+      };
+
+      // Enrolled in this lecture's course (which also keeps institutions apart).
+      const course = await findCourse(lecture?.courseId);
+      if (!lecture || !isEnrolled(studentId, course)) {
+        return reject("You are not enrolled in this course.");
+      }
+
+      // Face match proof from /attendance/verify-student.
+      const proof = verifyIdentityProof(identityProof, { uid: studentId, lectureId });
+      if (!proof && faceProofRequired()) {
+        return reject(
+          "Your identity check has expired or is missing. Update iCampus and verify your face again.",
+        );
+      }
+
+      // Rotating beacon code heard in the room (lecturer apps that rotate).
+      const session = (await AttendanceSessions.doc(String(lectureId)).get()).data();
+      const beaconVerified = session?.secret
+        ? isFreshBeaconCode(beaconCodes, {
+            secret: session.secret,
+            lectureId: String(lectureId),
+            windowSeconds: session.windowSeconds,
+          })
+        : null;
+      if (beaconVerified === false) {
+        return reject(
+          "We couldn't confirm you're in the lecture room. Stay near your lecturer and try again.",
+        );
+      }
 
       if (!student) {
         setImmediate(() => {
@@ -316,8 +439,12 @@ export const registerAttendanceHandlers = (io, socket) => {
         lectureId,
         courseId: lecture?.courseId || null,
         status: "Present",
-        timestamp: timestamp ? new Date(timestamp) : new Date(),
+        // Server time: a client clock can be set to anything.
+        timestamp: new Date(),
         createdAt: new Date(),
+        identityMethod: proof?.method || "none",
+        liveness: proof?.liveness || null,
+        beaconVerified,
       };
       await Attendance.doc(attendanceId).set(attendanceRecord);
       const attendanceRoomId = `lecture_attendance_${lectureId}`;
@@ -333,7 +460,7 @@ export const registerAttendanceHandlers = (io, socket) => {
             matricNumber: student.matricNumber,
             department: student.department || "General",
             isException: false,
-            timestamp: timestamp,
+            timestamp: attendanceRecord.timestamp.toISOString(),
           });
 
           console.log(

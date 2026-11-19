@@ -1,0 +1,44 @@
+rules_version = '2';
+
+// Firebase Storage. The app uploads a few files directly (course resources,
+// iAssistant attachments, digital products). It now signs in first with a
+// custom token from POST /v1/secure/firebase-token, so uploads require a
+// signed-in iCampus user, and each upload is size- and type-limited.
+//
+// Everyone else reads files through the download URLs Firebase returns
+// (they carry their own token). Signed-in users may `get` one object, which
+// getDownloadURL needs right after an upload; listing folders stays closed.
+//
+// Deploy: firebase deploy --only storage
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider == 'custom';
+    }
+    function sizeUnder(mb) {
+      return request.resource.size < mb * 1024 * 1024;
+    }
+    function allowedType() {
+      return request.resource.contentType.matches('image/.*')
+        || request.resource.contentType.matches('video/.*')
+        || request.resource.contentType.matches('audio/.*')
+        || request.resource.contentType.matches('application/(pdf|zip|msword|vnd\\.openxmlformats-officedocument\\..*|vnd\\.ms-.*)')
+        || request.resource.contentType.matches('text/(plain|csv)');
+    }
+
+    // Folders the app uses today; no deletes or overwrites from clients.
+    match /{folder}/{fileName} {
+      allow get: if signedIn();
+      allow list: if false;
+      allow create: if signedIn()
+        && folder in ['uploads', 'digital-products', 'course-materials', 'assignments-briefs', 'chat-attachments']
+        && sizeUnder(200)
+        && allowedType();
+      allow update, delete: if false;
+    }
+
+    match /{path=**} {
+      allow read, write: if false;
+    }
+  }
+}
